@@ -37,7 +37,6 @@ import io.questdb.ServerMain;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
-import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.StringSink;
@@ -61,17 +60,14 @@ import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
-import java.util.concurrent.TimeUnit;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class DynamicPropServerConfigurationTest extends AbstractTest {
-    private SOCountDownLatch latch;
     private File serverConf;
 
     @Before
     public void setUp() {
-        latch = new SOCountDownLatch(1);
         Path serverConfPath = Paths.get(temp.getRoot().getAbsolutePath(), "dbRoot", "conf", "server.conf");
         try {
             Files.createDirectories(serverConfPath.getParent());
@@ -130,7 +126,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                     w.write("http.net.connection.limit=2\n");
                 }
 
-                latch.await();
+                assertReloadConfig(true);
 
                 // we should be able to open two connections now
                 try (
@@ -192,7 +188,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                     w.write("http.recv.buffer.size=300\n");
                 }
 
-                latch.await();
+                assertReloadConfig(true);
 
                 try (TestHttpClient testHttpClient = new TestHttpClient()) {
                     testHttpClient.assertGet(
@@ -232,7 +228,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                     w.write("http.send.buffer.size=200\n");
                 }
 
-                latch.await();
+                assertReloadConfig(true);
 
                 try (TestHttpClient testHttpClient = new TestHttpClient()) {
                     testHttpClient.assertGet(
@@ -258,7 +254,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                     w.write("pg.named.statement.limit=10\n");
                 }
 
-                latch.await();
+                assertReloadConfig(true);
 
                 namedStatementLimit = serverMain.getConfiguration().getPGWireConfiguration().getNamedStatementLimit();
                 Assert.assertEquals(10, namedStatementLimit);
@@ -291,7 +287,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                     w.write("pg.net.connection.limit=2\n");
                 }
 
-                latch.await();
+                assertReloadConfig(true);
 
                 // we should be able to open two connections now
                 try (Connection conn1 = getConnection("admin", "quest")) {
@@ -325,7 +321,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                     w.write("\n");
                 }
 
-                latch.await();
+                assertReloadConfig(true, "steven", "sklar");
 
                 try (Connection conn = getConnection("admin", "quest")) {
                     Assert.assertFalse(conn.isClosed());
@@ -354,7 +350,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                     w.write("pg.password=ralks\n");
                 }
 
-                latch.await();
+                assertReloadConfig(true, "steven", "sklar");
 
                 try (Connection conn = getConnection("nevets", "ralks")) {
                     Assert.assertFalse(conn.isClosed());
@@ -382,7 +378,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                     w.write("pg.password=sklar\n");
                 }
 
-                latch.await();
+                assertReloadConfig(true);
 
                 try (Connection conn = getConnection("steven", "sklar")) {
                     Assert.assertFalse(conn.isClosed());
@@ -408,7 +404,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                     w.write("pg.password=sklar\n");
                 }
 
-                latch.await();
+                assertReloadConfig(true);
 
                 try (Connection conn = getConnection("steven", "sklar")) {
                     Assert.assertFalse(conn.isClosed());
@@ -449,7 +445,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                     w.write("pg.recv.buffer.size=512\n");
                 }
 
-                latch.await();
+                assertReloadConfig(true);
 
                 // Now we should be able to insert
                 try (
@@ -490,7 +486,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                     w.write("pg.send.buffer.size=512\n");
                 }
 
-                latch.await();
+                assertReloadConfig(true);
 
                 try (
                         Connection conn = getConnection("admin", "quest");
@@ -525,7 +521,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                     w.write("\n");
                 }
 
-                Assert.assertFalse(latch.await(TimeUnit.SECONDS.toNanos(1)));
+                assertReloadConfig(false, "steven", "sklar");
 
                 try (Connection conn = getConnection("steven", "sklar")) {
                     Assert.assertFalse(conn.isClosed());
@@ -554,7 +550,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                     w.write("pg.password=sklar\n");
                 }
 
-                Assert.assertFalse(latch.await(TimeUnit.SECONDS.toNanos(1)));
+                assertReloadConfig(false, "steven", "sklar");
             }
         });
     }
@@ -579,7 +575,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                     w.write("pg.password=foo\n");
                 }
 
-                latch.await();
+                assertReloadConfig(true, "steven", "sklar");
 
                 // unsupported property should stay as it was before reload
                 Assert.assertTrue(serverMain.getConfiguration().getLineTcpReceiverConfiguration().isUseLegacyStringDefault());
@@ -595,6 +591,21 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
         properties.setProperty("socketTimeout", "1");
         final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", 8812);
         return DriverManager.getConnection(url, properties);
+    }
+
+    private void assertReloadConfig(boolean expectedResult) throws SQLException {
+        assertReloadConfig(expectedResult, "admin", "quest");
+    }
+
+    private void assertReloadConfig(boolean expectedResult, String user, String password) throws SQLException {
+        try (
+                Connection conn = getConnection(user, password);
+                PreparedStatement stmt = conn.prepareStatement("select reload_config();");
+                ResultSet rs = stmt.executeQuery()
+        ) {
+            Assert.assertTrue(rs.next());
+            Assert.assertEquals(expectedResult, rs.getBoolean(1));
+        }
     }
 
     private Bootstrap getBootstrap() {
@@ -621,8 +632,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                             FilesFacadeImpl.INSTANCE,
                             bootstrap.getMicrosecondClock(),
                             FactoryProviderFactoryImpl.INSTANCE,
-                            true,
-                            () -> latch.countDown()
+                            true
                     );
                 } catch (Exception ex) {
                     Assert.fail(ex.getMessage());

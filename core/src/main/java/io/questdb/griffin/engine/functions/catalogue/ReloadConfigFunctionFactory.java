@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -33,19 +34,11 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
-import io.questdb.log.LogRecord;
 import io.questdb.std.IntList;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
-import io.questdb.std.Os;
-import io.questdb.std.Unsafe;
 
-public class DumpMemoryUsageFunctionFactory implements FunctionFactory {
-
-    private static final Log LOG = LogFactory.getLog("dump-memory-usage");
-    private static final String SIGNATURE = "dump_memory_usage()";
+public class ReloadConfigFunctionFactory implements FunctionFactory {
+    private static final String SIGNATURE = "reload_config()";
 
     @Override
     public String getSignature() {
@@ -60,31 +53,25 @@ public class DumpMemoryUsageFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new DumpMemoryUsageFunction();
+        return new Func(sqlExecutionContext.getCairoEngine());
     }
 
-    private static class DumpMemoryUsageFunction extends BooleanFunction {
+    private static class Func extends BooleanFunction {
+        private final CairoEngine engine;
+
+        public Func(CairoEngine engine) {
+            this.engine = engine;
+        }
+
         @Override
         public boolean getBool(Record rec) {
-            final LogRecord record = LOG.advisory();
-
-            record.$("\n\tTOTAL: ").$(Unsafe.getMemUsed());
-            record.$("\n\tRSS: ").$(Os.getRss());
-            record.$("\n\tMALLOC_COUNT: ").$(Unsafe.getMallocCount());
-            record.$("\n\tREALLOC_COUNT: ").$(Unsafe.getReallocCount());
-            record.$("\n\tFREE_COUNT: ").$(Unsafe.getFreeCount());
-            for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
-                record.$('\n').$('\t').$(MemoryTag.nameOf(i)).$(": ").$(Unsafe.getMemUsedByTag(i));
-            }
-            record.$('\n');
-            record.$();
-            return true;
+            return engine.getConfigReloader().reload();
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            super.init(symbolTableSource, executionContext);
             executionContext.getSecurityContext().authorizeSystemAdmin();
+            super.init(symbolTableSource, executionContext);
         }
 
         @Override
