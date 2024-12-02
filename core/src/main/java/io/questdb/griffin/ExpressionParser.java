@@ -559,7 +559,7 @@ public class ExpressionParser {
 
                     case '(':
                         // check that we are handling a declare variable, and we have finished parsing it
-                        if (parsedDeclaration && prevBranch != BRANCH_LEFT_PARENTHESIS
+                        if (parsedDeclaration && prevBranch != BRANCH_LEFT_PARENTHESIS && prevBranch != BRANCH_LITERAL
                                 && !(prevBranch == BRANCH_OPERATOR && Chars.equals(opStack.peek().token, ":="))) {
                             lexer.unparseLast();
                             break OUT;

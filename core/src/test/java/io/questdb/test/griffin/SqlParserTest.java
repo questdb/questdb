@@ -3742,6 +3742,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclareSelectWithFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(tradesDdl);
+            drainWalQueue();
+            assertModel("select-group-by timestamp, symbol, max(price) max from (select [timestamp, symbol, price] from trades timestamp (timestamp))",
+                    "DECLARE @max_price := max(price) SELECT timestamp, symbol, @max_price FROM trades", ExecutionModel.QUERY);
+        });
+    }
+
+    @Test
     public void testDeclareSelectWrongAssignmentOperator() throws Exception {
         assertException("DECLARE @x = 5 SELECT @x;", 11, "expected variable assignment operator");
     }
