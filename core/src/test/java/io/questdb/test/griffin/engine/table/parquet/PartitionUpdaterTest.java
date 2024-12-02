@@ -112,6 +112,7 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                 // Once again with the correct row group id
                 PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
                 updater.updateRowGroup((short) 0, descriptor);
+                updater.updateFileMetadata();
 
                 final long updatedParquetPartitionSize = ff.length(path.$());
                 Assert.assertTrue(updatedParquetPartitionSize > parquetPartitionSize);

@@ -28,7 +28,13 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
+import io.questdb.std.QuietCloseable;
+import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 
 public class PartitionUpdater implements QuietCloseable {
@@ -71,6 +77,13 @@ public class PartitionUpdater implements QuietCloseable {
         );
     }
 
+    // call to this method will update file metadata
+    // MUST be called after all row groups have been updated
+    public void updateFileMetadata() {
+        assert ptr != 0;
+        updateFileMetadata(ptr);
+    }
+
     public void updateRowGroup(short rowGroupId, PartitionDescriptor descriptor) {
         final int columnCount = descriptor.getColumnCount();
         final long rowCount = descriptor.getPartitionRowCount();
@@ -108,6 +121,9 @@ public class PartitionUpdater implements QuietCloseable {
 
     private static native void destroy(long impl);
 
+    // throws CairoException on error
+    private static native void updateFileMetadata(long impl);
+
     private static native void updateRowGroup(
             long impl,
             int tableNameLen,
@@ -122,12 +138,6 @@ public class PartitionUpdater implements QuietCloseable {
     ) throws CairoException;
 
     private void destroy() {
-        // TODO(eugenels): Extract `finish` to a separate public API method.
-        //                 Currently it gets called as part of `close()`, which isn't ideal
-        //                 from an exception handling point of view.
-        //                 This is because `close()` should not throw exceptions or
-        //                 the exception will prevent `destroy()` from being called.
-        //                 In other words, we also have a memory leak here :-)
         if (ptr != 0) {
             try {
                 destroy(ptr);

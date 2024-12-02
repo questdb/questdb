@@ -85,6 +85,19 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_destroy(
+    _env: JNIEnv,
+    _class: JClass,
+    updater: *mut ParquetUpdater,
+) {
+    if updater.is_null() {
+        panic!("ParquetUpdater pointer is null");
+    }
+
+    let _ = unsafe { Box::from_raw(updater) };
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_updateFileMetadata(
     mut env: JNIEnv,
     _class: JClass,
     updater: *mut ParquetUpdater,
@@ -93,12 +106,12 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
         panic!("ParquetUpdater pointer is null");
     }
 
-    let mut parquet_updater = unsafe { Box::from_raw(updater) };
+    let parquet_updater = unsafe { &mut *updater };
     match parquet_updater.end(None) {
         Ok(_) => (),
         Err(mut err) => {
-            err.add_context("could not update partition");
-            err.add_context("error in PartitionUpdater.destroy");
+            err.add_context("could not update partition metadata");
+            err.add_context("error in PartitionUpdater.updateFileMetadata");
             err.into_cairo_exception().throw(&mut env)
         }
     }

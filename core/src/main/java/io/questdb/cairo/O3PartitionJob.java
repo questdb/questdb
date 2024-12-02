@@ -256,6 +256,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             srcOooBatchRowSize
                     );
                 }
+                partitionUpdater.updateFileMetadata();
             } finally {
                 ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             }
