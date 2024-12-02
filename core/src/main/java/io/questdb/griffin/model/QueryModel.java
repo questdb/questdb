@@ -709,6 +709,19 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return allowPropagationOfOrderByAdvice;
     }
 
+    public boolean windowStopPropagate(ObjList<ExpressionNode>orderByAdvice, IntList orderByDirectionAdvice) {
+        if (selectModelType != SELECT_MODEL_WINDOW) {
+            return false;
+        }
+        for (int i = 0, size = getColumns().size(); i < size; i++) {
+            QueryColumn column = getColumns().getQuick(i);
+            if (column.isWindowColumn() && ((WindowColumn) column).stopOrderByPropagate(orderByAdvice, orderByDirectionAdvice)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public ObjList<CharSequence> getBottomUpColumnAliases() {
         return bottomUpColumnAliases;
     }

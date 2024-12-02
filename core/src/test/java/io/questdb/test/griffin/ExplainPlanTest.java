@@ -10965,6 +10965,49 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowRangeFrameDependOnSubqueryOrderBy() throws SqlException {
+        execute("create table cpu_ts ( hostname symbol, usage_system double, ts1 timestamp, ts2 timestamp) timestamp(ts1);");
+
+        assertPlanNoLeakCheck(
+                "SELECT * from " +
+                        "( " +
+                        "SELECT ts2, hostname, usage_system, " +
+                        "first_value(usage_system) OVER ( partition by hostname ORDER BY ts2 ASC RANGE BETWEEN 3 seconds preceding and current row ) AS first_usage_system " +
+                        "from ( " +
+                        "select * FROM cpu_ts WHERE ts2 >= '2024-08-22T14:15:29.206' ORDER BY ts2)" +
+                        ") order by hostname, ts2 LIMIT 40;",
+                "Limit lo: 40\n" +
+                        "    Sort\n" +
+                        "      keys: [hostname, ts2]\n" +
+                        "        Window\n" +
+                        "          functions: [first_value(usage_system) over (partition by [hostname] range between 3000000 preceding and current row)]\n" +
+                        "            Radix sort light\n" +
+                        "              keys: [ts2]\n" +
+                        "                Async Filter workers: 1\n" +
+                        "                  filter: ts2>=1724336129206000\n" +
+                        "                    PageFrame\n" +
+                        "                        Row forward scan\n" +
+                        "                        Frame forward scan on: cpu_ts\n"
+        );
+
+        assertPlanNoLeakCheck(
+                "SELECT ts2, hostname, usage_system, " +
+                        "first_value(usage_system) OVER ( partition by hostname ORDER BY ts2 ASC RANGE BETWEEN 3 seconds preceding and current row ) AS first_usage_system " +
+                        "from ( " +
+                        "select * FROM cpu_ts WHERE ts2 >= '2024-08-22T14:15:29.206' ORDER BY ts2)",
+                "Window\n" +
+                        "  functions: [first_value(usage_system) over (partition by [hostname] range between 3000000 preceding and current row)]\n" +
+                        "    Radix sort light\n" +
+                        "      keys: [ts2]\n" +
+                        "        Async Filter workers: 1\n" +
+                        "          filter: ts2>=1724336129206000\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: cpu_ts\n"
+        );
+    }
+
+    @Test
     public void testWithBindVariables() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t ( x int );");

@@ -3558,10 +3558,11 @@ public class SqlOptimiser implements Mutable {
         if (model == null) {
             return;
         }
-        // don't propagate though group by, sample by or distinct
+        // don't propagate though group by, sample by, distinct or some window functions.
         if (model.getGroupBy().size() != 0
                 || model.getSampleBy() != null
-                || model.getSelectModelType() == QueryModel.SELECT_MODEL_DISTINCT) {
+                || model.getSelectModelType() == QueryModel.SELECT_MODEL_DISTINCT
+                || model.windowStopPropagate(orderByAdvice, orderByDirectionAdvice)) {
             return;
         }
         // placeholder for prefix-stripped advice
@@ -6364,6 +6365,7 @@ public class SqlOptimiser implements Mutable {
             rewriteCountDistinct(rewrittenModel);
             rewriteNegativeLimit(rewrittenModel, sqlExecutionContext);
             pushLimitFromChooseToNone(rewrittenModel, sqlExecutionContext);
+            validateWindowFunctions(rewrittenModel, sqlExecutionContext, 0);
             rewriteOrderByPosition(rewrittenModel);
             rewriteOrderByPositionForUnionModels(rewrittenModel);
             rewrittenModel = rewriteOrderBy(rewrittenModel);
@@ -6373,7 +6375,7 @@ public class SqlOptimiser implements Mutable {
             eraseColumnPrefixInWhereClauses(rewrittenModel);
             moveTimestampToChooseModel(rewrittenModel);
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
-            validateWindowFunctions(rewrittenModel, sqlExecutionContext, 0);
+            //validateWindowFunctions(rewrittenModel, sqlExecutionContext, 0);
             authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
             return rewrittenModel;
         } catch (Throwable th) {
