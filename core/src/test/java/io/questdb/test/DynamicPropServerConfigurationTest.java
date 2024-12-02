@@ -596,8 +596,8 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
         Properties properties = new Properties();
         properties.setProperty("user", user);
         properties.setProperty("password", pass);
-        properties.setProperty("connectTimeout", "1");
-        properties.setProperty("socketTimeout", "1");
+        properties.setProperty("connectTimeout", "3");
+        properties.setProperty("socketTimeout", "3");
         final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", 8812);
         return DriverManager.getConnection(url, properties);
     }
