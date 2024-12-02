@@ -281,9 +281,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 isTerminating = runStatus.isTerminating();
                 final long timeLimit = microClock.getTicks() + tableTimeQuotaMicros;
                 boolean firstRun = true;
+                WHILE_TRANSACTION_CURSOR:
 
                 try {
-                    WHILE_TRANSACTION_CURSOR:
 
                     while (!isTerminating && ((finishedAll = microClock.getTicks() <= timeLimit) || firstRun) && transactionLogCursor.hasNext()) {
                         firstRun = false;
@@ -576,8 +576,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
                 TableToken tableToken = tableWriter.getTableToken();
 
-                // Here means we got TableDoesNotExist SQL or Cairo Exception.
-                // Table may be renamed while processing the WAL transaction.
+                // Getting to here means we got Table Does Not Exist SQL or Cairo Exception.
+                // Table may be renamed or dropped while processing the WAL transaction.
                 // Need to refresh the table token and retry.
                 TableToken updatedToken = engine.getUpdatedTableToken(tableToken);
                 if (updatedToken == null || tableToken.equals(updatedToken)) {
@@ -585,8 +585,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         // This is definitely dropped table.
                         throw CairoException.tableDropped(tableToken);
                     }
-                    // No progress, same token or no token and it's not dropped. Avoid infinite loop.
-                    throw CairoException.tableDoesNotExist(tableToken.getTableName());
+                    // No progress, same token or no token and it's not dropped.
+                    // Stop processing WAL transactions for this table, switch to the next table.
+                    LOG.info().$("failed to compile SQL, table rename not fully applied, will retry [table=").$(tableToken).I$();
+                    throw EjectApplyWalException.INSTANCE;
                 }
                 tableWriter.updateTableToken(updatedToken);
             }
