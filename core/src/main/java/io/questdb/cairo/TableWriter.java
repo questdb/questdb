@@ -2669,7 +2669,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // This can mean that the writer state is corrupt. Force re-open writer with next transaction
                     LOG.critical().$("detected line append failure, writer marked as distressed [table=").$(tableToken).I$();
                     distressed = true;
-                    return;
+                    checkDistressed();
                 }
                 freeColumns(false);
                 txWriter.unsafeLoadAll();

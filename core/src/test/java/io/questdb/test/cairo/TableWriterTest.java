@@ -4251,7 +4251,9 @@ public class TableWriterTest extends AbstractCairoTest {
         final Rnd rnd = new Rnd();
         long t = TimestampFormatUtils.parseTimestamp("2019-03-22T00:00:00.000000Z");
         long increment = 2_000_000;
-        try (TableWriter w = getWriter(tableToken)) {
+        TableWriter w = null;
+        try {
+            w = getWriter(tableToken);
             testIndexIsAddedToTableAppendData(N, rnd, t, increment, w);
             w.commit();
 
@@ -4268,6 +4270,13 @@ public class TableWriterTest extends AbstractCairoTest {
             // modifier enters TableWriter in different states from which
             // truncate() call must be able to recover
             modifier.modify(w, rnd, t1, increment);
+
+            try {
+                w.rollback();
+            } catch (CairoError ignore) {
+            }
+            w.close();
+            w = getWriter(tableToken);
 
             // truncate writer mid-row-append
             w.truncate();
@@ -4329,6 +4338,10 @@ public class TableWriterTest extends AbstractCairoTest {
                 Assert.assertEquals(0, w.size());
                 Assert.assertTrue(reader.reload());
                 Assert.assertEquals(0, reader.size());
+            }
+        } finally {
+            if (w != null) {
+                w.close();
             }
         }
     }

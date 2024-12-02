@@ -36,7 +36,7 @@ import io.questdb.std.str.LPSZ;
 // Contiguous mapped with offset readable memory
 public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
     private static final Log LOG = LogFactory.getLog(MemoryCMORImpl.class);
-    private boolean closeFdOnClose;
+    private boolean closeFdOnClose = true;
     private long mapFileOffset;
     private long offset;
 
@@ -70,6 +70,7 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
         super.close();
         mapFileOffset = 0;
         offset = 0;
+        closeFdOnClose = true;
     }
 
     @Override
