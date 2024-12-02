@@ -106,6 +106,7 @@ import io.questdb.std.WeakClosableObjectPool;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.ndarr.NdArrayView;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -8667,6 +8668,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         void putLong256Utf8(int columnIndex, DirectUtf8Sequence hexString);
 
+        void putNdArray(int columnIndex, NdArrayView array);
+
         void putShort(int columnIndex, short value);
 
         void putStr(int columnIndex, CharSequence value);
@@ -8820,6 +8823,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void putLong256Utf8(int columnIndex, DirectUtf8Sequence hexString) {
+            // no-op
+        }
+
+        @Override
+        public void putNdArray(int columnIndex, NdArrayView array) {
             // no-op
         }
 
@@ -9029,6 +9037,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         public void putLong256Utf8(int columnIndex, DirectUtf8Sequence hexString) {
             getPrimaryColumn(columnIndex).putLong256Utf8(hexString);
             setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putNdArray(int columnIndex, NdArrayView array) {
+            throw new UnsupportedOperationException("not yet implemented");
         }
 
         @Override

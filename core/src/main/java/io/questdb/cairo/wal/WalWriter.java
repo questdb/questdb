@@ -36,6 +36,7 @@ import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DdlListener;
 import io.questdb.cairo.EmptySymbolMapReader;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.NdArrayTypeDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SymbolMapReader;
@@ -83,6 +84,7 @@ import io.questdb.std.Utf8StringIntHashMap;
 import io.questdb.std.Uuid;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.ndarr.NdArrayView;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -2298,6 +2300,15 @@ public class WalWriter implements TableWriterAPI {
         @Override
         public void putLong256Utf8(int columnIndex, DirectUtf8Sequence hexString) {
             getPrimaryColumn(columnIndex).putLong256Utf8(hexString);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putNdArray(int columnIndex, NdArrayView array) {
+            NdArrayTypeDriver.appendValue(
+                    getSecondaryColumn(columnIndex), getPrimaryColumn(columnIndex),
+                    array
+            );
             setRowValueNotNull(columnIndex);
         }
 

@@ -184,9 +184,8 @@ public class LineWalAppender {
         TableWriter.Row r = writer.newRow(timestamp);
         try {
             for (int i = 0; i < entCount; i++) {
-                int colTypeAndIndex = ld.getColumnType(i);
-                int colType = Numbers.decodeLowShort(colTypeAndIndex);
-                int columnIndex = Numbers.decodeHighShort(colTypeAndIndex);
+                final int colType = ld.getColumnType(i);
+                final int columnIndex = ld.getColumnIndex(i);
 
                 if (columnIndex < 0) {
                     continue;
@@ -409,6 +408,12 @@ public class LineWalAppender {
                         }
                         break;
                     }
+                    case LineTcpParser.ENTITY_TYPE_ND_ARRAY:
+                        if (!ColumnType.isNdArray(colType)) {
+                            throw castError(tud.getTableNameUtf16(), "ND_ARRAY", colType, ent.getName());
+                        }
+                        r.putNdArray(columnIndex, ent.getNdArray());
+                        break;
                     default:
                         break; // unsupported types are ignored
                 }

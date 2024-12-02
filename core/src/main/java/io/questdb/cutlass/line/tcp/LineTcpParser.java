@@ -33,6 +33,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
+import io.questdb.std.ndarr.NdArrayView;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 
@@ -664,7 +665,9 @@ public class LineTcpParser implements QuietCloseable {
          */
         ND_ARR_MALFORMED,
 
-        /** Parsing of the array datatype failed. */
+        /**
+         * Parsing of the array datatype failed.
+         */
         ND_ARR_INVALID_TYPE,
 
 
@@ -704,6 +707,10 @@ public class LineTcpParser implements QuietCloseable {
 
         public DirectUtf8Sequence getName() {
             return name;
+        }
+
+        public NdArrayView getNdArray() {
+            return ndArrParser.getView();
         }
 
         public byte getType() {

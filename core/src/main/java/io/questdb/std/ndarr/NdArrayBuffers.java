@@ -30,6 +30,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.bytes.DirectByteSink;
+import org.jetbrains.annotations.NotNull;
 
 /**
  * Buffers required for an array.
@@ -58,7 +59,7 @@ public class NdArrayBuffers implements QuietCloseable {
     /**
      * Validate the buffers and set the array view.
      */
-    public NdArrayView.ValidatonStatus setView(NdArrayView view) {
+    public NdArrayView.ValidatonStatus setView(@NotNull NdArrayView view) {
         if (shape.size() == 0) {
             view.ofNull();
             return NdArrayView.ValidatonStatus.OK;

@@ -31,9 +31,14 @@ import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryOM;
 import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.std.DirectIntSlice;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.ndarr.NdArrayMeta;
+import io.questdb.std.ndarr.NdArrayView;
 import io.questdb.std.str.LPSZ;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Reads and writes arrays.
@@ -41,29 +46,33 @@ import io.questdb.std.str.LPSZ;
  * <h1>AUX entries</h1>
  * <pre>
  * 128-bit fixed size entries
- *     * manydims_and_dim0: int =======
- *         * bit 0 to =26: dim0: 27-bit unsigned integer
- *             * the first dimension of the array,
- *             * or `0` if null.
- *         * bits 27 to =30: unused
- *         * bit 31: manydims: 1-bit bool
- *             * if `1`, this nd array has more than two dimensions
- *     * dim1_and_format: int =======
- *         * bits 0 to =26: dim1: 27-bit unsigned integer
- *             * the second dimension of the array
- *             * or `0` if a 1D array.
- *         * bits 27 to =31: unused
- *     * offset_and_hash: long ======
- *         * bits 0 to =47: offset: 48-bit unsigned integer
- *             * byte count offset into the data vector
- *         * bits 48 to =64: hash: 16-bit
- *             * CRC-16/XMODEM hash used to speed up equality comparisons
+ *     * auxHi ======
+ *         * manydims_and_dim0: int =======
+ *             * bit 0 to =26: dim0: 27-bit unsigned integer
+ *                 * the first dimension of the array,
+ *                 * or `0` if null.
+ *             * bits 27 to =30: unused
+ *             * bit 31: manydims: 1-bit bool
+ *                 * if `1`, this nd array has more than two dimensions
+ *         * dim1_and_format: int =======
+ *             * bits 0 to =26: dim1: 27-bit unsigned integer
+ *                 * the second dimension of the array
+ *                 * or `0` if a 1D array.
+ *             * bits 27 to =31: unused, reserved for format use (in case we want to support sparse arrays)
+ *     * auxLo ======
+ *         * offset_and_hash: long ======
+ *             * bits 0 to =47: offset: 48-bit unsigned integer
+ *                 * byte count offset into the data vector
+ *             * bits 48 to =64: hash: 16-bit
+ *                 * CRC-16/XMODEM hash used to speed up equality comparisons
  * </pre>
  * <p><strong>Special NULL value encoding:</strong> All bits of the entry are 0.</p>
  * <h1>Data vector</h1>
  * <pre>
  * variable length encoding, starting at the offset specified in the `aux` entry.
  *     * A sequence of extra dimensions.
+ *         * padding:
+ *             * enough padding to satisfy the datatype alignment requirements for `int` (i.e. on a 4 byte boundary).
  *         * Optional, present if more than 2 dimensions (see `manydims` field in aux)
  *         * Each dimension is:
  *             * last marker: 1-bit
@@ -102,6 +111,47 @@ import io.questdb.std.str.LPSZ;
 public class NdArrayTypeDriver implements ColumnTypeDriver {
     public static final NdArrayTypeDriver INSTANCE = new NdArrayTypeDriver();
     public static final int ND_ARRAY_AUX_WIDTH_BYTES = 2 * Long.BYTES;
+    private static final long MAX_OFFSET = 1L << 48 - 1L;
+
+    public static void appendValue(@NotNull MemoryA auxMem, @NotNull MemoryA dataMem, @Nullable NdArrayView array) {
+        if (array == null) {
+            NdArrayTypeDriver.INSTANCE.appendNull(auxMem, dataMem);
+            return;
+        }
+
+        final long offset = writeDataEntry(dataMem, array);
+        writeAuxEntry(auxMem, array, offset);
+
+        if (NdArrayMeta.isDefaultStrides(array.getShape(), array.getStrides())) {
+
+        } else {
+            throw new UnsupportedOperationException("not yet implemented");
+        }
+    }
+
+    private static long writeDataEntry(@NotNull MemoryA dataMem, @Nullable NdArrayView array) {
+        throw new UnsupportedOperationException("not yet implemented");
+    }
+
+    private static void writeAuxEntry(MemoryA auxMem, @NotNull NdArrayView array, long offset) {
+        final DirectIntSlice shape = array.getShape();
+        final int nDims = array.getShape().length();
+
+        // The fields we will hold in the aux header.
+        final boolean manyDims = nDims > 2;
+        final int dim0 = shape.get(0);
+        final int dim1 = nDims >= 2 ? shape.get(1) : 0;
+        assert dim0 <= NdArrayMeta.MAX_DIM_SIZE;
+        assert dim1 <= NdArrayMeta.MAX_DIM_SIZE;
+        assert offset <= MAX_OFFSET;
+        final short crc = array.getCrc();
+
+        // Encoded into 128 bits.
+        final long auxHiHi = (manyDims ? (1L << 31) : 0) | dim0;
+        final long auxHi = (auxHiHi << 32) | dim1;
+        final long auxLo = (((long) crc) << 48) | offset;
+        auxMem.putLong128(auxLo, auxHi);
+    }
 
     @Override
     public void appendNull(MemoryA auxMem, MemoryA dataMem) {

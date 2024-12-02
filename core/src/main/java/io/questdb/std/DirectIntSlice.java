@@ -30,23 +30,27 @@ import io.questdb.std.bytes.DirectSequence;
  * A flyweight to an immutable int slice stored in native memory.
  */
 public class DirectIntSlice implements DirectSequence {
+    private int length = 0;
     private long ptr = 0;
-    private int size = 0;
 
     public int get(int index) {
+        assert index >= 0;
+        assert index < length;
         return Unsafe.getUnsafe().getInt(ptr + ((long) index << 2));
     }
 
     public int length() {
-        return size() / Integer.BYTES;
+        return length;
     }
 
-    public DirectIntSlice of(long ptr, int size) {
+    /**
+     * Set from start address and length (element count).
+     */
+    public DirectIntSlice of(long ptr, int length) {
         assert ptr > 0;
-        assert size > 0;
-        assert size % Integer.BYTES == 0;
+        assert length > 0;
         this.ptr = ptr;
-        this.size = size;
+        this.length = length;
         return this;
     }
 
@@ -58,12 +62,12 @@ public class DirectIntSlice implements DirectSequence {
 
     public void reset() {
         ptr = 0;
-        size = 0;
+        length = 0;
     }
 
     @Override
     public int size() {
-        assert size >= 0;
-        return size;
+        assert length >= 0;
+        return length * Integer.BYTES;
     }
 }

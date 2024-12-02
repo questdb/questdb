@@ -26,6 +26,7 @@ package io.questdb.std.ndarr;
 
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectIntSlice;
+import org.jetbrains.annotations.NotNull;
 
 /**
  * Algorithms to work with the shape (dimensions) and strides.
@@ -54,10 +55,14 @@ public class NdArrayMeta {
      * Set the list to the default strides for a row-major vector of the specified dimensions.
      * <p>The strides are expressed in element space (not byte space).</p>
      */
-    public static void setDefaultStrides(DirectIntSlice shape, DirectIntList strides) {
-        assert shape.length() == strides.size();
+    public static void setDefaultStrides(@NotNull DirectIntSlice shape, @NotNull DirectIntList strides) {
         strides.clear();
-        strides.setCapacity(shape.length());
+        if (shape.length() == 0) {
+            return;
+        }
+        if (strides.getCapacity() < shape.length()) {
+            strides.setCapacity(shape.length());
+        }
         for (int dimIndex = 0, nDims = shape.length(); dimIndex < nDims; dimIndex++) {
             strides.add(0);
         }

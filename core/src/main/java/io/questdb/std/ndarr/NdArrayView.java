@@ -25,6 +25,7 @@
 package io.questdb.std.ndarr;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.std.CRC16XModem;
 import io.questdb.std.DirectIntSlice;
 
 /**
@@ -32,6 +33,8 @@ import io.questdb.std.DirectIntSlice;
  * This is a flyweight object.
  */
 public class NdArrayView {
+    private volatile short crc;
+
     public enum ValidatonStatus {
         OK,
 
@@ -218,6 +221,7 @@ public class NdArrayView {
         this.values.reset();
         this.valuesOffset = 0;
         this.valuesLength = 0;
+        this.crc = 0;
     }
 
     /**
@@ -243,7 +247,7 @@ public class NdArrayView {
      *     <li>A 2-D matrix of 50 rows and 2 columns: <code>[50, 2]</code>.</li>
      * </ul></p>
      */
-    DirectIntSlice getShape() {
+    public DirectIntSlice getShape() {
         return shape;
     }
 
@@ -261,7 +265,35 @@ public class NdArrayView {
      *         instead.</li>
      * </ul></p>
      */
-    DirectIntSlice getStrides() {
+    public DirectIntSlice getStrides() {
         return strides;
+    }
+
+    public boolean isDefaultStrides() {
+        return NdArrayMeta.isDefaultStrides(shape, strides);
+    }
+
+    public short getCrc() {
+        if (crc == 0) {
+            short checksum = 0;
+            // Add the dimension information first.
+            checksum = CRC16XModem.calc(checksum, shape.length());
+            for (int dimIndex = 0, nDims = shape.length(); dimIndex < nDims; ++dimIndex) {
+                checksum = CRC16XModem.calc((short) 0, valuesLength);
+            }
+
+            // Add the values next.
+            if ((ColumnType.getNdArrayElementTypePrecision(type) < 3) && (valuesOffset > 0)) {
+                // We don't currently support walking data that has a byte-unaligned start.
+                // In other words, a scenario where the first value is not at the start of a byte boundary.
+                // We simplify this even further by not supporting `valuesOffset` at all yet.
+                throw new UnsupportedOperationException("nyi");
+            }
+            if (!isDefaultStrides()) {
+                throw new UnsupportedOperationException("nyi");
+            }
+            crc = CRC16XModem.calc(checksum, values.ptr(), values.size());
+        }
+        return crc;
     }
 }

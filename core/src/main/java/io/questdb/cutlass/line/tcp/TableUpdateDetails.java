@@ -418,6 +418,7 @@ public class TableUpdateDetails implements Closeable {
         // indexed by colIdx + 1, first value accounts for spurious, new cols (index -1)
         private final IntList columnTypeMeta = new IntList();
         private final IntList columnTypes = new IntList();
+        private final IntList columnIndices = new IntList();
         private final Path path = new Path();
         // tracking of processed columns by their index, duplicates will be ignored
         private final BitSet processedCols = new BitSet();
@@ -605,7 +606,8 @@ public class TableUpdateDetails implements Closeable {
         }
 
         void addColumnType(int columnWriterIndex, int colType) {
-            columnTypes.add(Numbers.encodeLowHighShorts((short) colType, (short) columnWriterIndex));
+            columnIndices.add(columnWriterIndex);
+            columnTypes.add(colType);
         }
 
         void clear() {
@@ -620,6 +622,7 @@ public class TableUpdateDetails implements Closeable {
             }
             symbolCacheByColumnIndex.clear();
             columnTypes.clear();
+            columnIndices.clear();
             columnTypeMeta.clear();
             columnTypeMeta.add(0);
             if (txReader != null) {
@@ -630,6 +633,7 @@ public class TableUpdateDetails implements Closeable {
 
         void clearColumnTypes() {
             columnTypes.clear();
+            columnIndices.clear();
         }
 
         void clearProcessedColumns() {
@@ -651,6 +655,10 @@ public class TableUpdateDetails implements Closeable {
 
         int getColumnType(int colIndex) {
             return columnTypes.getQuick(colIndex);
+        }
+
+        int getColumnIndex(int colIndex) {
+            return columnIndices.getQuick(colIndex);
         }
 
         int getColumnType(Utf8String colName, byte entityType) {
