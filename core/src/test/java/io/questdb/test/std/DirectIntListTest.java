@@ -204,4 +204,26 @@ public class DirectIntListTest {
             Assert.assertEquals(str1.substring(0, str1.length() - 1) + ", .. ]", str2);
         }
     }
+
+    @Test
+    public void testZeroCapacity() {
+        try (DirectIntList list = new DirectIntList(0, MemoryTag.NATIVE_DEFAULT)) {
+            list.add(42);
+            Assert.assertEquals(42, list.get(0));
+            Assert.assertEquals(2, list.getCapacity());  // allocating the first elem gave us cap for two.
+            Assert.assertEquals(1, list.size());
+            list.add(43);
+            Assert.assertEquals(43, list.get(1));
+            Assert.assertEquals(2, list.getCapacity());  // still fits.
+            Assert.assertEquals(2, list.size());
+            list.resetCapacity();
+            Assert.assertEquals(0, list.getCapacity());
+            list.add(1);
+            list.add(2);
+            list.add(3);
+            list.add(4);
+            Assert.assertEquals(4, list.getCapacity());
+            Assert.assertEquals(4, list.size());
+        }
+    }
 }

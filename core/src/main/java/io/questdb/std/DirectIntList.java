@@ -46,9 +46,10 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
     private DirectIntSlice slice = new DirectIntSlice();
 
     public DirectIntList(long capacity, int memoryTag) {
+        assert capacity >= 0;
         this.memoryTag = memoryTag;
         this.capacity = (capacity * Integer.BYTES);
-        this.address = Unsafe.malloc(this.capacity, memoryTag);
+        this.address = capacity == 0 ? 0 : Unsafe.malloc(this.capacity, memoryTag);
         this.pos = address;
         this.limit = pos + this.capacity;
         this.initialCapacity = this.capacity;
@@ -118,7 +119,12 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
     }
 
     public void resetCapacity() {
-        setCapacityBytes(initialCapacity);
+        if (initialCapacity == 0) {
+            close();
+        }
+        else {
+            setCapacityBytes(initialCapacity);
+        }
     }
 
     public void reverse() {
@@ -180,6 +186,7 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
 
     // desired capacity in bytes (not count of INT values)
     private void setCapacityBytes(long capacity) {
+        assert capacity > 0;
         if (this.capacity != capacity) {
             if ((capacity >>> 2) > MAX_SAFE_INT_POW_2) {
                 throw CairoException.nonCritical().put("int list capacity overflow");
@@ -212,6 +219,6 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
         if (pos < limit) {
             return;
         }
-        setCapacityBytes(capacity << 1);
+        setCapacityBytes((Math.max(capacity, Integer.BYTES)) << 1);
     }
 }
