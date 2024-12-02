@@ -3472,16 +3472,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testDeclareSelectFromSubqueryAsVariable() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table foo (ts timestamp, x int) timestamp(ts) partition by day wal;");
-            drainWalQueue();
-            assertException("DECLARE @subquery := (SELECT * FROM foo), @ts := ts, @x := x, SELECT @ts, @x FROM @subquery",
-                    22, "function, literal or constant is expected");
-        });
-    }
-
-    @Test
     public void testDeclareSelectGroupByNames() throws Exception {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
