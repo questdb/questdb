@@ -509,8 +509,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     HTTP_MIN_SERVER_KEEP_ALIVE("http.min.server.keep.alive"),
     HTTP_MIN_REQUEST_HEADER_BUFFER_SIZE("http.min.request.header.buffer.size");
 
-    private static final Map<String, PropertyKey> envMapping;
-    private static final Map<String, PropertyKey> propMapping;
+    private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;
     private final String envVarName;
     private final String propertyPath;
@@ -534,12 +533,8 @@ public enum PropertyKey implements ConfigPropertyKey {
         this.debug = debug;
     }
 
-    public static Optional<PropertyKey> getByEnvString(String name) {
-        return Optional.ofNullable(envMapping.get(name));
-    }
-
     public static Optional<PropertyKey> getByString(String name) {
-        return Optional.ofNullable(propMapping.get(name));
+        return Optional.ofNullable(nameMapping.get(name));
     }
 
     @Override
@@ -568,11 +563,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     }
 
     static {
-        propMapping = Arrays
+        nameMapping = Arrays
                 .stream(PropertyKey.values())
                 .collect(Collectors.toMap(PropertyKey::getPropertyPath, k -> k));
-        envMapping = Arrays
-                .stream(PropertyKey.values())
-                .collect(Collectors.toMap(PropertyKey::getEnvVarName, k -> k));
     }
 }

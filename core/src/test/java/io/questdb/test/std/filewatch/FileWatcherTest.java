@@ -46,10 +46,7 @@ public class FileWatcherTest extends AbstractTest {
     public void testEmptyFilename() throws Exception {
         assertMemoryLeak(() -> Assert.assertThrows(
                 IllegalArgumentException.class,
-                () -> FileWatcherFactory.getFileWatcher(new Utf8String(""), () -> {
-                    Assert.fail();
-                    return false;
-                })
+                () -> FileWatcherFactory.getFileWatcher(new Utf8String(""), Assert::fail)
         ));
     }
 
@@ -104,14 +101,15 @@ public class FileWatcherTest extends AbstractTest {
     public void testFileDoesNotExist() throws Exception {
         assertMemoryLeak(() -> Assert.assertThrows(
                 CairoException.class,
-                () -> FileWatcherFactory.getFileWatcher(new Utf8String("/hello/i/dont/exist"), () -> {
-                    Assert.fail();
-                    return false;
-                })
+                () -> FileWatcherFactory.getFileWatcher(
+                        new Utf8String("/hello/i/dont/exist"),
+                        Assert::fail
+                )
         ));
     }
 
     static class FileChangedCallback implements FileEventCallback {
+
         SOCountDownLatch latch;
 
         public FileChangedCallback(SOCountDownLatch latch) {
@@ -119,9 +117,8 @@ public class FileWatcherTest extends AbstractTest {
         }
 
         @Override
-        public boolean reload() {
-            latch.countDown();
-            return false;
+        public void onFileEvent() {
+            this.latch.countDown();
         }
     }
 

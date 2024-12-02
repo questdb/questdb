@@ -48,7 +48,9 @@ import java.io.PrintWriter;
 import static io.questdb.PropertyKey.HTTP_ENABLED;
 
 public class LinuxFileWatcherTest extends AbstractTest {
-    private static final FileEventCallback DUMMY_CALLBACK = () -> false;
+
+    private static final FileEventCallback DUMMY_CALLBACK = () -> {
+    };
     private Utf8Sequence configPath;
 
     @Before

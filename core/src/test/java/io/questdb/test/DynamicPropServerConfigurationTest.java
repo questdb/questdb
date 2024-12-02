@@ -29,7 +29,6 @@ import io.questdb.BootstrapConfiguration;
 import io.questdb.DefaultBootstrapConfiguration;
 import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.DynamicPropServerConfiguration;
-import io.questdb.EnvProvider;
 import io.questdb.FactoryProviderFactoryImpl;
 import io.questdb.HttpClientConfiguration;
 import io.questdb.PropertyKey;
@@ -66,15 +65,9 @@ import java.util.concurrent.TimeUnit;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
-public class DynamicPropServerConfigurationTest extends AbstractTest implements EnvProvider {
-    private Map<String, String> env;
+public class DynamicPropServerConfigurationTest extends AbstractTest {
     private SOCountDownLatch latch;
     private File serverConf;
-
-    @Override
-    public Map<String, String> getEnv() {
-        return env;
-    }
 
     @Before
     public void setUp() {
@@ -88,10 +81,6 @@ public class DynamicPropServerConfigurationTest extends AbstractTest implements 
             Assert.fail(e.getMessage());
         }
         Assert.assertTrue(serverConf.exists());
-
-        env = new HashMap<>();
-        env.put(PropertyKey.SHARED_WORKER_COUNT.getEnvVarName(), "1");
-        env.put(PropertyKey.WAL_APPLY_WORKER_COUNT.getEnvVarName(), "1");
     }
 
     @Test
@@ -516,42 +505,6 @@ public class DynamicPropServerConfigurationTest extends AbstractTest implements 
     }
 
     @Test
-    public void testReloadConfigFunction() throws Exception {
-        assertMemoryLeak(() -> {
-            env.put(PropertyKey.PG_NAMED_STATEMENT_LIMIT.getEnvVarName(), "10");
-            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
-                serverMain.start();
-
-                int namedStatementLimit = serverMain.getConfiguration().getPGWireConfiguration().getNamedStatementLimit();
-                Assert.assertEquals(10, namedStatementLimit);
-
-                try (
-                        Connection conn = getConnection("admin", "quest");
-                        PreparedStatement stmt = conn.prepareStatement("select reload_config();");
-                        ResultSet rs = stmt.executeQuery()
-                ) {
-                    Assert.assertTrue(rs.next());
-                    Assert.assertFalse(rs.getBoolean(1));
-                }
-
-                env.put(PropertyKey.PG_NAMED_STATEMENT_LIMIT.getEnvVarName(), "20");
-
-                try (
-                        Connection conn = getConnection("admin", "quest");
-                        PreparedStatement stmt = conn.prepareStatement("select reload_config();");
-                        ResultSet rs = stmt.executeQuery()
-                ) {
-                    Assert.assertTrue(rs.next());
-                    Assert.assertTrue(rs.getBoolean(1));
-                }
-
-                namedStatementLimit = serverMain.getConfiguration().getPGWireConfiguration().getNamedStatementLimit();
-                Assert.assertEquals(20, namedStatementLimit);
-            }
-        });
-    }
-
-    @Test
     public void testReloadDisabled() throws Exception {
         assertMemoryLeak(() -> {
             try (FileWriter w = new FileWriter(serverConf)) {
@@ -652,6 +605,9 @@ public class DynamicPropServerConfigurationTest extends AbstractTest implements 
     }
 
     private BootstrapConfiguration getBootstrapConfig() {
+        Map<String, String> envMap = new HashMap<>();
+        envMap.put(PropertyKey.SHARED_WORKER_COUNT.getEnvVarName(), "1");
+        envMap.put(PropertyKey.WAL_APPLY_WORKER_COUNT.getEnvVarName(), "1");
         return new DefaultBootstrapConfiguration() {
             @Override
             public ServerConfiguration getServerConfiguration(Bootstrap bootstrap) {
@@ -659,7 +615,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest implements 
                     return new DynamicPropServerConfiguration(
                             bootstrap.getRootDirectory(),
                             bootstrap.loadProperties(),
-                            DynamicPropServerConfigurationTest.this,
+                            envMap,
                             bootstrap.getLog(),
                             bootstrap.getBuildInformation(),
                             FilesFacadeImpl.INSTANCE,

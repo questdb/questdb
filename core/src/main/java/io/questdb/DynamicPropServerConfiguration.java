@@ -56,7 +56,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Paths;
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Map;
@@ -69,11 +68,7 @@ import java.util.function.Function;
 
 public class DynamicPropServerConfiguration implements DynamicServerConfiguration {
     private static final Log LOG = LogFactory.getLog(DynamicPropServerConfiguration.class);
-    private static final Function<String, ? extends ConfigPropertyKey> envResolver = (k) -> {
-        Optional<PropertyKey> prop = PropertyKey.getByEnvString(k);
-        return prop.orElse(null);
-    };
-    private static final Function<String, ? extends ConfigPropertyKey> propResolver = (k) -> {
+    private static final Function<String, ? extends ConfigPropertyKey> keyResolver = (k) -> {
         Optional<PropertyKey> prop = PropertyKey.getByString(k);
         return prop.orElse(null);
     };
@@ -98,8 +93,7 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
     private final CairoConfigurationImpl cairoConfig;
     private final java.nio.file.Path confPath;
     private final boolean configReloadEnabled;
-    private final @Nullable HashMap<String, String> env;
-    private final EnvProvider envProvider;
+    private final @Nullable Map<String, String> env;
     private final FilesFacade filesFacade;
     private final FactoryProviderFactory fpf;
     private final HttpServerConfigurationImpl httpServerConfig;
@@ -125,7 +119,7 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
     public DynamicPropServerConfiguration(
             String root,
             Properties properties,
-            EnvProvider envProvider,
+            @Nullable Map<String, String> env,
             Log log,
             BuildInformation buildInformation,
             FilesFacade filesFacade,
@@ -135,10 +129,7 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
     ) throws ServerConfigurationException, JsonException {
         this.root = root;
         this.properties = properties;
-        this.envProvider = envProvider;
-        final Map<String, String> env = envProvider.getEnv();
-        // make a mutable copy of env
-        this.env = env != null ? new HashMap<>(env) : null;
+        this.env = env;
         this.log = log;
         this.buildInformation = buildInformation;
         this.filesFacade = filesFacade;
@@ -184,7 +175,7 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
     public DynamicPropServerConfiguration(
             String root,
             Properties properties,
-            EnvProvider envProvider,
+            @Nullable Map<String, String> env,
             Log log,
             final BuildInformation buildInformation,
             FilesFacade filesFacade,
@@ -194,7 +185,7 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
         this(
                 root,
                 properties,
-                envProvider,
+                env,
                 log,
                 buildInformation,
                 filesFacade,
@@ -207,14 +198,14 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
     public DynamicPropServerConfiguration(
             String root,
             Properties properties,
-            EnvProvider envProvider,
+            @Nullable Map<String, String> env,
             Log log,
             final BuildInformation buildInformation
     ) throws ServerConfigurationException, JsonException {
         this(
                 root,
                 properties,
-                envProvider,
+                env,
                 log,
                 buildInformation,
                 FilesFacadeImpl.INSTANCE,
@@ -227,7 +218,7 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
     public DynamicPropServerConfiguration(
             String root,
             Properties properties,
-            EnvProvider envProvider,
+            @Nullable Map<String, String> env,
             Log log,
             BuildInformation buildInformation,
             FilesFacade filesFacade,
@@ -239,7 +230,7 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
         this(
                 root,
                 properties,
-                envProvider,
+                env,
                 log,
                 buildInformation,
                 filesFacade,
@@ -248,6 +239,59 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
                 loadAdditionalConfigurations
         );
         this.afterConfigReloaded = afterConfigFileChanged;
+    }
+
+    public static boolean updateSupportedProperties(
+            Properties oldProperties,
+            Properties newProperties,
+            Set<? extends ConfigPropertyKey> reloadableProps,
+            Function<String, ? extends ConfigPropertyKey> keyResolver,
+            Log log
+    ) {
+        if (newProperties.equals(oldProperties)) {
+            return false;
+        }
+
+        boolean changed = false;
+        // Compare the new and existing properties
+        for (Map.Entry<Object, Object> entry : newProperties.entrySet()) {
+            String key = (String) entry.getKey();
+            String oldVal = oldProperties.getProperty(key);
+            if (oldVal == null || !oldVal.equals(entry.getValue())) {
+                ConfigPropertyKey config = keyResolver.apply(key);
+                if (config == null) {
+                    return false;
+                }
+
+                if (reloadableProps.contains(config)) {
+                    log.info().$("loaded new value of ").$(entry.getKey()).$();
+                    oldProperties.setProperty(key, (String) entry.getValue());
+                    changed = true;
+                } else {
+                    log.advisory().$("property ").$(entry.getKey()).$(" was modified in the config file but cannot be reloaded. Ignoring new value").$();
+                }
+            }
+        }
+
+        // Check for any old reloadable properties that have been removed in the new config
+        Iterator<Object> oldPropsIter = oldProperties.keySet().iterator();
+        while (oldPropsIter.hasNext()) {
+            Object key = oldPropsIter.next();
+            if (!newProperties.containsKey(key)) {
+                ConfigPropertyKey prop = keyResolver.apply((String) key);
+                if (prop == null) {
+                    continue;
+                }
+                if (reloadableProps.contains(prop)) {
+                    log.info().$("removed property ").$(key).$();
+                    oldPropsIter.remove();
+                    changed = true;
+                } else {
+                    log.advisory().$("property ").$(key).$(" was removed from the config file but cannot be reloaded. Ignoring").$();
+                }
+            }
+        }
+        return changed;
     }
 
     @Override
@@ -318,9 +362,6 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
     @Override
     public void init(CairoEngine engine, FreeOnExit freeOnExit) {
         serverConfig.get().init(this, engine, freeOnExit);
-        if (configReloadEnabled) {
-            engine.setReloadConfigCallback(this);
-        }
     }
 
     @Override
@@ -329,8 +370,7 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
     }
 
     @Override
-    public synchronized boolean reload() {
-        boolean envReloaded = updateSupportedEnvProperties();
+    public void onFileEvent() {
         try (Path p = new Path()) {
             p.of(confPath.toString());
 
@@ -346,38 +386,23 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
                     newProperties.load(is);
                 } catch (IOException exc) {
                     LOG.error().$(exc).$();
-                    return false;
+                    return;
                 }
 
-                if (updateSupportedProperties(newProperties)) {
-                    reload0();
-                    LOG.info().$("QuestDB configuration reloaded, [file=").$(confPath)
-                            .$(", env=").$(envReloaded)
-                            .$(", modifiedAt=").$ts(newLastModified * 1000)
-                            .I$();
+                if (updateSupportedProperties(properties, newProperties, reloadableProps, keyResolver, LOG)) {
+                    reload(properties);
+                    LOG.info().$("QuestDB configuration reloaded, [file=").$(confPath).$(", modifiedAt=").$ts(newLastModified * 1000).$(']').$();
                     if (afterConfigReloaded != null) {
                         afterConfigReloaded.run();
                     }
-                    return true;
                 }
             } else if (newLastModified == -1) {
                 LOG.critical().$("Server configuration file is inaccessible! This is dangerous as server will likely not boot on restart. Make sure the current user can access the configuration file [path=").$(confPath).I$();
             }
         }
-
-        // config file stayed the same, but env vars changed
-        if (envReloaded) {
-            reload0();
-            LOG.info().$("QuestDB configuration reloaded [env=true]").$();
-            if (afterConfigReloaded != null) {
-                afterConfigReloaded.run();
-            }
-            return true;
-        }
-        return false;
     }
 
-    private void reload0() {
+    public void reload(Properties properties) {
         PropServerConfiguration newConfig;
         try {
             newConfig = new PropServerConfiguration(
@@ -416,99 +441,6 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
         publicPassThroughConfig.setDelegate(serverConfig.getPublicPassthroughConfiguration());
         workerPoolConfig.setDelegate(serverConfig.getWorkerPoolConfiguration());
         walApplyPoolConfig.setDelegate(serverConfig.getWalApplyPoolConfiguration());
-    }
-
-    private boolean updateSupportedEnvProperties() {
-        final Map<String, String> newEnv = envProvider.getEnv();
-        if (env == null || newEnv == null) {
-            return false;
-        }
-
-        boolean changed = false;
-        // Compare the new and existing properties
-        for (Map.Entry<String, String> entry : newEnv.entrySet()) {
-            String key = entry.getKey();
-            String oldVal = env.get(key);
-            if (oldVal == null || !oldVal.equals(entry.getValue())) {
-                ConfigPropertyKey propKey = envResolver.apply(key);
-                if (propKey == null) {
-                    return false;
-                }
-                if (reloadableProps.contains(propKey)) {
-                    log.info().$("loaded new env value of ").$(key).$();
-                    env.put(key, entry.getValue());
-                    changed = true;
-                } else {
-                    log.advisory().$("property ").$(key).$(" was modified in environment variables but cannot be reloaded. Ignoring new value").$();
-                }
-            }
-        }
-
-        // Check for any old reloadable properties that have been removed in the new env
-        Iterator<String> oldEnvIter = env.keySet().iterator();
-        while (oldEnvIter.hasNext()) {
-            String key = oldEnvIter.next();
-            if (!newEnv.containsKey(key)) {
-                ConfigPropertyKey propKey = envResolver.apply(key);
-                if (propKey == null) {
-                    continue;
-                }
-                if (reloadableProps.contains(propKey)) {
-                    log.info().$("removed env property ").$(key).$();
-                    oldEnvIter.remove();
-                    changed = true;
-                } else {
-                    log.advisory().$("property ").$(key).$(" was removed from the environment variables but cannot be reloaded. Ignoring").$();
-                }
-            }
-        }
-        return changed;
-    }
-
-    private boolean updateSupportedProperties(Properties newProperties) {
-        if (newProperties.equals(properties)) {
-            return false;
-        }
-
-        boolean changed = false;
-        // Compare the new and existing properties
-        for (Map.Entry<Object, Object> entry : newProperties.entrySet()) {
-            String key = (String) entry.getKey();
-            String oldVal = properties.getProperty(key);
-            if (oldVal == null || !oldVal.equals(entry.getValue())) {
-                ConfigPropertyKey config = propResolver.apply(key);
-                if (config == null) {
-                    return false;
-                }
-                if (reloadableProps.contains(config)) {
-                    log.info().$("loaded new value of ").$(key).$();
-                    properties.setProperty(key, (String) entry.getValue());
-                    changed = true;
-                } else {
-                    log.advisory().$("property ").$(key).$(" was modified in the config file but cannot be reloaded. Ignoring new value").$();
-                }
-            }
-        }
-
-        // Check for any old reloadable properties that have been removed in the new config
-        Iterator<Object> oldPropsIter = properties.keySet().iterator();
-        while (oldPropsIter.hasNext()) {
-            Object key = oldPropsIter.next();
-            if (!newProperties.containsKey(key)) {
-                ConfigPropertyKey prop = propResolver.apply((String) key);
-                if (prop == null) {
-                    continue;
-                }
-                if (reloadableProps.contains(prop)) {
-                    log.info().$("removed property ").$(key).$();
-                    oldPropsIter.remove();
-                    changed = true;
-                } else {
-                    log.advisory().$("property ").$(key).$(" was removed from the config file but cannot be reloaded. Ignoring").$();
-                }
-            }
-        }
-        return changed;
     }
 
     private static class CairoConfigurationImpl extends CairoConfigurationWrapper {

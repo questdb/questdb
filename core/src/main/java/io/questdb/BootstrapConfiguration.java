@@ -27,9 +27,13 @@ package io.questdb;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 
-public interface BootstrapConfiguration extends EnvProvider {
+import java.util.Map;
+
+public interface BootstrapConfiguration {
 
     String getBanner();
+
+    Map<String, String> getEnv();
 
     FilesFacade getFilesFacade();
 
