@@ -2010,7 +2010,7 @@ public class SqlParser {
             case QueryModel.JOIN_OUTER:
                 expectTok(lexer, tok, "on");
                 try {
-                    expressionParser.parseExpr(lexer, expressionTreeBuilder, sqlParserCallback);
+                    expressionParser.parseExpr(lexer, expressionTreeBuilder, sqlParserCallback, decls);
                     ExpressionNode expr;
                     switch (expressionTreeBuilder.size()) {
                         case 0:
@@ -3178,7 +3178,7 @@ public class SqlParser {
     ExpressionNode expr(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback, @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls, @Nullable CharSequence exclude) throws SqlException {
         try {
             expressionTreeBuilder.pushModel(model);
-            expressionParser.parseExpr(lexer, expressionTreeBuilder, sqlParserCallback);
+            expressionParser.parseExpr(lexer, expressionTreeBuilder, sqlParserCallback, decls);
             return rewriteKnownStatements(expressionTreeBuilder.poll(), decls, exclude);
         } catch (SqlException e) {
             expressionTreeBuilder.reset();
@@ -3199,7 +3199,7 @@ public class SqlParser {
     // test only
     @TestOnly
     void expr(GenericLexer lexer, ExpressionParserListener listener, SqlParserCallback sqlParserCallback) throws SqlException {
-        expressionParser.parseExpr(lexer, listener, sqlParserCallback);
+        expressionParser.parseExpr(lexer, listener, sqlParserCallback, null);
     }
 
     ExecutionModel parse(GenericLexer lexer, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {

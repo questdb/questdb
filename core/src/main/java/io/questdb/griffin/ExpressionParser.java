@@ -34,9 +34,11 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.IntStack;
 import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseAsciiCharSequenceObjHashMap;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjStack;
 import io.questdb.std.ObjectPool;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.OperatorExpression.UNARY;
 
@@ -189,7 +191,8 @@ public class ExpressionParser {
             GenericLexer lexer,
             ExpressionParserListener listener,
             int argStackDepth,
-            SqlParserCallback sqlParserCallback
+            SqlParserCallback sqlParserCallback,
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
     ) throws SqlException {
         // It is highly likely this expression parser will be re-entered when
         // parsing sub-query. To prevent sub-query consuming operation stack we must add a
@@ -212,7 +215,7 @@ public class ExpressionParser {
         // validate is Query is allowed
         onNode(listener, node, argStackDepth, false);
         // we can compile query if all is well
-        node.queryModel = sqlParser.parseAsSubQuery(lexer, null, true, sqlParserCallback, null); // todo: review passing non-null here
+        node.queryModel = sqlParser.parseAsSubQuery(lexer, null, true, sqlParserCallback, decls);
         argStackDepth = onNode(listener, node, argStackDepth, false);
 
         // pop our control node if sub-query hasn't done it
@@ -228,7 +231,7 @@ public class ExpressionParser {
         return argStackDepth;
     }
 
-    void parseExpr(GenericLexer lexer, ExpressionParserListener listener, SqlParserCallback sqlParserCallback) throws SqlException {
+    void parseExpr(GenericLexer lexer, ExpressionParserListener listener, SqlParserCallback sqlParserCallback, @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) throws SqlException {
         try {
             int shadowParseMismatchFirstPosition = -1;
             int paramCount = 0;
@@ -431,7 +434,7 @@ public class ExpressionParser {
                             if (betweenCount > 0) {
                                 throw SqlException.$(lastPos, "constant expected");
                             }
-                            argStackDepth = processLambdaQuery(lexer, listener, argStackDepth, sqlParserCallback);
+                            argStackDepth = processLambdaQuery(lexer, listener, argStackDepth, sqlParserCallback, decls);
                             processDefaultBranch = false;
                             break;
                         }
@@ -835,7 +838,7 @@ public class ExpressionParser {
                             if (betweenCount > 0) {
                                 throw SqlException.$(lastPos, "constant expected");
                             }
-                            argStackDepth = processLambdaQuery(lexer, listener, argStackDepth, sqlParserCallback);
+                            argStackDepth = processLambdaQuery(lexer, listener, argStackDepth, sqlParserCallback, decls);
                         } else {
                             processDefaultBranch = true;
                         }
