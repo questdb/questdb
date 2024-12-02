@@ -378,6 +378,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     .$(", columnType=").$(columnType)
                     .$(", exception=").$(th)
                     .I$();
+            throw th;
         }
     }
 
@@ -1155,7 +1156,11 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
 
     @Override
     protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
-        copy(queue.get(cursor), cursor, subSeq);
+        try {
+            copy(queue.get(cursor), cursor, subSeq);
+        } catch (CairoException th) {
+            // Already logged, continue the job execution
+        }
         return true;
     }
 }
