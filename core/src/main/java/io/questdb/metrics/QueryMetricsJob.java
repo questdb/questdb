@@ -103,7 +103,7 @@ public class QueryMetricsJob extends AbstractQueueBatchConsumerJob<QueryMetrics>
         }
         try (WalWriter walWriter = walWriter0) {
             for (int n = metricsList.size(), i = 0; i < n; i++) {
-                metricsList.getQuick(i, metrics);
+                metricsList.moveQuick(i, metrics);
                 final TableWriter.Row row = walWriter.newRow(metrics.timestamp);
                 utf8sink.clear();
                 utf8sink.put(metrics.queryText);
@@ -112,6 +112,7 @@ public class QueryMetricsJob extends AbstractQueueBatchConsumerJob<QueryMetrics>
                 row.append();
             }
             walWriter.commit();
+            metrics.clear();
         }
         return false;
     }

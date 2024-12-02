@@ -25,5 +25,7 @@
 package io.questdb.mp;
 
 public interface ValueHolder<T> {
+    void clear();
+
     void copyTo(T dest);
 }

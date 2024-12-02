@@ -25,12 +25,25 @@
 package io.questdb.metrics;
 
 import io.questdb.mp.ValueHolder;
+import io.questdb.std.Misc;
+
+import java.io.Closeable;
 
 public class QueryMetrics implements ValueHolder<QueryMetrics> {
 
     public long executionNanos;
     public CharSequence queryText;
     public long timestamp;
+
+    @Override
+    public void clear() {
+        executionNanos = 0;
+        if (queryText instanceof Closeable) {
+            Misc.free((Closeable) queryText);
+        }
+        queryText = null;
+        timestamp = 0;
+    }
 
     @Override
     public void copyTo(QueryMetrics dest) {

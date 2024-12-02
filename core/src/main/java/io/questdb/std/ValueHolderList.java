@@ -49,9 +49,14 @@ public class ValueHolderList<T extends ValueHolder<T>> {
         size++;
     }
 
-    public void getQuick(int i, @NotNull T dest) {
+    /**
+     * Copies the data from the ith item of this list to dest, and then clears the item.
+     */
+    public void moveQuick(int i, @NotNull T dest) {
         assert i >= 0 && i < size;
-        storage.getQuick(i).copyTo(dest);
+        T item = storage.getQuick(i);
+        item.copyTo(dest);
+        item.clear();
     }
 
     public @NotNull T peekNextHolder() {
