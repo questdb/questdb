@@ -1159,11 +1159,6 @@ public class SqlParser {
                 throw SqlException.$(lexer.lastTokenPosition(), "empty declaration");
             }
 
-            if (expr.rhs != null && expr.rhs.queryModel != null) {
-                // throw because we don't support variables as subqueries
-                throw SqlException.$(lexer.lastTokenPosition(), "variables cannot be subqueries");
-            }
-
             if (!Chars.equalsIgnoreCase(expr.lhs.token, tok)) {
                 // could be a `DECLARE @x := (1,2,3)` situation
                 throw SqlException.$(lexer.lastTokenPosition(), "unexpected bind expression - bracket lists not supported");
@@ -1544,11 +1539,21 @@ public class SqlParser {
         // copy decls down
         model.copyDeclsFrom(masterModel);
 
+        QueryModel proposedNested = null;
+        ExpressionNode variableExpr;
+
+        // check for variable as subquery
+        if (tok.charAt(0) == '@' && (variableExpr = model.getDecls().get(tok)) != null && variableExpr.rhs != null && variableExpr.rhs.queryModel != null) {
+            proposedNested = variableExpr.rhs.queryModel;
+        }
+
         // expect "(" in case of sub-query
+        if (Chars.equals(tok, '(') || proposedNested != null) {
 
-        if (Chars.equals(tok, '(')) {
+            if (proposedNested == null) {
+                proposedNested = parseAsSubQueryAndExpectClosingBrace(lexer, masterModel.getWithClauses(), true, sqlParserCallback, model.getDecls());
+            }
 
-            QueryModel proposedNested = parseAsSubQueryAndExpectClosingBrace(lexer, masterModel.getWithClauses(), true, sqlParserCallback, model.getDecls());
             tok = optTok(lexer);
 
             // do not collapse aliased sub-queries or those that have timestamp()
@@ -1591,6 +1596,7 @@ public class SqlParser {
                 tok = setModelAliasAndTimestamp(lexer, model);
             }
         } else {
+
             lexer.unparseLast();
             parseSelectFrom(lexer, model, masterModel.getWithClauses(), sqlParserCallback);
             tok = setModelAliasAndTimestamp(lexer, model);

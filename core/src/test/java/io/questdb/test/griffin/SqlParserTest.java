@@ -3758,7 +3758,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testDeclareVariableAsSubQuery() throws Exception {
-        assertModel("select-virtual 123.456 column1 from (long_sequence(1))",
+        String targetModel = "select-choose y from (select-virtual [1 y] 1 y from (long_sequence(1)))";
+        assertModel(targetModel,
+                "SELECT * FROM (SELECT 1 as y)", ExecutionModel.QUERY);
+        assertModel(targetModel,
                 "DECLARE @x := (SELECT 1 as y) SELECT * FROM @x", ExecutionModel.QUERY);
     }
 
