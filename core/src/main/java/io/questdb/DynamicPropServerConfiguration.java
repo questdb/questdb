@@ -215,6 +215,60 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
         );
     }
 
+    // used in ent
+    public static boolean updateSupportedProperties(
+            Properties oldProperties,
+            Properties newProperties,
+            Set<? extends ConfigPropertyKey> reloadableProps,
+            Function<String, ? extends ConfigPropertyKey> keyResolver,
+            Log log
+    ) {
+        if (newProperties.equals(oldProperties)) {
+            return false;
+        }
+
+        boolean changed = false;
+        // Compare the new and existing properties
+        for (Map.Entry<Object, Object> entry : newProperties.entrySet()) {
+            String key = (String) entry.getKey();
+            String oldVal = oldProperties.getProperty(key);
+            if (oldVal == null || !oldVal.equals(entry.getValue())) {
+                ConfigPropertyKey config = keyResolver.apply(key);
+                if (config == null) {
+                    return false;
+                }
+
+                if (reloadableProps.contains(config)) {
+                    log.info().$("loaded new value of ").$(key).$();
+                    oldProperties.setProperty(key, (String) entry.getValue());
+                    changed = true;
+                } else {
+                    log.advisory().$("property ").$(key).$(" was modified in the config file but cannot be reloaded. Ignoring new value").$();
+                }
+            }
+        }
+
+        // Check for any old reloadable properties that have been removed in the new config
+        Iterator<Object> oldPropsIter = oldProperties.keySet().iterator();
+        while (oldPropsIter.hasNext()) {
+            Object key = oldPropsIter.next();
+            if (!newProperties.containsKey(key)) {
+                ConfigPropertyKey prop = keyResolver.apply((String) key);
+                if (prop == null) {
+                    continue;
+                }
+                if (reloadableProps.contains(prop)) {
+                    log.info().$("removed property ").$(key).$();
+                    oldPropsIter.remove();
+                    changed = true;
+                } else {
+                    log.advisory().$("property ").$(key).$(" was removed from the config file but cannot be reloaded. Ignoring").$();
+                }
+            }
+        }
+        return changed;
+    }
+
     @Override
     public CairoConfiguration getCairoConfiguration() {
         return cairoConfig;
@@ -309,7 +363,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
                         return false;
                     }
 
-                    if (updateSupportedProperties(newProperties)) {
+                    if (updateSupportedProperties(properties, newProperties, reloadableProps, keyResolver, LOG)) {
                         reload0();
                         LOG.info().$("QuestDB configuration reloaded, [file=").$(confPath).$(", modifiedAt=").$ts(newLastModified * 1000).I$();
                         return true;
@@ -361,53 +415,6 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
         publicPassThroughConfig.setDelegate(serverConfig.getPublicPassthroughConfiguration());
         workerPoolConfig.setDelegate(serverConfig.getWorkerPoolConfiguration());
         walApplyPoolConfig.setDelegate(serverConfig.getWalApplyPoolConfiguration());
-    }
-
-    private boolean updateSupportedProperties(Properties newProperties) {
-        if (newProperties.equals(properties)) {
-            return false;
-        }
-
-        boolean changed = false;
-        // Compare the new and existing properties
-        for (Map.Entry<Object, Object> entry : newProperties.entrySet()) {
-            String key = (String) entry.getKey();
-            String oldVal = properties.getProperty(key);
-            if (oldVal == null || !oldVal.equals(entry.getValue())) {
-                ConfigPropertyKey config = keyResolver.apply(key);
-                if (config == null) {
-                    return false;
-                }
-
-                if (reloadableProps.contains(config)) {
-                    log.info().$("loaded new value of ").$(key).$();
-                    properties.setProperty(key, (String) entry.getValue());
-                    changed = true;
-                } else {
-                    log.advisory().$("property ").$(key).$(" was modified in the config file but cannot be reloaded. Ignoring new value").$();
-                }
-            }
-        }
-
-        // Check for any old reloadable properties that have been removed in the new config
-        Iterator<Object> oldPropsIter = properties.keySet().iterator();
-        while (oldPropsIter.hasNext()) {
-            Object key = oldPropsIter.next();
-            if (!newProperties.containsKey(key)) {
-                ConfigPropertyKey prop = keyResolver.apply((String) key);
-                if (prop == null) {
-                    continue;
-                }
-                if (reloadableProps.contains(prop)) {
-                    log.info().$("removed property ").$(key).$();
-                    oldPropsIter.remove();
-                    changed = true;
-                } else {
-                    log.advisory().$("property ").$(key).$(" was removed from the config file but cannot be reloaded. Ignoring").$();
-                }
-            }
-        }
-        return changed;
     }
 
     private static class CairoConfigurationImpl extends CairoConfigurationWrapper {
