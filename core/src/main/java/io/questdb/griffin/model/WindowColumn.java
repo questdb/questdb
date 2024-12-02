@@ -24,6 +24,9 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.griffin.engine.functions.window.RankFunctionFactory;
+import io.questdb.griffin.engine.functions.window.RowNumberFunctionFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
@@ -201,6 +204,31 @@ public final class WindowColumn extends QueryColumn {
     public boolean requiresOrderBy() {
         return framingMode == FRAMING_RANGE && (rowsLoKind != PRECEDING || (rowsHiKind != CURRENT && rowsHiKind != FOLLOWING) || rowsHiExpr != null || rowsLoExpr != null) ||
                 framingMode == FRAMING_GROUPS;
+    }
+
+    public boolean stopOrderByPropagate(ObjList<ExpressionNode> orderByAdvice, IntList orderByDirectionAdvice) {
+        // Range frames work correctly depending on the ORDER BY clause of the subquery, which cannot be removed by the optimizer.
+        boolean stopOrderBy = framingMode == FRAMING_RANGE && !Chars.equalsIgnoreCase(getAst().token, RowNumberFunctionFactory.NAME)
+                && !Chars.equalsIgnoreCase(getAst().token, RankFunctionFactory.NAME) &&
+                orderBy.size() > 0 && ((rowsHi != 0 || rowsLo != Long.MIN_VALUE) && !(rowsHi == Long.MAX_VALUE && rowsLo == Long.MIN_VALUE));
+
+        // Heuristic. If current recordCursor has orderBy column exactly same as orderBy of window frame, we continue pushing the order.
+        if (stopOrderBy) {
+            boolean sameOrder = true;
+            if (orderByAdvice.size() != orderBy.size()) {
+                sameOrder = false;
+            } else {
+                for (int i = 0, max = orderByAdvice.size(); i < max; i++) {
+                    if (!Chars.equalsIgnoreCase(orderByAdvice.getQuick(i).token, orderBy.getQuick(i).token) ||
+                            orderByDirectionAdvice.getQuick(i) != orderByDirection.getQuick(i)) {
+                        sameOrder = false;
+                        break;
+                    }
+                }
+            }
+            stopOrderBy = !sameOrder;
+        }
+        return stopOrderBy;
     }
 
     public void setExclusionKind(int exclusionKind, int exclusionKindPos) {
