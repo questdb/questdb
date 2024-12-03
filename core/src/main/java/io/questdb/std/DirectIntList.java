@@ -209,7 +209,7 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
 
     public DirectIntSlice asSlice() {
         final long length = size();
-        assert length > 0;
+        assert length >= 0;
         assert length <= Integer.MAX_VALUE;
         slice.of(getAddress(), (int) length);
         return slice;

@@ -47,8 +47,9 @@ public class DirectIntSlice implements DirectSequence {
      * Set from start address and length (element count).
      */
     public DirectIntSlice of(long ptr, int length) {
-        assert ptr > 0;
-        assert length > 0;
+        assert ptr >= 0;
+        assert length >= 0;
+        assert (ptr != 0) || (length == 0);
         this.ptr = ptr;
         this.length = length;
         return this;

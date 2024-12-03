@@ -52,6 +52,20 @@ public class NdArrayMeta {
     }
 
     /**
+     * The product of all the shape's dimensions.
+     * <p>This returns the number of elements contained in the values
+     * vector returned by {@link NdArrayView#getValues()}.</p>
+     */
+    public static int flatLength(DirectIntSlice shape) {
+        int length = 1;
+        for (int dimIndex = 0, nDims = shape.length(); dimIndex < nDims; ++dimIndex) {
+            final int dim = shape.get(dimIndex);
+            length *= dim;
+        }
+        return length;
+    }
+
+    /**
      * Set the list to the default strides for a row-major vector of the specified dimensions.
      * <p>The strides are expressed in element space (not byte space).</p>
      */

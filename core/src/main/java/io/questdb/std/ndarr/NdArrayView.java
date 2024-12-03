@@ -54,7 +54,6 @@ public class NdArrayView {
     private final DirectIntSlice shape = new DirectIntSlice();
     private final DirectIntSlice strides = new DirectIntSlice();
     private final NdArrayValuesSlice values = new NdArrayValuesSlice();
-    int valuesLength = 0;
     int valuesOffset = 0;
     private int type = ColumnType.UNDEFINED;
 
@@ -107,6 +106,7 @@ public class NdArrayView {
      * </pre></p>
      * <p>The buffer would contain a flat vector of elements
      * with the numbers <code>[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4]</code>.</p>
+     * <p><strong>IMPORTANT</strong>: The number of elements</p>
      */
     public NdArrayValuesSlice getValues() {
         return values;
@@ -116,7 +116,7 @@ public class NdArrayView {
      * Number of values readable, after skipping {@link NdArrayView#getValuesOffset}.
      */
     public int getValuesLength() {
-        return valuesLength;
+        return NdArrayMeta.flatLength(getShape());
     }
 
     /**
@@ -167,7 +167,7 @@ public class NdArrayView {
             if (!NdArrayMeta.validShape(this.shape)) {
                 return ValidatonStatus.BAD_SHAPE;
             }
-            valuesLength = calcValuesLength();
+            final int valuesLength = NdArrayMeta.flatLength(shape);
             if (!validValuesSize(type, valuesOffset, valuesLength, valuesSize)) {
                 return ValidatonStatus.BAD_VALUES_SIZE;
             }
@@ -192,16 +192,6 @@ public class NdArrayView {
         return expectedByteSize == (long) valuesSize;
     }
 
-    /** Infer the number of addressable elements in the flat buffer from the shape. */
-    private int calcValuesLength() {
-        int length = 1;
-        for (int dimIndex = 0, nDims = shape.length(); dimIndex < nDims; ++dimIndex) {
-            final int dim = shape.get(dimIndex);
-            length *= dim;
-        }
-        return length;
-    }
-
     /**
      * Set to a null array.
      */
@@ -220,7 +210,6 @@ public class NdArrayView {
         this.strides.reset();
         this.values.reset();
         this.valuesOffset = 0;
-        this.valuesLength = 0;
         this.crc = 0;
     }
 
@@ -235,7 +224,7 @@ public class NdArrayView {
             final int dimStride = strides.get(dimsIndex);
             flatIndex += (dimCoordinate * dimStride);
         }
-        assert flatIndex < valuesLength;
+        assert flatIndex < NdArrayMeta.flatLength(shape);
         return valuesOffset + flatIndex;
     }
 
@@ -283,7 +272,8 @@ public class NdArrayView {
             // Add the dimension information first.
             short checksum = CRC16XModem.update(CRC16XModem.init(), shape.length());
             for (int dimIndex = 0, nDims = shape.length(); dimIndex < nDims; ++dimIndex) {
-                checksum = CRC16XModem.update(checksum, valuesLength);
+                final int dim = shape.get(dimIndex);
+                checksum = CRC16XModem.update(checksum, dim);
             }
 
             // Add the values next.
