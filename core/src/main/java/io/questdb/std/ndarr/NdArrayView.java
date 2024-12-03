@@ -274,12 +274,16 @@ public class NdArrayView {
     }
 
     public short getCrc() {
+        if (isNull()) {
+            return 0;
+        }
+
+        // Compute lazily.
         if (crc == 0) {
-            short checksum = 0;
             // Add the dimension information first.
-            checksum = CRC16XModem.calc(checksum, shape.length());
+            short checksum = CRC16XModem.update(CRC16XModem.init(), shape.length());
             for (int dimIndex = 0, nDims = shape.length(); dimIndex < nDims; ++dimIndex) {
-                checksum = CRC16XModem.calc((short) 0, valuesLength);
+                checksum = CRC16XModem.update(checksum, valuesLength);
             }
 
             // Add the values next.
@@ -292,7 +296,8 @@ public class NdArrayView {
             if (!hasDefaultStrides()) {
                 throw new UnsupportedOperationException("nyi");
             }
-            crc = CRC16XModem.calc(checksum, values.ptr(), values.size());
+            checksum = CRC16XModem.update(checksum, values.ptr(), values.size());
+            crc = CRC16XModem.finalize(checksum);
         }
         return crc;
     }
