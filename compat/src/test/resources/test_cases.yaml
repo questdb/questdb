@@ -2,6 +2,44 @@ variables:
   table_name: "sensor_data"
 
 tests:
+  - name: In Varchar Test
+    description: Test inserting and selecting data with a varchar using the IN clause.
+    prepare:
+      - action: execute
+        query: "CREATE TABLE ${table_name} (timestamp timestamp, vch varchar);"
+    steps:
+      - loop:
+          range:
+            start: 1
+            end: 10
+          as: id
+          steps:
+            - action: execute
+              query: "INSERT INTO ${table_name} (timestamp, vch) VALUES ($[1], $[2]);"
+              parameters:
+                - value: "2023-10-01T10:00:00.000000Z"
+                  type: "TIMESTAMP"
+                - value: "${id}"
+                  type: "VARCHAR"
+              expect:
+                result:
+                  - [ 1 ]
+      - action: query
+        query: "SELECT * FROM ${table_name} WHERE vch IN ($[1], $[2], $[3]);"
+        parameters:
+          - value: "1"
+            type: "VARCHAR"
+          - value: "2"
+            type: "VARCHAR"
+          - value: "11"
+            type: "VARCHAR"
+        expect:
+          result:
+            - [ '2023-10-01T10:00:00.000000Z', '1' ]
+            - [ '2023-10-01T10:00:00.000000Z', '2' ]
+    teardown:
+      - action: execute
+        query: "DROP TABLE IF EXISTS ${table_name};"
   - name: Insert and Select Test
     description: Test inserting and selecting data.
     prepare:

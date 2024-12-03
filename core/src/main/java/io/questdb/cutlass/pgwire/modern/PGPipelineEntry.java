@@ -1276,9 +1276,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             case X_PG_UUID:
                 bindVariableService.define(j, ColumnType.UUID, 0);
                 break;
-            case 0:
-                // unknown types, we are not defining them for now - this gives
-                // the compiler a chance to infer the best possible type
+            case PG_UNSPECIFIED:
+                // declare the variable as UNDEFINED for now
+                // the type gets resolved at BINDing type
+                bindVariableService.define(j, ColumnType.UNDEFINED, 0);
                 break;
             default:
                 bindVariableService.define(j, ColumnType.STRING, 0);
@@ -1566,6 +1567,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private void msgParseCopyOutTypeDescriptionTypeOIDs(BindVariableService bindVariableService) {
+        // Q: why Math.max()? A: varargs function parameters are not defined in the bind variable service right after compilation
+        // Example: If you compile SELECT * FROM tab WHERE name IN ($1, $2);
+//        final int n = Math.max(bindVariableService.getIndexedVariableCount(), msgParseParameterTypeOIDs.size());
         final int n = bindVariableService.getIndexedVariableCount();
         outParameterTypeDescriptionTypeOIDs.setPos(n);
         if (n > 0) {
@@ -1584,7 +1588,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 //    the client will error out. e.g. PG JDBC is very strict about this.
                 if (oid == PG_UNSPECIFIED || oid == X_PG_VOID) {
                     final Function f = bindVariableService.getFunction(i);
-                    oid = Numbers.bswap(PGOids.getTypeOid(f != null ? f.getType() : ColumnType.UNDEFINED));
+                    int type = f != null ? f.getType() : ColumnType.STRING;
+                    if (type == ColumnType.UNDEFINED) {
+                        type = ColumnType.STRING;
+                    }
+                    oid = Numbers.bswap(PGOids.getTypeOid(type));
                 }
                 outParameterTypeDescriptionTypeOIDs.setQuick(i, oid);
             }
