@@ -709,7 +709,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return allowPropagationOfOrderByAdvice;
     }
 
-    public boolean windowStopPropagate(ObjList<ExpressionNode>orderByAdvice, IntList orderByDirectionAdvice) {
+    public boolean windowStopPropagate(ObjList<ExpressionNode> orderByAdvice, IntList orderByDirectionAdvice) {
         if (selectModelType != SELECT_MODEL_WINDOW) {
             return false;
         }
