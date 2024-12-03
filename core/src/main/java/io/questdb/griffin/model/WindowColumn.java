@@ -212,7 +212,7 @@ public final class WindowColumn extends QueryColumn {
                 && !Chars.equalsIgnoreCase(getAst().token, RankFunctionFactory.NAME) &&
                 orderBy.size() > 0 && ((rowsHi != 0 || rowsLo != Long.MIN_VALUE) && !(rowsHi == Long.MAX_VALUE && rowsLo == Long.MIN_VALUE));
 
-        // Heuristic. If current recordCursor has orderBy column exactly same as orderBy of window frame, we continue pushing the order.
+        // Heuristic. If current recordCursor has orderBy column exactly same as orderBy of window frame, we continue to push the order.
         if (stopOrderBy) {
             boolean sameOrder = true;
             if (orderByAdvice.size() != orderBy.size()) {

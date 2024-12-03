@@ -10983,7 +10983,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "          functions: [first_value(usage_system) over (partition by [hostname] range between 3000000 preceding and current row)]\n" +
                         "            Radix sort light\n" +
                         "              keys: [ts2]\n" +
-                        "                Async Filter workers: 1\n" +
+                        "                Async JIT Filter workers: 1\n" +
                         "                  filter: ts2>=1724336129206000\n" +
                         "                    PageFrame\n" +
                         "                        Row forward scan\n" +
@@ -10999,8 +10999,24 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "  functions: [first_value(usage_system) over (partition by [hostname] range between 3000000 preceding and current row)]\n" +
                         "    Radix sort light\n" +
                         "      keys: [ts2]\n" +
-                        "        Async Filter workers: 1\n" +
+                        "        Async JIT Filter workers: 1\n" +
                         "          filter: ts2>=1724336129206000\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: cpu_ts\n"
+        );
+
+        assertPlanNoLeakCheck(
+                "SELECT * FROM (" +
+                        "SELECT ts1, hostname, usage_system, " +
+                        "first_value(usage_system) OVER ( partition by hostname ORDER BY ts1 ASC RANGE BETWEEN 3 seconds preceding and current row ) AS first_usage_system " +
+                        "from cpu_ts order by ts1)" +
+                        "order by ts1 desc",
+                "Sort\n" +
+                        "  keys: [ts1 desc]\n" +
+                        "    Limit lo: 9223372036854775807L\n" +
+                        "        Window\n" +
+                        "          functions: [first_value(usage_system) over (partition by [hostname] range between 3000000 preceding and current row)]\n" +
                         "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: cpu_ts\n"
