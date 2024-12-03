@@ -31,6 +31,7 @@ import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.DynamicPropServerConfiguration;
 import io.questdb.FactoryProviderFactoryImpl;
 import io.questdb.HttpClientConfiguration;
+import io.questdb.Metrics;
 import io.questdb.PropertyKey;
 import io.questdb.ServerConfiguration;
 import io.questdb.ServerMain;
@@ -90,7 +91,8 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
             try (ServerMain serverMain = new ServerMain(getBootstrap())) {
                 serverMain.start();
 
-                HttpClientConfiguration config = new DefaultHttpClientConfiguration() {
+                final Metrics metrics = serverMain.getEngine().getMetrics();
+                final HttpClientConfiguration config = new DefaultHttpClientConfiguration() {
                     @Override
                     public int getTimeout() {
                         return 1000;
@@ -125,6 +127,8 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                     w.write("http.net.bind.to=0.0.0.0:9001\n");
                     w.write("http.net.connection.limit=10\n");
                 }
+
+                TestUtils.assertEventually(() -> Assert.assertEquals(0, metrics.jsonQuery().connectionCountGauge().getValue()));
 
                 assertReloadConfig(true);
 
@@ -274,6 +278,8 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
             try (ServerMain serverMain = new ServerMain(getBootstrap())) {
                 serverMain.start();
 
+                final Metrics metrics = serverMain.getEngine().getMetrics();
+
                 try (Connection conn1 = getConnection("admin", "quest")) {
                     Assert.assertFalse(conn1.isClosed());
 
@@ -288,6 +294,8 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 try (FileWriter w = new FileWriter(serverConf)) {
                     w.write("pg.net.connection.limit=10\n");
                 }
+
+                TestUtils.assertEventually(() -> Assert.assertEquals(0, metrics.pgWire().connectionCountGauge().getValue()));
 
                 // call the reload method directly instead of using the reload_config() SQL function
                 // to avoid opening a PGWire connection;
@@ -626,6 +634,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
 
     private BootstrapConfiguration getBootstrapConfig() {
         Map<String, String> envMap = new HashMap<>();
+        envMap.put(PropertyKey.METRICS_ENABLED.getEnvVarName(), "true");
         envMap.put(PropertyKey.SHARED_WORKER_COUNT.getEnvVarName(), "1");
         envMap.put(PropertyKey.WAL_APPLY_WORKER_COUNT.getEnvVarName(), "1");
         return new DefaultBootstrapConfiguration() {
