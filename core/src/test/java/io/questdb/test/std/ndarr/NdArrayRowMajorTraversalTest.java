@@ -38,6 +38,8 @@ public class NdArrayRowMajorTraversalTest {
                 NdArrayRowMajorTraversal traversal = new NdArrayRowMajorTraversal();
         ) {
             Assert.assertNull(traversal.of(shape.asSlice()).next());
+            Assert.assertNull(traversal.of(shape.asSlice()).next());
+            Assert.assertNull(traversal.of(shape.asSlice()).next());
         }
     }
 }

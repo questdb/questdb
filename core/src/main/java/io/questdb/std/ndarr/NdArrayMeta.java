@@ -57,6 +57,9 @@ public class NdArrayMeta {
      * vector returned by {@link NdArrayView#getValues()}.</p>
      */
     public static int flatLength(DirectIntSlice shape) {
+        if ((shape == null) || (shape.length() == 0)) {
+            return 0;
+        }
         int length = 1;
         for (int dimIndex = 0, nDims = shape.length(); dimIndex < nDims; ++dimIndex) {
             final int dim = shape.get(dimIndex);

@@ -69,15 +69,11 @@ public class NdArrayRowMajorTraversal implements QuietCloseable {
      * Get the next coordinates to iterate.
      */
     public DirectIntSlice next() {
-        if (shape == null) {
+        if ((flatIndex + 1) >= valuesLength) {
             return null;
         }
 
         ++flatIndex;
-
-        if (flatIndex >= valuesLength) {
-            return null;
-        }
 
         int tempIndex = flatIndex;
         for (int dimIndex = shape.length() - 1; dimIndex >= 0; --dimIndex) {
@@ -94,10 +90,6 @@ public class NdArrayRowMajorTraversal implements QuietCloseable {
 
     public NdArrayRowMajorTraversal of(DirectIntSlice shape) {
         reset();
-        if (shape.length() == 0) {
-            // array is null
-            return this;
-        }
         this.shape = shape;
         valuesLength = NdArrayMeta.flatLength(shape);
         return this;
