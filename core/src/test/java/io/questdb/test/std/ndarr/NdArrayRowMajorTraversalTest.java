@@ -74,6 +74,21 @@ public class NdArrayRowMajorTraversalTest {
 
             // End of iteration.
             Assert.assertNull(t.next());
+
+            // Reaching the end of the iterator is idempotent.
+            Assert.assertNull(t.next());
+            Assert.assertNull(t.next());
+
+            // Reusability.
+            traversal.of(shape.asSlice());
+            Assert.assertArrayEquals(new int[]{0, 0}, t.next().toArray());
+            Assert.assertArrayEquals(new int[]{0, 1}, t.next().toArray());
+            Assert.assertArrayEquals(new int[]{0, 2}, t.next().toArray());
+            Assert.assertArrayEquals(new int[]{1, 0}, t.next().toArray());
+            Assert.assertArrayEquals(new int[]{1, 1}, t.next().toArray());
+            Assert.assertArrayEquals(new int[]{1, 2}, t.next().toArray());
+            Assert.assertNull(t.next());
+
         }
     }
 
