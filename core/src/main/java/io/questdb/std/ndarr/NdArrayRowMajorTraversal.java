@@ -49,8 +49,7 @@ import io.questdb.std.QuietCloseable;
  */
 public class NdArrayRowMajorTraversal implements QuietCloseable {
     private final DirectIntList coordinates = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY);
-    private int flatIndex = -1;
-    private int valuesLength = -1;
+    private boolean done = false;
     /**
      * The array's shape
      */
@@ -65,16 +64,25 @@ public class NdArrayRowMajorTraversal implements QuietCloseable {
      * Get the next coordinates to iterate.
      */
     public DirectIntSlice next() {
-        if ((flatIndex + 1) >= valuesLength) {
+        if (done) {
             return null;
         }
 
-        ++flatIndex;
-
-        int tempIndex = flatIndex;
+        int carryCounter = 0;
         for (int dimIndex = shape.length() - 1; dimIndex >= 0; --dimIndex) {
-            coordinates.set(dimIndex, tempIndex % shape.get(dimIndex));
-            tempIndex /= shape.get(dimIndex);
+            int current = coordinates.get(dimIndex);
+            if (current + 1 < shape.get(dimIndex)) {
+                coordinates.set(dimIndex, current + 1);
+                break;
+            } else {
+                coordinates.set(dimIndex, 0);
+                ++carryCounter;
+            }
+        }
+
+        if (carryCounter == shape.length()) {
+            done = true;
+            return null;
         }
 
         return coordinates.asSlice();
@@ -87,9 +95,14 @@ public class NdArrayRowMajorTraversal implements QuietCloseable {
     public NdArrayRowMajorTraversal of(DirectIntSlice shape) {
         reset();
         this.shape = shape;
-        valuesLength = NdArrayMeta.flatLength(shape);
         for (int dimIndex = shape.length() - 1; dimIndex >= 0; --dimIndex) {
             coordinates.add(0);
+        }
+        if (coordinates.size() > 0) {
+            coordinates.set(coordinates.size() - 1, -1);  // one before the end.
+        }
+        else {
+            done = true;
         }
         return this;
     }
@@ -97,7 +110,6 @@ public class NdArrayRowMajorTraversal implements QuietCloseable {
     private void reset() {
         coordinates.clear();
         shape = null;
-        flatIndex = -1;
-        valuesLength = -1;
+        done = false;
     }
 }

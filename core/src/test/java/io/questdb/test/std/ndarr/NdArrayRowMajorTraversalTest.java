@@ -78,6 +78,45 @@ public class NdArrayRowMajorTraversalTest {
     }
 
     @Test
+    public void test2x3x4() {
+        try (
+                DirectIntList shape = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY);
+                NdArrayRowMajorTraversal traversal = new NdArrayRowMajorTraversal()
+        ) {
+            shape.add(2);
+            shape.add(3);
+            shape.add(4);
+            traversal.of(shape.asSlice());
+
+            Assert.assertArrayEquals(new int[]{0, 0, 0}, traversal.next().toArray());
+            Assert.assertArrayEquals(new int[]{0, 0, 1}, traversal.next().toArray());
+            Assert.assertArrayEquals(new int[]{0, 0, 2}, traversal.next().toArray());
+            Assert.assertArrayEquals(new int[]{0, 0, 3}, traversal.next().toArray());
+            Assert.assertArrayEquals(new int[]{0, 1, 0}, traversal.next().toArray());
+            Assert.assertArrayEquals(new int[]{0, 1, 1}, traversal.next().toArray());
+            Assert.assertArrayEquals(new int[]{0, 1, 2}, traversal.next().toArray());
+            Assert.assertArrayEquals(new int[]{0, 1, 3}, traversal.next().toArray());
+            Assert.assertArrayEquals(new int[]{0, 2, 0}, traversal.next().toArray());
+            Assert.assertArrayEquals(new int[]{0, 2, 1}, traversal.next().toArray());
+            Assert.assertArrayEquals(new int[]{0, 2, 2}, traversal.next().toArray());
+            Assert.assertArrayEquals(new int[]{0, 2, 3}, traversal.next().toArray());
+            Assert.assertArrayEquals(new int[]{1, 0, 0}, traversal.next().toArray());
+            Assert.assertArrayEquals(new int[]{1, 0, 1}, traversal.next().toArray());
+            Assert.assertArrayEquals(new int[]{1, 0, 2}, traversal.next().toArray());
+            Assert.assertArrayEquals(new int[]{1, 0, 3}, traversal.next().toArray());
+            Assert.assertArrayEquals(new int[]{1, 1, 0}, traversal.next().toArray());
+            Assert.assertArrayEquals(new int[]{1, 1, 1}, traversal.next().toArray());
+            Assert.assertArrayEquals(new int[]{1, 1, 2}, traversal.next().toArray());
+            Assert.assertArrayEquals(new int[]{1, 1, 3}, traversal.next().toArray());
+            Assert.assertArrayEquals(new int[]{1, 2, 0}, traversal.next().toArray());
+            Assert.assertArrayEquals(new int[]{1, 2, 1}, traversal.next().toArray());
+            Assert.assertArrayEquals(new int[]{1, 2, 2}, traversal.next().toArray());
+            Assert.assertArrayEquals(new int[]{1, 2, 3}, traversal.next().toArray());
+            Assert.assertNull(traversal.next());
+        }
+    }
+
+    @Test
     public void testNull() {
         try (
                 DirectIntList shape = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY);
