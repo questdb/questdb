@@ -35,6 +35,7 @@ import io.questdb.std.DirectIntSlice;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ndarr.NdArrayMeta;
+import io.questdb.std.ndarr.NdArrayRowMajorTraversal;
 import io.questdb.std.ndarr.NdArrayValuesSlice;
 import io.questdb.std.ndarr.NdArrayView;
 import io.questdb.std.str.LPSZ;
@@ -115,7 +116,7 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
     private static final long MAX_OFFSET = 1L << 48 - 1L;
 
     public static void appendValue(@NotNull MemoryA auxMem, @NotNull MemoryA dataMem, @Nullable NdArrayView array) {
-        if (array == null) {
+        if ((array == null) || array.isNull()) {
             NdArrayTypeDriver.INSTANCE.appendNull(auxMem, dataMem);
             return;
         }
@@ -265,6 +266,13 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
         throw new UnsupportedOperationException("nyi");
     }
 
+    /**
+     * Determine if the values buffer's values inside the array are all byte aligned.
+     */
+    private static boolean isByteAligned(int bitWidth, @NotNull NdArrayView array) {
+        return array.getValuesOffset() * bitWidth % 8 == 0;
+    }
+
     private static void padTo(@NotNull MemoryA dataMem, long byteAlignment) {
         final long requiredPadding = dataMem.getAppendOffset() % byteAlignment;
         for (long paddingIndex = 0; paddingIndex < requiredPadding; ++paddingIndex) {
@@ -326,6 +334,86 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
         return offset;
     }
 
+    private static void writeStrided1ByteValues(@NotNull MemoryA dataMem, @NotNull NdArrayView array) {
+        NdArrayRowMajorTraversal t = NdArrayRowMajorTraversal.LOCAL.get().of(array);
+        DirectIntSlice coordinates;
+        while ((coordinates = t.next()) != null) {
+            final byte value = array.getByte(coordinates);
+            dataMem.putByte(value);
+        }
+    }
+
+    private static void writeStrided2ByteValues(@NotNull MemoryA dataMem, @NotNull NdArrayView array) {
+        NdArrayRowMajorTraversal t = NdArrayRowMajorTraversal.LOCAL.get().of(array);
+        DirectIntSlice coordinates;
+        while ((coordinates = t.next()) != null) {
+            final short value = array.getShort(coordinates);
+            dataMem.putShort(value);
+        }
+    }
+
+    private static void writeStrided4ByteValues(@NotNull MemoryA dataMem, @NotNull NdArrayView array) {
+        NdArrayRowMajorTraversal t = NdArrayRowMajorTraversal.LOCAL.get().of(array);
+        DirectIntSlice coordinates;
+        while ((coordinates = t.next()) != null) {
+            // N.B. this will work for FLOAT too, since we're just performing a bitwise copy.
+            final int value = array.getInt(coordinates);
+            dataMem.putInt(value);
+        }
+    }
+
+    private static void writeStrided8ByteValues(@NotNull MemoryA dataMem, @NotNull NdArrayView array) {
+        NdArrayRowMajorTraversal t = NdArrayRowMajorTraversal.LOCAL.get().of(array);
+        DirectIntSlice coordinates;
+        while ((coordinates = t.next()) != null) {
+            // N.B. this will work for DOUBLE too, since we're just performing a bitwise copy.
+            final long value = array.getLong(coordinates);
+            dataMem.putLong(value);
+        }
+    }
+
+    private static void writeStridedBooleanValues(@NotNull MemoryA dataMem, @NotNull NdArrayView array) {
+        // Accumulate the bits into bytes, then write them.
+        byte buf = 0;
+        int bitIndex = 0;
+        NdArrayRowMajorTraversal t = NdArrayRowMajorTraversal.LOCAL.get().of(array);
+        DirectIntSlice coordinates;
+        while ((coordinates = t.next()) != null) {
+            final byte value = array.getBoolean(coordinates) ? (byte) 1 : (byte) 0;
+            buf |= (byte) (value << bitIndex);
+            ++bitIndex;
+            if (bitIndex >= 8) {
+                dataMem.putByte(buf);
+                bitIndex = 0;
+            }
+        }
+        // If there's an incompletely written byte, write it.
+        if (bitIndex > 0) {
+            dataMem.putByte(buf);
+        }
+    }
+
+    private static void writeStridedByteAlignedValues(int byteWidth, @NotNull MemoryA dataMem, @NotNull NdArrayView array) {
+        // Yes, the code would be shorter written by striding first, then switching on type,
+        // but this way we avoid conditionals inside a loop.
+        switch (byteWidth) {
+            case 1:  // BYTE
+                writeStrided1ByteValues(dataMem, array);
+                break;
+            case 2: // SHORT
+                writeStrided2ByteValues(dataMem, array);
+                break;
+            case 4:  // INT & FLOAT
+                writeStrided4ByteValues(dataMem, array);
+                break;
+            case 8:  // LONG & DOUBLE
+                writeStrided8ByteValues(dataMem, array);
+                break;
+            default:
+                throw new UnsupportedOperationException("unsupported byte width: " + byteWidth);
+        }
+    }
+
     private static void writeValues(@NotNull MemoryA dataMem, @NotNull NdArrayView array) {
         // We could be storing values of different datatypes.
         // We thus need to align accordingly. I.e., if we store doubles, we need to align on an 8-byte boundary.
@@ -335,12 +423,15 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
         padTo(dataMem, requiredByteAlignment);
 
         final NdArrayValuesSlice values = array.getValues();
-        if (array.hasDefaultStrides()) {
-            // Optimised path.
-            dataMem.putBlockOfBytes(values.ptr(), values.size());
+        if (array.hasDefaultStrides() && isByteAligned(bitWidth, array)) {
+            // Optimised path - works for all types.
+            final int bytesToSkip = array.getValuesOffset() * bitWidth / 8;
+            dataMem.putBlockOfBytes(values.ptr() + bytesToSkip, values.size() - bytesToSkip);
+        } else if (bitWidth == 1) {
+            writeStridedBooleanValues(dataMem, array);
         } else {
-            // Stride-walking path.
-            throw new UnsupportedOperationException("nyi");
+            assert bitWidth >= 8;
+            writeStridedByteAlignedValues(bitWidth / 8, dataMem, array);
         }
     }
 }
