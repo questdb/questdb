@@ -2893,7 +2893,7 @@ public class SqlOptimiser implements Mutable {
             try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken, model.getMetadataVersion())) {
                 enumerateColumns(model, metadata);
             } catch (CairoException e) {
-                if (e.isOutOfMemory()) {
+                if (e.isOutOfMemory() || e.isTableDoesNotExist()) {
                     throw e;
                 }
                 throw SqlException.position(tableNamePosition).put(e);
@@ -2904,7 +2904,7 @@ public class SqlOptimiser implements Mutable {
             } catch (EntryLockedException e) {
                 throw SqlException.position(tableNamePosition).put("table is locked: ").put(tableToken.getTableName());
             } catch (CairoException e) {
-                if (e.isOutOfMemory()) {
+                if (e.isOutOfMemory() || e.isTableDoesNotExist()) {
                     throw e;
                 }
                 throw SqlException.position(tableNamePosition).put(e);
