@@ -498,6 +498,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int jsonQueryConnectionCheckFrequency;
     private int jsonQueryDoubleScale;
     private int jsonQueryFloatScale;
+    private boolean lineLogMessageOnError;
     private long lineTcpCommitIntervalDefault;
     private double lineTcpCommitIntervalFraction;
     private int lineTcpConnectionPoolInitialCapacity;
@@ -1390,6 +1391,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     this.lineTcpCommitIntervalDefault = COMMIT_INTERVAL_DEFAULT;
                 }
                 this.lineTcpAuthDB = getString(properties, env, PropertyKey.LINE_TCP_AUTH_DB_PATH, null);
+                this.lineLogMessageOnError = getBoolean(properties, env, PropertyKey.LINE_LOG_MESSAGE_ON_ERROR, true);
                 // deprecated
                 String defaultTcpPartitionByProperty = getString(properties, env, PropertyKey.LINE_TCP_DEFAULT_PARTITION_BY, "DAY");
                 defaultTcpPartitionByProperty = getString(properties, env, PropertyKey.LINE_DEFAULT_PARTITION_BY, defaultTcpPartitionByProperty);
@@ -3777,6 +3779,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropLineHttpProcessorConfiguration implements LineHttpProcessorConfiguration {
+
         @Override
         public boolean autoCreateNewColumns() {
             return ilpAutoCreateNewColumns;
@@ -3836,9 +3839,15 @@ public class PropServerConfiguration implements ServerConfiguration {
         public boolean isUseLegacyStringDefault() {
             return useLegacyStringDefault;
         }
+
+        @Override
+        public boolean logMessageOnError() {
+            return lineLogMessageOnError;
+        }
     }
 
     private class PropLineTcpIOWorkerPoolConfiguration implements WorkerPoolConfiguration {
+
         @Override
         public long getNapThreshold() {
             return lineTcpIOWorkerNapThreshold;
@@ -3876,6 +3885,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropLineTcpReceiverConfiguration implements LineTcpReceiverConfiguration {
+
         @Override
         public String getAuthDB() {
             return lineTcpAuthDB;
@@ -4027,6 +4037,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isUseLegacyStringDefault() {
             return useLegacyStringDefault;
+        }
+
+        @Override
+        public boolean logMessageOnError() {
+            return lineLogMessageOnError;
         }
     }
 

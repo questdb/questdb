@@ -100,4 +100,6 @@ public interface LineTcpReceiverConfiguration {
     boolean isStringToCharCastAllowed();
 
     boolean isUseLegacyStringDefault();
+
+    boolean logMessageOnError();
 }
