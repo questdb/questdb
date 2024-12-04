@@ -37,6 +37,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class BindVariableServiceImpl implements BindVariableService {
@@ -196,6 +197,19 @@ public class BindVariableServiceImpl implements BindVariableService {
     @Override
     public ObjList<CharSequence> getNamedVariables() {
         return namedVariables.keys();
+    }
+
+    @Override
+    public @NotNull Function getOrDefineFunction(int index) {
+        final int n = indexedVariables.size();
+        if (index < n) {
+            Function fun = indexedVariables.getQuick(index);
+            if (fun != null) {
+                return fun;
+            }
+        }
+        indexedVariables.extendAndSet(index, UndefinedFunction.INSTANCE);
+        return UndefinedFunction.INSTANCE;
     }
 
     @Override

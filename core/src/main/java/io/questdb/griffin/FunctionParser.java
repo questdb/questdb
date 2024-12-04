@@ -970,12 +970,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     }
 
     private Function createIndexParameter(int variableIndex, int position) throws SqlException {
-        Function function = getBindVariableService().getFunction(variableIndex);
-        if (function == null) {
-            // bind variable is undefined, we still want to index it
-            getBindVariableService().define(variableIndex, ColumnType.UNDEFINED, position);
-            return new IndexedParameterLinkFunction(variableIndex, ColumnType.UNDEFINED, position);
-        }
+        Function function = getBindVariableService().getOrDefineFunction(variableIndex);
         return new IndexedParameterLinkFunction(variableIndex, function.getType(), position);
     }
 
