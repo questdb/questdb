@@ -7328,7 +7328,7 @@ nodejs code:
                 ps1.executeQuery();
                 Assert.fail("PSQLException should be thrown");
             } catch (PSQLException e) {
-                assertContains(e.getMessage(), "there is no matching operator`!=` with the argument types: BOOLEAN != STRING");
+                assertContains(e.getMessage(), "there is no matching operator `!=` with the argument types: BOOLEAN != STRING");
             }
 
             try (PreparedStatement s = connection.prepareStatement("select 2 a,2 b from long_sequence(1) where x > 0 and x < 10")) {
