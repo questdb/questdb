@@ -48,7 +48,6 @@ final class TimestampFloorOffsetFunctions {
             this.arg = arg;
             this.stride = stride;
             this.offset = offset;
-            assert offset >= 0;
         }
 
         @Override

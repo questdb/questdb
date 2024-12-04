@@ -184,13 +184,6 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     private static class FillRangeRecordCursor implements NoRandomAccessRecordCursor {
-        // Cache line size on Xeon, EPYC processors
-        private static final int DEFAULT_BITSET_SIZE = 64 * 8;
-        private static final int RANGE_FULLY_BOUND = 1;
-        private static final int RANGE_LOWER_BOUND = 2;
-        private static final int RANGE_UNBOUNDED = 0;
-        private static final int RANGE_UPPER_BOUND = 3;
-
         private final FillRangeRecord fillingRecord = new FillRangeRecord();
         private final FillRangeTimestampConstant fillingTimestampFunc = new FillRangeTimestampConstant();
         private final Function fromFunc;
@@ -200,8 +193,8 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         private final ObjList<Function> valueFuncs;
         private RecordCursor baseCursor;
         private Record baseRecord;
-        private long fromTimestamp;
         private boolean gapFilling;
+        private boolean hasNegative;
         private long lastTimestamp = Long.MIN_VALUE;
         private long maxTimestamp;
         private long minTimestamp;
@@ -210,8 +203,6 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         private DirectLongList presentTimestamps;
         private long presentTimestampsIndex;
         private long presentTimestampsSize;
-        private int rangeBound;
-        private long toTimestamp;
 
         private FillRangeRecordCursor(TimestampSampler timestampSampler,
                                       @NotNull Function fromFunc,
@@ -252,6 +243,10 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 // to determine the gaps later.
                 long timestamp = baseRecord.getTimestamp(timestampIndex);
                 needsSorting |= lastTimestamp > timestamp;
+                hasNegative = hasNegative || timestamp < 0;
+                if (hasNegative && needsSorting) {
+                    throw CairoException.nonCritical().put("cannot FILL for the timestamps before 1970");
+                }
                 // Start saving timestamps to determine the gaps
                 presentTimestamps.add(lastTimestamp = timestamp);
                 return true;
@@ -351,23 +346,20 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         private void prepareGapFilling() {
-            if (minTimestamp < 0 && needsSorting && presentTimestamps.size() > 1) {
-                throw CairoException.nonCritical().put("cannot fill range for timestamps before the epoch");
-            }
+            // Cache the size of the present timestamps for loop optimization
+            presentTimestampsSize = presentTimestamps.size();
 
-            if (needsSorting) {
+            if (needsSorting && presentTimestampsSize > 1) {
                 presentTimestamps.sortAsUnsigned();
             }
 
-            if (presentTimestamps.size() > 0) {
+            if (presentTimestampsSize > 0) {
                 minTimestamp = Math.min(minTimestamp, presentTimestamps.get(0));
-                maxTimestamp = Math.max(maxTimestamp, presentTimestamps.get(presentTimestamps.size() - 1));
+                maxTimestamp = Math.max(maxTimestamp, presentTimestamps.get(presentTimestampsSize - 1));
             }
             timestampSampler.setStart(minTimestamp);
             nextBucketTimestamp = minTimestamp;
             presentTimestampsIndex = 0;
-            // Cache the size of the present timestamps for loop optimization
-            presentTimestampsSize = presentTimestamps.size();
         }
 
         private class FillRangeRecord implements Record {
