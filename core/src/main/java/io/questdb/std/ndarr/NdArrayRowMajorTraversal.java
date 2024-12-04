@@ -55,10 +55,6 @@ public class NdArrayRowMajorTraversal implements QuietCloseable {
      * The array's shape
      */
     private DirectIntSlice shape;
-    /**
-     * The element-space strides we're iterating
-     */
-    private DirectIntSlice strides;
 
     @Override
     public void close() {
@@ -92,12 +88,14 @@ public class NdArrayRowMajorTraversal implements QuietCloseable {
         reset();
         this.shape = shape;
         valuesLength = NdArrayMeta.flatLength(shape);
+        for (int dimIndex = shape.length() - 1; dimIndex >= 0; --dimIndex) {
+            coordinates.add(0);
+        }
         return this;
     }
 
     private void reset() {
         coordinates.clear();
-        strides = null;
         shape = null;
         flatIndex = -1;
         valuesLength = -1;

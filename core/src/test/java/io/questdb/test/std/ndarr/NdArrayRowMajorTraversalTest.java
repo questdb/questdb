@@ -32,10 +32,56 @@ import org.junit.Test;
 
 public class NdArrayRowMajorTraversalTest {
     @Test
+    public void test2x3() {
+        try (
+                DirectIntList shape = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY);
+                NdArrayRowMajorTraversal traversal = new NdArrayRowMajorTraversal()
+        ) {
+            shape.add(2);  // rows
+            shape.add(3);  // columns
+            NdArrayRowMajorTraversal t = traversal.of(shape.asSlice());
+            Assert.assertSame(traversal, t);
+
+            // {0, 0}:
+            //   X - -
+            //   - - -
+            Assert.assertArrayEquals(new int[]{0, 0}, t.next().toArray());
+
+            // {0, 1}:
+            //   - X -
+            //   - - -
+            Assert.assertArrayEquals(new int[]{0, 1}, t.next().toArray());
+
+            // {0, 2}:
+            //   - - X
+            //   - - -
+            Assert.assertArrayEquals(new int[]{0, 2}, t.next().toArray());
+
+            // {1, 0}:
+            //   - - -
+            //   X - -
+            Assert.assertArrayEquals(new int[]{1, 0}, t.next().toArray());
+
+            // {1, 1}:
+            //   - - -
+            //   - X -
+            Assert.assertArrayEquals(new int[]{1, 1}, t.next().toArray());
+
+            // {1, 2}:
+            //   - - -
+            //   - - X
+            Assert.assertArrayEquals(new int[]{1, 2}, t.next().toArray());
+
+            // End of iteration.
+            Assert.assertNull(t.next());
+        }
+    }
+
+    @Test
     public void testNull() {
         try (
                 DirectIntList shape = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY);
-                NdArrayRowMajorTraversal traversal = new NdArrayRowMajorTraversal();
+                NdArrayRowMajorTraversal traversal = new NdArrayRowMajorTraversal()
         ) {
             Assert.assertNull(traversal.of(shape.asSlice()).next());
             Assert.assertNull(traversal.of(shape.asSlice()).next());

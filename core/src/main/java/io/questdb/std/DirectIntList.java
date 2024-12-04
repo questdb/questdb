@@ -29,6 +29,7 @@ import io.questdb.cairo.Reopenable;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.str.Utf16Sink;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
