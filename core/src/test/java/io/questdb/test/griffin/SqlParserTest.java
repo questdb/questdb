@@ -3467,6 +3467,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclareCreateAsSelect() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(tradesDdl);
+            drainWalQueue();
+            assertModel("create batch 1000000 table foo as (select-virtual 1 + 2 column from (long_sequence(1)))",
+                    "CREATE TABLE foo AS (DECLARE @x := 1, @y := 2 SELECT @x + @y)", ExecutionModel.CREATE_TABLE);
+        });
+    }
+
+    @Test
     public void testDeclareInsertIntoSelect() throws Exception {
         assertMemoryLeak(() -> {
             execute(tradesDdl);

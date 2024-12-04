@@ -1141,8 +1141,9 @@ public class SqlParser {
                 break;
             }
 
-            // todo: review this, maybe we can use an immutable
-            tok = tok.toString();
+            CharacterStoreEntry cse = characterStore.newEntry();
+            cse.put(tok);
+            tok = cse.toImmutable();
 
             CharSequence expectWalrus = optTok(lexer);
 
@@ -1150,24 +1151,7 @@ public class SqlParser {
                 throw SqlException.$(lexer.lastTokenPosition(), "expected variable assignment operator `:=`");
             }
 
-//            CharSequence possibleBracket = optTok(lexer);
-//            ExpressionNode expr;
-//
-//            // expect "(" in case of sub-query
-//            if (Chars.equals(tok, '(')) {
-//                QueryModel subquery = parseAsSubQueryAndExpectClosingBrace(lexer, model.getWithClauses(), true, sqlParserCallback, model.getDecls());
-//
-//                if (subquery == null) {
-//                    throw SqlException.$(lexer.lastTokenPosition(), "could not parse subquery in declared variable");
-//                }
-//
-//                expr = expressionNodePool.next().of(ExpressionNode.OPERATION, ":=", 100, lexer.lastTokenPosition());
-//                expr.lhs = expressionNodePool.next().of(ExpressionNode.LITERAL, tok, 0, pos);
-//                expr.rhs = expressionNodePool.next().of(ExpressionNode.QUERY, null, 0, lexer.lastTokenPosition());
-//            }
-
             lexer.goToPosition(pos);
-
 
             ExpressionNode expr = expr(lexer, model, sqlParserCallback, model.getDecls(), tok);
 
@@ -1495,11 +1479,11 @@ public class SqlParser {
     }
 
     // doesn't allow copy, rename
-    private ExecutionModel parseExplain(GenericLexer lexer, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback, LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) throws SqlException {
+    private ExecutionModel parseExplain(GenericLexer lexer, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {
         CharSequence tok = tok(lexer, "'create', 'format', 'insert', 'update', 'select' or 'with'");
 
         if (isSelectKeyword(tok)) {
-            return parseSelect(lexer, sqlParserCallback, decls);
+            return parseSelect(lexer, sqlParserCallback, null);
         }
 
         if (isCreateKeyword(tok)) {
@@ -1507,18 +1491,18 @@ public class SqlParser {
         }
 
         if (isUpdateKeyword(tok)) {
-            return parseUpdate(lexer, sqlParserCallback, decls);
+            return parseUpdate(lexer, sqlParserCallback, null);
         }
 
         if (isInsertKeyword(tok)) {
-            return parseInsert(lexer, sqlParserCallback, decls);
+            return parseInsert(lexer, sqlParserCallback, null);
         }
 
         if (isWithKeyword(tok)) {
-            return parseWith(lexer, sqlParserCallback, decls);
+            return parseWith(lexer, sqlParserCallback, null);
         }
 
-        return parseSelect(lexer, sqlParserCallback, decls);
+        return parseSelect(lexer, sqlParserCallback, null);
     }
 
     private int parseExplainOptions(GenericLexer lexer, CharSequence prevTok) throws SqlException {
@@ -1954,7 +1938,7 @@ public class SqlParser {
             int joinType,
             LowerCaseCharSequenceObjHashMap<WithClauseModel> parent,
             SqlParserCallback sqlParserCallback,
-            LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
     ) throws SqlException {
         QueryModel joinModel = queryModelPool.next();
 
@@ -2575,11 +2559,8 @@ public class SqlParser {
             if (expr.type == ExpressionNode.LITERAL) {
                 // replace it if so
                 expr = model.getDecls().get(expr.token).rhs;
-            } else if (expr.queryModel != null) {
-                // throw because we don't support variables as subqueries
-                throw SqlException.$(lexer.lastTokenPosition(), "variables cannot be subqueries");
             } else {
-                throw SqlException.$(lexer.lastTokenPosition(), "expected literal table name");
+                throw SqlException.$(lexer.lastTokenPosition(), "expected literal table name or subquery");
             }
         }
 
@@ -2746,7 +2727,7 @@ public class SqlParser {
         throw SqlException.$(lexer.lastTokenPosition(), "'select' | 'update' | 'insert' expected");
     }
 
-    private QueryModel parseWith(GenericLexer lexer, WithClauseModel wcm, SqlParserCallback sqlParserCallback, LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) throws SqlException {
+    private QueryModel parseWith(GenericLexer lexer, WithClauseModel wcm, SqlParserCallback sqlParserCallback, @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) throws SqlException {
         QueryModel m = wcm.popModel();
         if (m != null) {
             return m;
@@ -2761,7 +2742,7 @@ public class SqlParser {
         return m;
     }
 
-    private void parseWithClauses(GenericLexer lexer, LowerCaseCharSequenceObjHashMap<WithClauseModel> model, SqlParserCallback sqlParserCallback, LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) throws SqlException {
+    private void parseWithClauses(GenericLexer lexer, LowerCaseCharSequenceObjHashMap<WithClauseModel> model, SqlParserCallback sqlParserCallback, @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) throws SqlException {
         do {
             ExpressionNode name = expectLiteral(lexer);
             if (name.token.length() == 0) {
@@ -2945,7 +2926,7 @@ public class SqlParser {
         }
     }
 
-    private ExpressionNode rewriteDeclaredVariables(ExpressionNode expr, @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls, CharSequence exclude) throws SqlException {
+    private ExpressionNode rewriteDeclaredVariables(ExpressionNode expr, @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls, @Nullable CharSequence exclude) throws SqlException {
         if (decls == null || decls.size() == 0) { // short circuit null case
             return expr;
         }
@@ -3207,7 +3188,7 @@ public class SqlParser {
 
         if (isExplainKeyword(tok)) {
             int format = parseExplainOptions(lexer, tok);
-            ExecutionModel model = parseExplain(lexer, executionContext, sqlParserCallback, null);
+            ExecutionModel model = parseExplain(lexer, executionContext, sqlParserCallback);
             ExplainModel explainModel = explainModelPool.next();
             explainModel.setFormat(format);
             explainModel.setModel(model);
@@ -3246,7 +3227,7 @@ public class SqlParser {
             throw SqlException.$(lexer.lastTokenPosition(), "Did you mean 'select * from'?");
         }
 
-        return parseSelect(lexer, sqlParserCallback, null); // todo: review decls null
+        return parseSelect(lexer, sqlParserCallback, null);
     }
 
     QueryModel parseAsSubQuery(
@@ -3289,10 +3270,6 @@ public class SqlParser {
             }
 
             return node;
-        }
-
-        RecursiveReplacingTreeTraversalAlgo.ReplacingVisitor of(@NotNull LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) {
-            return this.of(decls, null);
         }
 
         RecursiveReplacingTreeTraversalAlgo.ReplacingVisitor of(@NotNull LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,

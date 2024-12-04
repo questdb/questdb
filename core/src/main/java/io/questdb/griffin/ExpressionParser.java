@@ -902,7 +902,6 @@ public class ExpressionParser {
                                                     lastPos
                                             )
                                     );
-
                                     break;
                                 }
                             }
@@ -1078,7 +1077,7 @@ public class ExpressionParser {
 
                         thisBranch = BRANCH_OPERATOR;
 
-                        if (thisChar == ':' && tok.length() == 2 && tok.charAt(1) == '=') {
+                        if (Chars.equals(tok, ":=")) {
                             parsedDeclaration = true;
                         }
 
