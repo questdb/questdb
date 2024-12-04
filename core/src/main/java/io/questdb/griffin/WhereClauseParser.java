@@ -712,7 +712,7 @@ public final class WhereClauseParser implements Mutable {
                         if (inListItem.type != ExpressionNode.FUNCTION) {
                             return false;
                         }
-                        Function func = functionParser.parseFunction(inListItem, metadata, executionContext);
+                        final Function func = functionParser.parseFunction(inListItem, metadata, executionContext);
                         if (!func.isConstant() || !checkFunctionCanBeStrInterval(executionContext, func)) {
                             Misc.free(func);
                             return false;
@@ -731,8 +731,13 @@ public final class WhereClauseParser implements Mutable {
                     if (inListItem.type == ExpressionNode.CONSTANT) {
                         ts = parseTokenAsTimestamp(inListItem);
                     } else {
-                        Function fun = moreThanOneTimestampFunc ? functionParser.parseFunction(inListItem, metadata, executionContext) : timestampFunc;
-                        ts = getTimestampFromConstFunction(fun, inListItem.position, false);
+                        final Function func = moreThanOneTimestampFunc ? functionParser.parseFunction(inListItem, metadata, executionContext) : timestampFunc;
+                        try {
+                            ts = getTimestampFromConstFunction(func, inListItem.position, false);
+                        } catch (Throwable th) {
+                            Misc.free(func);
+                            throw th;
+                        }
                     }
                     if (!isNegated) {
                         if (i == 0) {
@@ -1766,24 +1771,27 @@ public final class WhereClauseParser implements Mutable {
             RecordMetadata metadata,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        Function func = functionParser.parseFunction(node, metadata, executionContext);
-        if (!func.isConstant()) {
-            Misc.free(func);
-            isConstFunction = false;
-            return null;
-        }
+        final Function func = functionParser.parseFunction(node, metadata, executionContext);
+        try {
+            if (!func.isConstant()) {
+                isConstFunction = false;
+                return null;
+            }
 
-        isConstFunction = true;
-        final int funcType = func.getType();
-        if (funcType == ColumnType.SYMBOL
-                || funcType == ColumnType.STRING
-                || funcType == ColumnType.CHAR
-                || funcType == ColumnType.UNDEFINED
-                || funcType == ColumnType.NULL
-                || funcType == ColumnType.VARCHAR) {
-            return func.getStrA(null);
-        } else {
-            throw SqlException.$(node.position, "Unexpected function type [").put(ColumnType.nameOf(funcType)).put("]");
+            isConstFunction = true;
+            final int funcType = func.getType();
+            if (funcType == ColumnType.SYMBOL
+                    || funcType == ColumnType.STRING
+                    || funcType == ColumnType.CHAR
+                    || funcType == ColumnType.UNDEFINED
+                    || funcType == ColumnType.NULL
+                    || funcType == ColumnType.VARCHAR) {
+                return Chars.toString(func.getStrA(null));
+            } else {
+                throw SqlException.$(node.position, "Unexpected function type [").put(ColumnType.nameOf(funcType)).put("]");
+            }
+        } finally {
+            Misc.free(func);
         }
     }
 
