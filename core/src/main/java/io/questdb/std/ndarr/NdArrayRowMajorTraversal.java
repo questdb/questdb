@@ -29,6 +29,10 @@ import io.questdb.std.DirectIntSlice;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.ThreadLocal;
+import io.questdb.std.str.Path;
+
+import java.io.Closeable;
 
 /**
  * An iterator-like utility to traverse an {@link NdArrayView} in row-major order.
@@ -48,6 +52,13 @@ import io.questdb.std.QuietCloseable;
  * }</pre></p>
  */
 public class NdArrayRowMajorTraversal implements QuietCloseable {
+    public static final io.questdb.std.ThreadLocal<NdArrayRowMajorTraversal> LOCAL = new io.questdb.std.ThreadLocal<>(NdArrayRowMajorTraversal::new);
+    public static final Closeable THREAD_LOCAL_CLEANER = NdArrayRowMajorTraversal::clearThreadLocals;
+
+    public static void clearThreadLocals() {
+        LOCAL.close();
+    }
+
     private final DirectIntList coordinates = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY);
     private boolean done = false;
     /**

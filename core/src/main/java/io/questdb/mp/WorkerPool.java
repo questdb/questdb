@@ -30,6 +30,7 @@ import io.questdb.metrics.WorkerMetrics;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
+import io.questdb.std.ndarr.NdArrayRowMajorTraversal;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -219,7 +220,9 @@ public class WorkerPool implements Closeable {
 
     private void setupPathCleaner() {
         for (int i = 0; i < workerCount; i++) {
-            threadLocalCleaners.getQuick(i).add(Path.THREAD_LOCAL_CLEANER);
+            ObjList<Closeable> workerCleaners = threadLocalCleaners.getQuick(i);
+            workerCleaners.add(Path.THREAD_LOCAL_CLEANER);
+            workerCleaners.add(NdArrayRowMajorTraversal.THREAD_LOCAL_CLEANER);
         }
     }
 }

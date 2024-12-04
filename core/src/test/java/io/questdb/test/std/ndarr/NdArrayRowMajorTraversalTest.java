@@ -24,122 +24,132 @@
 
 package io.questdb.test.std.ndarr;
 
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ndarr.NdArrayRowMajorTraversal;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class NdArrayRowMajorTraversalTest {
+    private static final Log LOG = LogFactory.getLog(NdArrayRowMajorTraversalTest.class);
+
     @Test
-    public void test2x3() {
-        try (
-                DirectIntList shape = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY);
-                NdArrayRowMajorTraversal traversal = new NdArrayRowMajorTraversal()
-        ) {
-            shape.add(2);  // rows
-            shape.add(3);  // columns
-            NdArrayRowMajorTraversal t = traversal.of(shape.asSlice());
-            Assert.assertSame(traversal, t);
+    public void test2x3() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    DirectIntList shape = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY);
+                    NdArrayRowMajorTraversal traversal = new NdArrayRowMajorTraversal()
+            ) {
+                shape.add(2);  // rows
+                shape.add(3);  // columns
+                NdArrayRowMajorTraversal t = traversal.of(shape.asSlice());
+                Assert.assertSame(traversal, t);
 
-            // {0, 0}:
-            //   X - -
-            //   - - -
-            Assert.assertArrayEquals(new int[]{0, 0}, t.next().toArray());
+                // {0, 0}:
+                //   X - -
+                //   - - -
+                Assert.assertArrayEquals(new int[]{0, 0}, t.next().toArray());
 
-            // {0, 1}:
-            //   - X -
-            //   - - -
-            Assert.assertArrayEquals(new int[]{0, 1}, t.next().toArray());
+                // {0, 1}:
+                //   - X -
+                //   - - -
+                Assert.assertArrayEquals(new int[]{0, 1}, t.next().toArray());
 
-            // {0, 2}:
-            //   - - X
-            //   - - -
-            Assert.assertArrayEquals(new int[]{0, 2}, t.next().toArray());
+                // {0, 2}:
+                //   - - X
+                //   - - -
+                Assert.assertArrayEquals(new int[]{0, 2}, t.next().toArray());
 
-            // {1, 0}:
-            //   - - -
-            //   X - -
-            Assert.assertArrayEquals(new int[]{1, 0}, t.next().toArray());
+                // {1, 0}:
+                //   - - -
+                //   X - -
+                Assert.assertArrayEquals(new int[]{1, 0}, t.next().toArray());
 
-            // {1, 1}:
-            //   - - -
-            //   - X -
-            Assert.assertArrayEquals(new int[]{1, 1}, t.next().toArray());
+                // {1, 1}:
+                //   - - -
+                //   - X -
+                Assert.assertArrayEquals(new int[]{1, 1}, t.next().toArray());
 
-            // {1, 2}:
-            //   - - -
-            //   - - X
-            Assert.assertArrayEquals(new int[]{1, 2}, t.next().toArray());
+                // {1, 2}:
+                //   - - -
+                //   - - X
+                Assert.assertArrayEquals(new int[]{1, 2}, t.next().toArray());
 
-            // End of iteration.
-            Assert.assertNull(t.next());
+                // End of iteration.
+                Assert.assertNull(t.next());
 
-            // Reaching the end of the iterator is idempotent.
-            Assert.assertNull(t.next());
-            Assert.assertNull(t.next());
+                // Reaching the end of the iterator is idempotent.
+                Assert.assertNull(t.next());
+                Assert.assertNull(t.next());
 
-            // Reusability.
-            traversal.of(shape.asSlice());
-            Assert.assertArrayEquals(new int[]{0, 0}, t.next().toArray());
-            Assert.assertArrayEquals(new int[]{0, 1}, t.next().toArray());
-            Assert.assertArrayEquals(new int[]{0, 2}, t.next().toArray());
-            Assert.assertArrayEquals(new int[]{1, 0}, t.next().toArray());
-            Assert.assertArrayEquals(new int[]{1, 1}, t.next().toArray());
-            Assert.assertArrayEquals(new int[]{1, 2}, t.next().toArray());
-            Assert.assertNull(t.next());
-
-        }
+                // Reusability.
+                traversal.of(shape.asSlice());
+                Assert.assertArrayEquals(new int[]{0, 0}, t.next().toArray());
+                Assert.assertArrayEquals(new int[]{0, 1}, t.next().toArray());
+                Assert.assertArrayEquals(new int[]{0, 2}, t.next().toArray());
+                Assert.assertArrayEquals(new int[]{1, 0}, t.next().toArray());
+                Assert.assertArrayEquals(new int[]{1, 1}, t.next().toArray());
+                Assert.assertArrayEquals(new int[]{1, 2}, t.next().toArray());
+                Assert.assertNull(t.next());
+            }
+        });
     }
 
     @Test
-    public void test2x3x4() {
-        try (
-                DirectIntList shape = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY);
-                NdArrayRowMajorTraversal traversal = new NdArrayRowMajorTraversal()
-        ) {
-            shape.add(2);
-            shape.add(3);
-            shape.add(4);
-            traversal.of(shape.asSlice());
+    public void test2x3x4() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    DirectIntList shape = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY);
+                    NdArrayRowMajorTraversal traversal = new NdArrayRowMajorTraversal()
+            ) {
+                shape.add(2);
+                shape.add(3);
+                shape.add(4);
+                traversal.of(shape.asSlice());
 
-            Assert.assertArrayEquals(new int[]{0, 0, 0}, traversal.next().toArray());
-            Assert.assertArrayEquals(new int[]{0, 0, 1}, traversal.next().toArray());
-            Assert.assertArrayEquals(new int[]{0, 0, 2}, traversal.next().toArray());
-            Assert.assertArrayEquals(new int[]{0, 0, 3}, traversal.next().toArray());
-            Assert.assertArrayEquals(new int[]{0, 1, 0}, traversal.next().toArray());
-            Assert.assertArrayEquals(new int[]{0, 1, 1}, traversal.next().toArray());
-            Assert.assertArrayEquals(new int[]{0, 1, 2}, traversal.next().toArray());
-            Assert.assertArrayEquals(new int[]{0, 1, 3}, traversal.next().toArray());
-            Assert.assertArrayEquals(new int[]{0, 2, 0}, traversal.next().toArray());
-            Assert.assertArrayEquals(new int[]{0, 2, 1}, traversal.next().toArray());
-            Assert.assertArrayEquals(new int[]{0, 2, 2}, traversal.next().toArray());
-            Assert.assertArrayEquals(new int[]{0, 2, 3}, traversal.next().toArray());
-            Assert.assertArrayEquals(new int[]{1, 0, 0}, traversal.next().toArray());
-            Assert.assertArrayEquals(new int[]{1, 0, 1}, traversal.next().toArray());
-            Assert.assertArrayEquals(new int[]{1, 0, 2}, traversal.next().toArray());
-            Assert.assertArrayEquals(new int[]{1, 0, 3}, traversal.next().toArray());
-            Assert.assertArrayEquals(new int[]{1, 1, 0}, traversal.next().toArray());
-            Assert.assertArrayEquals(new int[]{1, 1, 1}, traversal.next().toArray());
-            Assert.assertArrayEquals(new int[]{1, 1, 2}, traversal.next().toArray());
-            Assert.assertArrayEquals(new int[]{1, 1, 3}, traversal.next().toArray());
-            Assert.assertArrayEquals(new int[]{1, 2, 0}, traversal.next().toArray());
-            Assert.assertArrayEquals(new int[]{1, 2, 1}, traversal.next().toArray());
-            Assert.assertArrayEquals(new int[]{1, 2, 2}, traversal.next().toArray());
-            Assert.assertArrayEquals(new int[]{1, 2, 3}, traversal.next().toArray());
-            Assert.assertNull(traversal.next());
-        }
+                Assert.assertArrayEquals(new int[]{0, 0, 0}, traversal.next().toArray());
+                Assert.assertArrayEquals(new int[]{0, 0, 1}, traversal.next().toArray());
+                Assert.assertArrayEquals(new int[]{0, 0, 2}, traversal.next().toArray());
+                Assert.assertArrayEquals(new int[]{0, 0, 3}, traversal.next().toArray());
+                Assert.assertArrayEquals(new int[]{0, 1, 0}, traversal.next().toArray());
+                Assert.assertArrayEquals(new int[]{0, 1, 1}, traversal.next().toArray());
+                Assert.assertArrayEquals(new int[]{0, 1, 2}, traversal.next().toArray());
+                Assert.assertArrayEquals(new int[]{0, 1, 3}, traversal.next().toArray());
+                Assert.assertArrayEquals(new int[]{0, 2, 0}, traversal.next().toArray());
+                Assert.assertArrayEquals(new int[]{0, 2, 1}, traversal.next().toArray());
+                Assert.assertArrayEquals(new int[]{0, 2, 2}, traversal.next().toArray());
+                Assert.assertArrayEquals(new int[]{0, 2, 3}, traversal.next().toArray());
+                Assert.assertArrayEquals(new int[]{1, 0, 0}, traversal.next().toArray());
+                Assert.assertArrayEquals(new int[]{1, 0, 1}, traversal.next().toArray());
+                Assert.assertArrayEquals(new int[]{1, 0, 2}, traversal.next().toArray());
+                Assert.assertArrayEquals(new int[]{1, 0, 3}, traversal.next().toArray());
+                Assert.assertArrayEquals(new int[]{1, 1, 0}, traversal.next().toArray());
+                Assert.assertArrayEquals(new int[]{1, 1, 1}, traversal.next().toArray());
+                Assert.assertArrayEquals(new int[]{1, 1, 2}, traversal.next().toArray());
+                Assert.assertArrayEquals(new int[]{1, 1, 3}, traversal.next().toArray());
+                Assert.assertArrayEquals(new int[]{1, 2, 0}, traversal.next().toArray());
+                Assert.assertArrayEquals(new int[]{1, 2, 1}, traversal.next().toArray());
+                Assert.assertArrayEquals(new int[]{1, 2, 2}, traversal.next().toArray());
+                Assert.assertArrayEquals(new int[]{1, 2, 3}, traversal.next().toArray());
+                Assert.assertNull(traversal.next());
+            }
+        });
     }
 
     @Test
-    public void testNull() {
-        try (
-                DirectIntList shape = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY);
-                NdArrayRowMajorTraversal traversal = new NdArrayRowMajorTraversal()
-        ) {
-            Assert.assertNull(traversal.of(shape.asSlice()).next());
-            Assert.assertNull(traversal.of(shape.asSlice()).next());
-            Assert.assertNull(traversal.of(shape.asSlice()).next());
-        }
+    public void testNull() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    DirectIntList shape = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY);
+                    NdArrayRowMajorTraversal traversal = new NdArrayRowMajorTraversal()
+            ) {
+                Assert.assertNull(traversal.of(shape.asSlice()).next());
+                Assert.assertNull(traversal.of(shape.asSlice()).next());
+                Assert.assertNull(traversal.of(shape.asSlice()).next());
+            }
+        });
     }
 }
