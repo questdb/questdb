@@ -1567,31 +1567,38 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private void msgParseCopyOutTypeDescriptionTypeOIDs(BindVariableService bindVariableService) {
-        // Q: why Math.max()? A: varargs function parameters are not defined in the bind variable service right after compilation
-        // Example: If you compile SELECT * FROM tab WHERE name IN ($1, $2);
-//        final int n = Math.max(bindVariableService.getIndexedVariableCount(), msgParseParameterTypeOIDs.size());
+//     Priority order for determining column types:
+//     1. Client-specified type in PARSE message (if provided and not PG_UNSPECIFIED nor X_PG_VOID)
+//     2. Compiler-inferred type (fallback)
+//
+//     Important: We cannot exclusively rely on compiler-inferred types because:
+//     - Clients may specify their own type expectations
+//     - Type mismatches between PARSE and subsequent DESCRIBE messages can cause client errors
+//     - Some clients (e.g., PG JDBC) strictly validate type consistency between types in PARSE and DESCRIBE messages
+
+
         final int n = bindVariableService.getIndexedVariableCount();
         outParameterTypeDescriptionTypeOIDs.setPos(n);
         if (n > 0) {
             for (int i = 0; i < n; i++) {
                 int oid = PG_UNSPECIFIED;
 
-                // first we prioritize the types we received in the PARSE message
+                // First we prioritize the types we received in the PARSE message
                 if (msgParseParameterTypeOIDs.size() > i) {
                     oid = msgParseParameterTypeOIDs.getQuick(i);
                 }
 
-                // if there was no type in the PARSE message, we use the type inferred by the compiler
-                // Q: why we cannot always use the types provided by a compiler?
-                // A: the compiler might infer slightly different type than the client provided.
-                //    if the client include types in a PARSE message and a subsequent DESCRIBE sends back different types
-                //    the client will error out. e.g. PG JDBC is very strict about this.
                 if (oid == PG_UNSPECIFIED || oid == X_PG_VOID) {
+//                  ok, either the client did not specify a type or the type is void.
                     final Function f = bindVariableService.getFunction(i);
-                    int type = f != null ? f.getType() : ColumnType.STRING;
-                    if (type == ColumnType.UNDEFINED) {
-                        type = ColumnType.STRING;
-                    }
+                    int funType = f.getType();
+
+//                  Force STRING type when function type is undefined after compilation.
+//                  This prevents client-side type inference attempts which can lead to:
+//                  - Unwanted metadata queries to unsupported system views
+//                  - Potentially incorrect type guessing behaviors
+//                  - Additional unnecessary roundtrips
+                    int type = funType == ColumnType.UNDEFINED ? ColumnType.STRING : funType;
                     oid = Numbers.bswap(PGOids.getTypeOid(type));
                 }
                 outParameterTypeDescriptionTypeOIDs.setQuick(i, oid);
