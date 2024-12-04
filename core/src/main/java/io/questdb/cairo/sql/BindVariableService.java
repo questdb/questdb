@@ -62,7 +62,7 @@ public interface BindVariableService extends Mutable {
      * @param index the 0-based index of the bind variable in question.
      * @return type of the bind variable
      */
-    @NotNull Function getOrDefineFunction(int index) throws SqlException;
+    @NotNull Function getOrDefineFunction(int index);
 
     /**
      * Checks if bind variable is defined. Bind variable will usually be defined by tge SQL compiler when

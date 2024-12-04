@@ -27,11 +27,13 @@ package io.questdb.test.griffin.engine.functions.bind;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -751,6 +753,29 @@ public class BindVariableServiceImplTest {
     }
 
     @Test
+    public void testSetIntoUndefined() throws Exception {
+        assertMemoryLeak(() -> {
+            testSetIntoUndefined0(8, () -> bindVariableService.setDate(8, 1), ColumnType.DATE);
+            testSetIntoUndefined0(9, () -> bindVariableService.setStr(9, "a"), ColumnType.STRING);
+            testSetIntoUndefined0(10, () -> bindVariableService.setTimestamp(10, 1), ColumnType.TIMESTAMP);
+            testSetIntoUndefined0(11, () -> bindVariableService.setLong256(11, 1, 2, 3, 4), ColumnType.LONG256);
+            testSetIntoUndefined0(12, () -> bindVariableService.setGeoHash(12, 1, ColumnType.getGeoHashTypeWithBits(5)), ColumnType.getGeoHashTypeWithBits(5));
+            testSetIntoUndefined0(13, () -> bindVariableService.setIPv4(13, 1), ColumnType.IPv4);
+            testSetIntoUndefined0(14, () -> bindVariableService.setIPv4(14, "127.0.0.1"), ColumnType.IPv4);
+            testSetIntoUndefined0(15, () -> bindVariableService.setUuid(15, 1, 2), ColumnType.UUID);
+            testSetIntoUndefined0(16, () -> bindVariableService.setVarchar(16, new Utf8String("a")), ColumnType.VARCHAR);
+            testSetIntoUndefined0(0, () -> bindVariableService.setLong(0, 1L), ColumnType.LONG);
+            testSetIntoUndefined0(1, () -> bindVariableService.setInt(1, 1), ColumnType.INT);
+            testSetIntoUndefined0(2, () -> bindVariableService.setShort(2, (short) 1), ColumnType.SHORT);
+            testSetIntoUndefined0(3, () -> bindVariableService.setByte(3, (byte) 1), ColumnType.BYTE);
+            testSetIntoUndefined0(4, () -> bindVariableService.setFloat(4, 1.0f), ColumnType.FLOAT);
+            testSetIntoUndefined0(5, () -> bindVariableService.setDouble(5, 1.0), ColumnType.DOUBLE);
+            testSetIntoUndefined0(6, () -> bindVariableService.setChar(6, 'a'), ColumnType.CHAR);
+            testSetIntoUndefined0(7, () -> bindVariableService.setBoolean(7, true), ColumnType.BOOLEAN);
+        });
+    }
+
+    @Test
     public void testSetLong256ToLong256() throws Exception {
         assertMemoryLeak(() -> {
             bindVariableService.define(0, ColumnType.LONG256, 0);
@@ -1025,5 +1050,25 @@ public class BindVariableServiceImplTest {
             final long d = bindVariableService.getFunction(0).getTimestamp(null);
             Assert.assertEquals(Numbers.LONG_NULL, d);
         });
+    }
+
+    private static void testSetIntoUndefined0(int index, RunnableWithSqlException test, int expectedType) throws SqlException {
+        Function funA = bindVariableService.getFunction(index);
+        Assert.assertNull(funA);
+        Function funB = bindVariableService.getOrDefineFunction(index);
+        funA = bindVariableService.getFunction(index);
+        Assert.assertSame(funB, funA);
+        Assert.assertTrue(funB.isUndefined());
+
+        test.run();
+
+        funA = bindVariableService.getFunction(index);
+        funB = bindVariableService.getOrDefineFunction(index);
+        Assert.assertSame(funB, funA);
+        Assert.assertEquals(expectedType, funB.getType());
+    }
+
+    private static interface RunnableWithSqlException {
+        void run() throws SqlException;
     }
 }
