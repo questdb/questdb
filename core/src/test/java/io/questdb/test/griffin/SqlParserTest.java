@@ -56,6 +56,83 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static io.questdb.test.tools.TestUtils.getSystemTablesCount;
 
 public class SqlParserTest extends AbstractSqlParserTest {
+    private static final String aaplDdl = "CREATE TABLE 'AAPL_orderbook' (\n" +
+            "  timestamp TIMESTAMP,\n" +
+            "  ts_recv VARCHAR,\n" +
+            "  ts_event VARCHAR,\n" +
+            "  rtype LONG,\n" +
+            "  symbol VARCHAR,\n" +
+            "  publisher_id LONG,\n" +
+            "  instrument_id LONG,\n" +
+            "  action VARCHAR,\n" +
+            "  side VARCHAR,\n" +
+            "  depth LONG,\n" +
+            "  price DOUBLE,\n" +
+            "  size LONG,\n" +
+            "  flags LONG,\n" +
+            "  ts_in_delta LONG,\n" +
+            "  sequence LONG,\n" +
+            "  bid_px_00 DOUBLE,\n" +
+            "  ask_px_00 DOUBLE,\n" +
+            "  bid_sz_00 LONG,\n" +
+            "  ask_sz_00 LONG,\n" +
+            "  bid_ct_00 LONG,\n" +
+            "  ask_ct_00 LONG,\n" +
+            "  bid_px_01 DOUBLE,\n" +
+            "  ask_px_01 DOUBLE,\n" +
+            "  bid_sz_01 LONG,\n" +
+            "  ask_sz_01 LONG,\n" +
+            "  bid_ct_01 LONG,\n" +
+            "  ask_ct_01 LONG,\n" +
+            "  bid_px_02 DOUBLE,\n" +
+            "  ask_px_02 DOUBLE,\n" +
+            "  bid_sz_02 LONG,\n" +
+            "  ask_sz_02 LONG,\n" +
+            "  bid_ct_02 LONG,\n" +
+            "  ask_ct_02 LONG,\n" +
+            "  bid_px_03 DOUBLE,\n" +
+            "  ask_px_03 DOUBLE,\n" +
+            "  bid_sz_03 LONG,\n" +
+            "  ask_sz_03 LONG,\n" +
+            "  bid_ct_03 LONG,\n" +
+            "  ask_ct_03 LONG,\n" +
+            "  bid_px_04 DOUBLE,\n" +
+            "  ask_px_04 DOUBLE,\n" +
+            "  bid_sz_04 LONG,\n" +
+            "  ask_sz_04 LONG,\n" +
+            "  bid_ct_04 LONG,\n" +
+            "  ask_ct_04 LONG,\n" +
+            "  bid_px_05 DOUBLE,\n" +
+            "  ask_px_05 DOUBLE,\n" +
+            "  bid_sz_05 LONG,\n" +
+            "  ask_sz_05 LONG,\n" +
+            "  bid_ct_05 LONG,\n" +
+            "  ask_ct_05 LONG,\n" +
+            "  bid_px_06 DOUBLE,\n" +
+            "  ask_px_06 DOUBLE,\n" +
+            "  bid_sz_06 LONG,\n" +
+            "  ask_sz_06 LONG,\n" +
+            "  bid_ct_06 LONG,\n" +
+            "  ask_ct_06 LONG,\n" +
+            "  bid_px_07 DOUBLE,\n" +
+            "  ask_px_07 DOUBLE,\n" +
+            "  bid_sz_07 LONG,\n" +
+            "  ask_sz_07 LONG,\n" +
+            "  bid_ct_07 LONG,\n" +
+            "  ask_ct_07 LONG,\n" +
+            "  bid_px_08 DOUBLE,\n" +
+            "  ask_px_08 DOUBLE,\n" +
+            "  bid_sz_08 LONG,\n" +
+            "  ask_sz_08 LONG,\n" +
+            "  bid_ct_08 LONG,\n" +
+            "  ask_ct_08 LONG,\n" +
+            "  bid_px_09 DOUBLE,\n" +
+            "  ask_px_09 DOUBLE,\n" +
+            "  bid_sz_09 LONG,\n" +
+            "  ask_sz_09 LONG,\n" +
+            "  bid_ct_09 LONG,\n" +
+            "  ask_ct_09 LONG\n" +
+            ") timestamp (timestamp) PARTITION BY HOUR WAL;";
     private static final List<String> frameTypes = Arrays.asList("rows  ", "groups", "range ");
     private static final String tradesDdl = "CREATE TABLE 'trades' (\n" +
             "  symbol SYMBOL,\n" +
@@ -3763,6 +3840,45 @@ public class SqlParserTest extends AbstractSqlParserTest {
                             "    @start := interval_start(@today),\n" +
                             "    @end := interval_end(@today)\n" +
                             "    SELECT @today = interval(@start, @end)");
+        });
+    }
+
+    @Test
+    public void testDeclareSelectWithWindowFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(aaplDdl);
+            drainWalQueue();
+            assertModel("select-window timestamp, bid_px_00, " +
+                            "AVG(bid_px_00) avg_5min over (order by timestamp range between '5' minute preceding and current row exclude no others)," +
+                            " COUNT() updates_100ms over (order by timestamp range between '100' millisecond preceding and current row exclude no others)," +
+                            " SUM(bid_sz_00) volume_2sec over (order by timestamp range between '2' second preceding and current row exclude no others)" +
+                            " from (select [timestamp, bid_px_00, bid_sz_00] from AAPL_orderbook timestamp (timestamp) where bid_px_00 > 0) limit 10",
+                    "DECLARE\n" +
+                            "    @ts := timestamp,\n" +
+                            "    @bid_price := bid_px_00,\n" +
+                            "    @bid_size := bid_sz_00,\n" +
+                            "    @avg_time_range := '5',\n" +
+                            "    @updates_period := '100',\n" +
+                            "    @volume_2sec := '2'\n" +
+                            "SELECT\n" +
+                            "    @ts,\n" +
+                            "    @bid_price,\n" +
+                            "    AVG(@bid_price) OVER (\n" +
+                            "        ORDER BY @ts\n" +
+                            "        RANGE BETWEEN @avg_time_range MINUTE PRECEDING AND CURRENT ROW\n" +
+                            "    ) AS avg_5min,\n" +
+                            "    COUNT(*) OVER (\n" +
+                            "        ORDER BY @ts\n" +
+                            "        RANGE BETWEEN @updates_period MILLISECOND PRECEDING AND CURRENT ROW\n" +
+                            "    ) AS updates_100ms,\n" +
+                            "    SUM(@bid_size) OVER (\n" +
+                            "        ORDER BY @ts\n" +
+                            "        RANGE BETWEEN @volume_2sec SECOND PRECEDING AND CURRENT ROW\n" +
+                            "    ) AS volume_2sec\n" +
+                            "FROM AAPL_orderbook\n" +
+                            "WHERE @bid_price > 0\n" +
+                            "LIMIT 10;"
+                    , ExecutionModel.QUERY);
         });
     }
 
