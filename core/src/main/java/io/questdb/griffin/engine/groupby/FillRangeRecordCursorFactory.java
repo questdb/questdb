@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -43,6 +44,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.BitSet;
+import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -70,6 +72,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
     private final int timestampIndex;
     private final Function toFunc;
     private final ObjList<Function> valueFuncs;
+    private final IntList valueFuncsPos;
 
     public FillRangeRecordCursorFactory(
             RecordMetadata metadata,
@@ -80,8 +83,9 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             char samplingIntervalUnit,
             TimestampSampler timestampSampler,
             ObjList<Function> fillValues,
+            IntList fillValuesPos,
             int timestampIndex
-    ) {
+    ) throws SqlException {
         super(metadata);
         this.base = base;
         this.fromFunc = fromFunc;
@@ -92,7 +96,45 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         this.samplingIntervalUnit = samplingIntervalUnit;
         this.timestampIndex = timestampIndex;
         this.valueFuncs = fillValues;
+        this.valueFuncsPos = fillValuesPos;
         this.metadata = metadata;
+
+        // only do this for value fill
+        if (!(valueFuncs.size() == 1 && valueFuncs.get(0).isNullConstant())) {
+            if (metadata.getColumnCount() - 1 > valueFuncs.size()) {
+                throw SqlException.$(fillValuesPos.getLast(), "not enough fill values");
+            }
+
+            /*
+            This is used to offset our lookup into the columns.
+            We don't expect the timestamp column to be included in the args list.
+            Therefore, once we pass the column, we need to offset back one entry to find
+            the corresponding fill value.
+             */
+            int passedTimestamp = 0;
+
+            // validate metadata
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                int columnType = metadata.getColumnType(i);
+                if (i == metadata.getTimestampIndex() ||
+                        (columnType == ColumnType.TIMESTAMP && metadata.getTimestampIndex() == -1)) {
+                    passedTimestamp = 1;
+                    continue;
+                }
+
+                // see earlier comment regarding `passedTimestamp`
+                int fillColumnType = valueFuncs.get(i - passedTimestamp).getType();
+
+                // check if the value can appropriately cast to the corresponding column type
+                // in the metadata
+                if (fillColumnType != columnType && !ColumnType.isBuiltInWideningCast(fillColumnType, columnType)) {
+                    throw SqlException.$(fillValuesPos.getQuick(i - passedTimestamp), "invalid fill value, cannot cast ")
+                            .put(ColumnType.nameOf(fillColumnType)).put(" to ")
+                            .put(ColumnType.nameOf(columnType));
+                }
+            }
+        }
+
         this.cursor = new FillRangeRecordCursor(timestampSampler, fromFunc, toFunc, fillValues, timestampIndex);
     }
 
@@ -111,7 +153,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                     valueFuncs.add(NullConstant.NULL);
                 }
             } else {
-                throw SqlException.$(-1, "not enough fill values");
+                throw SqlException.$(valueFuncsPos.getQuick(valueFuncsPos.getLast()), "not enough fill values");
             }
         }
 
