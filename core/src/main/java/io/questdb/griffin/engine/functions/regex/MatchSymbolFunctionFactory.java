@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.std.DelayInitialize;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -72,7 +73,7 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
                 if (matcher == null) {
                     return BooleanConstant.FALSE;
                 }
-                return new MatchStaticSymbolTableConstPatternFunction(func, matcher);
+                return new MatchStaticSymbolTableConstPatternFunction(func, matcher, pattern);
             } else if (pattern.isRuntimeConstant()) {
                 return new MatchStaticSymbolTableRuntimeConstPatternFunction(func, pattern, patternPosition);
             }
@@ -82,7 +83,7 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
                 if (matcher == null) {
                     return BooleanConstant.FALSE;
                 }
-                return new MatchStrFunctionFactory.MatchStrConstPatternFunction(func, matcher);
+                return new MatchStrFunctionFactory.MatchStrConstPatternFunction(func, matcher, pattern);
             } else if (pattern.isRuntimeConstant()) {
                 return new MatchStrFunctionFactory.MatchStrRuntimeConstPatternFunction(func, pattern, patternPosition);
             }
@@ -104,14 +105,16 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
     }
 
     private static class MatchStaticSymbolTableConstPatternFunction extends BooleanFunction implements UnaryFunction {
-        private final Matcher matcher;
+        private @DelayInitialize Matcher matcher;
         private final SymbolFunction symbolFun;
         private final IntList symbolKeys = new IntList();
         private boolean initialized;
+        private final Function pattern;
 
-        public MatchStaticSymbolTableConstPatternFunction(SymbolFunction symbolFun, Matcher matcher) {
+        public MatchStaticSymbolTableConstPatternFunction(SymbolFunction symbolFun, Matcher matcher, Function pattern) {
             this.symbolFun = symbolFun;
             this.matcher = matcher;
+            this.pattern = pattern;
         }
 
         @Override
@@ -132,6 +135,9 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
             initialized = false;
+            if (matcher == null) {
+                matcher = RegexUtils.createMatcher(pattern, 0);
+            }
         }
 
         @Override
@@ -151,7 +157,7 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         private final SymbolFunction symbolFun;
         private final IntList symbolKeys = new IntList();
         private boolean initialized;
-        private Matcher matcher;
+        private @DelayInitialize Matcher matcher;
 
         public MatchStaticSymbolTableRuntimeConstPatternFunction(SymbolFunction symbolFun, Function pattern, int patternPosition) {
             this.symbolFun = symbolFun;

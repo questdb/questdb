@@ -36,7 +36,10 @@ import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByIntHashSet;
+import io.questdb.griffin.engine.groupby.GroupByLong128HashSet;
+import io.questdb.std.DelayInitialize;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectUtf16Sink;
 
@@ -46,15 +49,21 @@ class StringDistinctAggSymbolGroupByFunction extends StrFunction implements Unar
     private static final int INITIAL_SINK_CAPACITY = 128;
     private final Function arg;
     private final char delimiter;
-    private final GroupByIntHashSet set;
+    private @DelayInitialize GroupByIntHashSet set;
     private final ObjList<DirectUtf16Sink> sinks = new ObjList<>();
     private int sinkIndex = 0;
     private int valueIndex;
+    private final int setInitialCapacity;
+    private final double setLoadFactor;
 
     public StringDistinctAggSymbolGroupByFunction(Function arg, char delimiter, int setInitialCapacity, double setLoadFactor) {
         this.arg = arg;
         this.delimiter = delimiter;
-        this.set = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, VALUE_IS_NULL);
+        this.setInitialCapacity = setInitialCapacity;
+        this.setLoadFactor = setLoadFactor;
+        if (setInitialCapacity != 0 || setLoadFactor != 0d) {
+            set = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, VALUE_IS_NULL);
+        }
     }
 
     @Override
@@ -155,6 +164,9 @@ class StringDistinctAggSymbolGroupByFunction extends StrFunction implements Unar
 
     @Override
     public void setAllocator(GroupByAllocator allocator) {
+        if (set == null) {
+            set = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, VALUE_IS_NULL);
+        }
         set.setAllocator(allocator);
     }
 

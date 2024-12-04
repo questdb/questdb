@@ -75,6 +75,11 @@ public interface UnaryFunction extends Function {
     }
 
     @Override
+    default boolean supportDeepClone() {
+        return getArg().supportDeepClone();
+    }
+
+    @Override
     default void toPlan(PlanSink sink) {
         if (isOperator()) {
             sink.val(getName()).val(getArg());

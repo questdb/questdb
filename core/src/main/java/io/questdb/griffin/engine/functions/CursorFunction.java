@@ -210,4 +210,9 @@ public class CursorFunction implements ScalarFunction {
     public void toPlan(PlanSink sink) {
         sink.val("cursor ").child(factory);
     }
+
+    @Override
+    public boolean supportDeepClone() {
+        return false;
+    }
 }

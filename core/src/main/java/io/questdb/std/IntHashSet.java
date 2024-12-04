@@ -31,7 +31,7 @@ import org.jetbrains.annotations.NotNull;
 import java.util.Arrays;
 
 
-public class IntHashSet extends AbstractIntHashSet implements Sinkable {
+public class IntHashSet extends AbstractIntHashSet implements Sinkable, DeepCloneable<IntHashSet> {
 
     private static final int MIN_INITIAL_CAPACITY = 16;
     private final IntList list;
@@ -93,6 +93,11 @@ public class IntHashSet extends AbstractIntHashSet implements Sinkable {
 
     public boolean contains(int key) {
         return keyIndex(key) < 0;
+    }
+
+    @Override
+    public IntHashSet deepClone() {
+        return new IntHashSet(this);
     }
 
     @Override

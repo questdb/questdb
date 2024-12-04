@@ -39,27 +39,39 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.columns.SymbolColumn;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByIntHashSet;
+import io.questdb.griffin.engine.groupby.GroupByLongHashSet;
+import io.questdb.std.DelayInitialize;
 import io.questdb.std.Numbers;
 
 import static io.questdb.cairo.sql.SymbolTable.VALUE_IS_NULL;
 
 public class CountDistinctSymbolGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
-    private final GroupByIntHashSet setA;
-    private final GroupByIntHashSet setB;
+    private @DelayInitialize GroupByIntHashSet setA;
+    private @DelayInitialize GroupByIntHashSet setB;
     private int knownSymbolCount = -1;
     private int valueIndex;
+    private final int setInitialCapacity;
+    private final double setLoadFactor;
 
     public CountDistinctSymbolGroupByFunction(Function arg, int setInitialCapacity, double setLoadFactor) {
         this.arg = arg;
-        this.setA = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, VALUE_IS_NULL);
-        this.setB = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, VALUE_IS_NULL);
+        this.setInitialCapacity = setInitialCapacity;
+        this.setLoadFactor = setLoadFactor;
+        if (setInitialCapacity != 0 || setLoadFactor != 0d) {
+            setA = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, VALUE_IS_NULL);
+            setB = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, VALUE_IS_NULL);
+        }
     }
 
     @Override
     public void clear() {
-        setA.resetPtr();
-        setB.resetPtr();
+        if (setA != null) {
+            setA.resetPtr();
+        }
+        if (setB != null) {
+            setB.resetPtr();
+        }
         knownSymbolCount = -1;
     }
 
@@ -189,6 +201,12 @@ public class CountDistinctSymbolGroupByFunction extends LongFunction implements 
 
     @Override
     public void setAllocator(GroupByAllocator allocator) {
+        if (setA == null) {
+            setA = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, VALUE_IS_NULL);
+        }
+        if (setB == null) {
+            setB = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, VALUE_IS_NULL);
+        }
         setA.setAllocator(allocator);
         setB.setAllocator(allocator);
     }

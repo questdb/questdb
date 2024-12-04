@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.regex;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -155,25 +156,15 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
     private static class ConstContainsSwarVarcharFunction extends BooleanFunction implements UnaryFunction {
         private static final int MAX_SIZE = Long.BYTES;
         private final Utf8Sequence pattern; // only used in toPlan
-        private final long patternMask;
-        private final int patternSize;
-        private final long patternWord;
-        private final byte searchFirstByte;
-        private final long searchWord;
+        private long patternMask;
+        private int patternSize;
+        private long patternWord;
+        private byte searchFirstByte;
+        private long searchWord;
         private final Function value;
 
         public ConstContainsSwarVarcharFunction(Function value, Utf8Sequence pattern) {
-            assert pattern.size() > 0 && pattern.size() <= MAX_SIZE;
             this.value = value;
-            this.patternSize = pattern.size();
-            this.patternMask = patternSize == MAX_SIZE ? -1L : (1L << 8 * pattern.size()) - 1L;
-            long patternWord = 0;
-            for (int i = 0, n = pattern.size(); i < n; i++) {
-                patternWord |= (long) (pattern.byteAt(i) & 0xff) << (8 * i);
-            }
-            this.patternWord = patternWord;
-            this.searchFirstByte = pattern.byteAt(0);
-            this.searchWord = SwarUtils.broadcast(pattern.byteAt(0));
             this.pattern = pattern;
         }
 
@@ -229,6 +220,21 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
             sink.val('%');
             sink.val(pattern);
             sink.val('%');
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            UnaryFunction.super.init(symbolTableSource, executionContext);
+            assert pattern.size() > 0 && pattern.size() <= MAX_SIZE;
+            this.patternSize = pattern.size();
+            this.patternMask = patternSize == MAX_SIZE ? -1L : (1L << 8 * pattern.size()) - 1L;
+            long patternWord = 0;
+            for (int i = 0, n = pattern.size(); i < n; i++) {
+                patternWord |= (long) (pattern.byteAt(i) & 0xff) << (8 * i);
+            }
+            this.patternWord = patternWord;
+            this.searchFirstByte = pattern.byteAt(0);
+            this.searchWord = SwarUtils.broadcast(pattern.byteAt(0));
         }
 
         private long tailWord(Utf8Sequence us, int i) {

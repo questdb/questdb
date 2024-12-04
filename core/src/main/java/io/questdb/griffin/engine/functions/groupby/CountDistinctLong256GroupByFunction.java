@@ -33,27 +33,39 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.griffin.engine.groupby.GroupByIntHashSet;
 import io.questdb.griffin.engine.groupby.GroupByLong256HashSet;
+import io.questdb.std.DelayInitialize;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
 
 public class CountDistinctLong256GroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
-    private final GroupByLong256HashSet setA;
-    private final GroupByLong256HashSet setB;
+    private @DelayInitialize GroupByLong256HashSet setA;
+    private @DelayInitialize GroupByLong256HashSet setB;
     private int valueIndex;
+    private final int setInitialCapacity;
+    private final double setLoadFactor;
 
     public CountDistinctLong256GroupByFunction(Function arg, int setInitialCapacity, double setLoadFactor) {
         this.arg = arg;
-        setA = new GroupByLong256HashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
-        setB = new GroupByLong256HashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
+        this.setInitialCapacity = setInitialCapacity;
+        this.setLoadFactor = setLoadFactor;
+        if (setInitialCapacity != 0 || setLoadFactor != 0d) {
+            setA = new GroupByLong256HashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
+            setB = new GroupByLong256HashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
+        }
     }
 
     @Override
     public void clear() {
-        setA.resetPtr();
-        setB.resetPtr();
+        if (setA != null) {
+            setA.resetPtr();
+        }
+        if (setB != null) {
+            setB.resetPtr();
+        }
     }
 
     @Override
@@ -167,6 +179,12 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
 
     @Override
     public void setAllocator(GroupByAllocator allocator) {
+        if (setA == null) {
+            setA = new GroupByLong256HashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
+        }
+        if (setB == null) {
+            setB = new GroupByLong256HashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
+        }
         setA.setAllocator(allocator);
         setB.setAllocator(allocator);
     }

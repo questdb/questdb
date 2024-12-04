@@ -95,6 +95,11 @@ public interface TernaryFunction extends Function {
     }
 
     @Override
+    default boolean supportDeepClone() {
+        return getLeft().supportDeepClone() && getCenter().supportDeepClone() && getRight().supportDeepClone();
+    }
+
+    @Override
     default void toPlan(PlanSink sink) {
         sink.val(getName()).val('(').val(getLeft()).val(',').val(getCenter()).val(',').val(getRight()).val(')');
     }

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.std.DeepCloneable;
 import io.questdb.std.Hash;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
@@ -43,7 +44,7 @@ import io.questdb.std.Vect;
  * +------------------------+--------------------+--------------------------+---------+---------------+
  * </pre>
  */
-public class GroupByLong256HashSet {
+public class GroupByLong256HashSet implements DeepCloneable<GroupByLong256HashSet> {
     private static final long HEADER_SIZE = 4 * Integer.BYTES;
     private static final int MIN_INITIAL_CAPACITY = 2;
     private static final long SIZE_LIMIT_OFFSET = 2 * Integer.BYTES;
@@ -94,6 +95,11 @@ public class GroupByLong256HashSet {
 
     public int capacity() {
         return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr) : 0;
+    }
+
+    @Override
+    public GroupByLong256HashSet deepClone() {
+        return new GroupByLong256HashSet(this);
     }
 
     public long keyAddrAt(long index) {
@@ -165,6 +171,12 @@ public class GroupByLong256HashSet {
 
     public int sizeLimit() {
         return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr + SIZE_LIMIT_OFFSET) : 0;
+    }
+
+    private GroupByLong256HashSet(GroupByLong256HashSet other) {
+        this.initialCapacity = other.initialCapacity;
+        this.loadFactor = other.loadFactor;
+        this.noKeyValue = other.noKeyValue;
     }
 
     private long probe(long k0, long k1, long k2, long k3, long index) {

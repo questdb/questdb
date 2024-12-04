@@ -35,6 +35,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.std.DelayInitialize;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
@@ -63,7 +64,7 @@ public class MatchStrFunctionFactory implements FunctionFactory {
             if (matcher == null) {
                 return BooleanConstant.FALSE;
             }
-            return new MatchStrConstPatternFunction(value, matcher);
+            return new MatchStrConstPatternFunction(value, matcher, pattern);
         } else if (pattern.isRuntimeConstant()) {
             return new MatchStrRuntimeConstPatternFunction(value, pattern, patternPosition);
         }
@@ -71,12 +72,22 @@ public class MatchStrFunctionFactory implements FunctionFactory {
     }
 
     static class MatchStrConstPatternFunction extends BooleanFunction implements UnaryFunction {
-        private final Matcher matcher;
+        private @DelayInitialize Matcher matcher;
         private final Function value;
+        private final Function pattern;
 
-        public MatchStrConstPatternFunction(Function value, @NotNull Matcher matcher) {
+        public MatchStrConstPatternFunction(Function value, Matcher matcher, Function pattern) {
             this.value = value;
             this.matcher = matcher;
+            this.pattern = pattern;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            UnaryFunction.super.init(symbolTableSource, executionContext);
+            if (matcher == null) {
+                matcher = RegexUtils.createMatcher(pattern, 0);
+            }
         }
 
         @Override

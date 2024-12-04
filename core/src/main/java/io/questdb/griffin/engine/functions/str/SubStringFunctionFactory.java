@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -75,7 +76,7 @@ public class SubStringFunctionFactory implements FunctionFactory {
     }
 
     private static class SubStringFunc extends StrFunction implements TernaryFunction {
-        private final boolean isSimplifiable;
+        private boolean isSimplifiable;
         private final Function lenFunc;
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
@@ -86,7 +87,11 @@ public class SubStringFunctionFactory implements FunctionFactory {
             this.strFunc = strFunc;
             this.startFunc = startFunc;
             this.lenFunc = lenFunc;
+        }
 
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            TernaryFunction.super.init(symbolTableSource, executionContext);
             this.isSimplifiable = startFunc.isConstant() && lenFunc.isConstant()
                     && startFunc.getInt(null) + lenFunc.getInt(null) < 1;
         }

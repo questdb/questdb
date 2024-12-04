@@ -32,7 +32,7 @@ import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 
-public class DoubleList implements Mutable, Sinkable {
+public class DoubleList implements Mutable, Sinkable, DeepCloneable<DoubleList> {
     public static final double DEFAULT_NO_ENTRY_VALUE = -1L;
     private static final int DEFAULT_ARRAY_SIZE = 16;
     private final double noEntryValue;
@@ -123,6 +123,11 @@ public class DoubleList implements Mutable, Sinkable {
             System.arraycopy(data, 0, buf, 0, l);
             this.data = buf;
         }
+    }
+
+    @Override
+    public DoubleList deepClone() {
+        return new DoubleList(this);
     }
 
     @Override

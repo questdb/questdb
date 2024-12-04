@@ -40,8 +40,10 @@ public class TrimStrConstFunction extends StrFunction implements UnaryFunction {
 
     public TrimStrConstFunction(Function arg, TrimType type) {
         this.arg = arg;
-        trim(type, getArg().getStrA(null), sinkA);
-        trim(type, getArg().getStrA(null), sinkB);
+        if (type != null) {
+            trim(type, getArg().getStrA(null), sinkA);
+            trim(type, getArg().getStrA(null), sinkB);
+        }
     }
 
     @Override

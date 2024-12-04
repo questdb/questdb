@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.hyperloglog.HyperLogLog;
+import io.questdb.std.DelayInitialize;
 import io.questdb.std.Hash;
 import io.questdb.std.Numbers;
 
@@ -41,16 +42,20 @@ public class ApproxCountDistinctLongGroupByFunction extends LongFunction impleme
     private static final long NULL_VALUE = -1;
 
     private final Function arg;
-    private final HyperLogLog hllA;
-    private final HyperLogLog hllB;
+    private @DelayInitialize HyperLogLog hllA;
+    private @DelayInitialize HyperLogLog hllB;
     private int hllPtrIndex;
     private int overwrittenFlagIndex;
     private int valueIndex;
+    private final int precision;
 
     public ApproxCountDistinctLongGroupByFunction(Function arg, int precision) {
         this.arg = arg;
-        this.hllA = new HyperLogLog(precision);
-        this.hllB = new HyperLogLog(precision);
+        this.precision = precision;
+        if (precision != 0) {
+            this.hllA = new HyperLogLog(precision);
+            this.hllB = new HyperLogLog(precision);
+        }
     }
 
     public ApproxCountDistinctLongGroupByFunction(Function arg) {
@@ -59,8 +64,12 @@ public class ApproxCountDistinctLongGroupByFunction extends LongFunction impleme
 
     @Override
     public void clear() {
-        hllA.resetPtr();
-        hllB.resetPtr();
+        if (hllA != null) {
+            hllA.resetPtr();
+        }
+        if (hllB != null) {
+            hllB.resetPtr();
+        }
     }
 
     @Override
@@ -198,6 +207,12 @@ public class ApproxCountDistinctLongGroupByFunction extends LongFunction impleme
 
     @Override
     public void setAllocator(GroupByAllocator allocator) {
+        if (hllA == null) {
+            hllA = new HyperLogLog(precision);
+        }
+        if (hllB == null) {
+            hllB = new HyperLogLog(precision);
+        }
         hllA.setAllocator(allocator);
         hllB.setAllocator(allocator);
     }

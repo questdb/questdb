@@ -34,25 +34,35 @@ import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByIntHashSet;
+import io.questdb.std.DelayInitialize;
 import io.questdb.std.Numbers;
 
 public class CountDistinctIPv4GroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
-    private final GroupByIntHashSet setA;
-    private final GroupByIntHashSet setB;
+    private @DelayInitialize GroupByIntHashSet setA;
+    private @DelayInitialize GroupByIntHashSet setB;
     private int valueIndex;
+    private final int setInitialCapacity;
+    private final double setLoadFactor;
 
     public CountDistinctIPv4GroupByFunction(Function arg, int setInitialCapacity, double setLoadFactor) {
         this.arg = arg;
-        // Numbers.IPv4_NULL is zero which is nice for faster zeroing on rehash.
-        setA = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, Numbers.IPv4_NULL);
-        setB = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, Numbers.IPv4_NULL);
+        this.setInitialCapacity = setInitialCapacity;
+        this.setLoadFactor = setLoadFactor;
+        if (setInitialCapacity != 0 || setLoadFactor != 0d) {
+            setA = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, Numbers.IPv4_NULL);
+            setB = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, Numbers.IPv4_NULL);
+        }
     }
 
     @Override
     public void clear() {
-        setA.resetPtr();
-        setB.resetPtr();
+        if (setA != null) {
+            setA.resetPtr();
+        }
+        if (setB != null) {
+            setB.resetPtr();
+        }
     }
 
     @Override
@@ -157,6 +167,12 @@ public class CountDistinctIPv4GroupByFunction extends LongFunction implements Un
 
     @Override
     public void setAllocator(GroupByAllocator allocator) {
+        if (setA == null) {
+            setA = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, Numbers.IPv4_NULL);
+        }
+        if (setB == null) {
+            setB = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, Numbers.IPv4_NULL);
+        }
         setA.setAllocator(allocator);
         setB.setAllocator(allocator);
     }
