@@ -34,7 +34,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table foo ( ts timestamp, s symbol, i int ) timestamp(ts) partition by day wal dedup upsert keys(ts, s, i)");
             assertSql("ddl\n" +
-                            "CREATE TABLE foo ( \n" +
+                            "CREATE TABLE 'foo' ( \n" +
                             "\tts TIMESTAMP,\n" +
                             "\ts SYMBOL CAPACITY 128 CACHE,\n" +
                             "\ti INT\n" +
@@ -50,7 +50,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table foo ( ts timestamp, s symbol ) timestamp(ts)");
             assertSql("ddl\n" +
-                            "CREATE TABLE foo ( \n" +
+                            "CREATE TABLE 'foo' ( \n" +
                             "\tts TIMESTAMP,\n" +
                             "\ts SYMBOL CAPACITY 128 CACHE\n" +
                             ") timestamp(ts) BYPASS WAL\n" +
@@ -91,7 +91,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                     " from long_sequence(10)" +
                     ") timestamp (timestamp);");
             assertSql("ddl\n" +
-                            "CREATE TABLE foo ( \n" +
+                            "CREATE TABLE 'foo' ( \n" +
                             "\ti INT,\n" +
                             "\tsym SYMBOL CAPACITY 128 CACHE,\n" +
                             "\tamt DOUBLE,\n" +
@@ -119,7 +119,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table foo (ts timestamp)");
             assertSql("ddl\n" +
-                            "CREATE TABLE foo ( \n" +
+                            "CREATE TABLE 'foo' ( \n" +
                             "\tts TIMESTAMP\n" +
                             ")\n" +
                             "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n",
@@ -132,7 +132,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table foo (ts timestamp, s symbol capacity 256)");
             assertSql("ddl\n" +
-                            "CREATE TABLE foo ( \n" +
+                            "CREATE TABLE 'foo' ( \n" +
                             "\tts TIMESTAMP,\n" +
                             "\ts SYMBOL CAPACITY 256 CACHE\n" +
                             ")\n" +
@@ -146,7 +146,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table foo ( ts timestamp, s symbol ) timestamp(ts) partition by year wal;");
             assertSql("ddl\n" +
-                            "CREATE TABLE foo ( \n" +
+                            "CREATE TABLE 'foo' ( \n" +
                             "\tts TIMESTAMP,\n" +
                             "\ts SYMBOL CAPACITY 128 CACHE\n" +
                             ") timestamp(ts) PARTITION BY YEAR WAL\n" +
@@ -160,7 +160,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table foo ( ts timestamp, s symbol ) timestamp(ts) partition by year bypass wal;");
             assertSql("ddl\n" +
-                            "CREATE TABLE foo ( \n" +
+                            "CREATE TABLE 'foo' ( \n" +
                             "\tts TIMESTAMP,\n" +
                             "\ts SYMBOL CAPACITY 128 CACHE\n" +
                             ") timestamp(ts) PARTITION BY YEAR BYPASS WAL\n" +
@@ -174,7 +174,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table foo (ts timestamp, s symbol capacity 512 nocache)");
             assertSql("ddl\n" +
-                            "CREATE TABLE foo ( \n" +
+                            "CREATE TABLE 'foo' ( \n" +
                             "\tts TIMESTAMP,\n" +
                             "\ts SYMBOL CAPACITY 512 NOCACHE\n" +
                             ")\n" +
@@ -188,7 +188,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table foo (ts timestamp, s symbol capacity 512 nocache index capacity 1024)");
             assertSql("ddl\n" +
-                            "CREATE TABLE foo ( \n" +
+                            "CREATE TABLE 'foo' ( \n" +
                             "\tts TIMESTAMP,\n" +
                             "\ts SYMBOL CAPACITY 512 NOCACHE INDEX CAPACITY 1024\n" +
                             ")\n" +
@@ -208,7 +208,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
             execute("create table foo ( ts timestamp, s symbol ) " +
                     "with maxUncommittedRows=1234");
             assertSql("ddl\n" +
-                            "CREATE TABLE foo ( \n" +
+                            "CREATE TABLE 'foo' ( \n" +
                             "\tts TIMESTAMP,\n" +
                             "\ts SYMBOL CAPACITY 128 CACHE\n" +
                             ")\n" +
@@ -227,7 +227,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
             execute("create table foo ( ts timestamp, s symbol ) " +
                     "with maxUncommittedRows=1234, o3MaxLag=1s");
             assertSql("ddl\n" +
-                            "CREATE TABLE foo ( \n" +
+                            "CREATE TABLE 'foo' ( \n" +
                             "\tts TIMESTAMP,\n" +
                             "\ts SYMBOL CAPACITY 128 CACHE\n" +
                             ")\n" +
@@ -242,7 +242,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
             execute("create table foo ( ts timestamp, s symbol ) " +
                     "with o3MaxLag=1s");
             assertSql("ddl\n" +
-                            "CREATE TABLE foo ( \n" +
+                            "CREATE TABLE 'foo' ( \n" +
                             "\tts TIMESTAMP,\n" +
                             "\ts SYMBOL CAPACITY 128 CACHE\n" +
                             ")\n" +

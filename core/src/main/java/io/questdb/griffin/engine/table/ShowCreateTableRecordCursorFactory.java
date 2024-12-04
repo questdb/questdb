@@ -51,8 +51,8 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
     public static final int N_DDL_COL = 0;
     private static final RecordMetadata METADATA;
     private final ShowCreateTableCursor cursor = new ShowCreateTableCursor();
-    private final TableToken tableToken;
-    private final int tokenPosition;
+    protected final TableToken tableToken;
+    protected final int tokenPosition;
 
     public ShowCreateTableRecordCursorFactory(TableToken tableToken, int tokenPosition) {
         super(METADATA);
@@ -78,11 +78,11 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
 
     public static class ShowCreateTableCursor implements NoRandomAccessRecordCursor {
         private final ShowCreateTableRecord record = new ShowCreateTableRecord();
-        private final Utf8StringSink sink = new Utf8StringSink();
+        protected final Utf8StringSink sink = new Utf8StringSink();
 
-        private SqlExecutionContext executionContext;
+        protected SqlExecutionContext executionContext;
         private boolean hasRun;
-        private CairoTable table;
+        protected CairoTable table;
         private TableToken tableToken;
 
         @Override
@@ -212,9 +212,9 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
         }
 
         protected void putCreateTable() {
-            sink.putAscii("CREATE TABLE ")
+            sink.putAscii("CREATE TABLE '")
                     .put(tableToken.getTableName())
-                    .putAscii(" ( ")
+                    .putAscii("' ( ")
                     .putAscii('\n');
         }
 

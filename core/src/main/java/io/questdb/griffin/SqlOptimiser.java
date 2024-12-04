@@ -3250,11 +3250,7 @@ public class SqlOptimiser implements Mutable {
                     tableFactory = new ShowServerVersionNumCursorFactory();
                     break;
                 case QueryModel.SHOW_CREATE_TABLE:
-                    tableToken = executionContext.getTableTokenIfExists(model.getTableNameExpr().token);
-                    if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
-                        throw SqlException.tableDoesNotExist(model.getTableNameExpr().position, model.getTableNameExpr().token);
-                    }
-                    tableFactory = new ShowCreateTableRecordCursorFactory(tableToken, model.getTableNameExpr().position);
+                    tableFactory = sqlParserCallback.generateShowCreateTableFactory(model, executionContext, path);
                     break;
                 default:
                     tableFactory = sqlParserCallback.generateShowSqlFactory(model);
