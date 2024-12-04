@@ -154,7 +154,7 @@ import org.junit.Test;
 import java.util.Arrays;
 
 public class ExplainPlanTest extends AbstractCairoTest {
-    protected final static Log LOG = LogFactory.getLog(ExplainPlanTest.class);
+    private static final Log LOG = LogFactory.getLog(ExplainPlanTest.class);
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -10124,6 +10124,60 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "                Frame forward scan on: b\n"
             );
         });
+    }
+
+    @Test
+    public void testTimestampEqSubQueryFilter() throws Exception {
+        assertPlan(
+                "create table x (l long, ts timestamp) timestamp(ts) partition by day",
+                "select * from x where ts = (select min(ts) from x)",
+                "Async Filter workers: 1\n" +
+                        "  filter: ts=cursor \n" +
+                        "    Limit lo: 1\n" +
+                        "        SelectedRecord\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: x\n" +
+                        "    PageFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: x\n"
+        );
+    }
+
+    @Test
+    public void testTimestampGtSubQueryFilter() throws Exception {
+        assertPlan(
+                "create table x (l long, ts timestamp) timestamp(ts) partition by day",
+                "select * from x where ts > (select min(ts) from x)",
+                "Async Filter workers: 1\n" +
+                        "  filter: ts>cursor \n" +
+                        "    Limit lo: 1\n" +
+                        "        SelectedRecord\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: x\n" +
+                        "    PageFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: x\n"
+        );
+    }
+
+    @Test
+    public void testTimestampLtSubQueryFilter() throws Exception {
+        assertPlan(
+                "create table x (l long, ts timestamp) timestamp(ts) partition by day",
+                "select * from x where ts < (select max(ts) from x)",
+                "Async Filter workers: 1\n" +
+                        "  filter: ts<cursor \n" +
+                        "    Limit lo: 1\n" +
+                        "        SelectedRecord\n" +
+                        "            PageFrame\n" +
+                        "                Row backward scan\n" +
+                        "                Frame backward scan on: x\n" +
+                        "    PageFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: x\n"
+        );
     }
 
     @Test
