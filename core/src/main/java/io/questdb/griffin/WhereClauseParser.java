@@ -29,13 +29,24 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.AbstractGeoHashFunction;
 import io.questdb.griffin.model.AliasTranslator;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.IntrinsicModel;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.FlyweightCharSequence;
 
@@ -430,8 +441,13 @@ public final class WhereClauseParser implements Mutable {
                     return true;
                 }
                 final Function func = functionParser.parseFunction(b, m, executionContext);
-                checkFunctionCanBeTimestamp(m, executionContext, func, b.position);
-                return analyzeTimestampEqualsFunction(model, node, func, b.position);
+                try {
+                    checkFunctionCanBeTimestamp(m, executionContext, func, b.position);
+                    return analyzeTimestampEqualsFunction(model, node, func, b.position);
+                } catch (Throwable th) {
+                    Misc.free(func);
+                    throw th;
+                }
             } else {
                 CharSequence columnName = translator.translateAlias(a.token);
                 int index = m.getColumnIndexQuiet(columnName);
@@ -531,6 +547,18 @@ public final class WhereClauseParser implements Mutable {
                 }
             }
         }
+        // special case for ts = (<subquery>) and similar cases
+        if (a.type == ExpressionNode.LITERAL && isTimestamp(a) && b.type == ExpressionNode.QUERY) {
+            final Function func = functionParser.parseFunction(b, m, executionContext);
+            try {
+                if (checkCursorFunctionReturnsSingleTimestamp(func, b.position)) {
+                    return analyzeTimestampEqualsFunction(model, node, func, b.position);
+                }
+            } catch (Throwable th) {
+                Misc.free(func);
+                throw th;
+            }
+        }
         return false;
     }
 
@@ -625,46 +653,49 @@ public final class WhereClauseParser implements Mutable {
             } else if (isFunc(inArg)) {
                 // Single value ts in $1 - treat string literal as an interval, not single Timestamp point
                 final Function func = functionParser.parseFunction(inArg, metadata, executionContext);
-                if (checkFunctionCanBeStrInterval(executionContext, func)) {
-                    if (func.isConstant()) {
-                        CharSequence funcVal = func.getStrA(null);
-                        if (!isNegated) {
-                            model.intersectIntervals(funcVal, 0, funcVal.length(), inArg.position);
+                try {
+                    if (checkFunctionCanBeStrInterval(executionContext, func)) {
+                        if (func.isConstant()) {
+                            CharSequence funcVal = func.getStrA(null);
+                            if (!isNegated) {
+                                model.intersectIntervals(funcVal, 0, funcVal.length(), inArg.position);
+                            } else {
+                                model.subtractIntervals(funcVal, 0, funcVal.length(), inArg.position);
+                            }
+                            Misc.free(func);
+                        } else if (func.isRuntimeConstant()) {
+                            if (!isNegated) {
+                                model.intersectRuntimeIntervals(func);
+                            } else {
+                                model.subtractRuntimeIntervals(func);
+                            }
                         } else {
-                            model.subtractIntervals(funcVal, 0, funcVal.length(), inArg.position);
-                        }
-                        Misc.free(func);
-                    } else if (func.isRuntimeConstant()) {
-                        if (!isNegated) {
-                            model.intersectRuntimeIntervals(func);
-                        } else {
-                            model.subtractRuntimeIntervals(func);
-                        }
-                    } else {
-                        Misc.free(func);
-                        return false;
-                    }
-
-                    in.intrinsicValue = IntrinsicModel.TRUE;
-                    return true;
-                } else if (checkFunctionCanBeInterval(executionContext, func)) {
-                    if (func.isRuntimeConstant()) {
-                        if (!isNegated) {
-                            model.intersectRuntimeIntervals(func);
-                        } else {
-                            model.subtractRuntimeIntervals(func);
+                            Misc.free(func);
+                            return false;
                         }
                         in.intrinsicValue = IntrinsicModel.TRUE;
                         return true;
+                    } else if (checkFunctionCanBeInterval(func)) {
+                        if (func.isRuntimeConstant()) {
+                            if (!isNegated) {
+                                model.intersectRuntimeIntervals(func);
+                            } else {
+                                model.subtractRuntimeIntervals(func);
+                            }
+                            in.intrinsicValue = IntrinsicModel.TRUE;
+                            return true;
+                        }
+                        Misc.free(func);
+                        return false;
+                    } else {
+                        checkFunctionCanBeTimestamp(metadata, executionContext, func, inArg.position);
+                        // This is IN (TIMESTAMP) one value which is timestamp and not a STRING
+                        // This is same as equals
+                        return analyzeTimestampEqualsFunction(model, in, func, inArg.position);
                     }
-
+                } catch (Throwable th) {
                     Misc.free(func);
-                    return false;
-                } else {
-                    checkFunctionCanBeTimestamp(metadata, executionContext, func, inArg.position);
-                    // This is IN (TIMESTAMP) one value which is timestamp and not a STRING
-                    // This is same as equals
-                    return analyzeTimestampEqualsFunction(model, in, func, inArg.position);
+                    throw th;
                 }
             }
         } else {
@@ -681,14 +712,15 @@ public final class WhereClauseParser implements Mutable {
                         if (inListItem.type != ExpressionNode.FUNCTION) {
                             return false;
                         }
-                        Function f = functionParser.parseFunction(inListItem, metadata, executionContext);
-                        if (!f.isConstant() || !checkFunctionCanBeStrInterval(executionContext, f)) {
+                        Function func = functionParser.parseFunction(inListItem, metadata, executionContext);
+                        if (!func.isConstant() || !checkFunctionCanBeStrInterval(executionContext, func)) {
+                            Misc.free(func);
                             return false;
                         }
                         if (timestampFunc != null) {
                             moreThanOneTimestampFunc = true;
                         } else {
-                            timestampFunc = f;
+                            timestampFunc = func;
                         }
                     }
                 }
@@ -792,8 +824,8 @@ public final class WhereClauseParser implements Mutable {
         return false;
     }
 
-    //checks and merges given in list with temp keys
-    //NOTE: sets containing bind variables can't be merged
+    // checks and merges given in list with temp keys
+    // NOTE: sets containing bind variables can't be merged
     private boolean analyzeListOfValues(
             IntrinsicModel model,
             CharSequence columnName,
@@ -1006,9 +1038,14 @@ public final class WhereClauseParser implements Mutable {
                     node.intrinsicValue = IntrinsicModel.TRUE;
                     return true;
                 }
-                Function function = functionParser.parseFunction(b, m, executionContext);
-                checkFunctionCanBeTimestamp(m, executionContext, function, b.position);
-                return analyzeTimestampNotEqualsFunction(model, node, function, b.position);
+                Function func = functionParser.parseFunction(b, m, executionContext);
+                try {
+                    checkFunctionCanBeTimestamp(m, executionContext, func, b.position);
+                    return analyzeTimestampNotEqualsFunction(model, node, func, b.position);
+                } catch (Throwable th) {
+                    Misc.free(func);
+                    throw th;
+                }
             } else {
                 CharSequence columnName = translator.translateAlias(a.token);
                 int index = m.getColumnIndexQuiet(columnName);
@@ -1294,6 +1331,10 @@ public final class WhereClauseParser implements Mutable {
             model.intersectRuntimeTimestamp(func);
             node.intrinsicValue = IntrinsicModel.TRUE;
             return true;
+        } else if (func.getType() == ColumnType.CURSOR) {
+            model.intersectRuntimeTimestamp(func);
+            node.intrinsicValue = IntrinsicModel.TRUE;
+            return true;
         }
         Misc.free(func);
         return false;
@@ -1323,26 +1364,42 @@ public final class WhereClauseParser implements Mutable {
             node.intrinsicValue = IntrinsicModel.TRUE;
             return true;
         } else if (isFunc(compareWithNode)) {
-            Function function = functionParser.parseFunction(compareWithNode, metadata, executionContext);
-            checkFunctionCanBeTimestamp(metadata, executionContext, function, compareWithNode.position);
-
-            if (function.isConstant()) {
-                lo = getTimestampFromConstFunction(function, compareWithNode.position, false);
-                if (lo == Numbers.LONG_NULL) {
-                    // make it empty set
-                    model.intersectEmpty();
-                } else {
-                    model.intersectIntervals(lo + adjustComparison(equalsTo, true), Long.MAX_VALUE);
+            final Function func = functionParser.parseFunction(compareWithNode, metadata, executionContext);
+            try {
+                checkFunctionCanBeTimestamp(metadata, executionContext, func, compareWithNode.position);
+                if (func.isConstant()) {
+                    lo = getTimestampFromConstFunction(func, compareWithNode.position, false);
+                    if (lo == Numbers.LONG_NULL) {
+                        // make it empty set
+                        model.intersectEmpty();
+                    } else {
+                        model.intersectIntervals(lo + adjustComparison(equalsTo, true), Long.MAX_VALUE);
+                    }
+                    node.intrinsicValue = IntrinsicModel.TRUE;
+                    return true;
+                } else if (func.isRuntimeConstant()) {
+                    model.intersectIntervals(func, Long.MAX_VALUE, adjustComparison(equalsTo, true));
+                    node.intrinsicValue = IntrinsicModel.TRUE;
+                    return true;
                 }
-                node.intrinsicValue = IntrinsicModel.TRUE;
-                return true;
-            } else if (function.isRuntimeConstant()) {
-                model.intersectIntervals(function, Long.MAX_VALUE, adjustComparison(equalsTo, true));
-                node.intrinsicValue = IntrinsicModel.TRUE;
-                return true;
+            } catch (Throwable th) {
+                Misc.free(func);
+                throw th;
+            }
+        } else if (compareWithNode.type == ExpressionNode.QUERY) {
+            // special case for ts = (<subquery>) and similar cases
+            final Function func = functionParser.parseFunction(compareWithNode, metadata, executionContext);
+            try {
+                if (checkCursorFunctionReturnsSingleTimestamp(func, compareWithNode.position)) {
+                    model.intersectIntervals(func, Long.MAX_VALUE, adjustComparison(equalsTo, true));
+                    node.intrinsicValue = IntrinsicModel.TRUE;
+                    return true;
+                }
+            } catch (Throwable th) {
+                Misc.free(func);
+                throw th;
             }
         }
-
         return false;
     }
 
@@ -1369,25 +1426,41 @@ public final class WhereClauseParser implements Mutable {
             }
             return true;
         } else if (isFunc(compareWithNode)) {
-            Function function = functionParser.parseFunction(compareWithNode, metadata, executionContext);
-            checkFunctionCanBeTimestamp(metadata, executionContext, function, compareWithNode.position);
-
-            if (function.isConstant()) {
-                long hi = getTimestampFromConstFunction(function, compareWithNode.position, false);
-                if (hi == Numbers.LONG_NULL) {
-                    model.intersectEmpty();
-                } else {
-                    model.intersectIntervals(Long.MIN_VALUE, hi + adjustComparison(equalsTo, false));
+            Function func = functionParser.parseFunction(compareWithNode, metadata, executionContext);
+            try {
+                checkFunctionCanBeTimestamp(metadata, executionContext, func, compareWithNode.position);
+                if (func.isConstant()) {
+                    long hi = getTimestampFromConstFunction(func, compareWithNode.position, false);
+                    if (hi == Numbers.LONG_NULL) {
+                        model.intersectEmpty();
+                    } else {
+                        model.intersectIntervals(Long.MIN_VALUE, hi + adjustComparison(equalsTo, false));
+                    }
+                    node.intrinsicValue = IntrinsicModel.TRUE;
+                    return true;
+                } else if (func.isRuntimeConstant()) {
+                    model.intersectIntervals(Long.MIN_VALUE, func, adjustComparison(equalsTo, false));
+                    node.intrinsicValue = IntrinsicModel.TRUE;
+                    return true;
                 }
-                node.intrinsicValue = IntrinsicModel.TRUE;
-                return true;
-            } else if (function.isRuntimeConstant()) {
-                model.intersectIntervals(Long.MIN_VALUE, function, adjustComparison(equalsTo, false));
-                node.intrinsicValue = IntrinsicModel.TRUE;
-                return true;
+            } catch (Throwable th) {
+                Misc.free(func);
+                throw th;
+            }
+        } else if (compareWithNode.type == ExpressionNode.QUERY) {
+            // special case for ts = (<subquery>) and similar cases
+            final Function func = functionParser.parseFunction(compareWithNode, metadata, executionContext);
+            try {
+                if (checkCursorFunctionReturnsSingleTimestamp(func, compareWithNode.position)) {
+                    model.intersectIntervals(Long.MIN_VALUE, func, adjustComparison(equalsTo, false));
+                    node.intrinsicValue = IntrinsicModel.TRUE;
+                    return true;
+                }
+            } catch (Throwable th) {
+                Misc.free(func);
+                throw th;
             }
         }
-
         return false;
     }
 
@@ -1416,9 +1489,7 @@ public final class WhereClauseParser implements Mutable {
                                     SqlExecutionContext executionContext,
                                     IntrinsicModel model
     ) throws SqlException {
-        if (model.keyColumn != null &&
-                tempKeyValues.size() > 0 &&
-                keyExclNodes.size() > 0) {
+        if (model.keyColumn != null && tempKeyValues.size() > 0 && keyExclNodes.size() > 0) {
             if (allKeyValuesAreKnown && allKeyExcludedValuesAreKnown) {
                 OUT:
                 for (int i = 0, n = keyExclNodes.size(); i < n; i++) {
@@ -1466,10 +1537,10 @@ public final class WhereClauseParser implements Mutable {
                 }
             }
 
-            //sql code generator assumes only one set has items so clear NOT IN set
+            // sql code generator assumes only one set has items so clear NOT IN set
             if (tempKeyValues.size() > 0 && tempKeyExcludedValues.size() > 0) {
-                //if both sets are constant values it's fine but
-                //if any set contains bind variables then we've to push not in set to filter
+                // if both sets are constant values it's fine but
+                // if any set contains bind variables then we've to push not in set to filter
                 if (!allKeyValuesAreKnown || !allKeyExcludedValuesAreKnown) {
                     resetExcludedNodes();
                 }
@@ -1482,7 +1553,16 @@ public final class WhereClauseParser implements Mutable {
         keyExclNodes.clear();
     }
 
-    private boolean checkFunctionCanBeInterval(SqlExecutionContext executionContext, Function function) {
+    private boolean checkCursorFunctionReturnsSingleTimestamp(Function function, int functionPosition) {
+        final RecordCursorFactory factory = function.getRecordCursorFactory();
+        if (factory != null) {
+            final RecordMetadata metadata = factory.getMetadata();
+            return metadata.getColumnCount() == 1 && metadata.getColumnType(0) == ColumnType.TIMESTAMP;
+        }
+        return false;
+    }
+
+    private boolean checkFunctionCanBeInterval(Function function) {
         return ColumnType.isInterval(function.getType());
     }
 
@@ -1530,7 +1610,7 @@ public final class WhereClauseParser implements Mutable {
         allKeyValuesAreKnown = true;
     }
 
-    //removes nodes extracted into special symbol/key or timestamp filters from given node
+    // removes nodes extracted into special symbol/key or timestamp filters from given node
     private ExpressionNode collapseIntrinsicNodes(ExpressionNode node) {
         if (node == null || node.intrinsicValue == IntrinsicModel.TRUE) {
             return null;
@@ -1585,9 +1665,10 @@ public final class WhereClauseParser implements Mutable {
             boolean latestByMultiColumn
     ) {
         return !latestByMultiColumn &&
-                (Chars.equalsIgnoreCaseNc(columnName, preferredKeyColumn)
-                        ||
-                        (preferredKeyColumn == null && m.isColumnIndexed(m.getColumnIndex(columnName))));
+                (
+                        Chars.equalsIgnoreCaseNc(columnName, preferredKeyColumn)
+                                || (preferredKeyColumn == null && m.isColumnIndexed(m.getColumnIndex(columnName)))
+                );
     }
 
     private Function createKeyValueBindVariable(
@@ -1616,7 +1697,8 @@ public final class WhereClauseParser implements Mutable {
                     executionContext,
                     tempKeyValuePos.getQuick(i),
                     tempKeyValues.get(i),
-                    tempKeyValueType.get(i));
+                    tempKeyValueType.get(i)
+            );
             model.keyValueFuncs.add(func);
         }
         clearKeys();
@@ -1678,22 +1760,30 @@ public final class WhereClauseParser implements Mutable {
         }
     }
 
-    private CharSequence getStrFromFunction(FunctionParser functionParser,
-                                            ExpressionNode node,
-                                            RecordMetadata metadata,
-                                            SqlExecutionContext executionContext) throws SqlException {
-        Function function = functionParser.parseFunction(node, metadata, executionContext);
-        if (!function.isConstant()) {
+    private CharSequence getStrFromFunction(
+            FunctionParser functionParser,
+            ExpressionNode node,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        Function func = functionParser.parseFunction(node, metadata, executionContext);
+        if (!func.isConstant()) {
+            Misc.free(func);
             isConstFunction = false;
             return null;
         }
 
         isConstFunction = true;
-        int type = function.getType();
-        if (type == ColumnType.SYMBOL || type == ColumnType.STRING || type == ColumnType.CHAR || type == ColumnType.UNDEFINED || type == ColumnType.NULL || type == ColumnType.VARCHAR) {
-            return function.getStrA(null);
+        final int funcType = func.getType();
+        if (funcType == ColumnType.SYMBOL
+                || funcType == ColumnType.STRING
+                || funcType == ColumnType.CHAR
+                || funcType == ColumnType.UNDEFINED
+                || funcType == ColumnType.NULL
+                || funcType == ColumnType.VARCHAR) {
+            return func.getStrA(null);
         } else {
-            throw SqlException.$(node.position, "Unexpected function type [").put(ColumnType.nameOf(type)).put("]");
+            throw SqlException.$(node.position, "Unexpected function type [").put(ColumnType.nameOf(funcType)).put("]");
         }
     }
 
@@ -1813,10 +1903,10 @@ public final class WhereClauseParser implements Mutable {
         final long hash;
 
         if (isFunc(inArg)) {
-            try (Function f = functionParser.parseFunction(inArg, metadata, executionContext)) {
-                if (isGeoHashConstFunction(f)) {
-                    type = f.getType();
-                    hash = GeoHashes.getGeoLong(type, f, null);
+            try (Function func = functionParser.parseFunction(inArg, metadata, executionContext)) {
+                if (isGeoHashConstFunction(func)) {
+                    type = func.getType();
+                    hash = GeoHashes.getGeoLong(type, func, null);
                 } else {
                     throw SqlException.$(inArg.position, "GeoHash const function expected");
                 }
@@ -1992,18 +2082,23 @@ public final class WhereClauseParser implements Mutable {
             return true;
         } else if (isFunc(node)) {
             final Function func = functionParser.parseFunction(node, metadata, executionContext);
-            checkFunctionCanBeTimestamp(metadata, executionContext, func, node.position);
-            if (func.isConstant()) {
-                long timestamp = getTimestampFromConstFunction(func, node.position, false);
-                model.setBetweenBoundary(timestamp);
+            try {
+                checkFunctionCanBeTimestamp(metadata, executionContext, func, node.position);
+                if (func.isConstant()) {
+                    long timestamp = getTimestampFromConstFunction(func, node.position, false);
+                    model.setBetweenBoundary(timestamp);
+                    Misc.free(func);
+                } else if (func.isRuntimeConstant()) {
+                    model.setBetweenBoundary(func);
+                } else {
+                    Misc.free(func);
+                    return false;
+                }
+                return true;
+            } catch (Throwable th) {
                 Misc.free(func);
-            } else if (func.isRuntimeConstant()) {
-                model.setBetweenBoundary(func);
-            } else {
-                Misc.free(func);
-                return false;
+                throw th;
             }
-            return true;
         }
         return false;
     }

@@ -196,34 +196,11 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAsyncTimestampSubQueryWithFilter() throws Exception {
-        WorkerPool pool = new WorkerPool((() -> 4));
-        TestUtils.execute(
-                pool,
-                (engine, compiler, sqlExecutionContext) -> {
-                    engine.execute(
-                            "CREATE TABLE price (" +
-                                    "  ts TIMESTAMP," +
-                                    "  type SYMBOL," +
-                                    "  value DOUBLE" +
-                                    ") timestamp (ts) PARTITION BY DAY;",
-                            sqlExecutionContext
-                    );
-                    engine.execute("insert into price select x::timestamp, 't' || (x%5), rnd_double() from long_sequence(100000)", sqlExecutionContext);
-
-                    final String query = "select * from price where ts = (select min(ts) from price) or ts = (select max(ts) from price)";
-                    TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            query,
-                            sink,
-                            "ts\ttype\tvalue\n" +
-                                    "1970-01-01T00:00:00.000001Z\tt1\t0.6607777894187332\n" +
-                                    "1970-01-01T00:00:00.100000Z\tt0\t0.8389262029238954\n"
-                    );
-                },
-                configuration,
-                LOG
+    public void testAsyncTimestampSubQueryWithEqFilter() throws Exception {
+        testAsyncTimestampSubQueryWithFilter(
+                "select * from x where ts2 = (select min(ts) from x)",
+                "ts\tts2\tid\n" +
+                        "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\n"
         );
     }
 
@@ -676,6 +653,34 @@ public class ParallelFilterTest extends AbstractCairoTest {
                             query,
                             sink,
                             "count\n20000\n"
+                    );
+                },
+                configuration,
+                LOG
+        );
+    }
+
+    private void testAsyncTimestampSubQueryWithFilter(String query, String expected) throws Exception {
+        WorkerPool pool = new WorkerPool((() -> 4));
+        TestUtils.execute(
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
+                    engine.execute(
+                            "CREATE TABLE x (" +
+                                    "  ts TIMESTAMP," +
+                                    "  ts2 TIMESTAMP," +
+                                    "  id long" +
+                                    ") timestamp (ts) PARTITION BY DAY;",
+                            sqlExecutionContext
+                    );
+                    engine.execute("insert into x select x::timestamp, x::timestamp, x from long_sequence(100000)", sqlExecutionContext);
+
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            query,
+                            sink,
+                            expected
                     );
                 },
                 configuration,
