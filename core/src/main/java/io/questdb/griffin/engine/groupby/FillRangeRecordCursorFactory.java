@@ -234,6 +234,8 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
+            // We rely on the fact this cursor is allowed to return result set
+            // that is not ordered on time. For that reason all the filling is done at the end
             if (gapFilling) {
                 nextBucketTimestamp = timestampSampler.nextTimestamp(nextBucketTimestamp);
                 return foundGapToFill();

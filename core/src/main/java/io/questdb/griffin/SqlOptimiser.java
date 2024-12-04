@@ -4787,6 +4787,10 @@ public class SqlOptimiser implements Mutable {
                     boolean isKeyed = false;
 
                     final CharSequence tableName = nested.getTableName();
+                    // down-sampling of sub-queries will yield a null table name
+                    if (tableName == null) {
+                        return model;
+                    }
                     for (int i = 0, n = maybeKeyed.size(); i < n; i++) {
                         final ExpressionNode expr = maybeKeyed.getQuick(i);
                         switch (expr.type) {
