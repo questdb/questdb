@@ -394,8 +394,9 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         // The list is sorted by last modification ts ASC, so we iterate in reverse order
         // starting with the newest files.
         long totalSize = 0;
-        for (long i = logFileList.size() - 1; i > -1; i -= 2) {
-            final long packedOffsets = logFileList.get(i);
+        // Leave last file on dik always.
+        for (long i = logFileList.size() - 3; i > 0; i -= 2) {
+            final long packedOffsets = logFileList.get(i - 1);
             final int startOffset = Numbers.decodeLowInt(packedOffsets);
             final int endOffset = Numbers.decodeHighInt(packedOffsets);
             CharSequence fileName = logFileNameSink.subSequence(startOffset, endOffset);
@@ -416,8 +417,9 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
                 int startOffset = logFileNameSink.length();
                 logFileNameSink.put(logFileName);
                 int endOffset = logFileNameSink.length();
+                long offsets = Numbers.encodeLowHighInts(startOffset, endOffset);
+                logFileList.add(offsets);
                 logFileList.add(ff.getLastModified(path.$()));
-                logFileList.add(Numbers.encodeLowHighInts(startOffset, endOffset));
             }
         }
     }
