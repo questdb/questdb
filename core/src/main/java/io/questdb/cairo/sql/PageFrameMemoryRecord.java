@@ -55,13 +55,14 @@ import org.jetbrains.annotations.Nullable;
  * or {@link #init(PageFrameMemory)} call for a given page frame before any use.
  */
 public class PageFrameMemoryRecord implements Record, StableStringSource, QuietCloseable, Mutable {
-    // Letters are used to track usage in PageFrameMemoryPool
     public static final byte RECORD_A_LETTER = 0;
     public static final byte RECORD_B_LETTER = 1;
     private final ObjList<MemoryCR.ByteSequenceView> bsViews = new ObjList<>();
     private final ObjList<DirectString> csViewsA = new ObjList<>();
     private final ObjList<DirectString> csViewsB = new ObjList<>();
-    private final byte letter; // 0 means A, 1 means B
+    // Letters are used for parquet buffer reference counting in PageFrameMemoryPool.
+    // RECORD_A_LETTER (0) stands for record A, RECORD_B_LETTER (1) stands for record B.
+    private final byte letter;
     private final ObjList<Long256Impl> longs256A = new ObjList<>();
     private final ObjList<Long256Impl> longs256B = new ObjList<>();
     private final ObjList<SymbolTable> symbolTableCache = new ObjList<>();
