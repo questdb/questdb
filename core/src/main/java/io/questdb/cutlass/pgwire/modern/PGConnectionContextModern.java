@@ -139,14 +139,14 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private static final int CACHE_HIT_SELECT_VALID = 4;
     private static final int CACHE_MISS = 0;
     private static final Log LOG = LogFactory.getLog(PGConnectionContextModern.class);
+    // Timeout to prevent getting stuck while draining socket's receive buffer
+    // before closing the socket. Ensures exit if malformed client keeps sending data.
+    private static final long MALFORMED_CLIENT_READ_TIMEOUT_MILLIS = 5000;
     private static final byte MESSAGE_TYPE_READY_FOR_QUERY = 'Z';
     private static final byte MESSAGE_TYPE_SSL_SUPPORTED_RESPONSE = 'S';
     private static final int PREFIXED_MESSAGE_HEADER_LEN = 5;
     private static final int PROTOCOL_TAIL_COMMAND_LENGTH = 64;
     private static final int SSL_REQUEST = 80877103;
-    // Timeout to prevent getting stuck while draining socket's receive buffer
-    // before closing the socket. Ensures exit if malformed client keeps sending data.
-    private static final long MALFORMED_CLIENT_READ_TIMEOUT_MILLIS = 5000;
     private final BatchCallback batchCallback;
     private final ObjectPool<DirectBinarySequence> binarySequenceParamsPool;
     private final BindVariableService bindVariableService;
@@ -652,6 +652,15 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         if (!socket.supportsTls() || tlsSessionStarting || socket.isTlsSessionStarted()) {
             return;
         }
+
+        // This is the initial stage of communication.
+        // The only message we've partially sent so far is the SSL request handling error.
+        if (bufferRemainingSize > 0) {
+            sendBuffer(bufferRemainingOffset, bufferRemainingSize);
+            // The client received the response; shutdown the socket
+            throw BadProtocolException.INSTANCE;
+        }
+
         recv();
         int expectedLen = 2 * Integer.BYTES;
         int len = (int) (recvBufferWriteOffset - recvBufferReadOffset);

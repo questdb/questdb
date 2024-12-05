@@ -67,7 +67,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
 
         this.configuration = configuration;
         this.rowCursorFactory = rowCursorFactory;
-        cursor = new PageFrameRecordCursorImpl(
+        this.cursor = new PageFrameRecordCursorImpl(
                 configuration,
                 metadata,
                 rowCursorFactory,
@@ -163,9 +163,11 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     @Override
     protected void _close() {
         super._close();
+        Misc.free(cursor);
         Misc.free(filter);
         Misc.free(fwdPageFrameCursor);
         Misc.free(bwdPageFrameCursor);
+        Misc.free(timeFrameCursor);
     }
 
     protected PageFrameCursor initBwdPageFrameCursor(

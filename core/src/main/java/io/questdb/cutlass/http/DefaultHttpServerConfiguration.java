@@ -200,6 +200,7 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
     }
 
     public class DefaultJsonQueryProcessorConfiguration implements JsonQueryProcessorConfiguration {
+
         @Override
         public int getConnectionCheckFrequency() {
             return 1_000_000;
@@ -247,6 +248,7 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
     }
 
     public class DefaultLineHttpProcessorConfiguration implements LineHttpProcessorConfiguration {
+
         @Override
         public boolean autoCreateNewColumns() {
             return lineHttpProcessorConfiguration.autoCreateNewColumns();
@@ -304,6 +306,11 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
 
         @Override
         public boolean isUseLegacyStringDefault() {
+            return true;
+        }
+
+        @Override
+        public boolean logMessageOnError() {
             return true;
         }
     }

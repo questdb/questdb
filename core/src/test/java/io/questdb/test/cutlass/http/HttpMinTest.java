@@ -90,7 +90,7 @@ public class HttpMinTest extends AbstractBootstrapTest {
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
                     while (true) {
                         try {
-                            rssAvailable = Unsafe.getRssMemAvailable();
+                            rssAvailable = Unsafe.getRssMemLimit() - Unsafe.getRssMemUsed();
                             buff = Unsafe.malloc(rssAvailable, MemoryTag.NATIVE_DEFAULT);
                             break;
                         } catch (CairoException e) {

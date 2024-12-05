@@ -27,7 +27,6 @@ package io.questdb.test.griffin.engine.functions.date;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
@@ -35,6 +34,7 @@ import io.questdb.griffin.engine.functions.date.ToTimestampVCFunctionFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Assert;
 import org.junit.Test;
 

@@ -126,6 +126,11 @@ public class DefaultLineUdpReceiverConfiguration implements LineUdpReceiverConfi
     }
 
     @Override
+    public boolean isUseLegacyStringDefault() {
+        return true;
+    }
+
+    @Override
     public boolean ownThread() {
         return true;
     }
@@ -133,10 +138,5 @@ public class DefaultLineUdpReceiverConfiguration implements LineUdpReceiverConfi
     @Override
     public int ownThreadAffinity() {
         return -1;
-    }
-
-    @Override
-    public boolean isUseLegacyStringDefault() {
-        return true;
     }
 }

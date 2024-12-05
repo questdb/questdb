@@ -96,4 +96,6 @@ public interface LineTcpReceiverConfiguration extends IODispatcherConfiguration 
     boolean isStringToCharCastAllowed();
 
     boolean isUseLegacyStringDefault();
+
+    boolean logMessageOnError();
 }

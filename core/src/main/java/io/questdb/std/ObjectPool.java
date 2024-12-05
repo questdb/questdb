@@ -29,7 +29,7 @@ import io.questdb.log.LogFactory;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * Single-threaded object pool based on ObjList. The goal is to optimise intermediate allocation of intermediate objects.
+ * Single-threaded object pool based on ObjList. The goal is to optimise intermediate allocation of objects.
  * <p>
  * There are 2 ways to use this pool:
  * <ul>

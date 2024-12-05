@@ -30,8 +30,8 @@ import io.questdb.std.ObjList;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class O3Basket implements Mutable {
-    private final ObjList<BitmapIndexWriter> indexers = new ObjList<BitmapIndexWriter>();
-    private final ObjList<AtomicInteger> partCounters = new ObjList<AtomicInteger>();
+    private final ObjList<BitmapIndexWriter> indexers = new ObjList<>();
+    private final ObjList<AtomicInteger> partCounters = new ObjList<>();
     private int columnCount;
     private int indexCount;
     private int indexerPointer;

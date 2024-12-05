@@ -201,4 +201,9 @@ public class DefaultLineTcpReceiverConfiguration extends DefaultIODispatcherConf
     public boolean isUseLegacyStringDefault() {
         return false;
     }
+
+    @Override
+    public boolean logMessageOnError() {
+        return true;
+    }
 }

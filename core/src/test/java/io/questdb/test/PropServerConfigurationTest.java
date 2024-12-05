@@ -281,6 +281,7 @@ public class PropServerConfigurationTest {
 
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelFilterPreTouchEnabled());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getSqlParallelWorkStealingThreshold());
+        Assert.assertEquals(3, configuration.getCairoConfiguration().getSqlParquetFrameCacheCapacity());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getSqlPageFrameMaxRows());
         Assert.assertEquals(100_000, configuration.getCairoConfiguration().getSqlPageFrameMinRows());
         Assert.assertEquals(256, configuration.getCairoConfiguration().getPageFrameReduceRowIdListCapacity());
@@ -338,6 +339,7 @@ public class PropServerConfigurationTest {
 
         // influxdb line TCP protocol
         Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().isEnabled());
+        Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().logMessageOnError());
         Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getLimit());
         Assert.assertEquals(0, configuration.getLineTcpReceiverConfiguration().getBindIPv4Address());
         Assert.assertEquals(9009, configuration.getLineTcpReceiverConfiguration().getBindPort());
@@ -381,6 +383,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(ColumnType.LONG, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());
         Assert.assertFalse(configuration.getLineTcpReceiverConfiguration().isUseLegacyStringDefault());
         Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().getDisconnectOnError());
+
+        Assert.assertTrue(configuration.getHttpServerConfiguration().getLineHttpProcessorConfiguration().logMessageOnError());
 
         Assert.assertTrue(configuration.getHttpServerConfiguration().getHttpContextConfiguration().getServerKeepAlive());
         Assert.assertEquals("HTTP/1.1 ", configuration.getHttpServerConfiguration().getHttpContextConfiguration().getHttpVersion());
@@ -1086,6 +1090,7 @@ public class PropServerConfigurationTest {
 
             // influxdb line TCP protocol
             Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().isEnabled());
+            Assert.assertFalse(configuration.getLineTcpReceiverConfiguration().logMessageOnError());
             Assert.assertEquals(11, configuration.getLineTcpReceiverConfiguration().getLimit());
             Assert.assertEquals(167903521, configuration.getLineTcpReceiverConfiguration().getBindIPv4Address());
             Assert.assertEquals(9916, configuration.getLineTcpReceiverConfiguration().getBindPort());
@@ -1120,6 +1125,8 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(ColumnType.FLOAT, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForFloat());
             Assert.assertEquals(ColumnType.INT, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());
             Assert.assertFalse(configuration.getLineTcpReceiverConfiguration().getDisconnectOnError());
+
+            Assert.assertFalse(configuration.getHttpServerConfiguration().getLineHttpProcessorConfiguration().logMessageOnError());
 
             Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().getServerKeepAlive());
             Assert.assertEquals("HTTP/1.0 ", configuration.getHttpServerConfiguration().getHttpContextConfiguration().getHttpVersion());
@@ -1472,6 +1479,7 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.isSqlOrderBySortEnabled());
         Assert.assertEquals(100, configuration.getSqlOrderByRadixSortThreshold());
         Assert.assertEquals(32, configuration.getSqlParallelWorkStealingThreshold());
+        Assert.assertEquals(42, configuration.getSqlParquetFrameCacheCapacity());
         Assert.assertEquals(1000, configuration.getSqlPageFrameMaxRows());
         Assert.assertEquals(100, configuration.getSqlPageFrameMinRows());
         Assert.assertEquals(128, configuration.getPageFrameReduceShardCount());

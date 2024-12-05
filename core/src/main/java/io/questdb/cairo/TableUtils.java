@@ -132,6 +132,7 @@ public final class TableUtils {
     public static final String META_SWAP_FILE_NAME = "_meta.swp";
     public static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
     public static final int NULL_LEN = -1;
+    public static final String PARQUET_PARTITION_NAME = "data.parquet";
     public static final String RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME = "_restore";
     public static final String SYMBOL_KEY_REMAP_FILE_SUFFIX = ".r";
     public static final char SYSTEM_TABLE_NAME_SUFFIX = '~';
@@ -1036,7 +1037,7 @@ public final class TableUtils {
      * <p>
      * Important note. Linux requires the offset to be page aligned.
      *
-     * @param ff        files facade, - intermediary to allow intercepting calls to the OS.
+     * @param ff        files facade - intermediary to allow intercepting calls to the OS.
      * @param fd        file descriptor, previously provided by one of openFile() functions
      * @param size      size of the mapped file region
      * @param offset    offset in file to begin mapping
@@ -1171,6 +1172,15 @@ public final class TableUtils {
 
     public static void oldPartitionName(Path path, long txn) {
         path.put("-x-").put(txn);
+    }
+
+    public static long openAppend(FilesFacade ff, LPSZ path, Log log) {
+        final long fd = ff.openAppend(path);
+        if (fd > -1) {
+            log.debug().$("open [file=").$(path).$(", fd=").$(fd).I$();
+            return fd;
+        }
+        throw CairoException.critical(ff.errno()).put("could not open append [file=").put(path).put(']');
     }
 
     public static long openFileRWOrFail(FilesFacade ff, LPSZ path, long opts) {
@@ -1548,18 +1558,8 @@ public final class TableUtils {
         }
     }
 
-    public static void setParquetPartitionPath(
-            Path path,
-            int partitionBy,
-            long partitionTimestamp,
-            long nameTxn
-    ) {
-        TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, nameTxn);
-        path.concat("data.parquet");
-    }
-
     /**
-     * Sets the path to the directory of a partition taking into account the timestamp, the partitioning scheme
+     * Sets the path to the directory of a native partition taking into account the timestamp, the partitioning scheme
      * and the partition version.
      *
      * @param path        Set to the root directory for a table, this will be updated to the root directory of the partition
@@ -1567,12 +1567,26 @@ public final class TableUtils {
      * @param timestamp   A timestamp in the partition
      * @param nameTxn     Partition txn suffix
      */
-    public static void setPathForPartition(Path path, int partitionBy, long timestamp, long nameTxn) {
-        setSinkForPartition(path.slash(), partitionBy, timestamp, nameTxn);
+    public static void setPathForNativePartition(Path path, int partitionBy, long timestamp, long nameTxn) {
+        setSinkForNativePartition(path.slash(), partitionBy, timestamp, nameTxn);
     }
 
     /**
-     * Sets the sink to the directory of a partition taking into account the timestamp, the partitioning scheme
+     * Sets the path to the file of a Parquet partition taking into account the timestamp, the partitioning scheme
+     * and the partition version.
+     *
+     * @param path        Set to the root directory for a table, this will be updated to the file of the partition
+     * @param partitionBy Partitioning scheme
+     * @param timestamp   A timestamp in the partition
+     * @param nameTxn     Partition txn suffix
+     */
+    public static void setPathForParquetPartition(Path path, int partitionBy, long timestamp, long nameTxn) {
+        setSinkForNativePartition(path.slash(), partitionBy, timestamp, nameTxn);
+        path.concat(PARQUET_PARTITION_NAME);
+    }
+
+    /**
+     * Sets the sink to the directory of a native partition taking into account the timestamp, the partitioning scheme
      * and the partition version.
      *
      * @param sink        Set to the root directory for a table, this will be updated to the root directory of the partition
@@ -1580,11 +1594,24 @@ public final class TableUtils {
      * @param timestamp   A timestamp in the partition
      * @param nameTxn     Partition txn suffix
      */
-    public static void setSinkForPartition(CharSink<?> sink, int partitionBy, long timestamp, long nameTxn) {
+    public static void setSinkForNativePartition(CharSink<?> sink, int partitionBy, long timestamp, long nameTxn) {
         PartitionBy.setSinkForPartition(sink, partitionBy, timestamp);
         if (nameTxn > -1L) {
             sink.put('.').put(nameTxn);
         }
+    }
+
+    /**
+     * Sets the sink to the directory of a Parquet partition taking into account the timestamp, the partitioning scheme
+     * and the partition version.
+     *
+     * @param sink        Set to the root directory for a table, this will be updated to the file of the partition
+     * @param partitionBy Partitioning scheme
+     * @param timestamp   A timestamp in the partition
+     * @param nameTxn     Partition txn suffix
+     */
+    public static void setSinkForParquetPartition(CharSink<?> sink, int partitionBy, long timestamp, long nameTxn) {
+
     }
 
     public static void setTxReaderPath(@NotNull TxReader reader, @NotNull Path path, int partitionBy) {
