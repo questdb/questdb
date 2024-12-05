@@ -71,6 +71,8 @@ public interface ColumnTypeDriver {
 
     void configureDataMemOM(FilesFacade ff, MemoryR auxMem, MemoryOM dataMem, long dataFd, LPSZ fileName, long rowLo, long rowHi, int memoryTag, long opts);
 
+    long dedupMergeVarColumnSize(long mergeIndexAddr, long mergeIndexCount, long srcDataFixAddr, long srcOooFixAddr);
+
     /**
      * Returns offset in bytes of the aux entry that describes the provided row number.
      *
@@ -209,6 +211,4 @@ public interface ColumnTypeDriver {
     void setPartAuxVectorNull(long auxMemAddr, long initialOffset, long columnTop);
 
     void shiftCopyAuxVector(long shift, long src, long srcLo, long srcHi, long dstAddr, long dstAddrSize);
-
-    long dedupMergeVarColumnSize(long mergeIndexAddr, long mergeIndexCount, long srcDataFixAddr, long srcOooFixAddr);
 }

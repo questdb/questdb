@@ -26,7 +26,10 @@ package io.questdb.cairo.sql.async;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreakerWrapper;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
@@ -77,7 +80,7 @@ public class PageFrameReduceJob implements Job, Closeable {
             shards[randomIndex] = tmp;
         }
 
-        this.record = new PageFrameMemoryRecord();
+        this.record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
         this.circuitBreaker = new SqlExecutionCircuitBreakerWrapper(circuitBreakerConfiguration);
     }
 

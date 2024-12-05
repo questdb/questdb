@@ -24,24 +24,27 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
-import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
-import io.questdb.std.Vect;
 import org.jetbrains.annotations.TestOnly;
 
+import static io.questdb.std.Vect.BIN_SEARCH_SCAN_UP;
+
 public abstract class AbstractIntervalPartitionFrameCursor implements PartitionFrameCursor {
-    public static final int SCAN_DOWN = 1;
-    public static final int SCAN_UP = -1;
+    protected final IntervalPartitionFrame frame = new IntervalPartitionFrame();
     protected final RuntimeIntrinsicIntervalModel intervalModel;
-    protected final IntervalPartitionFrame partitionFrame = new IntervalPartitionFrame();
+    protected final PartitionDecoder parquetDecoder = new PartitionDecoder();
     protected final int timestampIndex;
+    private final NativeTimestampFinder nativeTimestampFinder = new NativeTimestampFinder();
+    private final ParquetTimestampFinder parquetTimestampFinder;
     protected LongList intervals;
     protected int intervalsHi;
     protected int intervalsLo;
@@ -63,15 +66,15 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         assert timestampIndex > -1;
         this.intervalModel = intervalModel;
         this.timestampIndex = timestampIndex;
-    }
-
-    public static long binarySearch(MemoryR column, long value, long low, long high, int scanDir) {
-        return Vect.binarySearch64Bit(column.getPageAddress(0), value, low, high, scanDir);
+        this.parquetTimestampFinder = new ParquetTimestampFinder(parquetDecoder);
     }
 
     @Override
     public void close() {
         reader = Misc.free(reader);
+        Misc.free(parquetTimestampFinder);
+        Misc.free(parquetDecoder);
+        nativeTimestampFinder.clear();
     }
 
     @Override
@@ -117,6 +120,8 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
 
     @Override
     public void toTop() {
+        parquetTimestampFinder.clear();
+        nativeTimestampFinder.clear();
         intervalsLo = initialIntervalsLo;
         intervalsHi = initialIntervalsHi;
         partitionLo = initialPartitionLo;
@@ -169,19 +174,21 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
                 Misc.free(e.getEvent());
                 return -1;
             }
+
             if (rowCount > 0) {
-                final MemoryR column = reader.getColumn(TableReader.getPrimaryColumnIndex(reader.getColumnBase(partitionLo), timestampIndex));
+                final TimestampFinder timestampFinder = initTimestampFinder(partitionLo, rowCount);
+
                 final long intervalLo = intervals.getQuick(intervalsLo * 2);
                 final long intervalHi = intervals.getQuick(intervalsLo * 2 + 1);
 
-                final long partitionTimestampLo = column.getLong(0);
+                final long partitionTimestampLo = timestampFinder.minTimestamp();
                 // interval is wholly above partition, skip interval
                 if (partitionTimestampLo > intervalHi) {
                     intervalsLo++;
                     continue;
                 }
 
-                final long partitionTimestampHi = column.getLong((rowCount - 1) * 8);
+                final long partitionTimestampHi = timestampFinder.maxTimestamp();
                 // interval is wholly below partition, skip partition
                 if (partitionTimestampHi < intervalLo) {
                     partitionLimit = 0;
@@ -194,22 +201,13 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
                 if (partitionTimestampLo >= intervalLo) {
                     lo = 0;
                 } else {
-                    lo = binarySearch(column, intervalLo, partitionLimit == -1 ? 0 : partitionLimit, rowCount, SCAN_UP);
-                    if (lo < 0) {
-                        lo = -lo - 1;
-                    }
+                    // intervalLo is inclusive of value. We will look for bottom index of intervalLo - 1
+                    // and then do index + 1 to skip to top of where we need to be.
+                    lo = timestampFinder.findTimestamp(intervalLo - 1, partitionLimit == -1 ? 0 : partitionLimit, rowCount - 1) + 1;
                 }
 
-                long hi = binarySearch(column, intervalHi, lo, rowCount - 1, SCAN_DOWN);
-
-                if (hi < 0) {
-                    hi = -hi - 1;
-                } else {
-                    // We have direct hit. Interval is inclusive of edges and we have to
-                    // bump to high bound because it is non-inclusive
-                    hi++;
-                }
-
+                // Interval is inclusive of edges, and we have to bump to high bound because it is non-inclusive.
+                long hi = timestampFinder.findTimestamp(intervalHi, lo, rowCount - 1) + 1;
                 if (lo < hi) {
                     size += (hi - lo);
 
@@ -238,7 +236,7 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     }
 
     private void cullIntervals(TableReader reader, LongList intervals) {
-        int intervalsLo = intervals.binarySearch(reader.getMinTimestamp(), BinarySearch.SCAN_UP);
+        int intervalsLo = intervals.binarySearch(reader.getMinTimestamp(), BIN_SEARCH_SCAN_UP);
 
         // not a direct hit
         if (intervalsLo < 0) {
@@ -253,7 +251,7 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         } else if (reader.getMaxTimestamp() == intervals.getQuick(0)) {
             this.initialIntervalsHi = 1;
         } else {
-            int intervalsHi = intervals.binarySearch(reader.getMaxTimestamp(), BinarySearch.SCAN_UP);
+            int intervalsHi = intervals.binarySearch(reader.getMaxTimestamp(), BIN_SEARCH_SCAN_UP);
             if (intervalsHi < 0) { // negative value means inexact match
                 intervalsHi = -intervalsHi - 1;
 
@@ -283,11 +281,29 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         this.initialPartitionHi = Math.min(reader.getPartitionCount(), reader.getPartitionIndexByTimestamp(intervalHi) + 1);
     }
 
-    protected static class IntervalPartitionFrame implements PartitionFrame {
+    protected TimestampFinder initTimestampFinder(int partitionIndex, long rowCount) {
+        if (reader.getPartitionFormat(partitionIndex) == PartitionFormat.PARQUET) {
+            return parquetTimestampFinder.of(reader, partitionIndex, timestampIndex);
+        }
+        return nativeTimestampFinder.of(reader, partitionIndex, timestampIndex, rowCount);
+    }
 
+    protected static class IntervalPartitionFrame implements PartitionFrame {
+        protected byte format;
+        protected PartitionDecoder parquetDecoder;
         protected int partitionIndex;
         protected long rowHi;
-        protected long rowLo = 0;
+        protected long rowLo;
+
+        @Override
+        public PartitionDecoder getParquetDecoder() {
+            return parquetDecoder;
+        }
+
+        @Override
+        public byte getPartitionFormat() {
+            return format;
+        }
 
         @Override
         public int getPartitionIndex() {

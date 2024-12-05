@@ -24,11 +24,11 @@
 
 package io.questdb.test.std;
 
-import io.questdb.cairo.BinarySearch;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.LongSort;
 import io.questdb.std.Rnd;
+import io.questdb.std.Vect;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -291,7 +291,7 @@ public class LongListTest {
         final int M = list.size();
 
         for (int i = 0; i < N; i++) {
-            int pos = list.binarySearchBlock(2, i, BinarySearch.SCAN_UP);
+            int pos = list.binarySearchBlock(2, i, Vect.BIN_SEARCH_SCAN_UP);
             int skip = skipList.getQuick(i);
 
             // the value was skipped
@@ -316,7 +316,7 @@ public class LongListTest {
         }
 
         for (int i = 0; i < N; i++) {
-            int pos = list.binarySearchBlock(2, i, BinarySearch.SCAN_DOWN);
+            int pos = list.binarySearchBlock(2, i, Vect.BIN_SEARCH_SCAN_DOWN);
             int skip = skipList.getQuick(i);
 
             // the value was skipped
@@ -344,7 +344,7 @@ public class LongListTest {
 
         // search max value (greater than anything in the list)
 
-        int pos = list.binarySearch(N, BinarySearch.SCAN_UP);
+        int pos = list.binarySearch(N, Vect.BIN_SEARCH_SCAN_UP);
         Assert.assertTrue(pos < 0);
 
         pos = -pos - 1;
@@ -352,7 +352,7 @@ public class LongListTest {
 
         // search min value (less than anything in the list)
 
-        pos = list.binarySearch(-1, BinarySearch.SCAN_UP);
+        pos = list.binarySearch(-1, Vect.BIN_SEARCH_SCAN_UP);
         Assert.assertTrue(pos < 0);
 
         pos = -pos - 1;
@@ -386,7 +386,7 @@ public class LongListTest {
         final int M = list.size();
 
         for (int i = 0; i < N; i++) {
-            int pos = list.binarySearch(i, BinarySearch.SCAN_UP);
+            int pos = list.binarySearch(i, Vect.BIN_SEARCH_SCAN_UP);
             int skip = skipList.getQuick(i);
 
             // the value was skipped
@@ -411,7 +411,7 @@ public class LongListTest {
         }
 
         for (int i = 0; i < N; i++) {
-            int pos = list.binarySearch(i, BinarySearch.SCAN_DOWN);
+            int pos = list.binarySearch(i, Vect.BIN_SEARCH_SCAN_DOWN);
             int skip = skipList.getQuick(i);
 
             // the value was skipped
@@ -438,7 +438,7 @@ public class LongListTest {
 
         // search max value (greater than anything in the list)
 
-        int pos = list.binarySearch(N, BinarySearch.SCAN_UP);
+        int pos = list.binarySearch(N, Vect.BIN_SEARCH_SCAN_UP);
         Assert.assertTrue(pos < 0);
 
         pos = -pos - 1;
@@ -446,7 +446,7 @@ public class LongListTest {
 
         // search min value (less than anything in the list)
 
-        pos = list.binarySearch(-1, BinarySearch.SCAN_UP);
+        pos = list.binarySearch(-1, Vect.BIN_SEARCH_SCAN_UP);
         Assert.assertTrue(pos < 0);
 
         pos = -pos - 1;
