@@ -57,9 +57,10 @@ public class QueryMetricsJob extends AbstractQueueBatchConsumerJob<QueryMetrics>
         this.clock = engine.getConfiguration().getMicrosecondClock();
     }
 
-    public static void assignToPool(CairoEngine engine, WorkerPool pool) {
+    public static void assignToPool(WorkerPool pool, CairoEngine engine) {
+        QueryMetricsJob job = new QueryMetricsJob(engine);
         for (int i = 0, n = pool.getWorkerCount(); i < n; i++) {
-            pool.assign(i, new QueryMetricsJob(engine));
+            pool.assign(i, job);
         }
     }
 
@@ -86,7 +87,7 @@ public class QueryMetricsJob extends AbstractQueueBatchConsumerJob<QueryMetrics>
     }
 
     @Override
-    protected boolean doRun(int workerId, ValueHolderList<QueryMetrics> metricsList, RunStatus runStatus) {
+    protected boolean doRun(ValueHolderList<QueryMetrics> metricsList) {
         discardOldData();
         TableWriter tableWriter0;
         try {
