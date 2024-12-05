@@ -207,4 +207,9 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     public boolean isUseLegacyStringDefault() {
         return false;
     }
+
+    @Override
+    public boolean logMessageOnError() {
+        return true;
+    }
 }

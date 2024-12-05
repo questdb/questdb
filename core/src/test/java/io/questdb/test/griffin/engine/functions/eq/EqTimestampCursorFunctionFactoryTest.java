@@ -29,51 +29,6 @@ import org.junit.Test;
 
 public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
     @Test
-    public void testCompareTimestampWithTimestamp() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table x as (" +
-                    "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(100000)" +
-                    ") timestamp(ts) partition by day");
-
-            assertSql(
-                    "a\tts\n" +
-                            "Qd%ǧ\t1970-01-03T21:26:37.500000Z\n",
-                    "select * from x where ts = (select max(ts) from x)"
-            );
-        });
-    }
-
-    @Test
-    public void testCompareTimestampWithString() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table x as (" +
-                    "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(100000)" +
-                    ") timestamp(ts) partition by day");
-
-            assertSql(
-                    "a\tts\n" +
-                            "Eڄ篽\uDB3D\uDF6B,ᵨD\uD939\uDF1E\uD8E5\uDCC3\t1970-01-03T21:26:00.000000Z\n",
-                    "select * from x where ts = (select '1970-01-03T21:26')"
-            );
-        });
-    }
-
-    @Test
-    public void testCompareTimestampWithVarchar() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table x as (" +
-                    "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(100000)" +
-                    ") timestamp(ts) partition by day");
-
-            assertSql(
-                    "a\tts\n" +
-                            "\uD8F9\uDFFC\uD8D2\uDE52p\t1970-01-03T20:14:00.000000Z\n",
-                    "select * from x where ts = (select '1970-01-03T20:14'::varchar)"
-            );
-        });
-    }
-
-    @Test
     public void testCompareTimestampWithNull() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (" +
@@ -120,6 +75,51 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
             assertException("select * from x where ts = (select 'hello'::varchar)", 28, "the cursor selected invalid timestamp value: hello");
             assertException("select * from x where ts =(select 'hello'::varchar, 10 x)", 27, "select must provide exactly one column");
             assertException("select * from x where ts =(select 10 x)", 27, "cannot compare TIMESTAMP and INT");
+        });
+    }
+
+    @Test
+    public void testCompareTimestampWithString() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(100000)" +
+                    ") timestamp(ts) partition by day");
+
+            assertSql(
+                    "a\tts\n" +
+                            "Eڄ篽\uDB3D\uDF6B,ᵨD\uD939\uDF1E\uD8E5\uDCC3\t1970-01-03T21:26:00.000000Z\n",
+                    "select * from x where ts = (select '1970-01-03T21:26')"
+            );
+        });
+    }
+
+    @Test
+    public void testCompareTimestampWithTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(100000)" +
+                    ") timestamp(ts) partition by day");
+
+            assertSql(
+                    "a\tts\n" +
+                            "Qd%ǧ\t1970-01-03T21:26:37.500000Z\n",
+                    "select * from x where ts = (select max(ts) from x)"
+            );
+        });
+    }
+
+    @Test
+    public void testCompareTimestampWithVarchar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(100000)" +
+                    ") timestamp(ts) partition by day");
+
+            assertSql(
+                    "a\tts\n" +
+                            "\uD8F9\uDFFC\uD8D2\uDE52p\t1970-01-03T20:14:00.000000Z\n",
+                    "select * from x where ts = (select '1970-01-03T20:14'::varchar)"
+            );
         });
     }
 }

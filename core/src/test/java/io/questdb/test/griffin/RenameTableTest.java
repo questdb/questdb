@@ -57,11 +57,6 @@ public class RenameTableTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRenameTrailingDebris() throws Exception {
-        assertException("rename table x to y xyz", 20, "debris?");
-    }
-
-    @Test
     public void testFunctionSrcTableName() throws Exception {
         assertException("rename table x() to y", 14, "function call is not allowed here");
     }
@@ -104,6 +99,11 @@ public class RenameTableTest extends AbstractCairoTest {
                     "1\tabc\t2022-02-25T00:00:00.000000Z\n" +
                     "1\tabc\t2022-02-25T00:00:00.000000Z\n", "select * from " + newTableName);
         });
+    }
+
+    @Test
+    public void testRenameTrailingDebris() throws Exception {
+        assertException("rename table x to y xyz", 20, "debris?");
     }
 
     @Test

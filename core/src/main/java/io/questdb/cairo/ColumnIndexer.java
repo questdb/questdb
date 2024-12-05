@@ -56,11 +56,11 @@ public interface ColumnIndexer extends QuietCloseable {
 
     void refreshSourceAndIndex(long loRow, long hiRow);
 
+    void releaseIndexWriter();
+
     void rollback(long maxRow);
 
     void sync(boolean async);
 
     boolean tryLock(long expectedSequence);
-
-    void releaseIndexWriter();
 }
