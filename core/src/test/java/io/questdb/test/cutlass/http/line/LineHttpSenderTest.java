@@ -475,6 +475,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                 String tableName = "ndarr_test";
                 serverMain.ddl("create table " + tableName + " (x symbol, y symbol, l1 long, a1 array(double), a2 array(long), ts timestamp) timestamp(ts) partition by DAY WAL");
+                serverMain.awaitTxn(tableName, 0);
 
                 int port = serverMain.getHttpServerPort();
                 try (Sender sender = Sender.builder(Sender.Transport.HTTP)
@@ -492,6 +493,8 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             .atNow();
                     sender.flush();
                 }
+
+                serverMain.awaitTxn(tableName, 1);
             }
         });
     }

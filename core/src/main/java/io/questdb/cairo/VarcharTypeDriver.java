@@ -551,7 +551,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public long setAppendAuxMemAppendPosition(MemoryMA auxMem, long rowCount) {
+    public long setAppendAuxMemAppendPosition(MemoryMA auxMem, MemoryMA dataMem, int columnType, long rowCount) {
         if (rowCount > 0) {
             auxMem.jumpTo(VARCHAR_AUX_WIDTH_BYTES * (rowCount - HEADER_FLAG_INLINED));
             final long dataMemOffset = getDataVectorSize(auxMem.getAppendAddress());

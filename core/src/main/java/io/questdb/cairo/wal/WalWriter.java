@@ -1552,7 +1552,7 @@ public class WalWriter implements TableWriterAPI {
             final long dataMemOffset;
             if (ColumnType.isVarSize(columnType)) {
                 assert auxMem != null;
-                dataMemOffset = ColumnType.getDriver(columnType).setAppendAuxMemAppendPosition(auxMem, rowCount);
+                dataMemOffset = ColumnType.getDriver(columnType).setAppendAuxMemAppendPosition(auxMem, dataMem, columnType, rowCount);
             } else {
                 dataMemOffset = rowCount << ColumnType.getWalDataColumnShl(columnType, columnIndex == metadata.getTimestampIndex());
             }

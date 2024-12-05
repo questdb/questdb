@@ -174,7 +174,7 @@ public interface ColumnTypeDriver {
      * expectation of the WAL writer is to have the append position set correctly on aux mem and size of data vector
      * provided correctly.
      */
-    long setAppendAuxMemAppendPosition(MemoryMA auxMem, long rowCount);
+    long setAppendAuxMemAppendPosition(MemoryMA auxMem, MemoryMA dataMem, int columnType, long rowCount);
 
     /**
      * Sets the append position in both the auxiliary and data vectors.

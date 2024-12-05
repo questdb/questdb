@@ -24,6 +24,7 @@
 
 package io.questdb.std.ndarr;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectIntSlice;
 import org.jetbrains.annotations.NotNull;
@@ -43,12 +44,23 @@ public class NdArrayMeta {
      *   <li>Our largest datatypes are 8 bytes</li>
      * </ul></p>
      * Assuming a 1-D array, <code>Integer.MAX_VALUE / Long.BYTES</code> gives us a maximum
-     * of 2 ** 28 - 1.
-     * For simplicity, we thus round this down to 2 ** 27.
+     * of 2 ** 28 - 1, i.e. all bits 0 to (inc) 27 set.
+     * <p><strong>NOTE</strong>: This value can also be used as a mask to extract the dim
+     * from the lower bits of an int, packed with extra data in the remaining bits.</p>
      */
-    public static final int MAX_DIM_SIZE = 1 << 27;
+    public static final int DIM_MAX_SIZE = (1 << 28) - 1;
 
     private NdArrayMeta() {
+    }
+
+    /**
+     * For a given "flat" element count and nd array type, compute the number of bytes required to store.
+     */
+    public static int calcRequiredValuesByteSize(int type, int elementsCount) {
+        assert ColumnType.isNdArray(type);
+        final int typeBitWidth = 1 << ColumnType.getNdArrayElementTypePrecision(type);
+        final int requiredBits = elementsCount * typeBitWidth;
+        return (requiredBits + 7) / 8;
     }
 
     /**
@@ -120,7 +132,7 @@ public class NdArrayMeta {
     public static boolean validShape(DirectIntSlice shape) {
         for (int dimIndex = 0, nDims = shape.length(); dimIndex < nDims; ++dimIndex) {
             final int dim = shape.get(dimIndex);
-            if ((dim <= 0) || (dim >= MAX_DIM_SIZE))
+            if ((dim <= 0) || (dim >= DIM_MAX_SIZE))
                 // having a zero or negative dimension is never valid.
                 return false;
         }

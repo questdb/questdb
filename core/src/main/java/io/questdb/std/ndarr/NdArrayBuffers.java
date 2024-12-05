@@ -72,8 +72,8 @@ public class NdArrayBuffers implements QuietCloseable {
                     (int) strides.size(),
                     values.ptr(),
                     values.size(),
-                    0
-            );
+                    0,
+                    (short) 0);
         }
     }
 

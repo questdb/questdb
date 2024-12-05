@@ -412,6 +412,7 @@ public class LineWalAppender {
                         if (!ColumnType.isNdArray(colType)) {
                             throw castError(tud.getTableNameUtf16(), "ND_ARRAY", colType, ent.getName());
                         }
+                        // TODO(amunra): Validate the array type itself. It's a free-for-all now.
                         r.putNdArray(columnIndex, ent.getNdArray());
                         break;
                     default:

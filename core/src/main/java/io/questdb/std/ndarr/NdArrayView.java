@@ -35,6 +35,14 @@ import io.questdb.std.DirectIntSlice;
 public class NdArrayView {
     private volatile short crc;
 
+    /**
+     * Gets the CRC value, if one was already previously calculated.
+     * <p>Returns 0 if this was never previously computed.</p>
+     */
+    public short getCachedCrc() {
+        return crc;
+    }
+
     public enum ValidatonStatus {
         OK,
 
@@ -141,9 +149,10 @@ public class NdArrayView {
     /**
      * Set to a non-null array.
      *
-     * @param stridesLength number of elements
      * @param shapeLength   number of elements
+     * @param stridesLength number of elements
      * @param valuesSize    number of bytes
+     * @param crc           the pre-computed CRC16/XModem checksum, or 0 if unavailable.
      */
     public ValidatonStatus of(
             int type,
@@ -153,7 +162,8 @@ public class NdArrayView {
             int stridesLength,
             long valuesPtr,
             int valuesSize,
-            int valuesOffset) {
+            int valuesOffset,
+            short crc) {
         boolean complete = false;
         try {
             if (!ColumnType.isNdArray(type)) {
@@ -186,10 +196,8 @@ public class NdArrayView {
 
     private static boolean validValuesSize(int type, int valuesOffset, int valuesLength, int valuesSize) {
         final int totExpectedElementCapacity = valuesOffset + valuesLength;
-        final long typeBitWidth = 1L << ColumnType.getNdArrayElementTypePrecision(type);
-        final long requiredBits = totExpectedElementCapacity * typeBitWidth;
-        final long expectedByteSize = (requiredBits + 7L) / 8L;
-        return expectedByteSize == (long) valuesSize;
+        final int expectedByteSize = NdArrayMeta.calcRequiredValuesByteSize(type, totExpectedElementCapacity);
+        return expectedByteSize == valuesSize;
     }
 
     /**
@@ -269,11 +277,15 @@ public class NdArrayView {
 
         // Compute lazily.
         if (crc == 0) {
+            // IMPORTANT!!
+            // Keep this logic in sync with the "intrusive"
+            // CRC logic in `NdArrayTypeDriver.writeValues`.
+
             // Add the dimension information first.
-            short checksum = CRC16XModem.update(CRC16XModem.init(), shape.length());
+            short checksum = CRC16XModem.updateInt(CRC16XModem.init(), shape.length());
             for (int dimIndex = 0, nDims = shape.length(); dimIndex < nDims; ++dimIndex) {
                 final int dim = shape.get(dimIndex);
-                checksum = CRC16XModem.update(checksum, dim);
+                checksum = CRC16XModem.updateInt(checksum, dim);
             }
 
             // Add the values next.
@@ -286,7 +298,7 @@ public class NdArrayView {
             if (!hasDefaultStrides()) {
                 throw new UnsupportedOperationException("nyi");
             }
-            checksum = CRC16XModem.update(checksum, values.ptr(), values.size());
+            checksum = CRC16XModem.updateBytes(checksum, values.ptr(), values.size());
             crc = CRC16XModem.finalize(checksum);
         }
         return crc;

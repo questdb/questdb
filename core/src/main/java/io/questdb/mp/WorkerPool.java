@@ -25,6 +25,7 @@
 package io.questdb.mp;
 
 import io.questdb.Metrics;
+import io.questdb.cairo.NdArrayTypeDriver;
 import io.questdb.log.Log;
 import io.questdb.metrics.WorkerMetrics;
 import io.questdb.std.Misc;
@@ -223,6 +224,7 @@ public class WorkerPool implements Closeable {
             ObjList<Closeable> workerCleaners = threadLocalCleaners.getQuick(i);
             workerCleaners.add(Path.THREAD_LOCAL_CLEANER);
             workerCleaners.add(NdArrayRowMajorTraversal.THREAD_LOCAL_CLEANER);
+            workerCleaners.add(NdArrayTypeDriver.THREAD_LOCAL_CLEANER);
         }
     }
 }

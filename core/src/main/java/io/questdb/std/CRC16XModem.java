@@ -78,25 +78,16 @@ public class CRC16XModem {
     private CRC16XModem() {
     }
 
+    public static short finalize(short crc) {
+        int code = Short.toUnsignedInt(crc);
+        for (int i = 0; i < 2; i++) {
+            code = (code << 8) ^ TAB[(code >>> 8) & 0xFF];
+        }
+        return (short) (code & 0xFFFF);
+    }
+
     public static short init() {
         return 0;
-    }
-
-    public static short update(short crc, long ptr, int size) {
-        for (int index = 0; index < size; ++index) {
-            final byte b = Unsafe.getUnsafe().getByte(ptr + index);
-            crc = update(crc, b);
-        }
-        return crc;
-    }
-
-    public static short update(short crc, int value) {
-        // b0 is the least significant byte, i.e. extracting as little endian.
-        byte b0 = (byte) value;
-        byte b1 = (byte) (value >> 8);
-        byte b2 = (byte) (value >> 16);
-        byte b3 = (byte) (value >> 24);
-        return update(update(update(update(crc, b0), b1), b2), b3);
     }
 
     public static short update(short crc, byte b) {
@@ -107,11 +98,40 @@ public class CRC16XModem {
         return (short) (res & 0xffff);
     }
 
-    public static short finalize(short crc) {
-        int code = Short.toUnsignedInt(crc);
-        for (int i = 0; i < 2; i++) {
-            code = (code << 8) ^ TAB[(code >>> 8) & 0xFF];
+    public static short updateBytes(short crc, long ptr, int size) {
+        for (int index = 0; index < size; ++index) {
+            final byte b = Unsafe.getUnsafe().getByte(ptr + index);
+            crc = update(crc, b);
         }
-        return (short) (code & 0xFFFF);
+        return crc;
+    }
+
+    public static short updateInt(short crc, int value) {
+        // b0 is the least significant byte, i.e. extracting as little endian.
+        byte b0 = (byte) value;
+        byte b1 = (byte) (value >> 8);
+        byte b2 = (byte) (value >> 16);
+        byte b3 = (byte) (value >> 24);
+        return update(update(update(update(crc, b0), b1), b2), b3);
+    }
+
+    public static short updateLong(short crc, long value) {
+        // b0 is the least significant byte, i.e. extracting as little endian.
+        byte b0 = (byte) value;
+        byte b1 = (byte) (value >> 8);
+        byte b2 = (byte) (value >> 16);
+        byte b3 = (byte) (value >> 24);
+        byte b4 = (byte) (value >> 32);
+        byte b5 = (byte) (value >> 40);
+        byte b6 = (byte) (value >> 48);
+        byte b7 = (byte) (value >> 56);
+        return update(update(update(update(update(update(update(update(crc, b0), b1), b2), b3), b4), b5), b6), b7);
+    }
+
+    public static short updateShort(short crc, short value) {
+        // b0 is the least significant byte, i.e. extracting as little endian.
+        byte b0 = (byte) value;
+        byte b1 = (byte) (value >> 8);
+        return update(update(crc, b0), b1);
     }
 }

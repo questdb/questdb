@@ -36,13 +36,13 @@ public class CRC16XModemTest {
     public void test123456789() {
         GcUtf8String buf = new GcUtf8String("123456789");
         final short crc = CRC16XModem.finalize(
-                CRC16XModem.update(CRC16XModem.init(), buf.ptr(), buf.size()));
+                CRC16XModem.updateBytes(CRC16XModem.init(), buf.ptr(), buf.size()));
         Assert.assertEquals((short) 0x31c3, crc);
     }
 
     @Test
     public void testEmpty() {
-        final short crc = CRC16XModem.update(CRC16XModem.init(), 0, 0);
+        final short crc = CRC16XModem.updateBytes(CRC16XModem.init(), 0, 0);
         Assert.assertEquals(0, crc);
     }
 
@@ -50,7 +50,7 @@ public class CRC16XModemTest {
     public void testHello() {
         GcUtf8String buf = new GcUtf8String("hello");
         final short crc = CRC16XModem.finalize(
-                CRC16XModem.update(CRC16XModem.init(), buf.ptr(), buf.size()));
+                CRC16XModem.updateBytes(CRC16XModem.init(), buf.ptr(), buf.size()));
         Assert.assertEquals((short) 50018, crc);
     }
 
@@ -62,15 +62,15 @@ public class CRC16XModemTest {
             ints.add(200);
             ints.add(300);
             expected = CRC16XModem.finalize(
-                    CRC16XModem.update(CRC16XModem.init(), ints.asSlice().ptr(), ints.asSlice().size())
+                    CRC16XModem.updateBytes(CRC16XModem.init(), ints.asSlice().ptr(), ints.asSlice().size())
             );
         }
         Assert.assertEquals((short) 58611, expected);
 
         short actual = CRC16XModem.init();
-        actual = CRC16XModem.update(actual, 100);
-        actual = CRC16XModem.update(actual, 200);
-        actual = CRC16XModem.update(actual, 300);
+        actual = CRC16XModem.updateInt(actual, 100);
+        actual = CRC16XModem.updateInt(actual, 200);
+        actual = CRC16XModem.updateInt(actual, 300);
         actual = CRC16XModem.finalize(actual);
 
         Assert.assertEquals(expected, actual);
