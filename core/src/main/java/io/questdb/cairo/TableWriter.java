@@ -716,13 +716,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             return rowsAffected;
         } catch (CairoException ex) {
+            // rollback in case on any dirty state
+            // Do not catch rollback exceptions, let the calling code handle distressed writer
+            rollback();
+
             if (ex.isWALTolerable()) {
-                try {
-                    rollback(); // rollback in case on any dirty state
-                    commitSeqTxn(seqTxn);
-                } catch (Throwable th2) {
-                    LOG.critical().$("could not rollback, table is distressed [table=").utf8(tableToken.getTableName()).$(", error=").$(th2).I$();
-                }
+                // Mark transaction as applied and ignore it.
+                commitSeqTxn(seqTxn);
+                return 0;
+            } else {
+                // Mark the transaction as not applied.
+                setSeqTxn(seqTxn - 1);
             }
             throw ex;
         } catch (Throwable th) {

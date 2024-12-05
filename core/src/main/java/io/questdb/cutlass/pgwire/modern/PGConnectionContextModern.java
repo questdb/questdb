@@ -81,6 +81,7 @@ import io.questdb.std.SimpleAssociativeCache;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.WeakSelfReturningObjectPool;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StdoutSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -138,6 +139,9 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private static final int CACHE_HIT_SELECT_VALID = 4;
     private static final int CACHE_MISS = 0;
     private static final Log LOG = LogFactory.getLog(PGConnectionContextModern.class);
+    // Timeout to prevent getting stuck while draining socket's receive buffer
+    // before closing the socket. Ensures exit if malformed client keeps sending data.
+    private static final long MALFORMED_CLIENT_READ_TIMEOUT_MILLIS = 5000;
     private static final byte MESSAGE_TYPE_READY_FOR_QUERY = 'Z';
     private static final byte MESSAGE_TYPE_SSL_SUPPORTED_RESPONSE = 'S';
     private static final int PREFIXED_MESSAGE_HEADER_LEN = 5;
@@ -402,6 +406,9 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         } catch (PeerDisconnectedException | PeerIsSlowToReadException | PeerIsSlowToWriteException e) {
             // BAU, not error metric
             throw e;
+        } catch (BadProtocolException bpe) {
+            shutdownSocketGracefully();
+            throw bpe; // request disconnection
         } catch (Throwable th) {
             metrics.pgWire().getErrorCounter().inc();
             throw th;
@@ -487,6 +494,20 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
 
     public void setSuspendEvent(SuspendEvent suspendEvent) {
         this.suspendEvent = suspendEvent;
+    }
+
+    private static void sendErrorResponseAndReset(PGResponseSink sink, CharSequence message) throws PeerIsSlowToReadException, PeerDisconnectedException {
+        sink.put(MESSAGE_TYPE_ERROR_RESPONSE);
+        long addr = sink.skipInt();
+        sink.put('C');
+        sink.putZ("08P01"); // protocol violation
+        sink.put('M');
+        sink.putZ(message);
+        sink.put('S');
+        sink.putZ("ERROR");
+        sink.put((char) 0);
+        sink.putLen(addr);
+        sink.sendBufferAndReset();
     }
 
     private void addPipelineEntry() {
@@ -627,6 +648,15 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         if (!socket.supportsTls() || tlsSessionStarting || socket.isTlsSessionStarted()) {
             return;
         }
+
+        // This is the initial stage of communication.
+        // The only message we've partially sent so far is the SSL request handling error.
+        if (bufferRemainingSize > 0) {
+            sendBuffer(bufferRemainingOffset, bufferRemainingSize);
+            // The client received the response; shutdown the socket
+            throw BadProtocolException.INSTANCE;
+        }
+
         recv();
         int expectedLen = 2 * Integer.BYTES;
         int len = (int) (recvBufferWriteOffset - recvBufferReadOffset);
@@ -635,6 +665,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         }
         if (len != expectedLen) {
             LOG.error().$("request SSL message expected [actualLen=").$(len).I$();
+            sendErrorResponseAndReset(responseUtf8Sink, "request SSL message expected");
             throw BadProtocolException.INSTANCE;
         }
         long address = recvBuffer + recvBufferReadOffset;
@@ -643,12 +674,14 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         address += Integer.BYTES;
         if (msgLen != expectedLen) {
             LOG.error().$("unexpected request SSL message [msgLen=").$(msgLen).I$();
+            sendErrorResponseAndReset(responseUtf8Sink, "unexpected request SSL message");
             throw BadProtocolException.INSTANCE;
         }
         int request = getIntUnsafe(address);
         recvBufferReadOffset += Integer.BYTES;
         if (request != SSL_REQUEST) {
             LOG.error().$("unexpected request SSL message [request=").$(msgLen).I$();
+            sendErrorResponseAndReset(responseUtf8Sink, "unexpected request SSL message");
             throw BadProtocolException.INSTANCE;
         }
         // tell the client that SSL is supported
@@ -1290,6 +1323,25 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         Vect.memmove(recvBuffer, recvBuffer + readOffsetBeforeParse, len);
         recvBufferWriteOffset = len;
         recvBufferReadOffset = 0;
+    }
+
+    private void shutdownSocketGracefully() {
+        // calling close on a socket with a
+        // non-empty receive kernel-buffer cause the connection to be RST and
+        // the send buffer discarded and not sent
+
+        socket.shutdown(Net.SHUT_WR); // sends a FIN packet and flushes the send buffer
+        final MillisecondClock clock = engine.getConfiguration().getMillisecondClock();
+        final long startTime = clock.getTicks();
+        // drain the kernel receive-buffer until we either receive all data or hit the timeout
+        while (true) {
+            final int n = socket.recv(recvBuffer, recvBufferSize);
+            // receive buffer is empty or connection is closed
+            // the timeout ensures that the loop exits if all data isn't drained within the specified time limit.
+            if (n <= 0 || clock.getTicks() - startTime > MALFORMED_CLIENT_READ_TIMEOUT_MILLIS) {
+                break;
+            }
+        }
     }
 
     // Send responses from the pipeline entries we have accumulated so far.

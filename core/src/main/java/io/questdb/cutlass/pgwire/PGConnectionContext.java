@@ -2478,7 +2478,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             executeUpdate();
         } else { // this must be an OK/SET/COMMIT/ROLLBACK or empty query
             executeTag();
-            prepareCommandComplete(false);
+            prepareCommandComplete(queryTag == TAG_INSERT_AS_SELECT);
         }
     }
 

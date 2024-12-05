@@ -29,11 +29,21 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.ConnectionAware;
-import io.questdb.cutlass.line.tcp.*;
+import io.questdb.cutlass.line.tcp.DefaultColumnTypes;
+import io.questdb.cutlass.line.tcp.LineProtocolException;
+import io.questdb.cutlass.line.tcp.LineTcpParser;
+import io.questdb.cutlass.line.tcp.LineWalAppender;
+import io.questdb.cutlass.line.tcp.SymbolCache;
+import io.questdb.cutlass.line.tcp.WalTableUpdateDetails;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.std.*;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.QuietCloseable;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
+import io.questdb.std.WeakClosableObjectPool;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sink;
 
@@ -47,6 +57,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private final LineWalAppender appender;
     private final StringSink error = new StringSink();
     private final LineHttpTudCache ilpTudCache;
+    private final boolean logMessageOnError;
     private final int maxResponseErrorMessageLength;
     private final LineTcpParser parser;
     private final int recvBufSize;
@@ -81,7 +92,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                 engine.getConfiguration().getMaxFileNameLength(),
                 configuration.getMicrosecondClock()
         );
-        DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(configuration);
+        final DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(configuration);
         this.ilpTudCache = new LineHttpTudCache(
                 engine,
                 configuration.autoCreateNewColumns(),
@@ -89,8 +100,11 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                 defaultColumnTypes,
                 configuration.getDefaultPartitionBy()
         );
-        symbolCachePool = new WeakClosableObjectPool<>(
-                () -> new SymbolCache(configuration.getMicrosecondClock(), configuration.getSymbolCacheWaitUsBeforeReload()), 5);
+        this.symbolCachePool = new WeakClosableObjectPool<>(
+                () -> new SymbolCache(configuration.getMicrosecondClock(), configuration.getSymbolCacheWaitUsBeforeReload()),
+                5
+        );
+        this.logMessageOnError = configuration.logMessageOnError();
     }
 
     public void clear() {
@@ -340,16 +354,17 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
 
     private Status handleLineError(LineTcpParser parser, CairoException ex) {
         errorId = ERROR_COUNT.incrementAndGet();
-        LogRecord error = ex.isCritical() ? LOG.critical() : LOG.error();
-        error
+        final LogRecord errorRec = ex.isCritical() ? LOG.critical() : LOG.error();
+        errorRec
                 .$('[').$(fd).$("] could not process line data [table=").$(parser.getMeasurementName())
                 .$(", errorId=").$(ERROR_ID).$('-').$(errorId)
-                .$(", errno=").$(ex.getErrno())
-                .$(", mangledLine=`").$utf8(recvBufStartOfMeasurement == 0 ? buffer : recvBufStartOfMeasurement, getErrorLogLineHi(parser)).$('`')
-                .$(", ex=").$(ex.getFlyweightMessage())
-                .I$();
+                .$(", errno=").$(ex.getErrno());
+        if (logMessageOnError) {
+            errorRec.$(", mangledLine=`").$utf8(recvBufStartOfMeasurement == 0 ? buffer : recvBufStartOfMeasurement, getErrorLogLineHi(parser)).$('`');
+        }
+        errorRec.$(", ex=").$(ex.getFlyweightMessage()).I$();
 
-        this.error.put("write error: ").put(parser.getMeasurementName())
+        error.put("write error: ").put(parser.getMeasurementName())
                 .put(", errno: ").put(ex.getErrno())
                 .put(", error: ").put(ex.getFlyweightMessage());
         errorLine = line + 1;
@@ -358,14 +373,15 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
 
     private Status handleUnknownParseError(Throwable ex) {
         errorId = ERROR_COUNT.incrementAndGet();
-        LOG.critical()
+        final LogRecord errorRec = LOG.critical()
                 .$('[').$(fd).$("] could not process line data [table=").$(parser.getMeasurementName())
-                .$(", mangledLine=`").$utf8(recvBufStartOfMeasurement == 0 ? buffer : recvBufStartOfMeasurement, getErrorLogLineHi(parser)).$('`')
-                .$(", errorId=").$(ERROR_ID).$('-').$(errorId)
-                .$(", ex=").$(ex.getMessage())
-                .I$();
+                .$(", errorId=").$(ERROR_ID).$('-').$(errorId);
+        if (logMessageOnError) {
+            errorRec.$(", mangledLine=`").$utf8(recvBufStartOfMeasurement == 0 ? buffer : recvBufStartOfMeasurement, getErrorLogLineHi(parser)).$('`');
+        }
+        errorRec.$(", ex=").$(ex.getMessage()).I$();
 
-        this.error.put("write error: ").put(parser.getMeasurementName())
+        error.put("write error: ").put(parser.getMeasurementName())
                 .put(", error: ").put(ex.getClass().getCanonicalName());
         errorLine = line + 1;
         return Status.INTERNAL_ERROR;
@@ -377,14 +393,16 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
 
     private void logError(LineTcpParser parser, int errorPos, boolean isError) {
         errorId = ERROR_COUNT.incrementAndGet();
-        LogRecord logger = isError ? LOG.error() : LOG.info();
-        logger.$("parse error [errorId=").$(ERROR_ID).$('-').$(errorId)
+        final LogRecord errorRec = isError ? LOG.error() : LOG.info();
+        errorRec.$("parse error [errorId=").$(ERROR_ID).$('-').$(errorId)
                 .$(", table=").$(parser.getMeasurementName())
                 .$(", line=").$(errorLine)
                 .$(", error=").$(error.subSequence(errorPos, error.length()))
-                .$(", fd=").$(fd)
-                .$(", mangledLine=`").$utf8(recvBufStartOfMeasurement == 0 ? buffer : recvBufStartOfMeasurement, parser.getBufferAddress()).$('`')
-                .I$();
+                .$(", fd=").$(fd);
+        if (logMessageOnError) {
+            errorRec.$(", mangledLine=`").$utf8(recvBufStartOfMeasurement == 0 ? buffer : recvBufStartOfMeasurement, parser.getBufferAddress()).$('`');
+        }
+        errorRec.I$();
     }
 
     private void logError() {

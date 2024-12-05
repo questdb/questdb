@@ -352,6 +352,11 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     }
 
     @Override
+    public OperationFuture getOperationFuture() {
+        return future;
+    }
+
+    @Override
     public int getPartitionBy() {
         return partitionBy;
     }

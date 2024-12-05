@@ -39,7 +39,12 @@ import io.questdb.log.LogRecord;
 import io.questdb.network.IOContext;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.NetworkFacade;
-import io.questdb.std.*;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Utf8StringObjHashMap;
+import io.questdb.std.Vect;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
@@ -57,6 +62,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     private final LineTcpReceiverConfiguration configuration;
     private final boolean disconnectOnError;
     private final long idleTimeout;
+    private final boolean logMessageOnError;
     private final Metrics metrics;
     private final MillisecondClock milliClock;
     private final LineTcpParser parser;
@@ -82,8 +88,9 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         );
         try {
             this.configuration = configuration;
-            nf = configuration.getNetworkFacade();
-            disconnectOnError = configuration.getDisconnectOnError();
+            this.nf = configuration.getNetworkFacade();
+            this.disconnectOnError = configuration.getDisconnectOnError();
+            this.logMessageOnError = configuration.logMessageOnError();
             this.scheduler = scheduler;
             this.metrics = metrics;
             this.milliClock = configuration.getMillisecondClock();
@@ -300,13 +307,15 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     private void logParseError() {
         int position = (int) (parser.getBufferAddress() - recvBufStartOfMeasurement);
         assert position >= 0;
-        LOG.error()
+        final LogRecord errorRec = LOG.error()
                 .$('[').$(getFd())
                 .$("] could not parse measurement, ").$(parser.getErrorCode())
-                .$(" at ").$(position)
-                .$(", line (may be mangled due to partial parsing): '")
-                .$(byteCharSequence.of(recvBufStartOfMeasurement, parser.getBufferAddress(), false)).$("'")
-                .$();
+                .$(" at ").$(position);
+        if (logMessageOnError) {
+            errorRec.$(", line (may be mangled due to partial parsing): '")
+                    .$(byteCharSequence.of(recvBufStartOfMeasurement, parser.getBufferAddress(), false)).$("'");
+        }
+        errorRec.$();
     }
 
     private void startNewMeasurement() {

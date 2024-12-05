@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -55,9 +56,9 @@ public class WaitWalTableFunctionFactory implements FunctionFactory {
 
     private static class WaitWalFunction extends BooleanFunction implements ScalarFunction {
         private final CharSequence tableName;
-        private SeqTxnTracker seqTxnTracker;
-        private long seqTxn;
         private SqlExecutionContext executionContext;
+        private long seqTxn;
+        private SeqTxnTracker seqTxnTracker;
 
         public WaitWalFunction(CharSequence tableName) {
             this.tableName = tableName;
@@ -66,9 +67,12 @@ public class WaitWalTableFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             if (seqTxnTracker != null) {
-                while (seqTxnTracker.getWriterTxn() < seqTxn) {
+                for (int i = 0; seqTxnTracker.getWriterTxn() < seqTxn; i++) {
                     Os.sleep(1);
                     executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
+                    if (i % 1000 == 0 && seqTxnTracker.isSuspended()) {
+                        throw CairoException.nonCritical().put("table is suspended [tableName=").put(tableName).put("]");
+                    }
                 }
             }
             return true;

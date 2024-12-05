@@ -97,10 +97,9 @@ class OperationExecutor implements Closeable {
                 updateOperation.withContext(executionContext);
                 return tableWriter.apply(updateOperation, seqTxn);
             }
-        } catch (SqlException ex) {
-            tableWriter.markSeqTxnCommitted(seqTxn);
-            throw ex;
         }
+        // Do not catch the exception and mark transaction as committed
+        // it can be transient, like table does not exist and should be retried.
     }
 
     public BindVariableService getBindVariableService() {
