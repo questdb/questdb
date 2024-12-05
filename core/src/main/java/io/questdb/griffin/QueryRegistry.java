@@ -173,7 +173,7 @@ public class QueryRegistry {
      */
     public void unregister(long queryId, SqlExecutionContext executionContext) {
         if (queryId < 0) {
-            //likely because query was already unregistered
+            // likely because query was already unregistered
             return;
         }
 
@@ -193,7 +193,6 @@ public class QueryRegistry {
     }
 
     public static class Entry implements Mutable {
-
         private final AtomicBoolean cancelled = new AtomicBoolean();
         private final StringSink query = new StringSink();
         private long changedAtNs;

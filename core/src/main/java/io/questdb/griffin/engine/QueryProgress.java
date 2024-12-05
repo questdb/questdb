@@ -291,6 +291,8 @@ public class QueryProgress extends AbstractRecordCursorFactory {
             if (isOpen) {
                 isOpen = false;
                 base.close();
+                // Unregister call must follow closing base cursor to avoid concurrent access
+                // to cleaned up circuit breaker.
                 registry.unregister(sqlId, executionContext);
                 if (!failed) {
                     logEnd(sqlId, sqlText, executionContext, beginNanos, jit);

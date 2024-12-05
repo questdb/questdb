@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -188,6 +189,39 @@ public class ParallelFilterTest extends AbstractCairoTest {
         testAsyncSubQueryWithFilter("SELECT count(*) " +
                 "FROM price " +
                 "WHERE type IN (SELECT id FROM mapping WHERE ext in ('s1'))");
+    }
+
+    @Test
+    public void testEarlyCursorClose() throws Exception {
+        // This scenario used to lead to an NPE on `circuitBreaker.cancelledFlag` access in PageFrameReduceJob.
+        WorkerPool pool = new WorkerPool((() -> 4));
+        TestUtils.execute(
+                pool, (engine, compiler, sqlExecutionContext) -> {
+                    engine.execute(
+                            "CREATE TABLE x (" +
+                                    "  ts TIMESTAMP," +
+                                    "  id long" +
+                                    ") timestamp (ts) PARTITION BY DAY;",
+                            sqlExecutionContext
+                    );
+                    engine.execute("insert into x select x::timestamp, x from long_sequence(" + (1000 * PAGE_FRAME_MAX_ROWS) + ")", sqlExecutionContext);
+
+                    // We need a special CB here to be able to track NPEs since otherwise the exception will come unnoticed.
+                    final NpeCountingAtomicBooleanCircuitBreaker npeCountingCircuitBreaker = new NpeCountingAtomicBooleanCircuitBreaker();
+                    ((SqlExecutionContextImpl) sqlExecutionContext).with(npeCountingCircuitBreaker);
+
+                    try (RecordCursorFactory factory = compiler.compile("x where id != -1;", sqlExecutionContext).getRecordCursorFactory()) {
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            // Trigger parallel filter and call it a day. The cursor will be closed early.
+                            Assert.assertTrue(cursor.hasNext());
+                        }
+                    }
+
+                    Assert.assertEquals(0, npeCountingCircuitBreaker.npeCounter.get());
+                },
+                configuration,
+                LOG
+        );
     }
 
     @Test
@@ -895,5 +929,17 @@ public class ParallelFilterTest extends AbstractCairoTest {
                 configuration,
                 LOG
         );
+    }
+
+    private static class NpeCountingAtomicBooleanCircuitBreaker extends AtomicBooleanCircuitBreaker {
+        final AtomicInteger npeCounter = new AtomicInteger();
+
+        @Override
+        public int getState() {
+            if (cancelledFlag == null) {
+                npeCounter.incrementAndGet();
+            }
+            return super.getState();
+        }
     }
 }
