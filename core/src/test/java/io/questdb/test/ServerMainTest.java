@@ -26,6 +26,7 @@ package io.questdb.test;
 
 import io.questdb.Bootstrap;
 import io.questdb.DefaultBootstrapConfiguration;
+import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
@@ -118,7 +119,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
     public void testServerMainStartHttpDisabled() throws Exception {
         assertMemoryLeak(() -> {
             Map<String, String> env = new HashMap<>(System.getenv());
-            env.put("QDB_HTTP_ENABLED", "false");
+            env.put(PropertyKey.HTTP_ENABLED.getEnvVarName(), "false");
             Bootstrap bootstrap = new Bootstrap(
                     new DefaultBootstrapConfiguration() {
                         @Override
