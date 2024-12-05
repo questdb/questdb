@@ -31,7 +31,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.AbstractQueueBatchConsumerJob;
+import io.questdb.mp.SynchronizedJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.ValueHolderList;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -39,21 +39,25 @@ import io.questdb.std.str.Utf8StringSink;
 
 import java.util.concurrent.TimeUnit;
 
-public class QueryMetricsJob extends AbstractQueueBatchConsumerJob<QueryMetrics> {
+public class QueryMetricsJob extends SynchronizedJob {
     public static final String TABLE_NAME = "_query_metrics_";
+    private static final int BATCH_LIMIT = 1024;
     private static final long CLEANUP_INTERVAL_MICROS = TimeUnit.SECONDS.toMicros(10);
+    private static final int INITIAL_CAPACITY = 128;
     private static final Log LOG = LogFactory.getLog(QueryMetricsJob.class.getName());
     private static final long METRICS_LIFETIME_MICROS = TimeUnit.MINUTES.toMicros(61);
-
+    private final ValueHolderList<QueryMetrics> buffer;
     private final MicrosecondClock clock;
     private final CairoEngine engine;
     private final QueryMetrics metrics = new QueryMetrics();
+    private final MemCappedQueryMetricsQueue queue;
     private final Utf8StringSink utf8sink = new Utf8StringSink();
     private long lastCleanupTs;
     private TableToken tableToken;
 
     public QueryMetricsJob(CairoEngine engine) {
-        super(engine.getMessageBus().getQueryMetricsQueue());
+        this.queue = engine.getMessageBus().getQueryMetricsQueue();
+        this.buffer = new ValueHolderList<>(MemCappedQueryMetricsQueue.ITEM_FACTORY, INITIAL_CAPACITY);
         this.engine = engine;
         this.clock = engine.getConfiguration().getMicrosecondClock();
     }
@@ -92,7 +96,14 @@ public class QueryMetricsJob extends AbstractQueueBatchConsumerJob<QueryMetrics>
     }
 
     @Override
-    protected boolean doRun(ValueHolderList<QueryMetrics> metricsList) {
+    protected boolean runSerially() {
+        buffer.clear();
+        for (int i = 0; i < BATCH_LIMIT && queue.tryDequeue(buffer.peekNextHolder()); i++) {
+            buffer.commitNextHolder();
+        }
+        if (buffer.size() <= 0) {
+            return false;
+        }
         discardOldData();
         TableWriter tableWriter0;
         try {
@@ -107,8 +118,8 @@ public class QueryMetricsJob extends AbstractQueueBatchConsumerJob<QueryMetrics>
             }
         }
         try (TableWriter tableWriter = tableWriter0) {
-            for (int n = metricsList.size(), i = 0; i < n; i++) {
-                metricsList.moveQuick(i, metrics);
+            for (int n = buffer.size(), i = 0; i < n; i++) {
+                buffer.moveQuick(i, metrics);
                 final TableWriter.Row row = tableWriter.newRow(metrics.timestamp);
                 utf8sink.clear();
                 utf8sink.put(metrics.queryText);

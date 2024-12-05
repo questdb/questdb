@@ -28,8 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cutlass.text.CopyRequestTask;
 import io.questdb.cutlass.text.CopyTask;
-import io.questdb.metrics.QueryMetrics;
-import io.questdb.mp.ConcurrentQueue;
+import io.questdb.metrics.MemCappedQueryMetricsQueue;
 import io.questdb.mp.FanOut;
 import io.questdb.mp.MCSequence;
 import io.questdb.mp.MPSequence;
@@ -125,7 +124,7 @@ public interface MessageBus extends Closeable {
 
     MCSequence getQueryCacheEventSubSeq();
 
-    ConcurrentQueue<QueryMetrics> getQueryMetricsQueue();
+    MemCappedQueryMetricsQueue getQueryMetricsQueue();
 
     FanOut getTableWriterEventFanOut();
 

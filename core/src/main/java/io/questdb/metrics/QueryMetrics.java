@@ -31,6 +31,11 @@ import io.questdb.std.Misc;
 import java.io.Closeable;
 
 public class QueryMetrics implements ValueHolder<QueryMetrics> {
+    public static final int OBJECT_SIZE =
+            Long.BYTES                 // executionNanos
+                    + Integer.BYTES    // jitMode
+                    + 24               // queryText ref + assumed CharSequence object size without its data
+                    + Long.BYTES;      // timestamp
 
     public long executionNanos;
     public int jitMode = SqlJitMode.JIT_MODE_ENABLED;
