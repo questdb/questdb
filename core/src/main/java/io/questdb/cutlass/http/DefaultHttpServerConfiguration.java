@@ -45,7 +45,6 @@ import java.io.IOException;
 import java.io.InputStream;
 
 public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
-
     protected final MimeTypesCache mimeTypesCache;
     private final IODispatcherConfiguration dispatcherConfiguration;
     private final HttpContextConfiguration httpContextConfiguration;
@@ -206,16 +205,17 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     @Override
-    public boolean preAllocateBuffers() {
-        return false;
-    }
-
-    @Override
     public boolean isQueryCacheEnabled() {
         return true;
     }
 
+    @Override
+    public boolean preAllocateBuffers() {
+        return false;
+    }
+
     public class DefaultJsonQueryProcessorConfiguration implements JsonQueryProcessorConfiguration {
+
         @Override
         public int getConnectionCheckFrequency() {
             return 1_000_000;
@@ -263,6 +263,7 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     public class DefaultLineHttpProcessorConfiguration implements LineHttpProcessorConfiguration {
+
         @Override
         public boolean autoCreateNewColumns() {
             return lineHttpProcessorConfiguration.autoCreateNewColumns();
@@ -320,6 +321,11 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
 
         @Override
         public boolean isUseLegacyStringDefault() {
+            return true;
+        }
+
+        @Override
+        public boolean logMessageOnError() {
             return true;
         }
     }

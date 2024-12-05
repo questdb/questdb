@@ -28,6 +28,7 @@ import io.questdb.cutlass.line.LineTcpTimestampAdapter;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 
 public interface LineHttpProcessorConfiguration {
+
     boolean autoCreateNewColumns();
 
     boolean autoCreateNewTables();
@@ -51,4 +52,6 @@ public interface LineHttpProcessorConfiguration {
     boolean isStringToCharCastAllowed();
 
     boolean isUseLegacyStringDefault();
+
+    boolean logMessageOnError();
 }

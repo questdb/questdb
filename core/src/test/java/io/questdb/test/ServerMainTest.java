@@ -444,6 +444,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.worker.sleep.timeout\tQDB_HTTP_WORKER_SLEEP_TIMEOUT\t10\tdefault\tfalse\tfalse\n" +
                                     "http.worker.nap.threshold\tQDB_HTTP_WORKER_NAP_THRESHOLD\t7000\tdefault\tfalse\tfalse\n" +
                                     "http.worker.yield.threshold\tQDB_HTTP_WORKER_YIELD_THRESHOLD\t10\tdefault\tfalse\tfalse\n" +
+                                    "line.log.message.on.error\tQDB_LINE_LOG_MESSAGE_ON_ERROR\ttrue\tdefault\tfalse\tfalse\n" +
                                     "line.auto.create.new.columns\tQDB_LINE_AUTO_CREATE_NEW_COLUMNS\ttrue\tdefault\tfalse\tfalse\n" +
                                     "line.auto.create.new.tables\tQDB_LINE_AUTO_CREATE_NEW_TABLES\ttrue\tdefault\tfalse\tfalse\n" +
                                     "line.default.partition.by\tQDB_LINE_DEFAULT_PARTITION_BY\tDAY\tdefault\tfalse\tfalse\n" +

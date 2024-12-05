@@ -107,7 +107,6 @@ public class PageFrameMemoryPool implements QuietCloseable, Mutable {
         freeParquetBuffers.addAll(cachedParquetBuffers);
         cachedParquetBuffers.clear();
         Misc.freeObjListAndKeepObjects(freeParquetBuffers);
-        frameMemory.clear();
         addressCache = null;
     }
 
