@@ -98,7 +98,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             ff.close(fd);
             fd = -1;
         }
-        if (addr != -1) {
+        if (addr != 0) {
             ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             addr = 0;
         }

@@ -1258,7 +1258,7 @@ fn decode_page0<T: Pushable>(
                     }
                 }
                 FilteredHybridEncoded::Skipped(length) => {
-                    // TODO(puzpuzpuz): think how to handle this properly
+                    // for now, we don't use filters, so this is a never-taken branch
                     sink.skip(length);
                 }
             };
