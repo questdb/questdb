@@ -25,6 +25,7 @@
 package io.questdb.metrics;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlException;
@@ -73,6 +74,10 @@ public class QueryMetricsJob extends AbstractQueueBatchConsumerJob<QueryMetrics>
                 lastCleanupTs = now;
             } catch (SqlException e) {
                 if (!e.getMessage().contains("table does not exist [table=_query_metrics_]")) {
+                    LOG.error().$("Failed to discard old query metrics").$((Throwable) e).$();
+                }
+            } catch (CairoException e) {
+                if (!e.getMessage().contains("no partitions matched WHERE clause")) {
                     LOG.error().$("Failed to discard old query metrics").$((Throwable) e).$();
                 }
             }
