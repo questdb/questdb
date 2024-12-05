@@ -51,14 +51,18 @@ import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT;
 
+@RunWith(Parameterized.class)
 public class ParallelFilterTest extends AbstractCairoTest {
-
     private static final int PAGE_FRAME_COUNT = 4; // also used to set queue size, so must be a power of 2
     private static final int PAGE_FRAME_MAX_ROWS = 100;
     private static final int ROW_COUNT = PAGE_FRAME_COUNT * PAGE_FRAME_MAX_ROWS;
@@ -132,6 +136,19 @@ public class ParallelFilterTest extends AbstractCairoTest {
     private static final String symbolQueryNoLimit = "select v from x where v > 3326086085493629941L and v < 4326086085493629941L order by v";
     private static final String symbolQueryPositiveLimit = "select v from x where v > 3326086085493629941L and v < 4326086085493629941L limit 10";
     private static final String varcharQueryNoLimit = "select l, v from x where l > 3326086085493629941L and l < 4326086085493629941L order by l";
+    private final boolean convertToParquet;
+
+    public ParallelFilterTest(boolean convertToParquet) {
+        this.convertToParquet = convertToParquet;
+    }
+
+    @Parameterized.Parameters(name = "parquet={0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {true},
+                {false},
+        });
+    }
 
     @Before
     public void setUp() {
@@ -247,6 +264,13 @@ public class ParallelFilterTest extends AbstractCairoTest {
                                 "VALUES ('0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c', '2022-08-28T06:25:"
                                 + (seconds < 10 ? "0" + seconds : String.valueOf(seconds)) + "Z')";
                         engine.execute(insertSql, sqlExecutionContext);
+                    }
+
+                    if (convertToParquet) {
+                        engine.execute(
+                                "alter table test1 convert partition to parquet where timestamp >= 0",
+                                sqlExecutionContext
+                        );
                     }
 
                     final String query = "SELECT column1 FROM test1 WHERE to_lowercase(column1) = '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c'";
@@ -527,6 +551,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     private void testAsyncOffloadNegativeLimitTimeout() throws Exception {
+        Assume.assumeFalse(convertToParquet);
         assertMemoryLeak(() -> {
             SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
             setCurrentMicros(0);
@@ -589,6 +614,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     private void testAsyncOffloadTimeout() throws Exception {
+        Assume.assumeFalse(convertToParquet);
         assertMemoryLeak(() -> {
             SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
             setCurrentMicros(0);
@@ -665,6 +691,13 @@ public class ParallelFilterTest extends AbstractCairoTest {
                     engine.execute("insert into price select x::timestamp,  't' || (x%5), rnd_double()  from long_sequence(100000)", sqlExecutionContext);
                     engine.execute("CREATE TABLE mapping ( id SYMBOL, ext SYMBOL, ext_in SYMBOL, ts timestamp ) timestamp(ts)", sqlExecutionContext);
                     engine.execute("insert into mapping select 't' || x, 's' || x, 's' || x, x::timestamp  from long_sequence(5)", sqlExecutionContext);
+                    if (convertToParquet) {
+                        execute(
+                                compiler,
+                                "alter table price convert partition to parquet where ts >= 0",
+                                sqlExecutionContext
+                        );
+                    }
 
                     TestUtils.assertSql(
                             engine,
@@ -693,6 +726,13 @@ public class ParallelFilterTest extends AbstractCairoTest {
                             sqlExecutionContext
                     );
                     engine.execute("insert into tab select x::timestamp, x%10, 't' || (x%10) from long_sequence(10)", sqlExecutionContext);
+                    if (convertToParquet) {
+                        execute(
+                                compiler,
+                                "alter table tab convert partition to parquet where ts >= 0",
+                                sqlExecutionContext
+                        );
+                    }
 
                     TestUtils.assertSql(
                             engine,
@@ -726,6 +766,13 @@ public class ParallelFilterTest extends AbstractCairoTest {
                             sqlExecutionContext
                     );
                     engine.execute("insert into tab select (x * 1000 * 1000 * 60)::timestamp, (x * 1000 * 1000 * 60)::timestamp, x%10, 't' || (x%10) from long_sequence(10000)", sqlExecutionContext);
+                    if (convertToParquet) {
+                        execute(
+                                compiler,
+                                "alter table tab convert partition to parquet where ts >= 0",
+                                sqlExecutionContext
+                        );
+                    }
 
                     TestUtils.assertSql(
                             engine,
@@ -765,6 +812,13 @@ public class ParallelFilterTest extends AbstractCairoTest {
                             sqlExecutionContext
                     );
                     engine.execute("insert into tab select (x * 1000 * 1000 * 60)::timestamp, (x * 1000 * 1000 * 60)::timestamp, x%10, 't' || (x%10) from long_sequence(10000)", sqlExecutionContext);
+                    if (convertToParquet) {
+                        execute(
+                                compiler,
+                                "alter table tab convert partition to parquet where ts >= 0",
+                                sqlExecutionContext
+                        );
+                    }
 
                     TestUtils.assertSql(
                             engine,
@@ -785,6 +839,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     private void testParallelStressSymbol(String query, String expected, int workerCount, int threadCount, int jitMode) throws Exception {
+        Assume.assumeFalse(convertToParquet);
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
 
         WorkerPool pool = new WorkerPool(() -> workerCount);
@@ -839,6 +894,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     private void testParallelStressVarchar(String query, String expected, int workerCount, int threadCount, int jitMode) throws Exception {
+        Assume.assumeFalse(convertToParquet);
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
 
         WorkerPool pool = new WorkerPool(() -> workerCount);
@@ -906,6 +962,13 @@ public class ParallelFilterTest extends AbstractCairoTest {
                             sqlExecutionContext
                     );
                     engine.execute("insert into price select x::timestamp, 't' || (x%5), rnd_double()  from long_sequence(100000)", sqlExecutionContext);
+                    if (convertToParquet) {
+                        execute(
+                                compiler,
+                                "alter table price convert partition to parquet where ts >= 0",
+                                sqlExecutionContext
+                        );
+                    }
 
                     sqlExecutionContext.getBindVariableService().clear();
                     sqlExecutionContext.getBindVariableService().setStr(0, "t3");

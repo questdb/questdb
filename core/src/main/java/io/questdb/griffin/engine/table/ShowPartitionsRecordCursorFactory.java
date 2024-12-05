@@ -233,7 +233,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 long timestamp = tableTxReader.getPartitionTimestampByIndex(partitionIndex);
                 isActive = timestamp == tableTxReader.getLastPartitionTimestamp();
                 PartitionBy.setSinkForPartition(partitionName, partitionBy, timestamp);
-                TableUtils.setPathForPartition(path, partitionBy, timestamp, tableTxReader.getPartitionNameTxn(partitionIndex));
+                TableUtils.setPathForNativePartition(path, partitionBy, timestamp, tableTxReader.getPartitionNameTxn(partitionIndex));
                 numRows = tableTxReader.getPartitionSize(partitionIndex);
             } else {
                 // partition table is over, we will iterate over detached and attachable partitions
