@@ -1856,6 +1856,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
         }
 
+        // Sometimes there can be spaces coming from environment variables, cut them off
+        result = (result != null) ? result.trim() : null;
         if (!key.isDebug()) {
             allPairs.put(key, new ConfigPropertyValueImpl(result, valueSource, false));
         }
