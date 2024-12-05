@@ -160,6 +160,11 @@ public class PGTlsCompatTest extends BasePGTest {
                         }
                     };
                 }
+
+                @Override
+                public int getForceSendFragmentationChunkSize() {
+                    return 2; // force fragmentation and PeerIsSlowToReadException
+                }
             };
 
             final int N = 10;
