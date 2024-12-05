@@ -30,7 +30,6 @@ import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -44,7 +43,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     private final NetworkFacade nf;
     private final int throttle;
     private long buffer;
-    private @Nullable AtomicBoolean cancelledFlag;
+    private AtomicBoolean cancelledFlag;
     private long fd = -1;
     private volatile long powerUpTime = Long.MAX_VALUE;
     private int secret;
@@ -179,7 +178,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
-    public void setCancelledFlag(@Nullable AtomicBoolean cancelledFlag) {
+    public void setCancelledFlag(AtomicBoolean cancelledFlag) {
         this.cancelledFlag = cancelledFlag;
     }
 

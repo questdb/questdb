@@ -32,7 +32,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 // Circuit breaker that doesn't check network connection status or timeout and only allows cancelling statement via CANCEL QUERY command .
 public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     private final int throttle;
-    private @Nullable AtomicBoolean cancelledFlag;
+    private AtomicBoolean cancelledFlag;
     private long fd = -1;
     private int testCount = 0;
 
@@ -46,10 +46,7 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     public void cancel() {
-        if (cancelledFlag != null) {
-            cancelledFlag.set(true);
-        }
-        // else, must already be cancelled
+        cancelledFlag.set(true);
     }
 
     @Override
@@ -108,9 +105,7 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     public void reset() {
-        if (cancelledFlag != null) {
-            cancelledFlag.set(false);
-        }
+        cancelledFlag.set(false);
     }
 
     @Override
@@ -119,7 +114,7 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     @Override
-    public void setCancelledFlag(@Nullable AtomicBoolean cancelledFlag) {
+    public void setCancelledFlag(AtomicBoolean cancelledFlag) {
         this.cancelledFlag = cancelledFlag;
     }
 
@@ -150,6 +145,6 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     private boolean isCancelled() {
-        return cancelledFlag == null || cancelledFlag.get();
+        return cancelledFlag.get();
     }
 }
