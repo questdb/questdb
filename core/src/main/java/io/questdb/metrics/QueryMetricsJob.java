@@ -27,7 +27,6 @@ package io.questdb.metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -82,36 +81,36 @@ public class QueryMetricsJob extends AbstractQueueBatchConsumerJob<QueryMetrics>
     private void init() throws SqlException {
         engine.execute("CREATE TABLE IF NOT EXISTS " + TABLE_NAME +
                 " (ts TIMESTAMP, query VARCHAR, execution_micros LONG)" +
-                " TIMESTAMP(ts) PARTITION BY HOUR");
+                " TIMESTAMP(ts) PARTITION BY HOUR BYPASS WAL");
         tableToken = engine.verifyTableName(TABLE_NAME);
     }
 
     @Override
     protected boolean doRun(int workerId, ValueHolderList<QueryMetrics> metricsList, RunStatus runStatus) {
         discardOldData();
-        WalWriter walWriter0;
+        TableWriter tableWriter0;
         try {
-            walWriter0 = engine.getWalWriter(tableToken);
+            tableWriter0 = engine.getWriter(tableToken, "query_tracing");
         } catch (Exception firstException) {
             try {
                 init();
-                walWriter0 = engine.getWalWriter(tableToken);
+                tableWriter0 = engine.getWriter(tableToken, "query_tracing");
             } catch (Exception e) {
                 LOG.error().$("Failed to save query metrics").$(e).$();
                 return false;
             }
         }
-        try (WalWriter walWriter = walWriter0) {
+        try (TableWriter tableWriter = tableWriter0) {
             for (int n = metricsList.size(), i = 0; i < n; i++) {
                 metricsList.moveQuick(i, metrics);
-                final TableWriter.Row row = walWriter.newRow(metrics.timestamp);
+                final TableWriter.Row row = tableWriter.newRow(metrics.timestamp);
                 utf8sink.clear();
                 utf8sink.put(metrics.queryText);
                 row.putVarchar(1, utf8sink);
                 row.putLong(2, metrics.executionNanos);
                 row.append();
             }
-            walWriter.commit();
+            tableWriter.commit();
             metrics.clear();
         }
         return false;
