@@ -24,12 +24,12 @@
 
 package io.questdb.test.cairo.wal;
 
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.cairo.TableUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
 import org.junit.Test;

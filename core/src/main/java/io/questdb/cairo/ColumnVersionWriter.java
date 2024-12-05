@@ -30,6 +30,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 
 public class ColumnVersionWriter extends ColumnVersionReader {
@@ -123,9 +124,9 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     }
 
     public void removePartition(long partitionTimestamp) {
-        int from = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_UP);
+        int from = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, Vect.BIN_SEARCH_SCAN_UP);
         if (from > -1) {
-            int to = cachedColumnVersionList.binarySearchBlock(from, BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_DOWN);
+            int to = cachedColumnVersionList.binarySearchBlock(from, BLOCK_SIZE_MSB, partitionTimestamp, Vect.BIN_SEARCH_SCAN_DOWN);
             int len = to - from + BLOCK_SIZE;
             cachedColumnVersionList.removeIndexBlock(from, len);
             hasChanges = true;
@@ -186,7 +187,7 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         if (cachedColumnVersionList.size() > 0) {
 
             final long defaultPartitionTimestamp = COL_TOP_DEFAULT_PARTITION;
-            int from = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, defaultPartitionTimestamp + 1, BinarySearch.SCAN_UP);
+            int from = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, defaultPartitionTimestamp + 1, Vect.BIN_SEARCH_SCAN_UP);
             if (from < 0) {
                 from = -from - 1;
             }
@@ -232,7 +233,7 @@ public class ColumnVersionWriter extends ColumnVersionReader {
      */
     public void upsert(long timestamp, int columnIndex, long txn, long columnTop) {
         final int sz = cachedColumnVersionList.size();
-        int index = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, timestamp, BinarySearch.SCAN_UP);
+        int index = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, timestamp, Vect.BIN_SEARCH_SCAN_UP);
         boolean insert = true;
         if (index > -1) {
             // brute force columns for this timestamp
@@ -325,21 +326,21 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     }
 
     private int copyColumnVersions(long srcTimestamp, long dstTimestamp, LongList srcColumnVersionList) {
-        int srcIndex = srcColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, srcTimestamp, BinarySearch.SCAN_UP);
+        int srcIndex = srcColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, srcTimestamp, Vect.BIN_SEARCH_SCAN_UP);
         if (srcIndex < 0) { // source does not have partition information
             return -1;
         }
 
-        int index = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, dstTimestamp, BinarySearch.SCAN_UP);
+        int index = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, dstTimestamp, Vect.BIN_SEARCH_SCAN_UP);
         if (index > -1L) {
             // Wipe out all the information about this partition to replace with the new one.
             removePartition(dstTimestamp);
-            index = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, dstTimestamp, BinarySearch.SCAN_UP);
+            index = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, dstTimestamp, Vect.BIN_SEARCH_SCAN_UP);
         }
 
         if (index < 0) { // the cache does not contain this partition
             index = -index - 1;
-            int srcEnd = srcColumnVersionList.binarySearchBlock(srcIndex, BLOCK_SIZE_MSB, srcTimestamp, BinarySearch.SCAN_DOWN);
+            int srcEnd = srcColumnVersionList.binarySearchBlock(srcIndex, BLOCK_SIZE_MSB, srcTimestamp, Vect.BIN_SEARCH_SCAN_DOWN);
             cachedColumnVersionList.insertFromSource(index, srcColumnVersionList, srcIndex, srcEnd + BLOCK_SIZE);
         } else {
             throw CairoException.critical(0)

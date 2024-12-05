@@ -64,7 +64,7 @@ public class BitSetTest {
         final Rnd rnd = new Rnd();
         BitSet set = new BitSet();
 
-        final int initialCapacity = set.capacity();
+        final long initialCapacity = set.capacity();
         Assert.assertTrue(set.capacity() > 0);
 
         for (int i = 0; i < N; i++) {

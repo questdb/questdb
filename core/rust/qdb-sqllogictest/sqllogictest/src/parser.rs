@@ -438,7 +438,7 @@ pub enum Control {
     SortMode(SortMode),
     /// Control whether or not to substitute variables in the SQL.
     Substitution(bool),
-    IsoTimestamp(bool)
+    IsoTimestamp(bool),
 }
 
 trait ControlItem: Sized {
@@ -937,7 +937,7 @@ fn parse_multiple_result<'a>(
 
     while let Some((_, line)) = lines.next() {
         // empty line
-        if line.is_empty()  {
+        if line.is_empty() {
             lines.next();
             break;
         }

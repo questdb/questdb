@@ -59,7 +59,7 @@ public class FailureFileFacade implements FilesFacade {
     }
 
     @Override
-    public long append(long fd, long buf, int len) {
+    public long append(long fd, long buf, long len) {
         if (checkForFailure()) {
             return -1;
         }

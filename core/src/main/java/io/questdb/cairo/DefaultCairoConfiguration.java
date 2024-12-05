@@ -563,11 +563,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public boolean getPartitionO3OverwriteControlEnabled() {
-        return false;
-    }
-
-    @Override
     public long getPartitionO3SplitMinSize() {
         return 50 * Numbers.SIZE_1MB;
     }
@@ -832,6 +827,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlParallelWorkStealingThreshold() {
         return 16;
+    }
+
+    @Override
+    public int getSqlParquetFrameCacheCapacity() {
+        return 3;
     }
 
     @Override
@@ -1151,6 +1151,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean isPartitionEncoderParquetStatisticsEnabled() {
         return true;
+    }
+
+    @Override
+    public boolean isPartitionO3OverwriteControlEnabled() {
+        return false;
     }
 
     @Override
