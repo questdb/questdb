@@ -1567,16 +1567,14 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private void msgParseCopyOutTypeDescriptionTypeOIDs(BindVariableService bindVariableService) {
-//     Priority order for determining column types:
-//     1. Client-specified type in PARSE message (if provided and not PG_UNSPECIFIED nor X_PG_VOID)
-//     2. Compiler-inferred type (fallback)
-//
-//     Important: We cannot exclusively rely on compiler-inferred types because:
-//     - Clients may specify their own type expectations
-//     - Type mismatches between PARSE and subsequent DESCRIBE messages can cause client errors
-//     - Some clients (e.g., PG JDBC) strictly validate type consistency between types in PARSE and DESCRIBE messages
-
-
+        // Priority order for determining column types:
+        // 1. Client-specified type in PARSE message (if provided and not PG_UNSPECIFIED nor X_PG_VOID)
+        // 2. Compiler-inferred type (fallback)
+        //
+        // Important: We cannot exclusively rely on compiler-inferred types because:
+        // - Clients may specify their own type expectations
+        // - Type mismatches between PARSE and subsequent DESCRIBE messages can cause client errors
+        // - Some clients (e.g., PG JDBC) strictly validate type consistency between types in PARSE and DESCRIBE messages
         final int n = bindVariableService.getIndexedVariableCount();
         outParameterTypeDescriptionTypeOIDs.setPos(n);
         if (n > 0) {
@@ -1589,15 +1587,15 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 }
 
                 if (oid == PG_UNSPECIFIED || oid == X_PG_VOID) {
-//                  ok, either the client did not specify a type or the type is void.
+                    // ok, either the client did not specify a type or the type is void.
                     final Function f = bindVariableService.getFunction(i);
                     int funType = f.getType();
 
-//                  Force STRING type when function type is undefined after compilation.
-//                  This prevents client-side type inference attempts which can lead to:
-//                  - Unwanted metadata queries to unsupported system views
-//                  - Potentially incorrect type guessing behaviors
-//                  - Additional unnecessary roundtrips
+                    // Force STRING type when function type is undefined after compilation.
+                    // This prevents client-side type inference attempts which can lead to:
+                    // - Unwanted metadata queries to unsupported system views
+                    // - Potentially incorrect type guessing behaviors
+                    // - Additional unnecessary roundtrips
                     int type = funType == ColumnType.UNDEFINED ? ColumnType.STRING : funType;
                     oid = Numbers.bswap(PGOids.getTypeOid(type));
                 }

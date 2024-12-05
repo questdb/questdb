@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
@@ -764,6 +765,17 @@ public class BindVariableServiceImplTest {
             testSetIntoUndefined0(14, () -> bindVariableService.setIPv4(14, "127.0.0.1"), ColumnType.IPv4);
             testSetIntoUndefined0(15, () -> bindVariableService.setUuid(15, 1, 2), ColumnType.UUID);
             testSetIntoUndefined0(16, () -> bindVariableService.setVarchar(16, new Utf8String("a")), ColumnType.VARCHAR);
+            testSetIntoUndefined0(17, () -> bindVariableService.setBin(17, new BinarySequence() {
+                @Override
+                public byte byteAt(long index) {
+                    return 2;
+                }
+
+                @Override
+                public long length() {
+                    return 1;
+                }
+            }), ColumnType.BINARY);
             testSetIntoUndefined0(0, () -> bindVariableService.setLong(0, 1L), ColumnType.LONG);
             testSetIntoUndefined0(1, () -> bindVariableService.setInt(1, 1), ColumnType.INT);
             testSetIntoUndefined0(2, () -> bindVariableService.setShort(2, (short) 1), ColumnType.SHORT);
@@ -772,6 +784,7 @@ public class BindVariableServiceImplTest {
             testSetIntoUndefined0(5, () -> bindVariableService.setDouble(5, 1.0), ColumnType.DOUBLE);
             testSetIntoUndefined0(6, () -> bindVariableService.setChar(6, 'a'), ColumnType.CHAR);
             testSetIntoUndefined0(7, () -> bindVariableService.setBoolean(7, true), ColumnType.BOOLEAN);
+
         });
     }
 
@@ -1068,7 +1081,7 @@ public class BindVariableServiceImplTest {
         Assert.assertEquals(expectedType, funB.getType());
     }
 
-    private static interface RunnableWithSqlException {
+    private interface RunnableWithSqlException {
         void run() throws SqlException;
     }
 }
