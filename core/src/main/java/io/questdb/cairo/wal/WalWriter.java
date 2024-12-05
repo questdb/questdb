@@ -2392,12 +2392,6 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void putUuidUtf8(int columnIndex, Utf8Sequence uuidStr) {
-            SqlUtil.implicitCastStrAsUuid(uuidStr, uuid);
-            putLong128(columnIndex, uuid.getLo(), uuid.getHi());
-        }
-
-        @Override
         public void putVarchar(int columnIndex, char value) {
             tempUtf8Sink.clear();
             tempUtf8Sink.put(value);
