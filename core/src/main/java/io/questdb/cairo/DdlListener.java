@@ -30,9 +30,6 @@ public interface DdlListener {
 
     void onColumnRenamed(SecurityContext securityContext, TableToken tableToken, CharSequence oldColumnName, CharSequence newColumnName);
 
-    default void onColumnTypeChanged(SecurityContext securityContext, TableToken tableToken, CharSequence columnName, int oldColumnType, int newColumnType) {
-    }
-
     void onTableCreated(SecurityContext securityContext, TableToken tableToken);
 
     void onTableRenamed(SecurityContext securityContext, TableToken oldTableToken, TableToken newTableToken);
