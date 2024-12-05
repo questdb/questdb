@@ -297,6 +297,11 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
         return getDelegate().isUseLegacyStringDefault();
     }
 
+    @Override
+    public boolean logMessageOnError() {
+        return getDelegate().logMessageOnError();
+    }
+
     protected LineTcpReceiverConfiguration getDelegate() {
         return delegate;
     }
