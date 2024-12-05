@@ -51,12 +51,12 @@ public class TableTransactionLogFuzzTest extends AbstractCairoTest {
         }
 
         @Override
-        public void toSink(Object obj, MemoryA sink) {
+        public short getCommandType(Object instance) {
+            return 0;
         }
 
         @Override
-        public short getCommandType(Object instance) {
-            return 0;
+        public void toSink(Object obj, MemoryA sink) {
         }
     };
 

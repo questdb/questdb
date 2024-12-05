@@ -38,6 +38,7 @@ public class O3PartitionTask {
     private AtomicInteger columnCounter;
     private ObjList<MemoryMA> columns;
     private long dedupColSinkAddr;
+    private boolean isParquet;
     private boolean last;
     private long maxTimestamp; // table's max timestamp
     private long newPartitionSize;
@@ -57,7 +58,6 @@ public class O3PartitionTask {
     private long srcOooMax;
     private TableWriter tableWriter;
     private long txn;
-    private boolean isParquet;
 
     public AtomicInteger getColumnCounter() {
         return columnCounter;

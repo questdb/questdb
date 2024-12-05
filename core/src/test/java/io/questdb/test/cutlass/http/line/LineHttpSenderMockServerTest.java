@@ -126,6 +126,43 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     }
 
     @Test
+    public void testConnectWithConfigString() throws Exception {
+        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
+                .withExpectedContent("test,sym=bol x=1.0\n")
+                .withExpectedHeader("Authorization", "Basic QWxhZGRpbjo7T3BlbjtTZXNhbWU7Ow==")
+                .replyWithStatus(204);
+        testWithMock(mockHttpProcessor, sender -> sender.table("test")
+                .symbol("sym", "bol")
+                .doubleColumn("x", 1.0)
+                .atNow(), port -> Sender.builder("http::addr=localhost:" + port + ";username=Aladdin;password=;;Open;;Sesame;;;;;")); // escaped semicolons in password
+    }
+
+    @Test
+    public void testConnectWithConfigString_deprecatedAuth() throws Exception {
+        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
+                .withExpectedContent("test,sym=bol x=1.0\n")
+                .withExpectedHeader("Authorization", "Basic QWxhZGRpbjo7T3BlbjtTZXNhbWU7Ow==")
+                .replyWithStatus(204);
+        testWithMock(mockHttpProcessor, sender -> sender.table("test")
+                .symbol("sym", "bol")
+                .doubleColumn("x", 1.0)
+                .atNow(), port -> Sender.builder("http::addr=localhost:" + port + ";user=Aladdin;pass=;;Open;;Sesame;;;;;")); // escaped semicolons in password
+    }
+
+    @Test
+    public void testDisableAutoFlush() throws Exception {
+        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor();
+        testWithMock(mockHttpProcessor, sender -> {
+            for (int i = 0; i < 1_000_000; i++) { // sufficient large number of rows to trigger auto-flush unless it is disabled
+                sender.table("test")
+                        .symbol("sym", "bol")
+                        .doubleColumn("x", 1.0)
+                        .atNow();
+            }
+        }, port -> Sender.builder("http::addr=localhost:" + port + ";auto_flush=off;"));
+    }
+
+    @Test
     public void testDisableIntervalBasedAutoFlush() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
                 .replyWithStatus(204);
@@ -173,43 +210,6 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                     }
                 },
                 port -> Sender.builder("http::addr=localhost:" + port + ";auto_flush_rows=off;auto_flush_interval=100000;"));
-    }
-
-    @Test
-    public void testConnectWithConfigString() throws Exception {
-        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
-                .withExpectedContent("test,sym=bol x=1.0\n")
-                .withExpectedHeader("Authorization", "Basic QWxhZGRpbjo7T3BlbjtTZXNhbWU7Ow==")
-                .replyWithStatus(204);
-        testWithMock(mockHttpProcessor, sender -> sender.table("test")
-                .symbol("sym", "bol")
-                .doubleColumn("x", 1.0)
-                .atNow(), port -> Sender.builder("http::addr=localhost:" + port + ";username=Aladdin;password=;;Open;;Sesame;;;;;")); // escaped semicolons in password
-    }
-
-    @Test
-    public void testConnectWithConfigString_deprecatedAuth() throws Exception {
-        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
-                .withExpectedContent("test,sym=bol x=1.0\n")
-                .withExpectedHeader("Authorization", "Basic QWxhZGRpbjo7T3BlbjtTZXNhbWU7Ow==")
-                .replyWithStatus(204);
-        testWithMock(mockHttpProcessor, sender -> sender.table("test")
-                .symbol("sym", "bol")
-                .doubleColumn("x", 1.0)
-                .atNow(), port -> Sender.builder("http::addr=localhost:" + port + ";user=Aladdin;pass=;;Open;;Sesame;;;;;")); // escaped semicolons in password
-    }
-
-    @Test
-    public void testDisableAutoFlush() throws Exception {
-        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor();
-        testWithMock(mockHttpProcessor, sender -> {
-            for (int i = 0; i < 1_000_000; i++) { // sufficient large number of rows to trigger auto-flush unless it is disabled
-                sender.table("test")
-                        .symbol("sym", "bol")
-                        .doubleColumn("x", 1.0)
-                        .atNow();
-            }
-        }, port -> Sender.builder("http::addr=localhost:" + port + ";auto_flush=off;"));
     }
 
     @Test

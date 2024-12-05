@@ -131,7 +131,7 @@ public class IndexBuilder extends RebuildColumnBase {
             int indexValueBlockCapacity
     ) {
         final int trimTo = path.size();
-        TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
+        TableUtils.setPathForNativePartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
         try {
             final int plen = path.size();
 
@@ -142,7 +142,6 @@ public class IndexBuilder extends RebuildColumnBase {
 
                 final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnWriterIndex);
                 if (columnTop > -1L) {
-
                     if (partitionSize > columnTop) {
                         LOG.info().$("indexing [path=").$(path).I$();
                         createIndexFiles(ff, columnName, indexValueBlockCapacity, plen, columnNameTxn);
