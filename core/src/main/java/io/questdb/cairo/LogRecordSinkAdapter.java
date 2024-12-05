@@ -25,8 +25,8 @@
 package io.questdb.cairo;
 
 import io.questdb.log.LogRecord;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 

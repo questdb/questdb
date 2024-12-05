@@ -271,7 +271,6 @@ import io.questdb.std.BitSet;
 import io.questdb.std.BufferWindowCharSequence;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Chars;
-import io.questdb.std.GenericLexer;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;

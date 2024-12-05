@@ -60,7 +60,7 @@ public class PGCommitFailureTest extends BasePGTest {
                 AtomicInteger counter = new AtomicInteger(2);
                 ff = new FilesFacadeImpl() {
                     @Override
-                    public long append(long fd, long buf, int len) {
+                    public long append(long fd, long buf, long len) {
                         if (counter.decrementAndGet() == 0) {
                             return -1;
                         }
@@ -96,7 +96,7 @@ public class PGCommitFailureTest extends BasePGTest {
                 AtomicInteger counter = new AtomicInteger(2);
                 ff = new FilesFacadeImpl() {
                     @Override
-                    public long append(long fd, long buf, int len) {
+                    public long append(long fd, long buf, long len) {
                         if (counter.decrementAndGet() == 0) {
                             return -1;
                         }
@@ -130,7 +130,7 @@ public class PGCommitFailureTest extends BasePGTest {
                 AtomicInteger counter = new AtomicInteger(2);
                 ff = new FilesFacadeImpl() {
                     @Override
-                    public long append(long fd, long buf, int len) {
+                    public long append(long fd, long buf, long len) {
                         if (counter.decrementAndGet() == 0) {
                             return -1;
                         }

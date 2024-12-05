@@ -140,7 +140,7 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean isThreadSafe() {
-            // the function is thread safe because its state is epoch, which does not mutate
+            // The function is thread safe because its state is epoch, which does not mutate
             // between frame executions. For non-thread-safe function, which operates a cursor,
             // the cursor will be re-executed as many times as there are threads. Which is suboptimal.
             return true;
@@ -197,7 +197,7 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean isThreadSafe() {
-            // the function is thread safe because its state is epoch, which does not mutate
+            // The function is thread safe because its state is epoch, which does not mutate
             // between frame executions. For non-thread-safe function, which operates a cursor,
             // the cursor will be re-executed as many times as there are threads. Which is suboptimal.
             return true;
@@ -261,7 +261,7 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean isThreadSafe() {
-            // the function is thread safe because its state is epoch, which does not mutate
+            // The function is thread safe because its state is epoch, which does not mutate
             // between frame executions. For non-thread-safe function, which operates a cursor,
             // the cursor will be re-executed as many times as there are threads. Which is suboptimal.
             return true;

@@ -36,6 +36,14 @@ public class WorkerMetrics {
         max.setValue(Long.MIN_VALUE);
     }
 
+    public long getMaxElapsedMicros() {
+        return max.getValue();
+    }
+
+    public long getMinElapsedMicros() {
+        return min.getValue();
+    }
+
     public void update(long candidateMin, long candidateMax) {
         if (candidateMin < min.getValue()) {
             min.setValue(candidateMin);
@@ -43,13 +51,5 @@ public class WorkerMetrics {
         if (candidateMax > max.getValue()) {
             max.setValue(candidateMax);
         }
-    }
-
-    public long getMinElapsedMicros() {
-        return min.getValue();
-    }
-
-    public long getMaxElapsedMicros() {
-        return max.getValue();
     }
 }

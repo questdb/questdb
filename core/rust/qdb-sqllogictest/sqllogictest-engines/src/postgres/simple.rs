@@ -1,8 +1,7 @@
 use std::process::Command;
 use std::time::Duration;
-
 use async_trait::async_trait;
-use sqllogictest::{DateFormat, DBOutput, DefaultColumnType};
+use sqllogictest::{DBOutput, DateFormat, DefaultColumnType};
 
 use super::{Postgres, Result, Simple};
 
