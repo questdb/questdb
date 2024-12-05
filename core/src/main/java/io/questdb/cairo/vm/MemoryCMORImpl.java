@@ -118,12 +118,13 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
     @Override
     public void ofOffset(FilesFacade ff, long fd, boolean keepFdOpen, LPSZ name, long lo, long hi, int memoryTag, long opts) {
         this.memoryTag = memoryTag;
-        this.closeFdOnClose = !keepFdOpen;
         if (fd > -1) {
             close();
+            this.closeFdOnClose = !keepFdOpen;
             this.ff = ff;
             this.fd = fd;
         } else {
+            this.closeFdOnClose = !keepFdOpen;
             openFile(ff, name);
         }
         mapLazy(lo, hi);
