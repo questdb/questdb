@@ -8605,6 +8605,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSampleByOfSubQuery() throws SqlException {
+        assertQuery(
+                "select-group-by sum(x) sum, t from (select-virtual [timestamp_sequence(0,2_000_000) t, x] x, timestamp_sequence(0,2_000_000) t from (select [x] from long_sequence(10))) timestamp (t) sample by 1s fill(null) align to calendar with offset '00:00'",
+                "select sum(x), t from \n" +
+                        "(select *, timestamp_sequence(0, 2_000_000) t from long_sequence(10)) timestamp(t)\n" +
+                        "sample by 1s fill(null)"
+        );
+    }
+
+    @Test
     public void testSampleBySansSelect() throws Exception {
         assertSyntaxError(
                 "(t1 sample by 1m align to first observation)",

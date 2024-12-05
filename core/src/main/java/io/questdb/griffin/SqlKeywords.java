@@ -1161,6 +1161,16 @@ public class SqlKeywords {
                 && (tok.charAt(2) | 32) == 'n';
     }
 
+    public static boolean isNativeKeyword(CharSequence tok) {
+        return tok.length() == 6
+                && (tok.charAt(0) | 32) == 'n'
+                && (tok.charAt(1) | 32) == 'a'
+                && (tok.charAt(2) | 32) == 't'
+                && (tok.charAt(3) | 32) == 'i'
+                && (tok.charAt(4) | 32) == 'v'
+                && (tok.charAt(5) | 32) == 'e';
+    }
+
     public static boolean isNoCacheKeyword(CharSequence tok) {
         return tok.length() == 7
                 && (tok.charAt(0) | 32) == 'n'
