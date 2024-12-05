@@ -204,9 +204,10 @@ public class ParallelFilterTest extends AbstractCairoTest {
                                     ") timestamp (ts) PARTITION BY DAY;",
                             sqlExecutionContext
                     );
+                    // We want a lot of page frames, so that reduce jobs have enough tasks to do.
                     engine.execute("insert into x select x::timestamp, x from long_sequence(" + (1000 * PAGE_FRAME_MAX_ROWS) + ")", sqlExecutionContext);
 
-                    // We need a special CB here to be able to track NPEs since otherwise the exception will come unnoticed.
+                    // A special CB is needed to be able to track NPEs since otherwise the exception will come unnoticed.
                     final NpeCountingAtomicBooleanCircuitBreaker npeCountingCircuitBreaker = new NpeCountingAtomicBooleanCircuitBreaker();
                     ((SqlExecutionContextImpl) sqlExecutionContext).with(npeCountingCircuitBreaker);
 

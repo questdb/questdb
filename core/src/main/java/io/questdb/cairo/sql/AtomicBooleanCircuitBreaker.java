@@ -46,7 +46,9 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     public void cancel() {
-        cancelledFlag.set(true);
+        if (cancelledFlag != null) {
+            cancelledFlag.set(true);
+        }
     }
 
     @Override
@@ -105,7 +107,9 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     public void reset() {
-        cancelledFlag.set(false);
+        if (cancelledFlag != null) {
+            cancelledFlag.set(false);
+        }
     }
 
     @Override
@@ -145,6 +149,6 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     private boolean isCancelled() {
-        return cancelledFlag.get();
+        return cancelledFlag == null || cancelledFlag.get();
     }
 }
