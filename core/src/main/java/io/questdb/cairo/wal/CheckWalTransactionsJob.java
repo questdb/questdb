@@ -48,8 +48,8 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
     private final TxReader txReader;
     private long lastProcessedCount = 0;
     private long lastRunMs;
-    private Path threadLocalPath;
     private boolean notificationQueueIsFull = false;
+    private Path threadLocalPath;
 
     public CheckWalTransactionsJob(CairoEngine engine) {
         this.engine = engine;

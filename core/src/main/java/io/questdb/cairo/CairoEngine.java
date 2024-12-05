@@ -188,7 +188,7 @@ public class CairoEngine implements Closeable, WriterSource {
             tableNameRegistry.reload();
 
             this.sqlCompilerPool = new SqlCompilerPool(this);
-            if (configuration.getPartitionO3OverwriteControlEnabled()) {
+            if (configuration.isPartitionO3OverwriteControlEnabled()) {
                 enablePartitionOverwriteControl();
             }
             this.metadataCache = new MetadataCache(this);
@@ -560,7 +560,7 @@ public class CairoEngine implements Closeable, WriterSource {
         final int tableId = tableToken.getTableId();
         TableReader reader = readerPool.get(tableToken);
         if ((metadataVersion > -1 && reader.getMetadataVersion() != metadataVersion)
-                || tableId > -1 && reader.getMetadata().getTableId() != tableId) {
+                || (tableId > -1 && reader.getMetadata().getTableId() != tableId)) {
             TableReferenceOutOfDateException ex = TableReferenceOutOfDateException.of(
                     tableToken,
                     tableId,

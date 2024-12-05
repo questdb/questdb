@@ -94,12 +94,10 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
                 row.putInt(1, rnd.nextInt());
 
                 // create partition on disk but do not commit transaction nor row
-
                 try (
                         TableReader reader = newOffPoolReader(configuration, "x");
                         FullFwdPartitionFrameCursor cursor = new FullFwdPartitionFrameCursor()
                 ) {
-
                     int frameCount = 0;
                     cursor.of(reader);
                     while (cursor.next() != null) {
@@ -2162,12 +2160,10 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
                 writer.commit();
 
                 try (TableReader reader = createTableReader(configuration, "x")) {
-
                     final FullFwdPartitionFrameCursor cursor = new FullFwdPartitionFrameCursor();
                     final TestTableReaderRecord record = new TestTableReaderRecord();
 
                     Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
-
 
                     cursor.of(reader);
                     record.of(reader);
@@ -2239,7 +2235,6 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
                     Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
 
-
                     cursor.of(reader);
                     record.of(reader);
 
@@ -2298,7 +2293,6 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
             // check that each symbol in table exists in index as well
             // and current row is collection of index rows
             try (TableReader reader = createTableReader(configuration, "x")) {
-
                 // Open partition frame cursor. This one will frame table as collection of
                 // partitions, each partition is a frame.
                 FullFwdPartitionFrameCursor cursor = new FullFwdPartitionFrameCursor();
@@ -2349,7 +2343,6 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
             // check that each symbol in table exists in index as well
             // and current row is collection of index rows
             try (TableReader reader = createTableReader(configuration, "x")) {
-
                 // Open partition frame cursor. This one will frame table as collection of
                 // partitions, each partition is a frame.
                 FullFwdPartitionFrameCursor cursor = new FullFwdPartitionFrameCursor();
@@ -2402,7 +2395,6 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
             // check that each symbol in table exists in index as well
             // and current row is collection of index rows
             try (TableReader reader = createTableReader(configuration, "x")) {
-
                 // Open partition frame cursor. This one will frame table as collection of
                 // partitions, each partition is a frame.
                 FullFwdPartitionFrameCursor cursor = new FullFwdPartitionFrameCursor();

@@ -37,16 +37,6 @@ public class CovarSampleGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCovarSampleNoValues() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tbl1(x int, y int)");
-            assertSql(
-                    "covar_samp\nnull\n", "select covar_samp(x, y) from tbl1"
-            );
-        });
-    }
-
-    @Test
     public void testCovarSampleAllSameValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select 17.2151921 x, 17.2151921 y from long_sequence(100))");
@@ -94,6 +84,16 @@ public class CovarSampleGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("create table tbl1 as (select cast(x as int) x, cast(x as int) y from long_sequence(100))");
             assertSql(
                     "covar_samp\n841.6666666666666\n", "select covar_samp(x, y) from tbl1"
+            );
+        });
+    }
+
+    @Test
+    public void testCovarSampleNoValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tbl1(x int, y int)");
+            assertSql(
+                    "covar_samp\nnull\n", "select covar_samp(x, y) from tbl1"
             );
         });
     }
