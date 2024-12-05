@@ -1299,7 +1299,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
                     final long columnRowCount = (columnTop != -1) ? partitionRowCount - columnTop : 0;
 
-                    // do not add the column to the parquet file if there are no rows
                     if (columnRowCount > 0) {
                         if (ColumnType.isSymbol(columnType)) {
                             partitionDescriptor.addColumn(
@@ -1379,6 +1378,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     0
                             );
                         }
+                    } else {
+                        // no rows in column
+                        partitionDescriptor.addColumn(
+                                columnName,
+                                columnType,
+                                columnId,
+                                partitionRowCount
+                        );
                     }
                 }
 

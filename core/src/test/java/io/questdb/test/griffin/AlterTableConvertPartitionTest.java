@@ -410,6 +410,43 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testConvertPartitionsWithColTopsSelect() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            final String tableName = testName.getMethodName();
+            createTable(
+                    tableName,
+                    "insert into " + tableName + " values(1, '2024-11-01T00:00:00.000000Z')",
+                    "insert into " + tableName + " values(2, '2024-11-02T00:00:00.000000Z')",
+                    "insert into " + tableName + " values(3, '2024-11-03T00:00:00.000000Z')",
+                    "insert into " + tableName + " values(4, '2024-11-04T00:00:00.000000Z')",
+                    "insert into " + tableName + " values(5, '2024-11-05T00:00:00.000000Z')"
+            );
+
+            execute("alter table " + tableName + " add column a int");
+            execute("insert into " + tableName + " values(5, '2024-11-05T00:00:00.000000Z', 5)");
+            execute("insert into " + tableName + " values(6, '2024-11-06T00:00:00.000000Z', 6)");
+            execute("insert into " + tableName + " values(7, '2024-11-07T00:00:00.000000Z', 7)");
+
+            execute("alter table " + tableName + " convert partition to parquet where timestamp >= 0");
+
+            assertQuery(
+                    "id\ttimestamp\ta\n" +
+                            "1\t2024-11-01T00:00:00.000000Z\tnull\n" +
+                            "2\t2024-11-02T00:00:00.000000Z\tnull\n" +
+                            "3\t2024-11-03T00:00:00.000000Z\tnull\n" +
+                            "4\t2024-11-04T00:00:00.000000Z\tnull\n" +
+                            "5\t2024-11-05T00:00:00.000000Z\tnull\n" +
+                            "5\t2024-11-05T00:00:00.000000Z\t5\n" +
+                            "6\t2024-11-06T00:00:00.000000Z\t6\n" +
+                            "7\t2024-11-07T00:00:00.000000Z\t7\n",
+                    tableName,
+                    "timestamp",
+                    true,
+                    true
+            );
+        });
+    }
     private void assertPartitionDoesNotExist(String tableName, String partition) {
         assertPartitionOnDisk0(tableName, false, partition);
     }
