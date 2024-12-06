@@ -40,6 +40,8 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
+import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.util.Set;
 
 abstract class AbstractLogRecord implements LogRecord, Log {
@@ -376,7 +378,14 @@ abstract class AbstractLogRecord implements LogRecord, Log {
 
     @Override
     public LogRecord ts() {
-        sink().putISODate(clock.getTicks());
+        final long us = clock.getTicks();
+        if (LogLevel.TIMEZONE != null) {
+            final Instant instant = Instant.ofEpochMilli(us / 1000).plusNanos((us % 1000) * 1000);
+            sink().put(OffsetDateTime.ofInstant(instant, LogLevel.TZ.toZoneId()).toString());
+        } else {
+            sink().putISODate(us);
+        }
+
         return this;
     }
 
