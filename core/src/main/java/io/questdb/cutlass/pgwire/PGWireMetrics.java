@@ -27,18 +27,23 @@ package io.questdb.cutlass.pgwire;
 import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.MetricsRegistry;
+import org.jetbrains.annotations.TestOnly;
 
 public class PGWireMetrics {
     private final LongGauge cachedSelectsGauge;
     private final LongGauge cachedUpdatesGauge;
+    private final Counter completedQueriesCounter;
     private final LongGauge connectionCountGauge;
     private final Counter errorCounter;
     private final Counter selectCacheHitCounter;
     private final Counter selectCacheMissCounter;
+    private final Counter startedQueriesCounter;
 
     public PGWireMetrics(MetricsRegistry metricsRegistry) {
         this.connectionCountGauge = metricsRegistry.newLongGauge("pg_wire_connections");
         this.cachedSelectsGauge = metricsRegistry.newLongGauge("pg_wire_select_queries_cached");
+        this.completedQueriesCounter = metricsRegistry.newCounter("pg_wire_queries_completed");
+        this.startedQueriesCounter = metricsRegistry.newCounter("pg_wire_queries");
         this.cachedUpdatesGauge = metricsRegistry.newLongGauge("pg_wire_update_queries_cached");
         this.selectCacheHitCounter = metricsRegistry.newCounter("pg_wire_select_cache_hits");
         this.selectCacheMissCounter = metricsRegistry.newCounter("pg_wire_select_cache_misses");
@@ -53,6 +58,11 @@ public class PGWireMetrics {
         return cachedUpdatesGauge;
     }
 
+    @TestOnly
+    public long completedQueriesCount() {
+        return completedQueriesCounter.getValue();
+    }
+
     public LongGauge connectionCountGauge() {
         return connectionCountGauge;
     }
@@ -61,11 +71,30 @@ public class PGWireMetrics {
         return errorCounter;
     }
 
+    public void markComplete() {
+        completedQueriesCounter.inc();
+    }
+
+    public void markStart() {
+        startedQueriesCounter.inc();
+    }
+
+    @TestOnly
+    public void resetQueryCounters() {
+        startedQueriesCounter.reset();
+        completedQueriesCounter.reset();
+    }
+
     public Counter selectCacheHitCounter() {
         return selectCacheHitCounter;
     }
 
     public Counter selectCacheMissCounter() {
         return selectCacheMissCounter;
+    }
+
+    @TestOnly
+    public long startedQueriesCount() {
+        return startedQueriesCounter.getValue();
     }
 }

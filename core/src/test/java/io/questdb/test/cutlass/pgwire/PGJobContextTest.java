@@ -8434,6 +8434,37 @@ nodejs code:
     }
 
     @Test
+    public void testQueryCountMetrics() throws Exception {
+        Assume.assumeFalse(legacyMode); // only modern PGWire server supports query counters
+        skipOnWalRun(); // non-partitioned table
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            execute("create table x as (select x id from long_sequence(10))");
+            // table
+            metrics.pgWire().resetQueryCounters();
+            try (
+                    PreparedStatement stmt = connection.prepareStatement("select count() from x;");
+                    ResultSet rs = stmt.executeQuery()
+            ) {
+                rs.next();
+                Assert.assertEquals(10, rs.getLong(1));
+                Assert.assertEquals(1, metrics.pgWire().startedQueriesCount());
+                Assert.assertEquals(1, metrics.pgWire().completedQueriesCount());
+            }
+            // virtual
+            metrics.pgWire().resetQueryCounters();
+            try (
+                    PreparedStatement stmt = connection.prepareStatement("select 1;");
+                    ResultSet rs = stmt.executeQuery()
+            ) {
+                rs.next();
+                Assert.assertEquals(1, rs.getLong(1));
+                Assert.assertEquals(1, metrics.pgWire().startedQueriesCount());
+                Assert.assertEquals(1, metrics.pgWire().completedQueriesCount());
+            }
+        });
+    }
+
+    @Test
     public void testQueryCountWithTsSmallerThanMinTsInTable() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (conn, binary, mode, port) -> {
             execute(
