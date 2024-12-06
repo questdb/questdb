@@ -59,7 +59,6 @@ import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 
 import static io.questdb.cairo.ErrorTag.*;
@@ -1109,62 +1108,34 @@ public class WalTableFailureTest extends AbstractCairoTest {
             }
         };
         assertMemoryLeak(ff, () -> {
-            AtomicBoolean done = new AtomicBoolean(false);
-            AtomicReference<Throwable> exception = new AtomicReference<>();
 
-            Thread applyThread = new Thread(() -> {
-                try {
-                    while (!done.get()) {
-                        drainWalQueue();
-                    }
-                } catch (Throwable e) {
-                    exception.set(e);
-                } finally {
-                    Path.clearThreadLocals();
-                }
-            });
-            applyThread.start();
+            execute("create table tab (b boolean, ts timestamp, sym symbol) timestamp(ts) partition by DAY WAL");
+            TableToken tt = engine.verifyTableName("tab");
 
-            try {
-                execute("create table tab (b boolean, ts timestamp, sym symbol) timestamp(ts) partition by DAY WAL");
-                TableToken tt = engine.verifyTableName("tab");
+            execute("insert into tab select true, (1)::timestamp, null from long_sequence(1)");
+            execute("insert into tab select true, (2)::timestamp, null from long_sequence(1)");
+            execute("insert into tab select true, (3)::timestamp, null from long_sequence(1)");
+            execute("insert into tab select true, (4)::timestamp, null from long_sequence(1)");
+            update("update tab set b=false");
+            execute("insert into tab select true, (5)::timestamp, null from long_sequence(1)");
+            drainWalQueue();
 
-                execute("insert into tab select true, (1)::timestamp, null from long_sequence(1)");
-                execute("insert into tab select true, (2)::timestamp, null from long_sequence(1)");
-                execute("insert into tab select true, (3)::timestamp, null from long_sequence(1)");
-                execute("insert into tab select true, (4)::timestamp, null from long_sequence(1)");
-                update("update tab set b=false");
+            assertEventually(() -> Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tt)));
 
-                assertEventually(() -> Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tt)));
+            execute("alter table tab resume wal");
+            execute("insert into tab select true, (6)::timestamp, null from long_sequence(1)");
+            drainWalQueue();
 
-                execute("alter table tab resume wal");
-                execute("insert into tab select true, (5)::timestamp, null from long_sequence(1)");
-                execute("insert into tab select true, (6)::timestamp, null from long_sequence(1)");
-
-                assertEventually(() -> {
-                    try {
-                        assertSql(
-                                "b\tts\tsym\n" +
-                                        "false\t1970-01-01T00:00:00.000001Z\t\n" +
-                                        "false\t1970-01-01T00:00:00.000002Z\t\n" +
-                                        "false\t1970-01-01T00:00:00.000003Z\t\n" +
-                                        "false\t1970-01-01T00:00:00.000004Z\t\n" +
-                                        "true\t1970-01-01T00:00:00.000005Z\t\n" +
-                                        "true\t1970-01-01T00:00:00.000006Z\t\n",
-                                "tab"
-                        );
-                    } catch (SqlException e) {
-                        throw new RuntimeException(e);
-                    }
-                });
-            } finally {
-                done.set(true);
-                applyThread.join();
-            }
-
-            if (exception.get() != null) {
-                throw new RuntimeException(exception.get());
-            }
+            assertSql(
+                    "b\tts\tsym\n" +
+                            "false\t1970-01-01T00:00:00.000001Z\t\n" +
+                            "false\t1970-01-01T00:00:00.000002Z\t\n" +
+                            "false\t1970-01-01T00:00:00.000003Z\t\n" +
+                            "false\t1970-01-01T00:00:00.000004Z\t\n" +
+                            "true\t1970-01-01T00:00:00.000005Z\t\n" +
+                            "true\t1970-01-01T00:00:00.000006Z\t\n",
+                    "tab"
+            );
         });
     }
 

@@ -418,6 +418,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             .$("rows/s, ampl=").$(Math.round(100.0 * physicalRowsAdded / rowsAdded) / 100.0)
                             .I$();
                 }
+            } catch (Throwable th) {
+                // We could have been applying multiple txns, and we failed somewhere in the middle. The writer will
+                // be returned to the pool and dirty writes will be rolled back. We have to update the sequencer
+                // on the state of the writer and revert any dirty txns that might have advanced. We do that
+                // by equalizing writerTxn and dirtyWriterTxn.
+                engine.getTableSequencerAPI().updateWriterTxns(tableToken, writer.getTxn(), writer.getTxn());
+                throw th;
             } finally {
                 Misc.free(structuralChangeCursor);
             }
@@ -644,7 +651,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 }
                 // else: table is dropped and fully cleaned, this is late notification.
             } else {
-                long lastWriterTxn;
+                long writerTxn, dirtyWriterTxn;
                 txnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
                 TableWriter writer = null;
                 try {
@@ -656,7 +663,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     }
                     applyOutstandingWalTransactions(tableToken, writer, engine, operationExecutor, tempPath, runStatus, txnTracker);
                     txnTracker.hadEnoughMemory(tableToken.getTableName(), rnd);
-                    lastWriterTxn = writer.getSeqTxn();
+                    writerTxn = writer.getSeqTxn();
+                    dirtyWriterTxn = writer.getAppliedSeqTxn();
                 } catch (EntryUnavailableException tableBusy) {
                     //noinspection StringEquality
                     if (tableBusy.getReason() != NO_LOCK_REASON
@@ -668,7 +676,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         engine.notifyWalTxnRepublisher(tableToken);
                     }
                     // Do not suspend table. Perhaps writer will be unlocked with no transaction applied.
-                    // We do not suspend table because of having initial value on lastWriterTxn. It will either be
+                    // We do not suspend table because of having initial value on writerTxn. It will either be
                     // "ignore" or last txn we applied.
                     return;
                 } catch (Throwable th) {
@@ -682,7 +690,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     Misc.free(writer);
                 }
 
-                if (engine.getTableSequencerAPI().notifyCommitReadable(tableToken, lastWriterTxn)) {
+                if (engine.getTableSequencerAPI().updateWriterTxns(tableToken, writerTxn, dirtyWriterTxn)) {
                     engine.notifyWalTxnCommitted(tableToken);
                 }
             }

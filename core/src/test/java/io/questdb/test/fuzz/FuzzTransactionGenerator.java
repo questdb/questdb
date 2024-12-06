@@ -86,7 +86,7 @@ public class FuzzTransactionGenerator {
         probabilityOfTruncate = probabilityOfTruncate / sumOfProbabilities;
         probabilityOfDropPartition = probabilityOfDropPartition / sumOfProbabilities;
         // effectively, probabilityOfDataInsert is as follows, but we don't need this value:
-//        probabilityOfDataInsert = probabilityOfDataInsert / sumOfProbabilities;
+// probabilityOfDataInsert = probabilityOfDataInsert / sumOfProbabilities;
 
         // To prevent long loops of cancelling rows, limit max probability of cancelling rows
         probabilityOfCancelRow = Math.min(probabilityOfCancelRow, 0.3);

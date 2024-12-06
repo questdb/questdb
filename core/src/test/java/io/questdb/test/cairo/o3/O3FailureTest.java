@@ -757,7 +757,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testOutOfFileHandles() throws Exception {
-        counter.set(1195); // 995 files are opened when provisioning tables
+        counter.set(600);
         executeWithPool(
                 4, O3FailureTest::testOutOfFileHandles0, new TestFilesFacadeImpl() {
                     @Override

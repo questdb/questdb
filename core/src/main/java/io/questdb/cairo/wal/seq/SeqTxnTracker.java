@@ -34,10 +34,12 @@ import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import org.jetbrains.annotations.TestOnly;
 
 public class SeqTxnTracker implements O3JobParallelismRegulator {
+    public static final long UNINITIALIZED_TXN = -1;
     private static final Log LOG = LogFactory.getLog(SeqTxnTracker.class);
     private static final long SEQ_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "seqTxn");
     private static final long SUSPENDED_STATE_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "suspendedState");
     private static final long WRITER_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "writerTxn");
+    private volatile long dirtyWriterTxn;
     private volatile String errorMessage = "";
     private volatile ErrorTag errorTag = ErrorTag.NONE;
     private int maxRecordedInflightPartitions = 1;
@@ -45,13 +47,13 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
     // negative int: holds backoff counter
     private int memoryPressureRegulationValue = Integer.MAX_VALUE;
     @SuppressWarnings("FieldMayBeFinal")
-    private volatile long seqTxn = -1;
+    private volatile long seqTxn = UNINITIALIZED_TXN;
     // -1 suspended
     // 0 unknown
     // 1 not suspended
     private volatile int suspendedState = 0;
     private long walBackoffUntil = -1;
-    private volatile long writerTxn = -1;
+    private volatile long writerTxn = UNINITIALIZED_TXN;
 
     public String getErrorMessage() {
         return errorMessage;
@@ -59,6 +61,10 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
 
     public ErrorTag getErrorTag() {
         return errorTag;
+    }
+
+    public long getLagTxnCount() {
+        return Math.max(0, this.dirtyWriterTxn - this.writerTxn);
     }
 
     public int getMaxO3MergeParallelism() {
@@ -123,22 +129,11 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
     }
 
     public boolean isInitialised() {
-        return writerTxn != -1;
+        return writerTxn != UNINITIALIZED_TXN;
     }
 
-    @TestOnly
     public boolean isSuspended() {
         return suspendedState < 0;
-    }
-
-    public boolean notifyCommitReadable(long newWriterTxn) {
-        // This is only called under TableWriter lock
-        // with no threads race
-        writerTxn = newWriterTxn;
-        if (newWriterTxn > -1) {
-            suspendedState = 1;
-        }
-        return newWriterTxn < seqTxn;
     }
 
     public boolean notifyOnCheck(long newSeqTxn) {
@@ -227,5 +222,30 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
     @Override
     public void updateInflightPartitions(int count) {
         maxRecordedInflightPartitions = Math.max(maxRecordedInflightPartitions, count);
+    }
+
+    /**
+     * Updates writerTxn and dirtyWriterTxn and returns true if the Apply2Wal job should be notified.
+     * This method is not thread-safe and should be called under TableWriter lock.
+     *
+     * @param writerTxn      txn that is available for reading
+     * @param dirtyWriterTxn txn that is in flight that is not yet fully written
+     * @return true if Apply2Wal job should be notified
+     */
+    public synchronized boolean updateWriterTxns(long writerTxn, long dirtyWriterTxn) {
+        // This is only called under TableWriter lock inside Apply2Wal job
+        // with no threads race
+        // TODO: remove other calls and make the call non-synchronized. The calls to reset txn
+        // when queue is full seems like redundant after all the changes in CheckWalTransactionsJob
+        long prevWriterTxn = this.writerTxn;
+        long prevDirtyWriterTxn = this.dirtyWriterTxn;
+        this.writerTxn = writerTxn;
+        this.dirtyWriterTxn = dirtyWriterTxn;
+
+        // Progress made means table is not suspended
+        if (writerTxn > prevWriterTxn || dirtyWriterTxn > prevDirtyWriterTxn) {
+            suspendedState = 1;
+        }
+        return writerTxn < seqTxn;
     }
 }

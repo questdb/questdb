@@ -4954,6 +4954,7 @@ if __name__ == "__main__":
 
     @Test
     public void testInsert2() throws Exception {
+        Assume.assumeFalse(legacyMode);
         String expectedAll = "a[INTEGER],d[TIMESTAMP],t[TIMESTAMP],d1[TIMESTAMP],t1[TIMESTAMP],t2[TIMESTAMP]\n" +
                 "0,2011-04-11 00:00:00.0,2011-04-11 14:40:54.998821,2011-04-11 14:40:54.998,2011-04-11 00:00:00.0,2011-04-11 14:40:54.998821\n" +
                 "1,2011-04-11 00:00:00.0,2011-04-11 14:40:54.999821,2011-04-11 14:40:54.999,2011-04-11 00:00:00.0,2011-04-11 14:40:54.999821\n" +

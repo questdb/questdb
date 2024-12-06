@@ -56,8 +56,6 @@ public interface TableSequencer extends QuietCloseable {
     // return txn cursor to apply transaction from given point
     TransactionLogCursor getTransactionLogCursor(long seqTxn);
 
-    boolean isSuspended();
-
     long lastTxn();
 
     long nextStructureTxn(long structureVersion, TableMetadataChange change);

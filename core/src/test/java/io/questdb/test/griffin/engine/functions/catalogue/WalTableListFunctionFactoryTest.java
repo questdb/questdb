@@ -117,6 +117,17 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNotInitialized() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable("B", true);
+            createTable("C", true);
+            assertSql("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
+                    "B\tfalse\t0\t0\t0\t\t\t0\n" +
+                    "C\tfalse\t0\t0\t0\t\t\t0\n", "wal_tables()");
+        });
+    }
+
+    @Test
     public void testWalTablesQueryCache() throws Exception {
         assertMemoryLeak(() -> {
             createTable("A", false);
@@ -234,7 +245,10 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
 
             execute("insert into A values (1, 'A', '2022-12-05T01', 'A')");
             execute("insert into B values (2, 'A', '2022-12-05T01', 'B')");
+
+            drainWalQueue();
             execute(suspendSql);
+
             execute("insert into B values (3, 'C', '2022-12-05T02', 'D')");
 
             drainWalQueue();
@@ -242,7 +256,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("B")));
 
             assertSql("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
-                    "B\ttrue\t2\t0\t2\t" + expectedErrorTag.text() + "\t" + expectedErrorMessage + "\t0\n", "wal_tables()");
+                    "B\ttrue\t1\t0\t2\t" + expectedErrorTag.text() + "\t" + expectedErrorMessage + "\t0\n", "wal_tables()");
 
             execute("alter table B resume wal");
 
