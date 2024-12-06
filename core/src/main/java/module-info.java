@@ -379,6 +379,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.date.IsLeapYearFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampDiffFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampAddFunctionFactory,
+            io.questdb.griffin.engine.functions.date.TimestampAddWithTimezoneFunctionFactory,
             io.questdb.griffin.engine.functions.date.ToDateFunctionFactory,
             io.questdb.griffin.engine.functions.date.VarcharToDateFunctionFactory,
             io.questdb.griffin.engine.functions.date.ToPgDateFunctionFactory,
