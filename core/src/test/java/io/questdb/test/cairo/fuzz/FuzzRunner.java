@@ -35,6 +35,7 @@ import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.ex.EntryLockedException;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.api.MemoryR;
@@ -790,16 +791,18 @@ public class FuzzRunner {
                 if (ColumnType.isVarSize(columnType)) {
                     for (int partitionIndex = 0; partitionIndex < reader.getPartitionCount(); partitionIndex++) {
                         reader.openPartition(partitionIndex);
-                        int columnBase = reader.getColumnBase(partitionIndex);
-                        MemoryR dCol = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, i));
-                        MemoryR iCol = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, i) + 1);
+                        if (PartitionFormat.NATIVE == reader.getPartitionFormat(partitionIndex)) {
+                            int columnBase = reader.getColumnBase(partitionIndex);
+                            MemoryR dCol = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, i));
+                            MemoryR iCol = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, i) + 1);
 
-                        long colTop = reader.getColumnTop(columnBase, i);
-                        long rowCount = reader.getPartitionRowCount(partitionIndex) - colTop;
-                        long dColAddress = dCol == null ? 0 : dCol.getPageAddress(0);
-                        if (DebugUtils.isSparseVarCol(rowCount, iCol.getPageAddress(0), dColAddress, columnType)) {
-                            Assert.fail("var column " + reader.getMetadata().getColumnName(i)
-                                    + " is not dense, .i file record size is different from .d file record size");
+                            long colTop = reader.getColumnTop(columnBase, i);
+                            long rowCount = reader.getPartitionRowCount(partitionIndex) - colTop;
+                            long dColAddress = dCol == null ? 0 : dCol.getPageAddress(0);
+                            if (DebugUtils.isSparseVarCol(rowCount, iCol.getPageAddress(0), dColAddress, columnType)) {
+                                Assert.fail("var column " + reader.getMetadata().getColumnName(i)
+                                        + " is not dense, .i file record size is different from .d file record size");
+                            }
                         }
                     }
                 }
