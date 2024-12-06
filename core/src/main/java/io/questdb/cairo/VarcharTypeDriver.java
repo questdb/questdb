@@ -383,6 +383,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         auxMem.ofOffset(
                 ff,
                 fd,
+                false,
                 fileName,
                 VARCHAR_AUX_WIDTH_BYTES * rowLo,
                 VARCHAR_AUX_WIDTH_BYTES * rowHi,
@@ -413,6 +414,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         dataMem.ofOffset(
                 ff,
                 dataFd,
+                false,
                 fileName,
                 lo,
                 hi,

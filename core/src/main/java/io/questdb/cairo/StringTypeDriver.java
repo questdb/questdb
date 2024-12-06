@@ -80,6 +80,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
         auxMem.ofOffset(
                 ff,
                 fd,
+                false,
                 fileName,
                 rowLo << LEGACY_VAR_SIZE_AUX_SHL,
                 (rowHi + 1) << LEGACY_VAR_SIZE_AUX_SHL,
@@ -103,6 +104,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
         dataMem.ofOffset(
                 ff,
                 dataFd,
+                false,
                 fileName,
                 auxMem.getLong(rowLo << LEGACY_VAR_SIZE_AUX_SHL),
                 auxMem.getLong(rowHi << LEGACY_VAR_SIZE_AUX_SHL),
