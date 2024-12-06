@@ -6241,16 +6241,16 @@ public class SqlOptimiser implements Mutable {
         return _model;
     }
 
-    private void addColumnToSelectModel(QueryModel model, IntList insetColumnIndexes, ObjList<QueryColumn> insertColumnAliases, CharSequence timestampAlias) {
+    private void addColumnToSelectModel(QueryModel model, IntList insertColumnIndexes, ObjList<QueryColumn> insertColumnAliases, CharSequence timestampAlias) {
         ObjList<QueryColumn> origins = new ObjList<>(model.getBottomUpColumns());
         model.clearColumnMapStructs();
 
         // These are merged columns, the assumption is that the insetColumnIndexes are ordered.
         // This loop will fail miserably in indexes are unordered.
         int src1ColumnCount = origins.size();
-        int src2ColumnCount = insetColumnIndexes.size();
+        int src2ColumnCount = insertColumnIndexes.size();
         for (int i = 0, k = 0, m = 0; i < src1ColumnCount || k < src2ColumnCount; m++) {
-            if (k < src2ColumnCount && insetColumnIndexes.getQuick(k) == m) {
+            if (k < src2ColumnCount && insertColumnIndexes.getQuick(k) == m) {
                 QueryColumn column = insertColumnAliases.get(k);
                 // insert column at this position, this column must reference our timestamp, that
                 // comes out of the group-by result set, but with user-provided aliases.

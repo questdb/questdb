@@ -3690,15 +3690,16 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSampleByFromToParallelDeduceTimeStampColumn() throws Exception {
+        execute("CREATE TABLE 't' (\n" +
+                "  name SYMBOL capacity 256 CACHE,\n" +
+                "  timestamp TIMESTAMP\n" +
+                ") timestamp (timestamp) PARTITION BY DAY;");
+        execute("INSERT INTO t (name, timestamp) VALUES" +
+                " ('a', '2023-09-01T00:00:00.000Z')," +
+                " ('a', '2023-09-01T00:10:00.000Z')");
+
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE 't' (\n" +
-                    "  name SYMBOL capacity 256 CACHE,\n" +
-                    "  timestamp TIMESTAMP\n" +
-                    ") timestamp (timestamp) PARTITION BY DAY;");
-            execute("INSERT INTO t (name, timestamp) VALUES" +
-                    " ('a', '2023-09-01T00:00:00.000Z')," +
-                    " ('a', '2023-09-01T00:10:00.000Z')");
-            final String parallel = "SELECT timestamp+60000000 as 'timestamp', 0 AS \"extra_column\", 0 AS \"extra_column2\"\n" +
+            final String query = "SELECT timestamp+60000000 as 'timestamp', 0 AS extra_column, 0 AS extra_column2 \n" +
                     "FROM t\n" +
                     "WHERE name = 'a'\n" +
                     "SAMPLE BY (1m);\n";
@@ -3707,7 +3708,27 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "2023-09-01T00:01:00.000000Z\t0\t0\n" +
                     "2023-09-01T00:11:00.000000Z\t0\t0\n";
 
-            assertSql(result, parallel);
+            assertSql(result, query);
+        });
+
+        assertMemoryLeak(() -> {
+            final String query = "select dateadd('d', 1, timestamp) timestamp, name from t sample by 10m";
+
+            final String result = "timestamp\tname\n" +
+                    "2023-09-02T00:00:00.000000Z\ta\n" +
+                    "2023-09-02T00:10:00.000000Z\ta\n";
+
+            assertSql(result, query);
+        });
+
+        assertMemoryLeak(() -> {
+            final String query = "select dateadd('d', 1, timestamp) timestamp, dateadd('d', 2, timestamp) timestamp2, name from t sample by 10m";
+
+            final String result = "timestamp\ttimestamp2\tname\n" +
+                    "2023-09-02T00:00:00.000000Z\t2023-09-03T00:00:00.000000Z\ta\n" +
+                    "2023-09-02T00:10:00.000000Z\t2023-09-03T00:10:00.000000Z\ta\n";
+
+            assertSql(result, query);
         });
     }
 
