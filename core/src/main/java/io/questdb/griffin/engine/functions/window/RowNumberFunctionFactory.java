@@ -55,8 +55,9 @@ import io.questdb.std.Unsafe;
 
 public class RowNumberFunctionFactory implements FunctionFactory {
 
+    public static final String NAME = "row_number";
     private static final SingleColumnType LONG_COLUMN_TYPE = new SingleColumnType(ColumnType.LONG);
-    private static final String SIGNATURE = "row_number()";
+    private static final String SIGNATURE = NAME + "()";
 
     @Override
     public String getSignature() {
