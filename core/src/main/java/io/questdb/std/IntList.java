@@ -85,6 +85,16 @@ public class IntList implements Mutable, Sinkable {
         return data.length;
     }
 
+    public void checkCapacity(int capacity) {
+        int l = data.length;
+        if (capacity > l) {
+            int newCap = Math.max(l << 1, capacity);
+            int[] buf = new int[newCap];
+            System.arraycopy(data, 0, buf, 0, l);
+            this.data = buf;
+        }
+    }
+
     public void clear() {
         pos = 0;
     }
@@ -241,6 +251,21 @@ public class IntList implements Mutable, Sinkable {
         return pos;
     }
 
+    /**
+     * Sorts groups of N elements. The size of the group is specified by {@code groupSize}.
+     * Comparison between groups is done by comparing the first element of each group, then
+     * if the first elements are equial the second elements are compared and so on.
+     *
+     * @param groupSize size of the group
+     */
+    public void sortGroups(int groupSize) {
+        if (groupSize > 0 && pos % groupSize == 0) {
+            IntGroupSort.quickSort(groupSize, data, 0, pos / groupSize);
+            return;
+        }
+        throw new IllegalStateException("sorting not supported for group size: " + groupSize + ", length: " + pos);
+    }
+
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         sink.putAscii('[');
@@ -282,16 +307,6 @@ public class IntList implements Mutable, Sinkable {
 
     public void zero(int value) {
         Arrays.fill(data, 0, pos, value);
-    }
-
-    private void checkCapacity(int capacity) {
-        int l = data.length;
-        if (capacity > l) {
-            int newCap = Math.max(l << 1, capacity);
-            int[] buf = new int[newCap];
-            System.arraycopy(data, 0, buf, 0, l);
-            this.data = buf;
-        }
     }
 
     private boolean equals(IntList that) {
