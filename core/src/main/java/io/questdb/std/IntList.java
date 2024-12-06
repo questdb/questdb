@@ -25,6 +25,7 @@
 package io.questdb.std;
 
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Int3Sort;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.NotNull;
@@ -57,6 +58,10 @@ public class IntList implements Mutable, Sinkable {
         int s = that.size();
         setPos(p + s);
         System.arraycopy(that.data, 0, this.data, p, s);
+    }
+
+    public void allocate(int size) {
+        checkCapacity(size);
     }
 
     public void arrayCopy(int srcPos, int dstPos, int length) {
@@ -239,6 +244,14 @@ public class IntList implements Mutable, Sinkable {
 
     public int size() {
         return pos;
+    }
+
+    public void sortGroups(int groupSize) {
+        if (groupSize == 3 && pos % 3 == 0) {
+            Int3Sort.quickSort(data, 0, pos / 3);
+            return;
+        }
+        throw new IllegalStateException("sorting not supported");
     }
 
     @Override
