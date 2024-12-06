@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.eq;
+package io.questdb.griffin.engine.functions.lt;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
@@ -45,11 +45,11 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
 
-public class EqTimestampCursorFunctionFactory implements FunctionFactory {
+public class GtTimestampCursorFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "=(NC)";
+        return ">(NC)";
     }
 
     @Override
@@ -108,7 +108,11 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (leftFunc.getTimestamp(rec) == epoch);
+            return Numbers.lessThan(
+                    epoch,
+                    leftFunc.getTimestamp(rec),
+                    negated
+            );
         }
 
         @Override
@@ -140,7 +144,7 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean isThreadSafe() {
-            // The function is thread safe because its state is epoch, which does not mutate
+            // the function is thread safe because its state is epoch, which does not mutate
             // between frame executions. For non-thread-safe function, which operates a cursor,
             // the cursor will be re-executed as many times as there are threads. Which is suboptimal.
             return true;
@@ -150,9 +154,11 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val(leftFunc);
             if (negated) {
-                sink.val('!');
+                sink.val("<=");
+            } else {
+                sink.val('>');
             }
-            sink.val('=').val(rightFunc);
+            sink.val(rightFunc);
         }
     }
 
@@ -170,7 +176,11 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (leftFunc.getTimestamp(rec) == epoch);
+            return Numbers.lessThan(
+                    epoch,
+                    leftFunc.getTimestamp(rec),
+                    negated
+            );
         }
 
         @Override
@@ -197,7 +207,7 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean isThreadSafe() {
-            // The function is thread safe because its state is epoch, which does not mutate
+            // the function is thread safe because its state is epoch, which does not mutate
             // between frame executions. For non-thread-safe function, which operates a cursor,
             // the cursor will be re-executed as many times as there are threads. Which is suboptimal.
             return true;
@@ -207,9 +217,11 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val(leftFunc);
             if (negated) {
-                sink.val('!');
+                sink.val("<=");
+            } else {
+                sink.val('>');
             }
-            sink.val('=').val(rightFunc);
+            sink.val(rightFunc);
         }
     }
 
@@ -229,7 +241,11 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (leftFunc.getTimestamp(rec) == epoch);
+            return Numbers.lessThan(
+                    epoch,
+                    leftFunc.getTimestamp(rec),
+                    negated
+            );
         }
 
         @Override
@@ -261,7 +277,7 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean isThreadSafe() {
-            // The function is thread safe because its state is epoch, which does not mutate
+            // the function is thread safe because its state is epoch, which does not mutate
             // between frame executions. For non-thread-safe function, which operates a cursor,
             // the cursor will be re-executed as many times as there are threads. Which is suboptimal.
             return true;
@@ -271,9 +287,11 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val(leftFunc);
             if (negated) {
-                sink.val('!');
+                sink.val("<=");
+            } else {
+                sink.val('>');
             }
-            sink.val('=').val(rightFunc);
+            sink.val(rightFunc);
         }
     }
 }

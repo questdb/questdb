@@ -26,8 +26,13 @@ package io.questdb.griffin.engine.functions.bool;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -38,10 +43,16 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.Chars;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 
 public class InSymbolCursorFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "in(KC)";
@@ -67,9 +78,9 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
             }
             final SymbolFunction symbolFunction = (SymbolFunction) args.getQuick(0);
             if (symbolFunction.isSymbolTableStatic()) {
-                return new SymbolInNullCursorFunction(symbolFunction);
+                return new SymbolInNullCursorFunc(symbolFunction);
             }
-            return new StrInNullCursorFunction(symbolFunction);
+            return new StrInNullCursorFunc(symbolFunction);
         }
 
         // use first column to create list of values (over multiple records)
@@ -90,18 +101,17 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         }
 
         if (valueFunction.isNullConstant()) {
-            return new StrInCursorFunction(NullConstant.NULL, cursorFunction, func);
+            return new StrInCursorFunc(NullConstant.NULL, cursorFunction, func);
         }
 
         final SymbolFunction symbolFunction = (SymbolFunction) args.getQuick(0);
         if (symbolFunction.isSymbolTableStatic()) {
-            return new SymbolInCursorFunction(symbolFunction, cursorFunction, func);
+            return new SymbolInCursorFunc(symbolFunction, cursorFunction, func);
         }
-        return new StrInCursorFunction(symbolFunction, cursorFunction, func);
+        return new StrInCursorFunc(symbolFunction, cursorFunction, func);
     }
 
-    private static class StrInCursorFunction extends BooleanFunction implements BinaryFunction {
-
+    private static class StrInCursorFunc extends BooleanFunction implements BinaryFunction {
         private final Function cursorArg;
         private final Record.CharSequenceFunction func;
         private final Function valueArg;
@@ -110,7 +120,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         private RecordCursor cursor;
         private CharSequenceHashSet valueSet;
 
-        public StrInCursorFunction(Function valueArg, Function cursorArg, Record.CharSequenceFunction func) {
+        public StrInCursorFunc(Function valueArg, Function cursorArg, Record.CharSequenceFunction func) {
             this.valueArg = valueArg;
             this.cursorArg = cursorArg;
             this.valueSet = valueSetA;
@@ -197,10 +207,10 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class StrInNullCursorFunction extends BooleanFunction implements UnaryFunction {
+    private static class StrInNullCursorFunc extends BooleanFunction implements UnaryFunction {
         private final Function valueArg;
 
-        public StrInNullCursorFunction(Function valueArg) {
+        public StrInNullCursorFunc(Function valueArg) {
             this.valueArg = valueArg;
         }
 
@@ -220,14 +230,14 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class SymbolInCursorFunction extends BooleanFunction implements BinaryFunction {
+    private static class SymbolInCursorFunc extends BooleanFunction implements BinaryFunction {
         private final Function cursorArg;
         private final Record.CharSequenceFunction func;
         private final IntHashSet symbolKeys = new IntHashSet();
         private final SymbolFunction valueArg;
         private RecordCursor cursor;
 
-        public SymbolInCursorFunction(SymbolFunction valueArg, Function cursorArg, Record.CharSequenceFunction func) {
+        public SymbolInCursorFunc(SymbolFunction valueArg, Function cursorArg, Record.CharSequenceFunction func) {
             this.valueArg = valueArg;
             this.cursorArg = cursorArg;
             this.func = func;
@@ -303,10 +313,10 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class SymbolInNullCursorFunction extends BooleanFunction implements UnaryFunction {
+    private static class SymbolInNullCursorFunc extends BooleanFunction implements UnaryFunction {
         private final Function valueArg;
 
-        public SymbolInNullCursorFunction(Function valueArg) {
+        public SymbolInNullCursorFunc(Function valueArg) {
             this.valueArg = valueArg;
         }
 
