@@ -263,7 +263,7 @@ public class IntList implements Mutable, Sinkable {
             IntGroupSort.quickSort(groupSize, data, 0, pos / groupSize);
             return;
         }
-        throw new IllegalStateException("sorting not supported");
+        throw new IllegalStateException("sorting not supported for group size: " + groupSize + ", length: " + pos);
     }
 
     @Override
