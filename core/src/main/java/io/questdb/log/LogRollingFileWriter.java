@@ -394,7 +394,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         // The list is sorted by last modification ts ASC, so we iterate in reverse order
         // starting with the newest files.
         long totalSize = 0;
-        // Leave last file on dik always.
+        // Leave last file on disk always.
         for (long i = logFileList.size() - 3; i > 0; i -= 2) {
             final long packedOffsets = logFileList.get(i - 1);
             final int startOffset = Numbers.decodeLowInt(packedOffsets);
