@@ -253,32 +253,41 @@ public class LogFactoryTest {
 
     @Test
     public void testLogAutoDeleteByDirectorySize40k() throws Exception {
-        testAutoDelete("40k", null);
+        testAutoDelete("40k", null, "30k");
     }
 
     @Test
     public void testLogAutoDeleteByDirectorySize500k() throws Exception {
-        testAutoDelete("500k", null);
+        testAutoDelete("500k", null, "30k");
+    }
+
+    @Test
+    public void testLogAutoDeleteByDirectorySizeRandom() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(null);
+        int fullSize = 2 + rnd.nextInt(498);
+        int rollSize = Math.max(1, (1 + rnd.nextInt(fullSize - 1)) / 2);
+        System.out.println("fullSize=" + fullSize + "k, rollSize=" + rollSize + "k");
+        testAutoDelete(fullSize + "k", null, rollSize + "k");
     }
 
     @Test
     public void testLogAutoDeleteByFileAge1Year() throws Exception {
-        testAutoDelete(null, "1y");
+        testAutoDelete(null, "1y", "30k");
     }
 
     @Test
     public void testLogAutoDeleteByFileAge25days() throws Exception {
-        testAutoDelete(null, "25d");
+        testAutoDelete(null, "25d", "30k");
     }
 
     @Test
     public void testLogAutoDeleteByFileAge3weeks() throws Exception {
-        testAutoDelete(null, "3w");
+        testAutoDelete(null, "3w", "30k");
     }
 
     @Test
     public void testLogAutoDeleteByFileAge6months() throws Exception {
-        testAutoDelete(null, "6m");
+        testAutoDelete(null, "6m", "30k");
     }
 
     @Test
@@ -1009,7 +1018,7 @@ public class LogFactoryTest {
         Assert.assertTrue("oops: " + len, len > 0L && len < 1073741824L);
     }
 
-    private void testAutoDelete(String sizeLimit, String lifeDuration) throws NumericException {
+    private void testAutoDelete(String sizeLimit, String lifeDuration, String rollSize) throws NumericException {
         final int extraFiles = 2;
         String fileTemplate = "mylog-${date:yyyy-MM-dd}.log";
         String extraFilePrefix = "mylog-test";
@@ -1021,6 +1030,7 @@ public class LogFactoryTest {
                 IntervalUtils.parseFloorPartialTimestamp("2019-12-31")
         );
 
+        long nSizeLimit = sizeLimit != null ? Numbers.parseLongSize(sizeLimit) : 0;
         String base = temp.getRoot().getAbsolutePath() + Files.SEPARATOR;
         String logFile = base + fileTemplate;
         AtomicReference<LogRollingFileWriter> writerRef = new AtomicReference<>();
@@ -1030,7 +1040,7 @@ public class LogFactoryTest {
                 w.setLocation(logFile);
                 w.setSpinBeforeFlush("10");
                 w.setRollEvery("day");
-                w.setRollSize("30k");
+                w.setRollSize(rollSize);
                 if (sizeLimit != null) {
                     w.setSizeLimit(sizeLimit);
                 }
@@ -1047,7 +1057,6 @@ public class LogFactoryTest {
 
             if (sizeLimit != null) {
                 // Create files to be deleted based on size.
-                long nSizeLimit = Numbers.parseLongSize(sizeLimit);
                 try (Path path = new Path()) {
                     for (int i = 0; i < extraFiles; i++) {
                         path.of(base + extraFilePrefix).put(i).put(".log").$();
@@ -1074,21 +1083,27 @@ public class LogFactoryTest {
             }
 
             Log logger = factory.create("x");
-            for (int i = 0; i < 100000; i++) {
+            int lines = (int) Math.max(100000, (double) nSizeLimit / (5 + 1 + 3) * 2);
+            for (int i = 0; i < lines; i++) {
                 logger.xinfo().$("test ").$(' ').$(i).$();
             }
+            logger.infoW().$("!").$();
 
             // Wait until we roll log files at least once.
             TestUtils.assertEventually(() -> {
-                logger.xinfo().$("test foobar").$();
+                logger.infoW().$("!").$();
                 Assert.assertTrue(writerRef.get().getRolledCount() > 0);
             }, 10);
+
+            factory.close(true);
         }
 
         int fileCount = 0;
+        boolean endFound = false;
         try (Path path = new Path()) {
             StringSink fileNameSink = new StringSink();
             path.of(base).$();
+            int len = path.size();
             long pFind = Files.findFirst(path.$());
             try {
                 Assert.assertNotEquals(0, pFind);
@@ -1101,6 +1116,14 @@ public class LogFactoryTest {
                     // All extra files should be deleted.
                     Assert.assertFalse(Chars.contains(fileNameSink, extraFilePrefix));
                     fileCount++;
+
+                    path.trimTo(len).concat(fileNameSink);
+                    long fileSize = Files.length(path.$());
+
+                    long fd = Files.openRO(path.$());
+                    char b = (char) Files.readNonNegativeByte(fd, fileSize - 3);
+                    Files.close(fd);
+                    endFound |= b == '!';
                 } while (Files.findNext(pFind) > 0);
             } finally {
                 Files.findClose(pFind);
@@ -1108,6 +1131,7 @@ public class LogFactoryTest {
         }
 
         Assert.assertTrue(fileCount > 0);
+        Assert.assertTrue(endFound);
     }
 
     private void testCustomLogIsCreated(boolean isCreated) throws IOException {
