@@ -139,8 +139,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         super(
                 socketFactory,
                 configuration.getHttpContextConfiguration().getNetworkFacade(),
-                LOG,
-                metrics.jsonQuery().connectionCountGauge()
+                LOG
         );
         this.configuration = configuration;
         this.cookieHandler = cookieHandler;

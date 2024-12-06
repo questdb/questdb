@@ -29,7 +29,6 @@ import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.MetricsRegistry;
 
 public class PGWireMetrics {
-
     private final LongGauge cachedSelectsGauge;
     private final LongGauge cachedUpdatesGauge;
     private final LongGauge connectionCountGauge;

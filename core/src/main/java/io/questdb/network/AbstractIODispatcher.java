@@ -27,6 +27,7 @@ package io.questdb.network;
 import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.metrics.LongGauge;
 import io.questdb.mp.EagerThreadSetup;
 import io.questdb.mp.MCSequence;
 import io.questdb.mp.MPSequence;
@@ -84,6 +85,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     protected final ObjLongMatrix<C> pendingHeartbeats = new ObjLongMatrix<>(OPM_COLUMN_COUNT);
     private final IODispatcherConfiguration configuration;
     private final AtomicInteger connectionCount = new AtomicInteger();
+    private final LongGauge connectionCountGauge;
     private final boolean peerNoLinger;
     private final long queuedConnectionTimeoutMs;
     private final int testConnectionBufSize;
@@ -98,10 +100,12 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
 
     public AbstractIODispatcher(
             IODispatcherConfiguration configuration,
-            IOContextFactory<C> ioContextFactory
+            IOContextFactory<C> ioContextFactory,
+            LongGauge connectionCountGauge
     ) {
         this.LOG = LogFactory.getLog(configuration.getDispatcherLogName());
         this.configuration = configuration;
+        this.connectionCountGauge = connectionCountGauge;
         this.nf = configuration.getNetworkFacade();
 
         this.testConnectionBufSize = configuration.getTestConnectionBufferSize();
@@ -350,6 +354,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
             LOG.info().$("connected [ip=").$ip(nf.getPeerIP(fd)).$(", fd=").$(fd).I$();
             tlConCount = connectionCount.incrementAndGet();
             addPending(fd, timestamp);
+            connectionCountGauge.inc();
         }
 
         if (tlConCount >= activeConnectionLimit) {
@@ -390,6 +395,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
                 LOG.advisory().$("below maximum connection limit, registered listener [serverFd=").$(serverFd).I$();
             }
         }
+        connectionCountGauge.dec();
     }
 
     protected abstract void pendingAdded(int index);

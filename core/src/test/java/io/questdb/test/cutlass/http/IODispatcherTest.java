@@ -270,7 +270,8 @@ public class IODispatcherTest extends AbstractTest {
                     (fd, dispatcher1) -> {
                         connectLatch.countDown();
                         return new HelloContext(fd, contextClosedLatch, dispatcher1);
-                    }
+                    },
+                    NullLongGauge.INSTANCE
             )) {
                 AtomicBoolean serverRunning = new AtomicBoolean(true);
                 SOCountDownLatch serverHaltLatch = new SOCountDownLatch(1);
@@ -388,7 +389,8 @@ public class IODispatcherTest extends AbstractTest {
                             return nf;
                         }
                     },
-                    (fd, dispatcher1) -> new HttpConnectionContext(serverConfiguration, metrics, PlainSocketFactory.INSTANCE).of(fd, dispatcher1)
+                    (fd, dispatcher1) -> new HttpConnectionContext(serverConfiguration, metrics, PlainSocketFactory.INSTANCE).of(fd, dispatcher1),
+                    NullLongGauge.INSTANCE
             )) {
                 // spin up dispatcher thread
                 AtomicBoolean dispatcherRunning = new AtomicBoolean(true);
@@ -472,7 +474,8 @@ public class IODispatcherTest extends AbstractTest {
                                 }
                             }.of(fd, dispatcher1);
                         }
-                    }
+                    },
+                    NullLongGauge.INSTANCE
             )) {
                 HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
                     @Override
@@ -5673,8 +5676,8 @@ public class IODispatcherTest extends AbstractTest {
                         "85\r\n" +
                         "{\"query\":\"select null from long_sequence(1)\",\"columns\":[{\"name\":\"null\",\"type\":\"STRING\"}],\"timestamp\":-1,\"dataset\":[[null]],\"count\":1}\r\n" +
                         "00\r\n" +
-                        "\r\n"
-                , 1
+                        "\r\n",
+                1
         );
     }
 
@@ -5810,7 +5813,8 @@ public class IODispatcherTest extends AbstractTest {
                                 }
                             }.of(fd, dispatcher1);
                         }
-                    }
+                    },
+                    NullLongGauge.INSTANCE
             )) {
                 try (HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
                     @Override
@@ -6702,7 +6706,8 @@ public class IODispatcherTest extends AbstractTest {
                                 }
                             }.of(fd, dispatcher1);
                         }
-                    }
+                    },
+                    NullLongGauge.INSTANCE
             )) {
                 StringSink sink = new StringSink();
 
@@ -6874,7 +6879,8 @@ public class IODispatcherTest extends AbstractTest {
                                 }
                             }.of(fd, dispatcher1);
                         }
-                    }
+                    },
+                    NullLongGauge.INSTANCE
             )) {
                 StringSink sink = new StringSink();
 
@@ -7034,7 +7040,8 @@ public class IODispatcherTest extends AbstractTest {
                                 }
                             }.of(fd, dispatcher1);
                         }
-                    }
+                    },
+                    NullLongGauge.INSTANCE
             )) {
                 StringSink sink = new StringSink();
 
@@ -8120,7 +8127,8 @@ public class IODispatcherTest extends AbstractTest {
                                     return true;
                                 }
                             },
-                            (fd, dispatcher1) -> new HttpConnectionContext(httpServerConfiguration, metrics, PlainSocketFactory.INSTANCE).of(fd, dispatcher1)
+                            (fd, dispatcher1) -> new HttpConnectionContext(httpServerConfiguration, metrics, PlainSocketFactory.INSTANCE).of(fd, dispatcher1),
+                            NullLongGauge.INSTANCE
                     );
                     final RingQueue<Status> queue = new RingQueue<>(Status::new, 1024)
             ) {
@@ -9572,7 +9580,7 @@ public class IODispatcherTest extends AbstractTest {
                 private long heartbeatId;
 
                 public TestIOContext(long fd, LongHashSet serverConnectedFds) {
-                    super(PlainSocketFactory.INSTANCE, NetworkFacadeImpl.INSTANCE, LOG, NullLongGauge.INSTANCE);
+                    super(PlainSocketFactory.INSTANCE, NetworkFacadeImpl.INSTANCE, LOG);
                     socket.of(fd);
                     this.serverConnectedFds = serverConnectedFds;
                 }
@@ -9635,7 +9643,7 @@ public class IODispatcherTest extends AbstractTest {
             Thread serverThread;
             long sockAddr = 0;
             final CountDownLatch serverLatch = new CountDownLatch(1);
-            try (IODispatcher<TestIOContext> dispatcher = IODispatchers.create(configuration, contextFactory)) {
+            try (IODispatcher<TestIOContext> dispatcher = IODispatchers.create(configuration, contextFactory, NullLongGauge.INSTANCE)) {
                 final int resolvedPort = dispatcher.getPort();
                 sockAddr = Net.sockaddr("127.0.0.1", resolvedPort);
                 serverThread = new Thread("test-io-dispatcher") {
@@ -9860,7 +9868,7 @@ public class IODispatcherTest extends AbstractTest {
         private final SOCountDownLatch closeLatch;
 
         public HelloContext(long fd, SOCountDownLatch closeLatch, IODispatcher<HelloContext> dispatcher) {
-            super(PlainSocketFactory.INSTANCE, NetworkFacadeImpl.INSTANCE, LOG, NullLongGauge.INSTANCE);
+            super(PlainSocketFactory.INSTANCE, NetworkFacadeImpl.INSTANCE, LOG);
             this.of(fd, dispatcher);
             this.closeLatch = closeLatch;
         }

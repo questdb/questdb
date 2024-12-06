@@ -282,8 +282,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         super(
                 configuration.getFactoryProvider().getPGWireSocketFactory(),
                 configuration.getNetworkFacade(),
-                LOG,
-                engine.getMetrics().pgWire().connectionCountGauge()
+                LOG
         );
 
         try {
