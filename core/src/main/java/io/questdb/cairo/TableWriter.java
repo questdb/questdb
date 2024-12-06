@@ -9167,6 +9167,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         void putUuid(int columnIndex, CharSequence uuid);
 
+        // Used by bytecode assembler. DO NOT REMOVE!
         void putUuidUtf8(int columnIndex, Utf8Sequence uuid);
 
         void putVarchar(int columnIndex, char value);
