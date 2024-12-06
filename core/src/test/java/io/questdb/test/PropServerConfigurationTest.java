@@ -78,6 +78,7 @@ import org.junit.rules.TemporaryFolder;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.time.ZoneId;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
@@ -110,6 +111,7 @@ public class PropServerConfigurationTest {
         FilesFacade ff = configuration.getCairoConfiguration().getFilesFacade();
 
         Assert.assertFalse(configuration.getCairoConfiguration().getLogLevelVerbose());
+        Assert.assertNull(configuration.getCairoConfiguration().getLogTimezone());
         Assert.assertEquals(4, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionPoolInitialCapacity());
         Assert.assertEquals(128, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionStringPoolCapacity());
         Assert.assertEquals(512, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getMultipartHeaderBufferSize());
@@ -597,6 +599,14 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testDefaultTimezone() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("log.timezone", "SystemDefault");
+        PropServerConfiguration configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        Assert.assertTrue(Chars.equalsIgnoreCase(configuration.getCairoConfiguration().getLogTimezone(), ZoneId.systemDefault().getId()));
+    }
+
+    @Test
     public void testDeprecatedConfigKeys() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("config.validation.strict", "true");
@@ -838,6 +848,17 @@ public class PropServerConfigurationTest {
         Properties properties = new Properties();
         properties.setProperty("cairo.idle.check.interval", "1234a");
         newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+    }
+
+    @Test
+    public void testInvalidTimezone() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("log.timezone", "foobar");
+        try {
+            newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+            Assert.fail("passed invalid timezone, should have failed");
+        } catch (ServerConfigurationException ignore) {
+        }
     }
 
     @Test
@@ -1315,6 +1336,13 @@ public class PropServerConfigurationTest {
         properties.setProperty("http.net.connection.rcvbuf", "10000");
         PropServerConfiguration.ValidationResult result = validate(properties);
         Assert.assertNull(result);
+    }
+
+    @Test
+    public void testValidTimezone() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("log.timezone", "Antarctica/McMurdo");
+        newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
     }
 
     @Test

@@ -112,6 +112,8 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
 import java.io.IOException;
+import java.time.DateTimeException;
+import java.time.ZoneId;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -532,6 +534,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int lineUdpBindIPV4Address;
     private int lineUdpDefaultPartitionBy;
     private int lineUdpPort;
+    private @Nullable
+    String logTimezone;
     private MimeTypesCache mimeTypesCache;
     private long minIdleMsBeforeWriterRelease;
     private int netTestConnectionBufferSize;
@@ -641,6 +645,20 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.log = log;
         this.logSqlQueryProgressExe = getBoolean(properties, env, PropertyKey.LOG_SQL_QUERY_PROGRESS_EXE, true);
         this.logLevelVerbose = getBoolean(properties, env, PropertyKey.LOG_LEVEL_VERBOSE, false);
+        this.logTimezone = getString(properties, env, PropertyKey.LOG_TIMEZONE, null);
+
+        // validate timezone
+        if (this.logTimezone != null) {
+            if (Chars.equalsIgnoreCase(logTimezone, "SystemDefault")) {
+                this.logTimezone = ZoneId.systemDefault().getId();
+            } else {
+                try {
+                    final ZoneId ignore = ZoneId.of(this.logTimezone);
+                } catch (DateTimeException ex) {
+                    throw ServerConfigurationException.forInvalidKey(PropertyKey.LOG_TIMEZONE.getPropertyPath(), this.logTimezone);
+                }
+            }
+        }
 
         this.filesFacade = filesFacade;
         this.fpf = fpf;
@@ -2539,6 +2557,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean getLogSqlQueryProgressExe() {
             return logSqlQueryProgressExe;
+        }
+
+        @Override
+        public @Nullable String getLogTimezone() {
+            return logTimezone;
         }
 
         @Override
