@@ -25,7 +25,6 @@
 package io.questdb.std;
 
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Int3Sort;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.NotNull;
@@ -60,10 +59,6 @@ public class IntList implements Mutable, Sinkable {
         System.arraycopy(that.data, 0, this.data, p, s);
     }
 
-    public void allocate(int size) {
-        checkCapacity(size);
-    }
-
     public void arrayCopy(int srcPos, int dstPos, int length) {
         System.arraycopy(data, srcPos, data, dstPos, length);
     }
@@ -88,6 +83,16 @@ public class IntList implements Mutable, Sinkable {
 
     public int capacity() {
         return data.length;
+    }
+
+    public void checkCapacity(int capacity) {
+        int l = data.length;
+        if (capacity > l) {
+            int newCap = Math.max(l << 1, capacity);
+            int[] buf = new int[newCap];
+            System.arraycopy(data, 0, buf, 0, l);
+            this.data = buf;
+        }
     }
 
     public void clear() {
@@ -246,9 +251,17 @@ public class IntList implements Mutable, Sinkable {
         return pos;
     }
 
+    /**
+     * Sorts groups of N elements. The size of the group is specified by {@code groupSize}.
+     * Comparison between groups is done by comparing the first element of each group, then
+     * if the first elements are equial the second elements are compared and so on.
+     *
+     * @param groupSize size of the group
+     */
     public void sortGroups(int groupSize) {
-        if (groupSize == 3 && pos % 3 == 0) {
-            Int3Sort.quickSort(data, 0, pos / 3);
+        assert groupSize > 0;
+        if (pos % groupSize == 0) {
+            IntGroupSort.quickSort(groupSize, data, 0, pos / groupSize);
             return;
         }
         throw new IllegalStateException("sorting not supported");
@@ -295,16 +308,6 @@ public class IntList implements Mutable, Sinkable {
 
     public void zero(int value) {
         Arrays.fill(data, 0, pos, value);
-    }
-
-    private void checkCapacity(int capacity) {
-        int l = data.length;
-        if (capacity > l) {
-            int newCap = Math.max(l << 1, capacity);
-            int[] buf = new int[newCap];
-            System.arraycopy(data, 0, buf, 0, l);
-            this.data = buf;
-        }
     }
 
     private boolean equals(IntList that) {
