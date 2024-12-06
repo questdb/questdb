@@ -168,6 +168,27 @@ public class IntListTest {
         checkSortGroupsEqualElements(n, rnd.nextInt(10000), rnd);
     }
 
+    @Test
+    public void testSortGroupsNotSupported() {
+        IntList l = new IntList();
+
+        l.add(1);
+        try {
+            l.sortGroups(2);
+            Assert.fail();
+        } catch (IllegalStateException e) {
+            // expected
+        }
+        l.sortGroups(1);
+
+        try {
+            l.sortGroups(-1);
+            Assert.fail();
+        } catch (IllegalStateException e) {
+            // expected
+        }
+    }
+
     private static void checkSortGroupsEqualElements(int n, int elements, Rnd rnd) {
         IntList list = new IntList(elements * n);
         int[][] arrays = new int[elements][];

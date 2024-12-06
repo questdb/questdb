@@ -259,8 +259,7 @@ public class IntList implements Mutable, Sinkable {
      * @param groupSize size of the group
      */
     public void sortGroups(int groupSize) {
-        assert groupSize > 0;
-        if (pos % groupSize == 0) {
+        if (groupSize > 0 && pos % groupSize == 0) {
             IntGroupSort.quickSort(groupSize, data, 0, pos / groupSize);
             return;
         }
