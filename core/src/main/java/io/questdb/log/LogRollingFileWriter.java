@@ -394,16 +394,23 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         // The list is sorted by last modification ts ASC, so we iterate in reverse order
         // starting with the newest files.
         long totalSize = 0;
-        // Leave last file on disk always.
-        for (long i = logFileList.size() - 3; i > 0; i -= 2) {
-            final long packedOffsets = logFileList.get(i - 1);
+        long lastIndex = logFileList.size() - 2;
+        for (long i = lastIndex; i > -1; i -= 2) {
+            final long packedOffsets = logFileList.get(i);
             final int startOffset = Numbers.decodeLowInt(packedOffsets);
             final int endOffset = Numbers.decodeHighInt(packedOffsets);
             CharSequence fileName = logFileNameSink.subSequence(startOffset, endOffset);
             path.trimTo(logDir.length()).concat(fileName);
-            if ((totalSize += Files.length(path.$())) > nSizeLimit) {
+
+            // Don't check the file size if already over the limit.
+            totalSize += (totalSize <= nSizeLimit) ? Files.length(path.$()) : 0;
+
+            // Leave last file on disk always.
+            if (i != lastIndex && totalSize > nSizeLimit) {
+                // Delete if not the last
                 if (!ff.removeQuiet(path.$())) {
-                    throw new LogError("cannot remove: " + path);
+                    // Do not stall the logging, log the error and continue.
+                    System.err.println("cannot remove: " + path + ", errno: " + ff.errno());
                 }
             }
         }
@@ -418,10 +425,10 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
                 logFileNameSink.put(logFileName);
                 int endOffset = logFileNameSink.length();
                 // It will be sorted as 128 bits hence
-                // set 2 longs for an entry, [packed_offsets, last_modification_ts]
-                // and it will sort it by last_modification_ts first and then by packed_offsets
-                long packed_offsets = Numbers.encodeLowHighInts(startOffset, endOffset);
-                logFileList.add(packed_offsets);
+                // set 2 longs for an entry, [packedOffsets, last_modification_ts]
+                // and it will sort it by last_modification_ts first and then by packedOffsets
+                long packedOffsets = Numbers.encodeLowHighInts(startOffset, endOffset);
+                logFileList.add(packedOffsets);
                 logFileList.add(ff.getLastModified(path.$()));
             }
         }
