@@ -390,7 +390,6 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testRandomDedupRepeat() throws Exception {
-        // TODO(eugene): fix indexes
         Rnd rnd = generateRandomAndProps(LOG);
         setFuzzProbabilities(
                 0,
@@ -400,7 +399,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 convertToParquet ? 0 : rnd.nextDouble() / 100,
                 convertToParquet ? 0 : rnd.nextDouble() / 100,
                 rnd.nextDouble(),
-                rnd.nextDouble(),
+                convertToParquet ? 0 : rnd.nextDouble(),
                 rnd.nextDouble(),
                 0.0,
                 0.0,

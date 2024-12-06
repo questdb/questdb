@@ -4247,6 +4247,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 final String columnName = metadata.getColumnName(columnIndex);
                 if (ColumnType.isSymbol(metadata.getColumnType(columnIndex)) && metadata.isIndexed(columnIndex)) {
+                    final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
+
+                    // no data in partition for this column
+                    if (columnTop == -1) {
+                        continue;
+                    }
+
                     final long columnNameTxn = getColumnNameTxn(partitionTimestamp, columnIndex);
 
                     BitmapIndexUtils.keyFileName(path.trimTo(partitionDirLen), columnName, columnNameTxn);
