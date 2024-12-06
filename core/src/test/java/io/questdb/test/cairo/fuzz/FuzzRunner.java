@@ -597,14 +597,6 @@ public class FuzzRunner {
         engine.getTableSequencerAPI().forAllWalTables(tableTokenBucket, false, checkNoSuspendedTablesRef);
     }
 
-    private int countOperations(ObjList<FuzzTransaction> transactions) {
-        int operations = 0;
-        for (int i = 0, n = transactions.size(); i < n; i++) {
-            operations += transactions.getQuick(i).operationList.size();
-        }
-        return operations;
-    }
-
     @NotNull
     private ObjList<FuzzTransaction> createTransactions(Rnd rnd, String tableNameBase) throws SqlException, NumericException {
         String tableNameNoWal = tableNameBase + "_nonwal";

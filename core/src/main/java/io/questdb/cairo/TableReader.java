@@ -670,7 +670,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
         int baseIndex = getPrimaryColumnIndex(columnBase, 0);
         int newBaseIndex = getPrimaryColumnIndex(getColumnBase(partitionIndex + 1), 0);
-        for (int i = baseIndex; i < newBaseIndex - 1; i++) {
+        for (int i = baseIndex, n = newBaseIndex - 1; i < n; i++) {
             // Close columns before deleting the objects.
             // FD leak caught by failing fuzz tests.
             Misc.free(columns.get(i));

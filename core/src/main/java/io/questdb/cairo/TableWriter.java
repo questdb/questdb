@@ -656,7 +656,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try {
                 ff.fsyncAndClose(openRO(ff, path.$(), LOG));
             } catch (CairoException e) {
-                LOG.info().$("could not fsync after column added, non-critical [path=").$(path).$();
+                LOG.error().$("could not fsync after column added, non-critical [path=").$(path)
+                        .$(", errno=").$(e.getErrno())
+                        .$(", error=").$(e.getFlyweightMessage()).$();
             }
         }
 
