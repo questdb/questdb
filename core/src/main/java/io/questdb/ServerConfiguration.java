@@ -61,6 +61,11 @@ public interface ServerConfiguration {
         return OSS;
     }
 
+    // used to detect configuration reloads
+    default long getVersion() {
+        return 0;
+    }
+
     WorkerPoolConfiguration getWalApplyPoolConfiguration();
 
     WorkerPoolConfiguration getWorkerPoolConfiguration();

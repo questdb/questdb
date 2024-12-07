@@ -24,6 +24,7 @@
 
 package io.questdb.network;
 
+import io.questdb.metrics.LongGauge;
 import io.questdb.std.LongIntHashMap;
 
 public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispatcher<C> {
@@ -37,9 +38,10 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
 
     public IODispatcherWindows(
             IODispatcherConfiguration configuration,
-            IOContextFactory<C> ioContextFactory
+            IOContextFactory<C> ioContextFactory,
+            LongGauge connectionCountGauge
     ) {
-        super(configuration, ioContextFactory);
+        super(configuration, ioContextFactory, connectionCountGauge);
         this.sf = configuration.getSelectFacade();
         this.readFdSet = new FDSet(configuration.getEventCapacity());
         this.writeFdSet = new FDSet(configuration.getEventCapacity());

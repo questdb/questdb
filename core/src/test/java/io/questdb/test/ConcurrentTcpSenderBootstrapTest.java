@@ -89,7 +89,7 @@ public class ConcurrentTcpSenderBootstrapTest extends AbstractBootstrapTest {
                 Thread th = new Thread(() -> {
                     try (Sender sender = Sender.builder(Sender.Transport.TCP)
                             .address("localhost")
-                            .port(serverMain.getConfiguration().getLineTcpReceiverConfiguration().getDispatcherConfiguration().getBindPort())
+                            .port(serverMain.getConfiguration().getLineTcpReceiverConfiguration().getBindPort())
                             .enableAuth(AbstractLineTcpReceiverTest.AUTH_KEY_ID1)
                             .authToken(AbstractLineTcpReceiverTest.AUTH_TOKEN_KEY1)
                             .build()) {
