@@ -464,7 +464,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
 
                 assertReloadConfig(true);
 
-                // Now we should be able to insert
+                // now we should be able to insert
                 try (
                         Connection conn = getConnection("admin", "quest");
                         PreparedStatement stmt = conn.prepareStatement("insert into x values (?)")
@@ -533,7 +533,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                     Assert.assertFalse(conn.isClosed());
                 }
 
-                // Overwrite file to remove props
+                // overwrite file to remove props
                 try (FileWriter w = new FileWriter(serverConf, false)) {
                     w.write("\n");
                 }
