@@ -51,7 +51,7 @@ public class DoubleHistogramDataAccessTest {
     @Test
     public void testAllValues() {
         int index = 0;
-        double latestValueAtIndex = 0;
+        double latestValueAtIndex;
         double totalCountToThisPoint = 0;
         double totalValueToThisPoint = 0;
         // Iterate raw data by stepping through every value that ahs a count recorded:

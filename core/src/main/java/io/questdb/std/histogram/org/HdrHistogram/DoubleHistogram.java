@@ -30,6 +30,7 @@
 package io.questdb.std.histogram.org.HdrHistogram;
 
 import io.questdb.cairo.CairoException;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.IOException;
 import java.io.ObjectInputStream;
@@ -1682,7 +1683,7 @@ public class DoubleHistogram extends EncodableHistogram implements DoubleValueRe
         /**
          * @return A {@link DoubleLogarithmicIterator}{@literal <}{@link DoubleHistogramIterationValue}{@literal >}
          */
-        public Iterator<DoubleHistogramIterationValue> iterator() {
+        public @NotNull Iterator<DoubleHistogramIterationValue> iterator() {
             return new DoubleLogarithmicIterator(histogram, valueUnitsInFirstBucket, logBase);
         }
     }
@@ -1703,7 +1704,7 @@ public class DoubleHistogram extends EncodableHistogram implements DoubleValueRe
         /**
          * @return A {@link DoublePercentileIterator}{@literal <}{@link DoubleHistogramIterationValue}{@literal >}
          */
-        public Iterator<DoubleHistogramIterationValue> iterator() {
+        public @NotNull Iterator<DoubleHistogramIterationValue> iterator() {
             return new DoublePercentileIterator(histogram, percentileTicksPerHalfDistance);
         }
     }
@@ -1722,7 +1723,7 @@ public class DoubleHistogram extends EncodableHistogram implements DoubleValueRe
         /**
          * @return A {@link DoubleRecordedValuesIterator}{@literal <}{@link HistogramIterationValue}{@literal >}
          */
-        public Iterator<DoubleHistogramIterationValue> iterator() {
+        public @NotNull Iterator<DoubleHistogramIterationValue> iterator() {
             return new DoubleRecordedValuesIterator(histogram);
         }
     }

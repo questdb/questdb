@@ -316,7 +316,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     @Override
-    public boolean processCookies(HttpConnectionContext context, SecurityContext securityContext) throws PeerIsSlowToReadException, PeerDisconnectedException {
+    public boolean processCookies(HttpConnectionContext context, SecurityContext securityContext) {
         return context.getCookieHandler().processCookies(context, securityContext);
     }
 
