@@ -1304,16 +1304,12 @@ public class VectTest {
 
     @Test
     public void testSortAEmptyA() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            testSortAB(10_000, 0);
-        });
+        TestUtils.assertMemoryLeak(() -> testSortAB(10_000, 0));
     }
 
     @Test
     public void testSortAEmptyB() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            testSortAB(1_000, 0);
-        });
+        TestUtils.assertMemoryLeak(() -> testSortAB(1_000, 0));
     }
 
     @Test

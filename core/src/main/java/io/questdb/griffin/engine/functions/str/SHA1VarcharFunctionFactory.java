@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.VarcharFunction;
@@ -50,7 +49,7 @@ public class SHA1VarcharFunctionFactory implements FunctionFactory {
                                 ObjList<Function> args,
                                 IntList argPositions,
                                 CairoConfiguration configuration,
-                                SqlExecutionContext sqlExecutionContext) throws SqlException {
+                                SqlExecutionContext sqlExecutionContext) {
 
         Function func = args.get(0);
         return new SHA1VarcharFunctionFactory.SHA1Func(func);

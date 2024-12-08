@@ -417,10 +417,10 @@ public class SingleRecordSinkTest extends AbstractTest {
     }
 
     interface WithNewSink {
-        void runWithSink(SingleRecordSink sink) throws Exception;
+        void runWithSink(SingleRecordSink sink);
     }
 
     interface WithNewSinks {
-        void runWithSink(SingleRecordSink left, SingleRecordSink right) throws Exception;
+        void runWithSink(SingleRecordSink left, SingleRecordSink right);
     }
 }

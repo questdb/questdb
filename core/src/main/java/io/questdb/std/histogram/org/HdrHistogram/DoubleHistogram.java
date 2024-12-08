@@ -31,7 +31,11 @@ package io.questdb.std.histogram.org.HdrHistogram;
 
 import io.questdb.cairo.CairoException;
 
-import java.io.*;
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+import java.io.PrintStream;
+import java.io.Serializable;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.nio.ByteBuffer;
@@ -288,10 +292,9 @@ public class DoubleHistogram extends EncodableHistogram implements DoubleValueRe
             if (!isNonCompressedDoubleHistogramCookie(cookie)) {
                 throw new IllegalArgumentException("The buffer does not contain a DoubleHistogram");
             }
-            DoubleHistogram histogram = constructHistogramFromBuffer(cookie, buffer,
+            return constructHistogramFromBuffer(cookie, buffer,
                     DoubleHistogram.class, internalCountsHistogramClass,
                     minBarForHighestToLowestValueRatio);
-            return histogram;
         } catch (DataFormatException ex) {
             throw new RuntimeException(ex);
         }
@@ -338,10 +341,9 @@ public class DoubleHistogram extends EncodableHistogram implements DoubleValueRe
         if (!isCompressedDoubleHistogramCookie(cookie)) {
             throw new IllegalArgumentException("The buffer does not contain a compressed DoubleHistogram");
         }
-        DoubleHistogram histogram = constructHistogramFromBuffer(cookie, buffer,
+        return constructHistogramFromBuffer(cookie, buffer,
                 DoubleHistogram.class, internalCountsHistogramClass,
                 minBarForHighestToLowestValueRatio);
-        return histogram;
     }
 
     /**
@@ -1210,8 +1212,8 @@ public class DoubleHistogram extends EncodableHistogram implements DoubleValueRe
     //
 
     private static int findContainingBinaryOrderOfMagnitude(final long longNumber) {
-        int pow2ceiling = 64 - Long.numberOfLeadingZeros(longNumber); // smallest power of 2 containing value
-        return pow2ceiling;
+        // smallest power of 2 containing value
+        return 64 - Long.numberOfLeadingZeros(longNumber);
     }
 
     private static int findContainingBinaryOrderOfMagnitude(final double doubleNumber) {
@@ -1283,9 +1285,7 @@ public class DoubleHistogram extends EncodableHistogram implements DoubleValueRe
         // all buckets. Compute the integer value range that will achieve this:
 
         long lowestTackingIntegerValue = AbstractHistogram.numberOfSubbuckets(numberOfSignificantValueDigits) / 2;
-        long integerValueRange = lowestTackingIntegerValue * internalHighestToLowestValueRatio;
-
-        return integerValueRange;
+        return lowestTackingIntegerValue * internalHighestToLowestValueRatio;
     }
 
     //
@@ -1301,9 +1301,7 @@ public class DoubleHistogram extends EncodableHistogram implements DoubleValueRe
         // e.g. the dynamic range that covers [0.9, 2.1) is 2.33x, which on it's own would require 4x range to
         // cover the contained order of magnitude. But (if 1.0 was a bucket boundary, for example, the range
         // will actually need to cover [0.5..1.0) [1.0..2.0) [2.0..4.0), mapping to an 8x internal dynamic range.
-        long internalHighestToLowestValueRatio =
-                1L << (findContainingBinaryOrderOfMagnitude(externalHighestToLowestValueRatio) + 1);
-        return internalHighestToLowestValueRatio;
+        return 1L << (findContainingBinaryOrderOfMagnitude(externalHighestToLowestValueRatio) + 1);
     }
 
     private int findCappedContainingBinaryOrderOfMagnitude(final double doubleNumber) {
@@ -1629,7 +1627,7 @@ public class DoubleHistogram extends EncodableHistogram implements DoubleValueRe
      * An {@link java.lang.Iterable}{@literal <}{@link DoubleHistogramIterationValue}{@literal >} through
      * the histogram using a {@link DoubleAllValuesIterator}
      */
-    public class AllValues implements Iterable<DoubleHistogramIterationValue> {
+    public static class AllValues implements Iterable<DoubleHistogramIterationValue> {
         final DoubleHistogram histogram;
 
         private AllValues(final DoubleHistogram histogram) {
@@ -1648,7 +1646,7 @@ public class DoubleHistogram extends EncodableHistogram implements DoubleValueRe
      * An {@link java.lang.Iterable}{@literal <}{@link DoubleHistogramIterationValue}{@literal >} through
      * the histogram using a {@link DoubleLinearIterator}
      */
-    public class LinearBucketValues implements Iterable<DoubleHistogramIterationValue> {
+    public static class LinearBucketValues implements Iterable<DoubleHistogramIterationValue> {
         final DoubleHistogram histogram;
         final double valueUnitsPerBucket;
 
@@ -1669,7 +1667,7 @@ public class DoubleHistogram extends EncodableHistogram implements DoubleValueRe
      * An {@link java.lang.Iterable}{@literal <}{@link DoubleHistogramIterationValue}{@literal >} through
      * the histogram using a {@link DoubleLogarithmicIterator}
      */
-    public class LogarithmicBucketValues implements Iterable<DoubleHistogramIterationValue> {
+    public static class LogarithmicBucketValues implements Iterable<DoubleHistogramIterationValue> {
         final DoubleHistogram histogram;
         final double logBase;
         final double valueUnitsInFirstBucket;
@@ -1693,7 +1691,7 @@ public class DoubleHistogram extends EncodableHistogram implements DoubleValueRe
      * An {@link java.lang.Iterable}{@literal <}{@link DoubleHistogramIterationValue}{@literal >} through
      * the histogram using a {@link DoublePercentileIterator}
      */
-    public class Percentiles implements Iterable<DoubleHistogramIterationValue> {
+    public static class Percentiles implements Iterable<DoubleHistogramIterationValue> {
         final DoubleHistogram histogram;
         final int percentileTicksPerHalfDistance;
 
@@ -1714,7 +1712,7 @@ public class DoubleHistogram extends EncodableHistogram implements DoubleValueRe
      * An {@link java.lang.Iterable}{@literal <}{@link DoubleHistogramIterationValue}{@literal >} through
      * the histogram using a {@link DoubleRecordedValuesIterator}
      */
-    public class RecordedValues implements Iterable<DoubleHistogramIterationValue> {
+    public static class RecordedValues implements Iterable<DoubleHistogramIterationValue> {
         final DoubleHistogram histogram;
 
         private RecordedValues(final DoubleHistogram histogram) {
