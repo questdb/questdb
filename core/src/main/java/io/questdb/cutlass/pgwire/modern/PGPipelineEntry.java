@@ -1277,7 +1277,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 bindVariableService.define(j, ColumnType.UUID, 0);
                 break;
             case PG_UNSPECIFIED:
-                // Client did not provide this type, let SQL compiler to infer it
+                // unknown types, we are not defining them for now - this gives
+                // the compiler a chance to infer the best possible type
                 break;
             default:
                 bindVariableService.define(j, ColumnType.STRING, 0);
