@@ -743,7 +743,7 @@ public class SimdJsonParserTest {
         TestUtils.assertMemoryLeak(() -> {
             final boolean res = parser.queryPointerBoolean(json, path2Pointer(".nonexistent"), result);
             Assert.assertFalse(res);
-                Assert.assertEquals(SimdJsonType.UNSET, result.getType());
+            Assert.assertEquals(SimdJsonType.UNSET, result.getType());
         });
     }
 
@@ -752,8 +752,8 @@ public class SimdJsonParserTest {
         TestUtils.assertMemoryLeak(() -> {
             final boolean res = parser.queryPointerBoolean(json, path2Pointer(".nothing"), result);
             Assert.assertFalse(res);
-                Assert.assertEquals(SimdJsonError.SUCCESS, result.getError());
-                Assert.assertEquals(SimdJsonType.NULL, result.getType());
+            Assert.assertEquals(SimdJsonError.SUCCESS, result.getError());
+            Assert.assertEquals(SimdJsonType.NULL, result.getType());
         });
     }
 
@@ -801,7 +801,7 @@ public class SimdJsonParserTest {
         TestUtils.assertMemoryLeak(() -> {
             final double res = parser.queryPointerDouble(json, path2Pointer(".nonexistent"), result);
             Assert.assertTrue(Double.isNaN(res));
-                Assert.assertEquals(SimdJsonType.UNSET, result.getType());
+            Assert.assertEquals(SimdJsonType.UNSET, result.getType());
         });
     }
 
@@ -810,7 +810,7 @@ public class SimdJsonParserTest {
         TestUtils.assertMemoryLeak(() -> {
             final double res = parser.queryPointerDouble(json, path2Pointer(".nothing"), result);
             Assert.assertTrue(Double.isNaN(res));
-                Assert.assertEquals(SimdJsonType.NULL, result.getType());
+            Assert.assertEquals(SimdJsonType.NULL, result.getType());
         });
     }
 
@@ -819,8 +819,8 @@ public class SimdJsonParserTest {
         TestUtils.assertMemoryLeak(() -> {
             try (DirectUtf8Sink dest = new DirectUtf8Sink(100)) {
                 parser.queryPointerUtf8(json, path2Pointer("£$£%£%invalid path!!"), result, dest, 100);
-                    Assert.assertEquals(SimdJsonError.INVALID_JSON_POINTER, result.getError());
-                    Assert.assertEquals(SimdJsonType.UNSET, result.getType());
+                Assert.assertEquals(SimdJsonError.INVALID_JSON_POINTER, result.getError());
+                Assert.assertEquals(SimdJsonType.UNSET, result.getType());
             }
         });
     }
@@ -830,7 +830,7 @@ public class SimdJsonParserTest {
         TestUtils.assertMemoryLeak(() -> {
             final long res = parser.queryPointerLong(json, path2Pointer(".nonexistent"), result);
             Assert.assertEquals(Long.MIN_VALUE, res);
-                Assert.assertEquals(SimdJsonType.UNSET, result.getType());
+            Assert.assertEquals(SimdJsonType.UNSET, result.getType());
         });
     }
 
@@ -839,7 +839,7 @@ public class SimdJsonParserTest {
         TestUtils.assertMemoryLeak(() -> {
             final long res = parser.queryPointerLong(json, path2Pointer(".nothing"), result);
             Assert.assertEquals(Long.MIN_VALUE, res);
-                Assert.assertEquals(SimdJsonType.NULL, result.getType());
+            Assert.assertEquals(SimdJsonType.NULL, result.getType());
         });
     }
 
@@ -848,7 +848,7 @@ public class SimdJsonParserTest {
         TestUtils.assertMemoryLeak(() -> {
             Assert.assertFalse(parser.queryPointerBoolean(json, path2Pointer(".hasChildren"), result));
             Assert.assertTrue(parser.queryPointerBoolean(json, path2Pointer(".pets[1].scratches"), result));
-                Assert.assertEquals(SimdJsonType.BOOLEAN, result.getType());
+            Assert.assertEquals(SimdJsonType.BOOLEAN, result.getType());
         });
     }
 
@@ -856,7 +856,7 @@ public class SimdJsonParserTest {
     public void testQueryPathDouble() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Assert.assertEquals(5.6, parser.queryPointerDouble(json, path2Pointer(".height"), result), 0.0001);
-                Assert.assertEquals(SimdJsonType.NUMBER, result.getType());
+            Assert.assertEquals(SimdJsonType.NUMBER, result.getType());
         });
     }
 
@@ -864,7 +864,7 @@ public class SimdJsonParserTest {
     public void testQueryPathLong() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Assert.assertEquals(30, parser.queryPointerLong(json, path2Pointer(".age"), result));
-                Assert.assertEquals(SimdJsonType.NUMBER, result.getType());
+            Assert.assertEquals(SimdJsonType.NUMBER, result.getType());
         });
     }
 
@@ -873,8 +873,8 @@ public class SimdJsonParserTest {
         TestUtils.assertMemoryLeak(() -> {
             final long res = parser.queryPointerLong(json, path2Pointer(".bignum"), result);
             Assert.assertEquals(Long.MIN_VALUE, res);
-                Assert.assertEquals(SimdJsonError.NUMBER_OUT_OF_RANGE, result.getError());
-                Assert.assertEquals(SimdJsonType.NUMBER, result.getType());
+            Assert.assertEquals(SimdJsonError.NUMBER_OUT_OF_RANGE, result.getError());
+            Assert.assertEquals(SimdJsonType.NUMBER, result.getType());
         });
     }
 
@@ -883,8 +883,8 @@ public class SimdJsonParserTest {
         TestUtils.assertMemoryLeak(() -> {
             final long res = parser.queryPointerLong(json, path2Pointer(".u64_val"), result);
             Assert.assertEquals(Long.MIN_VALUE, res);
-                Assert.assertEquals(SimdJsonError.NUMBER_OUT_OF_RANGE, result.getError());
-                Assert.assertEquals(SimdJsonType.NUMBER, result.getType());
+            Assert.assertEquals(SimdJsonError.NUMBER_OUT_OF_RANGE, result.getError());
+            Assert.assertEquals(SimdJsonType.NUMBER, result.getType());
         });
     }
 
@@ -908,7 +908,7 @@ public class SimdJsonParserTest {
                 dest.clear();
                 parser.queryPointerUtf8(json, descriptionPath, result, dest, 272);
                 // The string is expected to be truncated at the last valid utf-8 sequence: 270 instead of 272.
-                    Assert.assertEquals(270, dest.size());
+                Assert.assertEquals(270, dest.size());
                 Assert.assertFalse(dest.isAscii());
 
                 // This ends up decoding just fine as UTF-8 and is shorter than the maxLen.
@@ -929,69 +929,69 @@ public class SimdJsonParserTest {
             try (DirectUtf8Sink dest = new DirectUtf8Sink(cap)) {
                 final long ret1 = parser.queryPointerValue(json, path2Pointer(".name"), result, dest, cap);
                 Assert.assertEquals(0, ret1);
-                    Assert.assertEquals(SimdJsonError.SUCCESS, result.getError());
-                    Assert.assertEquals(SimdJsonType.STRING, result.getType());
-                    Assert.assertEquals(SimdJsonNumberType.UNSET, result.getNumberType());
+                Assert.assertEquals(SimdJsonError.SUCCESS, result.getError());
+                Assert.assertEquals(SimdJsonType.STRING, result.getType());
+                Assert.assertEquals(SimdJsonNumberType.UNSET, result.getNumberType());
                 Assert.assertEquals("John", dest.toString());
 
                 dest.clear();
 
                 final long ret2 = parser.queryPointerValue(json, path2Pointer(".age"), result, dest, cap);
                 Assert.assertEquals(30, ret2);
-                    Assert.assertEquals(SimdJsonError.SUCCESS, result.getError());
-                    Assert.assertEquals(SimdJsonType.NUMBER, result.getType());
-                    Assert.assertEquals(SimdJsonNumberType.SIGNED_INTEGER, result.getNumberType());
+                Assert.assertEquals(SimdJsonError.SUCCESS, result.getError());
+                Assert.assertEquals(SimdJsonType.NUMBER, result.getType());
+                Assert.assertEquals(SimdJsonNumberType.SIGNED_INTEGER, result.getNumberType());
                 Assert.assertEquals(0, dest.size());
 
                 final long ret3 = parser.queryPointerValue(json, path2Pointer(".height"), result, dest, cap);
                 final double ret3Double = Double.longBitsToDouble(ret3);
                 Assert.assertEquals(5.6, ret3Double, 0.000001);
-                    Assert.assertEquals(SimdJsonError.SUCCESS, result.getError());
-                    Assert.assertEquals(SimdJsonType.NUMBER, result.getType());
-                    Assert.assertEquals(SimdJsonNumberType.FLOATING_POINT_NUMBER, result.getNumberType());
+                Assert.assertEquals(SimdJsonError.SUCCESS, result.getError());
+                Assert.assertEquals(SimdJsonType.NUMBER, result.getType());
+                Assert.assertEquals(SimdJsonNumberType.FLOATING_POINT_NUMBER, result.getNumberType());
                 Assert.assertEquals(0, dest.size());
 
                 final long ret4 = parser.queryPointerValue(json, path2Pointer(".hasChildren"), result, dest, cap);
                 Assert.assertEquals(0, ret4);
-                    Assert.assertEquals(SimdJsonError.SUCCESS, result.getError());
-                    Assert.assertEquals(SimdJsonType.BOOLEAN, result.getType());
-                    Assert.assertEquals(SimdJsonNumberType.UNSET, result.getNumberType());
+                Assert.assertEquals(SimdJsonError.SUCCESS, result.getError());
+                Assert.assertEquals(SimdJsonType.BOOLEAN, result.getType());
+                Assert.assertEquals(SimdJsonNumberType.UNSET, result.getNumberType());
                 Assert.assertEquals(0, dest.size());
 
                 final long ret5 = parser.queryPointerValue(json, path2Pointer(".hasPets"), result, dest, cap);
                 Assert.assertEquals(1, ret5);
-                    Assert.assertEquals(SimdJsonError.SUCCESS, result.getError());
-                    Assert.assertEquals(SimdJsonType.BOOLEAN, result.getType());
-                    Assert.assertEquals(SimdJsonNumberType.UNSET, result.getNumberType());
+                Assert.assertEquals(SimdJsonError.SUCCESS, result.getError());
+                Assert.assertEquals(SimdJsonType.BOOLEAN, result.getType());
+                Assert.assertEquals(SimdJsonNumberType.UNSET, result.getNumberType());
                 Assert.assertEquals(0, dest.size());
 
                 final long ret6 = parser.queryPointerValue(json, path2Pointer(".nothing"), result, dest, cap);
                 Assert.assertEquals(0, ret6);
-                    Assert.assertEquals(SimdJsonError.SUCCESS, result.getError());
-                    Assert.assertEquals(SimdJsonType.NULL, result.getType());
-                    Assert.assertEquals(SimdJsonNumberType.UNSET, result.getNumberType());
+                Assert.assertEquals(SimdJsonError.SUCCESS, result.getError());
+                Assert.assertEquals(SimdJsonType.NULL, result.getType());
+                Assert.assertEquals(SimdJsonNumberType.UNSET, result.getNumberType());
                 Assert.assertEquals(0, dest.size());
 
                 final long ret7 = parser.queryPointerValue(json, path2Pointer(".u64_val"), result, dest, cap);
                 Assert.assertEquals(-2L, ret7);
-                    Assert.assertEquals(SimdJsonError.SUCCESS, result.getError());
-                    Assert.assertEquals(SimdJsonType.NUMBER, result.getType());
-                    Assert.assertEquals(SimdJsonNumberType.UNSIGNED_INTEGER, result.getNumberType());
+                Assert.assertEquals(SimdJsonError.SUCCESS, result.getError());
+                Assert.assertEquals(SimdJsonType.NUMBER, result.getType());
+                Assert.assertEquals(SimdJsonNumberType.UNSIGNED_INTEGER, result.getNumberType());
                 Assert.assertEquals(0, dest.size());
 
                 final long ret8 = parser.queryPointerValue(json, path2Pointer(".bignum"), result, dest, cap);
                 Assert.assertEquals(0, ret8);
-                    Assert.assertEquals(SimdJsonError.SUCCESS, result.getError());
-                    Assert.assertEquals(SimdJsonType.NUMBER, result.getType());
-                    Assert.assertEquals(SimdJsonNumberType.BIG_INTEGER, result.getNumberType());
+                Assert.assertEquals(SimdJsonError.SUCCESS, result.getError());
+                Assert.assertEquals(SimdJsonType.NUMBER, result.getType());
+                Assert.assertEquals(SimdJsonNumberType.BIG_INTEGER, result.getNumberType());
                 Assert.assertEquals("12345678901234567890123456789012345678901234567890", dest.toString());
                 dest.clear();
 
                 final long ret9 = parser.queryPointerValue(json, path2Pointer(".pets"), result, dest, cap);
                 Assert.assertEquals(0, ret9);
-                    Assert.assertEquals(SimdJsonError.SUCCESS, result.getError());
-                    Assert.assertEquals(SimdJsonType.ARRAY, result.getType());
-                    Assert.assertEquals(SimdJsonNumberType.UNSET, result.getNumberType());
+                Assert.assertEquals(SimdJsonError.SUCCESS, result.getError());
+                Assert.assertEquals(SimdJsonType.ARRAY, result.getType());
+                Assert.assertEquals(SimdJsonNumberType.UNSET, result.getNumberType());
                 Assert.assertEquals("[\n" +
                         "    {\"name\": \"Max\", \"species\": \"Dog\"},\n" +
                         "    {\"name\": \"Whiskers\", \"species\": \"Cat\", \"scratches\": true}\n" +
@@ -1000,17 +1000,17 @@ public class SimdJsonParserTest {
 
                 final long ret10 = parser.queryPointerValue(json, path2Pointer(".pets[0]"), result, dest, cap);
                 Assert.assertEquals(0, ret10);
-                    Assert.assertEquals(SimdJsonError.SUCCESS, result.getError());
-                    Assert.assertEquals(SimdJsonType.OBJECT, result.getType());
-                    Assert.assertEquals(SimdJsonNumberType.UNSET, result.getNumberType());
+                Assert.assertEquals(SimdJsonError.SUCCESS, result.getError());
+                Assert.assertEquals(SimdJsonType.OBJECT, result.getType());
+                Assert.assertEquals(SimdJsonNumberType.UNSET, result.getNumberType());
                 Assert.assertEquals("{\"name\": \"Max\", \"species\": \"Dog\"}", dest.toString());
                 dest.clear();
 
                 final long ret11 = parser.queryPointerValue(json, path2Pointer(".nonexistent"), result, dest, cap);
                 Assert.assertEquals(0, ret11);
-                    Assert.assertEquals(SimdJsonError.NO_SUCH_FIELD, result.getError());
-                    Assert.assertEquals(SimdJsonType.UNSET, result.getType());
-                    Assert.assertEquals(SimdJsonNumberType.UNSET, result.getNumberType());
+                Assert.assertEquals(SimdJsonError.NO_SUCH_FIELD, result.getError());
+                Assert.assertEquals(SimdJsonType.UNSET, result.getType());
+                Assert.assertEquals(SimdJsonNumberType.UNSET, result.getNumberType());
                 Assert.assertEquals(0, dest.size());
             }
         });
@@ -1121,7 +1121,7 @@ public class SimdJsonParserTest {
             try (DirectUtf8Sink dest = new DirectUtf8Sink(100)) {
                 parser.queryPointerUtf8(json, path2Pointer(".nonexistent"), result, dest, 100);
                 Assert.assertEquals("", dest.toString());
-                    Assert.assertEquals(SimdJsonType.UNSET, result.getType());
+                Assert.assertEquals(SimdJsonType.UNSET, result.getType());
             }
         });
     }
@@ -1132,7 +1132,7 @@ public class SimdJsonParserTest {
             try (DirectUtf8Sink dest = new DirectUtf8Sink(100)) {
                 parser.queryPointerUtf8(json, path2Pointer(".nothing"), result, dest, 100);
                 Assert.assertEquals("", dest.toString());
-                    Assert.assertEquals(SimdJsonType.NULL, result.getType());
+                Assert.assertEquals(SimdJsonType.NULL, result.getType());
             }
         });
     }
