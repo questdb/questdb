@@ -109,7 +109,6 @@ import io.questdb.std.Uuid;
 import io.questdb.std.Vect;
 import io.questdb.std.WeakClosableObjectPool;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -214,7 +213,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final MemoryMR metaMem;
     private final TableWriterMetadata metadata;
     private final Metrics metrics;
-    private final @NotNull MicrosecondClock microsecondClock;
     private final boolean mixedIOFlag;
     private final int mkDirMode;
     private final ObjList<Runnable> nullSetters;
@@ -357,8 +355,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         this.tableToken = tableToken;
         this.o3QuickSortEnabled = configuration.isO3QuickSortEnabled();
         this.engine = cairoEngine;
-        this.microsecondClock = configuration.getMicrosecondClock();
-        this.lastWalCommitTimestampMicros = microsecondClock.getTicks();
+        this.lastWalCommitTimestampMicros = configuration.getMicrosecondClock().getTicks();
         try {
             this.path = new Path().of(root);
             this.pathRootSize = path.size();
@@ -5314,7 +5311,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (ttl == 0) {
             return;
         }
-        long oldDataCutoffMicros = microsecondClock.getTicks() - TimeUnit.HOURS.toMicros(ttl);
+        long oldDataCutoffMicros = getMaxTimestamp() - TimeUnit.HOURS.toMicros(ttl);
         int partitionCount = getPartitionCount();
         if (partitionCount < 2 || getPartitionTimestamp(1) >= oldDataCutoffMicros) {
             // Fast path: the oldest partition isn't past its lifetime, return
