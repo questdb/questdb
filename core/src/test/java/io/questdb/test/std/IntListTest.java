@@ -195,8 +195,9 @@ public class IntListTest {
 
         for (int i = 0; i < elements; i++) {
             arrays[i] = new int[n];
+            int equalValue = rnd.nextInt();
             for (int j = 0; j < n; j++) {
-                arrays[i][j] = rnd.nextInt();
+                arrays[i][j] = equalValue;
                 list.add(arrays[i][j]);
             }
         }
