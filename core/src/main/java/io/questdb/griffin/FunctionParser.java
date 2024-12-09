@@ -882,6 +882,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             if (pos < candidateSigArgCount) {
                 final int sigArgType = FunctionFactoryDescriptor.toType(candidateDescriptor.getArgTypeMask(pos));
                 args.getQuick(pos).assignType(sigArgType, sqlExecutionContext.getBindVariableService());
+            } else {
+                // fallback for variadic functions with UNDEFINED types: define arguments as string
+                // todo: be smarter about this, we could potentially infer type from other arguments or
+                //       function factory with variadic arguments could indicate preferred type
+                args.getQuick(pos).assignType(ColumnType.STRING, sqlExecutionContext.getBindVariableService());
             }
         }
 
@@ -970,7 +975,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     }
 
     private Function createIndexParameter(int variableIndex, int position) throws SqlException {
-        Function function = getBindVariableService().getOrDefineFunction(variableIndex);
+        Function function = getBindVariableService().getFunction(variableIndex);
+        if (function == null) {
+            // bind variable is undefined
+            return new IndexedParameterLinkFunction(variableIndex, ColumnType.UNDEFINED, position);
+        }
         return new IndexedParameterLinkFunction(variableIndex, function.getType(), position);
     }
 

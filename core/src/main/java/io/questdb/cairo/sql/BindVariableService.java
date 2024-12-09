@@ -56,13 +56,18 @@ public interface BindVariableService extends Mutable {
     ObjList<CharSequence> getNamedVariables();
 
     /**
-     * Returns the type of bind variable by index. If variable has not been defined
-     * the method defines and returns the type as <code>UNDEFINED</code>.
+     * Checks if bind variable is defined. Bind variable will usually be defined by the SQL compiler when
+     * the type of the variable can be inferred from the expression where this variable is used. However, in
+     * cases where bind variable is selected instead of a column, the type is ambiguous and the variable is
+     * left undefined.
+     * <p>
+     * The undefined variables will need to be assigned types (and values) by the client. For example a PostgresSQL
+     * client.
      *
      * @param index the 0-based index of the bind variable in question.
-     * @return type of the bind variable
+     * @return true when variable type is defined and false otherwise.
      */
-    @NotNull Function getOrDefineFunction(int index);
+    boolean isDefined(int index);
 
     /**
      * Set the type of bind variable by name as binary and provide a value
@@ -82,7 +87,6 @@ public interface BindVariableService extends Mutable {
      *                      that is not compatible with Binary
      */
     void setBin(int index) throws SqlException;
-
 
     /**
      * Set type of bind variable by index as binary and provide a value
@@ -577,18 +581,4 @@ public interface BindVariableService extends Mutable {
      *                      that is not compatible with UTF8 encoded String
      */
     void setVarchar(CharSequence name, Utf8Sequence value) throws SqlException;
-
-    /**
-     * Checks if bind variable is defined. Bind variable will usually be defined by the SQL compiler when
-     * the type of the variable can be inferred from the expression where this variable is used. However, in
-     * cases where bind variable is selected instead of a column, the type is ambiguous and the variable is
-     * left undefined.
-     * <p>
-     * The undefined variables will need to be assigned types (and values) by the client. For example a PostgresSQL
-     * client.
-     *
-     * @param index the 0-based index of the bind variable in question.
-     * @return true when variable type is defined and false otherwise.
-     */
-    boolean isDefined(int index);
 }

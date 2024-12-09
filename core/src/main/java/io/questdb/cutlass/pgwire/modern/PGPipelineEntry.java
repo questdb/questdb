@@ -1277,9 +1277,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 bindVariableService.define(j, ColumnType.UUID, 0);
                 break;
             case PG_UNSPECIFIED:
-                // declare the variable as UNDEFINED for now
-                // the type gets resolved at BINDing type
-                bindVariableService.define(j, ColumnType.UNDEFINED, 0);
+                // Client did not provide this type, let SQL compiler to infer it
                 break;
             default:
                 bindVariableService.define(j, ColumnType.STRING, 0);
@@ -1591,13 +1589,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     final Function f = bindVariableService.getFunction(i);
                     int funType = f.getType();
 
-                    // Force STRING type when function type is undefined after compilation.
-                    // This prevents client-side type inference attempts which can lead to:
-                    // - Unwanted metadata queries to unsupported system views
-                    // - Potentially incorrect type guessing behaviors
-                    // - Additional unnecessary roundtrips
-                    int type = funType == ColumnType.UNDEFINED ? ColumnType.STRING : funType;
-                    oid = Numbers.bswap(PGOids.getTypeOid(type));
+                    assert funType != ColumnType.UNDEFINED : "function type is undefined";
+
+                    oid = Numbers.bswap(PGOids.getTypeOid(funType));
                 }
                 outParameterTypeDescriptionTypeOIDs.setQuick(i, oid);
             }

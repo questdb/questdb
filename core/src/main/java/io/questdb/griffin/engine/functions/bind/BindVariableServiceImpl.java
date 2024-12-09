@@ -37,7 +37,6 @@ import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class BindVariableServiceImpl implements BindVariableService {
@@ -200,19 +199,6 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     @Override
-    public @NotNull Function getOrDefineFunction(int index) {
-        final int n = indexedVariables.size();
-        if (index < n) {
-            Function fun = indexedVariables.getQuick(index);
-            if (fun != null) {
-                return fun;
-            }
-        }
-        indexedVariables.extendAndSet(index, UndefinedFunction.INSTANCE);
-        return UndefinedFunction.INSTANCE;
-    }
-
-    @Override
     public boolean isDefined(int index) {
         Function f = getFunction(index);
         if (f != null) {
@@ -245,7 +231,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     public void setBin(int index, BinarySequence value) throws SqlException {
         indexedVariables.extendPos(index + 1);
         Function function = indexedVariables.getQuick(index);
-        if (function == null || function == UndefinedFunction.INSTANCE) {
+        if (function == null) {
             indexedVariables.setQuick(index, new BinBindVariable(value));
         } else if (function instanceof BinBindVariable) {
             ((BinBindVariable) function).value = value;
@@ -276,7 +262,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         indexedVariables.extendPos(index + 1);
         // variable exists
         Function function = indexedVariables.getQuick(index);
-        if (function != null && function != UndefinedFunction.INSTANCE) {
+        if (function != null) {
             setBoolean0(function, value, index, null);
         } else {
             indexedVariables.setQuick(index, function = booleanVarPool.next());
@@ -301,7 +287,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         indexedVariables.extendPos(index + 1);
         // variable exists
         Function function = indexedVariables.getQuick(index);
-        if (function != null && function != UndefinedFunction.INSTANCE) {
+        if (function != null) {
             setByte0(function, value, index, null);
         } else {
             indexedVariables.setQuick(index, function = byteVarPool.next());
@@ -336,7 +322,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         indexedVariables.extendPos(index + 1);
         // variable exists
         Function function = indexedVariables.getQuick(index);
-        if (function != null && function != UndefinedFunction.INSTANCE) {
+        if (function != null) {
             setChar0(function, value, index, null);
         } else {
             indexedVariables.setQuick(index, function = charVarPool.next());
@@ -366,7 +352,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         indexedVariables.extendPos(index + 1);
         // variable exists
         Function function = indexedVariables.getQuick(index);
-        if (function != null && function != UndefinedFunction.INSTANCE) {
+        if (function != null) {
             setLong0(function, value, index, null, ColumnType.DATE);
         } else {
             indexedVariables.setQuick(index, function = dateVarPool.next());
@@ -396,7 +382,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         indexedVariables.extendPos(index + 1);
         // variable exists
         Function function = indexedVariables.getQuick(index);
-        if (function != null && function != UndefinedFunction.INSTANCE) {
+        if (function != null) {
             setDouble0(function, value, index, null);
         } else {
             indexedVariables.setQuick(index, function = doubleVarPool.next());
@@ -426,7 +412,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         indexedVariables.extendPos(index + 1);
         // variable exists
         Function function = indexedVariables.getQuick(index);
-        if (function != null && function != UndefinedFunction.INSTANCE) {
+        if (function != null) {
             setFloat0(function, value, index, null);
         } else {
             indexedVariables.setQuick(index, function = floatVarPool.next());
@@ -452,7 +438,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         indexedVariables.extendPos(index + 1);
         // variable exists
         Function function = indexedVariables.getQuick(index);
-        if (function != null && function != UndefinedFunction.INSTANCE) {
+        if (function != null) {
             setGeoHash0(function, value, type, index, null);
         } else {
             indexedVariables.setQuick(index, function = geoHashVarPool.next());
@@ -476,7 +462,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         indexedVariables.extendPos(index + 1);
         // variable exists
         Function function = indexedVariables.getQuick(index);
-        if (function != null && function != UndefinedFunction.INSTANCE) {
+        if (function != null) {
             setIPv40(function, value);
         } else {
             indexedVariables.setQuick(index, function = IPv4VarPool.next());
@@ -489,7 +475,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         indexedVariables.extendPos(index + 1);
         // variable exists
         Function function = indexedVariables.getQuick(index);
-        if (function != null && function != UndefinedFunction.INSTANCE) {
+        if (function != null) {
             setIPv40(function, Numbers.parseIPv4Quiet(value));
         } else {
             indexedVariables.setQuick(index, function = IPv4VarPool.next());
@@ -519,7 +505,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         indexedVariables.extendPos(index + 1);
         // variable exists
         Function function = indexedVariables.getQuick(index);
-        if (function != null && function != UndefinedFunction.INSTANCE) {
+        if (function != null) {
             setInt0(function, value, index, null);
         } else {
             indexedVariables.setQuick(index, function = intVarPool.next());
@@ -549,7 +535,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         indexedVariables.extendPos(index + 1);
         // variable exists
         Function function = indexedVariables.getQuick(index);
-        if (function != null && function != UndefinedFunction.INSTANCE) {
+        if (function != null) {
             setLong0(function, value, index, null, ColumnType.LONG);
         } else {
             indexedVariables.setQuick(index, function = longVarPool.next());
@@ -599,7 +585,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         indexedVariables.extendPos(index + 1);
         // variable exists
         Function function = indexedVariables.getQuick(index);
-        if (function != null && function != UndefinedFunction.INSTANCE) {
+        if (function != null) {
             setLong2560(
                     function,
                     l0,
@@ -630,7 +616,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         indexedVariables.extendPos(index + 1);
         // variable exists
         Function function = indexedVariables.getQuick(index);
-        if (function != null && function != UndefinedFunction.INSTANCE) {
+        if (function != null) {
             setShort0(function, value, index, null);
         } else {
             indexedVariables.setQuick(index, function = shortVarPool.next());
@@ -660,7 +646,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         indexedVariables.extendPos(index + 1);
         // variable exists
         Function function = indexedVariables.getQuick(index);
-        if (function != null && function != UndefinedFunction.INSTANCE) {
+        if (function != null) {
             setStr0(function, value, index, null);
         } else {
             indexedVariables.setQuick(index, function = strVarPool.next());
@@ -690,7 +676,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         indexedVariables.extendPos(index + 1);
         // variable exists
         Function function = indexedVariables.getQuick(index);
-        if (function != null && function != UndefinedFunction.INSTANCE) {
+        if (function != null) {
             setTimestamp0(function, value, index);
         } else {
             indexedVariables.setQuick(index, function = timestampVarPool.next());
@@ -715,7 +701,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         indexedVariables.extendPos(index + 1);
         // variable exists
         Function function = indexedVariables.getQuick(index);
-        if (function != null && function != UndefinedFunction.INSTANCE) {
+        if (function != null) {
             setUuid(function, lo, hi, index, null);
         } else {
             indexedVariables.setQuick(index, function = uuidVarPool.next());
@@ -749,7 +735,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         indexedVariables.extendPos(index + 1);
         // variable exists
         Function function = indexedVariables.getQuick(index);
-        if (function != null && function != UndefinedFunction.INSTANCE) {
+        if (function != null) {
             setVarchar0(function, value, index, null);
         } else {
             indexedVariables.setQuick(index, function = varcharVarPool.next());
