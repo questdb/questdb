@@ -210,7 +210,6 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         return metadataType == ColumnType.VARCHAR && decoderType == ColumnType.SYMBOL;
     }
 
-    // TODO: this is broken
     private class ParquetRecord implements Record {
         private final ObjList<DirectBinarySequence> bsViews = new ObjList<>();
         private final ObjList<DirectString> csViewsA = new ObjList<>();
