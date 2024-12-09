@@ -93,7 +93,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             }
         }
 
-        if (allConst) {
+        if (allConst && !(args.size() == 2 && (ColumnType.isString(args.get(1).getType()) || ColumnType.isVarchar(args.get(1).getType()) || ColumnType.isUndefined(args.get(1).getType())))) {
             return new InTimestampConstFunction(args.getQuick(0), parseDiscreteTimestampValues(args, argPositions));
         }
 
@@ -119,6 +119,14 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
 
         // have to copy, args is mutable
         return new InTimestampVarFunction(new ObjList<>(args));
+    }
+
+    @Override
+    public int resolvePreferredVariadicType(ObjList<Function> args) throws SqlException {
+        if (args.size() == 2) {
+            return ColumnType.VARCHAR;
+        }
+        return ColumnType.LONG;
     }
 
     private static LongList parseDiscreteTimestampValues(ObjList<Function> args, IntList argPositions) throws SqlException {
