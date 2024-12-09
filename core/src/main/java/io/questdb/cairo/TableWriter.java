@@ -1223,85 +1223,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return rowsAdded;
     }
 
-    /**
-     * Commits newly added rows of data. This method updates transaction file with pointers to end of appended data.
-     * <p>
-     * <b>Pending rows</b>
-     * <p>This method will cancel pending rows by calling {@link #rowCancel()}. Data in partially appended row will be lost.</p>
-     *
-     * @param o3MaxLag if > 0 then do a partial commit, leaving the rows within the lag in a new uncommitted transaction
-     */
-    private void commit(long o3MaxLag) {
-        checkDistressed();
-        physicallyWrittenRowsSinceLastCommit.set(0);
-
-        if (o3InError) {
-            rollback();
-            return;
-        }
-
-        if ((masterRef & 1) != 0) {
-            rowCancel();
-        }
-
-        if (inTransaction()) {
-            final boolean o3 = hasO3();
-            if (o3) {
-                final boolean noop = o3Commit(o3MaxLag);
-                if (noop) {
-                    // Bookmark masterRef to track how many rows is in uncommitted state
-                    this.committedMasterRef = masterRef;
-                    getTxn();
-                    return;
-                } else if (o3MaxLag > 0) {
-                    // It is possible that O3 commit will create partition just before
-                    // the last one, leaving last partition row count 0 when doing ic().
-                    // That's when the data from the last partition is moved to in-memory lag.
-                    // One way to detect this is to check if index of the "last" partition is not
-                    // last partition in the attached partition list.
-                    if (reconcileOptimisticPartitions()) {
-                        this.lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
-                        this.partitionTimestampHi = txWriter.getNextPartitionTimestamp(txWriter.getMaxTimestamp()) - 1;
-                        openLastPartition();
-                    }
-                }
-            } else if (noOpRowCount > 0) {
-                LOG.critical()
-                        .$("o3 ignoring write on read-only partition [table=").utf8(tableToken.getTableName())
-                        .$(", timestamp=").$ts(lastOpenPartitionTs)
-                        .$(", numRows=").$(noOpRowCount)
-                        .$();
-            }
-
-
-            final long committedRowCount = txWriter.unsafeCommittedFixedRowCount() + txWriter.unsafeCommittedTransientRowCount();
-            final long rowsAdded = txWriter.getRowCount() - committedRowCount;
-
-            updateIndexes();
-            syncColumns();
-            columnVersionWriter.commit();
-            txWriter.setColumnVersion(columnVersionWriter.getVersion());
-            txWriter.commit(denseSymbolMapWriters);
-
-            // Check if partitions are split into too many pieces and merge few of them back.
-            squashSplitPartitions(minSplitPartitionTimestamp, txWriter.getMaxTimestamp(), configuration.getO3LastPartitionMaxSplits());
-
-            // Bookmark masterRef to track how many rows is in uncommitted state
-            this.committedMasterRef = masterRef;
-            processPartitionRemoveCandidates();
-
-            metrics.tableWriter().incrementCommits();
-            metrics.tableWriter().addCommittedRows(rowsAdded);
-            if (!o3) {
-                // If `o3`, the metric is tracked inside `o3Commit`, possibly async.
-                addPhysicallyWrittenRows(rowsAdded);
-            }
-
-            noOpRowCount = 0L;
-            enforceTTL();
-        }
-    }
-
     @Override
     public boolean convertPartitionNativeToParquet(long partitionTimestamp) {
         final int memoryTag = MemoryTag.MMAP_PARQUET_PARTITION_CONVERTER;
@@ -4030,7 +3951,83 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         walFdCacheSize = 0;
     }
 
+    /**
+     * Commits newly added rows of data. This method updates transaction file with pointers to end of appended data.
+     * <p>
+     * <b>Pending rows</b>
+     * <p>This method will cancel pending rows by calling {@link #rowCancel()}. Data in partially appended row will be lost.</p>
+     *
+     * @param o3MaxLag if > 0 then do a partial commit, leaving the rows within the lag in a new uncommitted transaction
+     */
+    private void commit(long o3MaxLag) {
+        checkDistressed();
+        physicallyWrittenRowsSinceLastCommit.set(0);
 
+        if (o3InError) {
+            rollback();
+            return;
+        }
+
+        if ((masterRef & 1) != 0) {
+            rowCancel();
+        }
+
+        if (inTransaction()) {
+            final boolean o3 = hasO3();
+            if (o3) {
+                final boolean noop = o3Commit(o3MaxLag);
+                if (noop) {
+                    // Bookmark masterRef to track how many rows is in uncommitted state
+                    this.committedMasterRef = masterRef;
+                    getTxn();
+                    return;
+                } else if (o3MaxLag > 0) {
+                    // It is possible that O3 commit will create partition just before
+                    // the last one, leaving last partition row count 0 when doing ic().
+                    // That's when the data from the last partition is moved to in-memory lag.
+                    // One way to detect this is to check if index of the "last" partition is not
+                    // last partition in the attached partition list.
+                    if (reconcileOptimisticPartitions()) {
+                        this.lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
+                        this.partitionTimestampHi = txWriter.getNextPartitionTimestamp(txWriter.getMaxTimestamp()) - 1;
+                        openLastPartition();
+                    }
+                }
+            } else if (noOpRowCount > 0) {
+                LOG.critical()
+                        .$("o3 ignoring write on read-only partition [table=").utf8(tableToken.getTableName())
+                        .$(", timestamp=").$ts(lastOpenPartitionTs)
+                        .$(", numRows=").$(noOpRowCount)
+                        .$();
+            }
+
+
+            final long committedRowCount = txWriter.unsafeCommittedFixedRowCount() + txWriter.unsafeCommittedTransientRowCount();
+            final long rowsAdded = txWriter.getRowCount() - committedRowCount;
+
+            updateIndexes();
+            syncColumns();
+            columnVersionWriter.commit();
+            txWriter.setColumnVersion(columnVersionWriter.getVersion());
+            txWriter.commit(denseSymbolMapWriters);
+
+            // Check if partitions are split into too many pieces and merge few of them back.
+            squashSplitPartitions(minSplitPartitionTimestamp, txWriter.getMaxTimestamp(), configuration.getO3LastPartitionMaxSplits());
+
+            // Bookmark masterRef to track how many rows is in uncommitted state
+            this.committedMasterRef = masterRef;
+            processPartitionRemoveCandidates();
+
+            metrics.tableWriter().incrementCommits();
+            metrics.tableWriter().addCommittedRows(rowsAdded);
+            if (!o3) {
+                // If `o3`, the metric is tracked inside `o3Commit`, possibly async.
+                addPhysicallyWrittenRows(rowsAdded);
+            }
+
+            noOpRowCount = 0L;
+            enforceTTL();
+        }
     }
 
     private void configureAppendPosition() {
