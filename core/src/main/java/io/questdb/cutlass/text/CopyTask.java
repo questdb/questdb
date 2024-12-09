@@ -1325,6 +1325,7 @@ public class CopyTask {
                 logError(offset, fieldIndex, dus);
                 switch (atomicity) {
                     case Atomicity.SKIP_ALL:
+                        w.cancel();
                         tableWriterRef.rollback();
                         throw TextException.$("bad syntax [line offset=").put(offset).put(",column=").put(fieldIndex).put(']');
                     case Atomicity.SKIP_ROW:

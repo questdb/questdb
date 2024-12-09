@@ -33,5 +33,5 @@ public interface MemoryMARW extends MemoryMW, MemoryARW, MemoryMA, MemoryMR, Mem
 
     void of(FilesFacade ff, long fd, @Nullable LPSZ fileName, long size, int memoryTag);
 
-    void of(FilesFacade ff, long fd, @Nullable LPSZ fileName, long extendSegmentSize, long size, int memoryTag);
+    void of(FilesFacade ff, long fd, boolean keepFdOpen, @Nullable LPSZ fileName, long extendSegmentSize, long size, int memoryTag);
 }
