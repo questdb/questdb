@@ -117,18 +117,19 @@ public interface FunctionFactory {
      * If function has variable number of arguments, this method should return preferred type
      * for variadic arguments.
      * <p>
-     * SQL Compiler will use this as a hint to determine type of variadic arguments when they are
-     * not UNDEFINED at compile time.
+     * SQL Compiler will use this as a hint to determine type of variadic arguments when they have the
+     * UNDEFINED type at compile time.
+     * <p>
+     * Default implementation finds common type among all arguments. This works well for most functions.
      *
      * @param args list of arguments, function type can be undefined
      * @return preferred type for variadic arguments
      */
     default int resolvePreferredVariadicType(ObjList<Function> args) throws SqlException {
-        int currentType;
         int commonType = UNDEFINED;
 
         for (int i = 0, n = args.size(); i < n; i++) {
-            currentType = args.getQuick(i).getType();
+            int currentType = args.getQuick(i).getType();
             if (currentType == UNDEFINED) {
                 continue;
             }
