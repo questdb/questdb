@@ -38,7 +38,6 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.Unsafe;
-import io.questdb.std.ndarr.NdArrayMeta;
 import io.questdb.std.ndarr.NdArrayRowMajorTraversal;
 import io.questdb.std.ndarr.NdArrayValuesSlice;
 import io.questdb.std.ndarr.NdArrayView;
@@ -52,41 +51,41 @@ import java.io.Closeable;
  * Reads and writes arrays.
  * <p>Arrays are organised as such</p>
  * <h1>AUX entries</h1>
+ * <h2>Data Offset Handling</h2>
+ * <p>Like the <code>VARCHAR</code> type, <code>ARRAY</code> uses an <code>N</code>
+ * (not <code>N + 1</code> encoding scheme.</p>
+ * <h2>AUX entry format</h2>
+ * <p><strong>IMPORTANT!</strong>: Since we store 96 bit entries, every second entry is unaligned for reading
+ * via <code>Unsafe.getLong()</code>, as such if you find any <code>{MemoryR,Unsafe}.{get,set}Long</code> calls
+ * operating on the aux data in this code, it's probably a bug!</p>
  * <pre>
- * 128-bit fixed size entries
- *     * auxHi ======
- *         * manydims_and_dim0: int =======
- *             * bit 0 to =26: dim0: 27-bit unsigned integer
- *                 * the first dimension of the array,
- *                 * or `0` if null.
- *             * bits 27 to =30: unused
- *             * bit 31: manydims: 1-bit bool
- *                 * if `1`, this nd array has more than two dimensions
- *         * dim1_and_format: int =======
- *             * bits 0 to =26: dim1: 27-bit unsigned integer
- *                 * the second dimension of the array
- *                 * or `0` if a 1D array.
- *             * bits 27 to =31: unused, reserved for format use (in case we want to support sparse arrays)
- *     * auxLo ======
+ * 96-bit fixed size entries
+ *     * crc_and_offset: 64-bits
  *         * offset_and_hash: long ======
  *             * bits 0 to =47: offset: 48-bit unsigned integer
  *                 * byte count offset into the data vector
  *             * bits 48 to =64: hash: 16-bit
  *                 * CRC-16/XMODEM hash used to speed up equality comparisons
+ *     * data_size: 32-bits
+ *         * number of bytes used to the store the array (along with any additional metadata) in the data vector.
  * </pre>
- * <p><strong>Special NULL value encoding:</strong> All bits of the entry are 0.</p>
+ * <h2>Encoding NULLs</h2>
+ * <ul>
+ *     <li>A null value has no size.</li>
+ *     <li>The CRC of a null array is 0, so <code>auxLo >> CRC16_SHIFT == 0</code></li>
+ *     <li>We however <em>do</em> populate the <code>offset</code> field with
+ *     the end of the previous non-null value.</li>
+ *     <li>This allows mapping the data vector for a specific range of values.</li>
+ * </ul></p>
  * <h1>Data vector</h1>
  * <pre>
  * variable length encoding, starting at the offset specified in the `aux` entry.
- *     * A sequence of extra dimensions.
- *         * padding:
- *             * enough padding to satisfy the datatype alignment requirements for `int` (i.e. on a 4 byte boundary).
- *         * Optional, present if more than 2 dimensions (see `manydims` field in aux)
- *         * Each dimension is: 32-bit int
- *             * last marker: 1-bit (most significant bit)
- *                 * if set to 1, then this is the last additional dimension
- *              * 3 bits unused.
- *             * number: 27-bits unsigned integer (lowest bits)
+ *     * START ALIGNMENT: Each offset pointed to by an aux entry is guaranteed to have at least `int` alignment`.
+ *     * Shape: len-prefixed ints
+ *         * The series of dimensions of the array.
+ *         * Starts with an 32-bit int with the number of dimensions.
+ *         * Each dimension then written as a 32-bit int.
+ *         * Note that each dimension only ever uses the lowest 27 bits.
  *     * padding:
  *         * enough padding to satisfy the datatype alignment requirements.
  *         * e.g. for 64-bit numeric types ensures that the following section
@@ -95,6 +94,7 @@ import java.io.Closeable;
  *           See the following <a
  *           href="https://medium.com/@jkstoyanov/aligned-and-unaligned-memory-access-9b5843b7f4ac"
  *           >blog post</a>.
+ *         * In practice, this would be either 0 or 4 bytes of padding (given we've just written ints).
  *     * raw values buffer
  *         * a buffer of bytes, containing the values in row-major order.
  *           E.g. for the 2x3 array
@@ -115,32 +115,35 @@ import java.io.Closeable;
  *                   precision: 5
  *                   n_bytes_size = 168
  *                       (bits_per_elem:32 * product(all_dimensions):42 + 7) / 8
+ *         * enough padding for `int` alignment, ready for the next record (see START ALIGNMENT note).
  * </pre>
  */
 public class NdArrayTypeDriver implements ColumnTypeDriver {
     public static final NdArrayTypeDriver INSTANCE = new NdArrayTypeDriver();
-    public static final int ND_ARRAY_AUX_WIDTH_BYTES = 2 * Long.BYTES;
+    public static final int ND_ARRAY_AUX_WIDTH_BYTES = 3 * Integer.BYTES;
     private static final int CRC16_MASK = 0xFFFF;
-    private static final int DIM0_SHIFT = 32;
-    private static final long MANYDIMS_BIT = 1L << 63;
-    private static final long OFFSET_MAX = (1L << 48) - 1L;
     private static final int CRC16_SHIFT = 48;
+    private static final long OFFSET_MAX = (1L << 48) - 1L;
     private static final ThreadLocal<DirectIntList> SHAPE = new ThreadLocal<>(NdArrayTypeDriver::newShape);
     public static final Closeable THREAD_LOCAL_CLEANER = NdArrayTypeDriver::clearThreadLocals;
+    private static final long U32_MASK = 0xFFFFFFFFL;
 
     public static void appendValue(@NotNull MemoryA auxMem, @NotNull MemoryA dataMem, @Nullable NdArrayView array) {
         if ((array == null) || array.isNull()) {
-            NdArrayTypeDriver.INSTANCE.appendNull(auxMem, dataMem);
+            appendNullImpl(auxMem, dataMem);
             return;
         }
 
-        final long crcAndOffset = writeDataEntry(dataMem, array);
-        writeAuxEntry(auxMem, array, crcAndOffset);
+        final long beginOffset = dataMem.getAppendOffset();
+        final short crc = writeDataEntry(dataMem, array);
+        final long endOffset = dataMem.getAppendOffset();
+        final int size = (int) (endOffset - beginOffset);
+        writeAuxEntry(auxMem, beginOffset, crc, size);
     }
 
     @Override
     public void appendNull(MemoryA auxMem, MemoryA dataMem) {
-        auxMem.putLong128(0, 0);
+        appendNullImpl(auxMem, dataMem);
     }
 
     @Override
@@ -186,23 +189,22 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
 
     @Override
     public void configureDataMemOM(FilesFacade ff, MemoryR auxMem, MemoryOM dataMem, long dataFd, LPSZ fileName, long rowLo, long rowHi, int memoryTag, long opts) {
-        throw new UnsupportedOperationException("nyi");
-//        long lo;
-//        if (rowLo > 0) {
-//            lo = getDataOffset(auxMem, VARCHAR_AUX_WIDTH_BYTES * rowLo);
-//        } else {
-//            lo = 0;
-//        }
-//        long hi = getDataVectorSize(auxMem, VARCHAR_AUX_WIDTH_BYTES * (rowHi - 1));
-//        dataMem.ofOffset(
-//                ff,
-//                dataFd,
-//                fileName,
-//                lo,
-//                hi,
-//                memoryTag,
-//                opts
-//        );
+        long lo;
+        if (rowLo > 0) {
+            lo = readDataOffset(auxMem, ND_ARRAY_AUX_WIDTH_BYTES * rowLo);
+        } else {
+            lo = 0;
+        }
+        long hi = calcDataOffsetEnd(auxMem, ND_ARRAY_AUX_WIDTH_BYTES * (rowHi - 1));
+        dataMem.ofOffset(
+                ff,
+                dataFd,
+                fileName,
+                lo,
+                hi,
+                memoryTag,
+                opts
+        );
     }
 
     @Override
@@ -212,12 +214,12 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
 
     @Override
     public long getAuxVectorOffset(long row) {
-        throw new UnsupportedOperationException("nyi");
+        return ND_ARRAY_AUX_WIDTH_BYTES * row;
     }
 
     @Override
     public long getAuxVectorSize(long storageRowCount) {
-        throw new UnsupportedOperationException("nyi");
+        return ND_ARRAY_AUX_WIDTH_BYTES * storageRowCount;
     }
 
     @Override
@@ -227,17 +229,27 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
 
     @Override
     public long getDataVectorOffset(long auxMemAddr, long row) {
-        throw new UnsupportedOperationException("nyi");
+        long auxEntry = auxMemAddr + ND_ARRAY_AUX_WIDTH_BYTES * row;
+        final long offset = readDataOffset(auxMemAddr);
+        final int size = Unsafe.getUnsafe().getInt(auxEntry + Long.BYTES);
+        assert size != 0;
+        return offset;
     }
 
     @Override
     public long getDataVectorSize(long auxMemAddr, long rowLo, long rowHi) {
-        throw new UnsupportedOperationException("nyi");
+        if (rowLo > rowHi) {
+            return 0;
+        }
+        if (rowLo > 0) {
+            return getDataVectorSizeAt(auxMemAddr, rowHi) - getDataVectorOffset(auxMemAddr, rowLo);
+        }
+        return getDataVectorSizeAt(auxMemAddr, rowHi);
     }
 
     @Override
     public long getDataVectorSizeAt(long auxMemAddr, long row) {
-        throw new UnsupportedOperationException("nyi");
+        return calcDataOffsetEnd(auxMemAddr + (ND_ARRAY_AUX_WIDTH_BYTES * row));
     }
 
     @Override
@@ -247,7 +259,7 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
 
     @Override
     public long getMinAuxVectorSize() {
-        throw new UnsupportedOperationException("nyi");
+        return 0;
     }
 
     @Override
@@ -271,9 +283,10 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
             auxMem.jumpTo(0);
             return 0;
         }
+
         // jump to the previous entry and calculate its data offset + data size
         auxMem.jumpTo(ND_ARRAY_AUX_WIDTH_BYTES * (rowCount - 1));
-        final long nextDataMemOffset = getEntryDataOffsetEnd(auxMem.getAppendAddress(), dataMem, columnType);
+        final long nextDataMemOffset = calcDataOffsetEnd(auxMem.getAppendAddress());
 
         // Jump to the end of file to correctly trim the file
         auxMem.jumpTo(ND_ARRAY_AUX_WIDTH_BYTES * rowCount);
@@ -282,7 +295,26 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
 
     @Override
     public long setAppendPosition(long pos, MemoryMA auxMem, MemoryMA dataMem) {
-        throw new UnsupportedOperationException("nyi");
+        if (pos > 0) {
+            // first we need to calculate already used space. both data and aux vectors.
+            long auxVectorOffset = getAuxVectorOffset(pos - 1); // the last entry we are NOT overwriting
+            auxMem.jumpTo(auxVectorOffset);
+            long auxEntryPtr = auxMem.getAppendAddress();
+
+            long dataVectorSize = calcDataOffsetEnd(auxEntryPtr);
+            long auxVectorSize = getAuxVectorSize(pos);
+            long totalDataSizeBytes = dataVectorSize + auxVectorSize;
+
+            auxVectorOffset = getAuxVectorOffset(pos); // the entry we are about to overwrite with the next append
+            // Jump to the end of file to correctly trim the file
+            auxMem.jumpTo(auxVectorOffset);
+            dataMem.jumpTo(dataVectorSize);
+            return totalDataSizeBytes;
+        }
+
+        dataMem.jumpTo(0);
+        auxMem.jumpTo(0);
+        return 0;
     }
 
     @Override
@@ -301,12 +333,45 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public void shiftCopyAuxVector(long shift, long src, long srcLo, long srcHi, long dstAddr, long dstAddrSize) {
-        throw new UnsupportedOperationException("nyi");
+    public void shiftCopyAuxVector(long shift, long srcAddr, long srcLo, long srcHi, long dstAddr, long dstAddrSize) {
+        // +1 since srcHi is inclusive
+        assert (srcHi - srcLo + 1) * ND_ARRAY_AUX_WIDTH_BYTES <= dstAddrSize;
+        O3Utils.shiftCopyVarcharColumnAux(
+                shift,
+                srcAddr,
+                srcLo,
+                srcHi,
+                dstAddr
+        );
+    }
+
+    private static void appendNullImpl(MemoryA auxMem, long offset) {
+        assert auxMem != null;
+        assert offset >= 0;
+        assert offset < OFFSET_MAX;
+        putIntAlignedLong(auxMem, offset);
+        auxMem.putInt(0);  // zero-length array
+    }
+
+    private static void appendNullImpl(MemoryA auxMem, MemoryA dataMem) {
+        final long offset = dataMem.getAppendOffset();
+        appendNullImpl(auxMem, offset);
     }
 
     private static void clearThreadLocals() {
         SHAPE.close();
+    }
+
+    private static long getIntAlignedLong(@NotNull MemoryR mem, long offset) {
+        final int lower = mem.getInt(offset);
+        final int upper = mem.getInt(offset + Integer.BYTES);
+        return ((long) upper << 32) | (lower & U32_MASK);
+    }
+
+    private static long getIntAlignedLong(long address) {
+        final int lower = Unsafe.getUnsafe().getInt(address);
+        final int upper = Unsafe.getUnsafe().getInt(address + Integer.BYTES);
+        return ((long) upper << 32) | (lower & U32_MASK);
     }
 
     private static short initCrc16FromShape(@NotNull DirectIntSlice shape) {
@@ -336,57 +401,51 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
         }
     }
 
-    private static void writeAuxEntry(MemoryA auxMem, @NotNull NdArrayView array, long crcAndOffset) {
-        final DirectIntSlice shape = array.getShape();
-        final int nDims = array.getShape().length();
+    private static void putIntAlignedLong(MemoryA mem, long value) {
+        final int lower = (int) (value & U32_MASK);
+        final int upper = (int) (value >> 32);
+        mem.putInt(lower);
+        mem.putInt(upper);
+    }
 
-        // The fields we will hold in the aux header.
-        final boolean manyDims = nDims > 2;
-        final int dim0 = shape.get(0);
-        final int dim1 = nDims >= 2 ? shape.get(1) : 0;
-        assert dim0 <= NdArrayMeta.DIM_MAX_SIZE;
-        assert dim1 <= NdArrayMeta.DIM_MAX_SIZE;
+    /**
+     * Read the data offset from the aux entry that starts at the specified offset.
+     */
+    private static long readDataOffset(MemoryR auxMem, long offset) {
+        return getIntAlignedLong(auxMem, offset) & OFFSET_MAX;
+    }
 
-        // Encoded into 128 bits.
-        final long auxHi = ((manyDims ? MANYDIMS_BIT : 0L) | ((long) dim0 << DIM0_SHIFT)) | dim1;
-        auxMem.putLong128(crcAndOffset, auxHi);
+    private static long readDataOffset(long address) {
+        return getIntAlignedLong(address) & OFFSET_MAX;
+    }
+
+    private static void writeAuxEntry(MemoryA auxMem, long offset, short crc, int size) {
+        assert offset >= 0;
+        assert offset <= OFFSET_MAX;
+        assert size >= 0;
+        final long crcAndOffset = ((long) crc << CRC16_SHIFT) | offset;
+        putIntAlignedLong(auxMem, crcAndOffset);
+        auxMem.putInt(size);
     }
 
     /**
      * Write the values and -- while doing so, also calculate the crc value, unless it was already cached.
+     *
+     * @return the CRC16/XModem value
      **/
-    private static long writeDataEntry(@NotNull MemoryA dataMem, @NotNull NdArrayView array) {
-        final long offset = writeExtraDims(dataMem, array);
-        final short crc = writeValues(dataMem, array);
-        return (((long) crc) << CRC16_SHIFT) | offset;
-    }
+    private static short writeDataEntry(@NotNull MemoryA dataMem, @NotNull NdArrayView array) {
+        writeShape(dataMem, array.getShape());
 
-    /**
-     * Write the additional dimensions and return the starting offset that we will hold in the aux entry.
-     */
-    private static long writeExtraDims(@NotNull MemoryA dataMem, @NotNull NdArrayView array) {
-
-        if (array.getShape().length() <= 2) {
-            return dataMem.getAppendOffset();
-        }
-
-        // If we have extra dims, we first need to pad for integer access.
+        // We could be storing values of different datatypes.
+        // We thus need to align accordingly. I.e., if we store doubles, we need to align on an 8-byte boundary.
+        // for shorts, it's on a 2-byte boundary. For booleans, we align to the byte.
+        final int bitWidth = 1 << ColumnType.getNdArrayElementTypePrecision(array.getType());
+        final int requiredByteAlignment = Math.max(1, bitWidth / 8);
+        padTo(dataMem, requiredByteAlignment);
+        final short crc = writeValues(dataMem, array, bitWidth);
+        // We pad at the end, ready for the next entry that starts with an int.
         padTo(dataMem, Integer.BYTES);
-
-        final long offset = dataMem.getAppendOffset();
-
-        final DirectIntSlice shape = array.getShape();
-        for (int dimIndex = 2, nDims = shape.length(); dimIndex < nDims; ++dimIndex) {
-            final int dim = shape.get(dimIndex);
-            final boolean isLast = dimIndex == nDims - 1;
-            if (isLast) {
-                dataMem.putInt(dim * -1);  // the last value is stored negative as marker that there's no more.
-            } else {
-                dataMem.putInt(dim);
-            }
-        }
-
-        return offset;
+        return crc;
     }
 
     private static short writeFlatValueBytes(@NotNull MemoryA dataMem, @NotNull NdArrayView array, int bitWidth, NdArrayValuesSlice values) {
@@ -407,6 +466,18 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
                 crc = CRC16XModem.update(crc, value);
             }
             return CRC16XModem.finalize(crc);
+        }
+    }
+
+    /**
+     * Write the dimensions.
+     */
+    private static void writeShape(@NotNull MemoryA dataMem, @NotNull DirectIntSlice shape) {
+        assert dataMem.getAppendOffset() % Integer.BYTES == 0; // aligned integer write
+        dataMem.putInt(shape.length());
+        for (int dimIndex = 0, nDims = shape.length(); dimIndex < nDims; ++dimIndex) {
+            final int dim = shape.get(dimIndex);
+            dataMem.putInt(dim);
         }
     }
 
@@ -564,23 +635,18 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
     /**
      * Writes the values and returns the CRC16 value
      */
-    private static short writeValues(@NotNull MemoryA dataMem, @NotNull NdArrayView array) {
-        // We could be storing values of different datatypes.
-        // We thus need to align accordingly. I.e., if we store doubles, we need to align on an 8-byte boundary.
-        // for shorts, it's on a 2-byte boundary. For booleans, we align to the byte.
-        final int bitWidth = 1 << ColumnType.getNdArrayElementTypePrecision(array.getType());
-        final int requiredByteAlignment = Math.max(1, bitWidth / 8);
-        padTo(dataMem, requiredByteAlignment);
-
+    private static short writeValues(@NotNull MemoryA dataMem, @NotNull NdArrayView array, int bitWidth) {
         final NdArrayValuesSlice values = array.getValues();
+        final short crc;
         if (array.hasDefaultStrides() && isByteAligned(bitWidth, array)) {
-            return writeFlatValueBytes(dataMem, array, bitWidth, values);
+            crc = writeFlatValueBytes(dataMem, array, bitWidth, values);
         } else if (bitWidth == 1) {
-            return writeStridedBooleanValues(dataMem, array);
+            crc = writeStridedBooleanValues(dataMem, array);
         } else {
             assert bitWidth >= 8;
-            return writeStridedByteAlignedValues(bitWidth / 8, dataMem, array);
+            crc = writeStridedByteAlignedValues(bitWidth / 8, dataMem, array);
         }
+        return crc;
     }
 
     /**
@@ -589,67 +655,15 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
      * to the start of the next entry following the one pointed to by
      * <code>auxAddr</code>.
      */
-    private long getEntryDataOffsetEnd(long auxAddr, MemoryMA dataMem, int columnType) {
-        final long auxLo = Unsafe.getUnsafe().getLong(auxAddr);
-        final long auxHi = Unsafe.getUnsafe().getLong(auxAddr + Long.BYTES);
-        final boolean manyDims = (auxHi & MANYDIMS_BIT) != 0;
-        final int dim0 = (int) (auxHi >>> DIM0_SHIFT) & NdArrayMeta.DIM_MAX_SIZE;
-        final int dim1 = (int) (auxHi & NdArrayMeta.DIM_MAX_SIZE);
-        final short crc = (short) ((auxLo >>> CRC16_SHIFT) & CRC16_MASK);
-        final long offset = auxLo & OFFSET_MAX;
-        if (dim0 == 0) {
-            // a NULL entry, nothing associated with it in the `dataMem`.
-            return offset;
-        } else if (manyDims) {
-            final long origOffset = dataMem.getAppendOffset();
-            try {
-                // We first need to read all our remaining dimensions.
-                dataMem.jumpTo(offset);
-                final DirectIntSlice shape = readManyDimsShape(dataMem.getAppendAddress(), dim0, dim1);
-
-                final int dimsBytes = shape.length() * Integer.BYTES;
-                dataMem.jumpTo(offset + dimsBytes);
-
-                // Figure out how many bytes of padding have been inserted.
-                final int bitWidth = 1 << ColumnType.getNdArrayElementTypePrecision(columnType);
-                final int requiredByteAlignment = Math.max(1, bitWidth / 8);
-                final int paddingByteCount = (int) (dataMem.getAppendOffset() % requiredByteAlignment);
-
-                final int elementCount = NdArrayMeta.flatLength(shape);
-                final int valuesSize = NdArrayMeta.calcRequiredValuesByteSize(columnType, elementCount);
-
-                return offset + dimsBytes + paddingByteCount + valuesSize;
-            } finally {
-                dataMem.jumpTo(origOffset);
-            }
-        } else {
-            // N.B., since we don't have extra dims with different `int` alignment requirements,
-            // the offset recorded in the `aux` entry includes any additional alignment padding
-            // as was recorded during insertion.
-
-            // We have up to two dimensions, product them to find the count.
-            final int elementCount = dim0 * (dim1 > 0 ? dim1 : 1);
-            final int valuesSize = NdArrayMeta.calcRequiredValuesByteSize(columnType, elementCount);
-            return offset + valuesSize;
-        }
+    private long calcDataOffsetEnd(long auxAddr) {
+        final long offset = getIntAlignedLong(auxAddr) & OFFSET_MAX;
+        final int size = Unsafe.getUnsafe().getInt(auxAddr + Long.BYTES);
+        return offset + size;
     }
 
-    private DirectIntSlice readManyDimsShape(long readAddr, int dim0, int dim1) {
-        DirectIntList shape = SHAPE.get();
-        shape.clear();
-        shape.add(dim0);
-        shape.add(dim1);
-        for (; ; ) {
-            final int dim = Unsafe.getUnsafe().getInt(readAddr);
-            if (dim > 0) {
-                shape.add(dim);
-            } else {
-                // if negative, it's the last dim.
-                shape.add(dim * -1);
-                break;
-            }
-            readAddr += Integer.BYTES;
-        }
-        return shape.asSlice();
+    private long calcDataOffsetEnd(@NotNull MemoryR mem, long auxOffset) {
+        final long offset = getIntAlignedLong(mem, auxOffset) & OFFSET_MAX;
+        final int size = mem.getInt(auxOffset + Long.BYTES);
+        return offset + size;
     }
 }

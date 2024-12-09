@@ -108,6 +108,9 @@ public interface ColumnTypeDriver {
      */
     long getDataVectorSize(long auxMemAddr, long rowLo, long rowHi);
 
+    /**
+     * Get the size of the data vector from entries 0 to <code>row</code> inclusive.
+     */
     long getDataVectorSizeAt(long auxMemAddr, long row);
 
     long getDataVectorSizeAtFromFd(FilesFacade ff, long auxFd, long row);
@@ -173,6 +176,8 @@ public interface ColumnTypeDriver {
      * For now this method is called by WAL writer when data is rolled back (or row is cancelled). The
      * expectation of the WAL writer is to have the append position set correctly on aux mem and size of data vector
      * provided correctly.
+     * @param rowCount the new row count that we'll want to write at.
+     * @return the write offset for <code>rowCount</code> in the data vector.
      */
     long setAppendAuxMemAppendPosition(MemoryMA auxMem, MemoryMA dataMem, int columnType, long rowCount);
 
@@ -208,7 +213,7 @@ public interface ColumnTypeDriver {
      */
     void setPartAuxVectorNull(long auxMemAddr, long initialOffset, long columnTop);
 
-    void shiftCopyAuxVector(long shift, long src, long srcLo, long srcHi, long dstAddr, long dstAddrSize);
+    void shiftCopyAuxVector(long shift, long srcAddr, long srcLo, long srcHi, long dstAddr, long dstAddrSize);
 
     long dedupMergeVarColumnSize(long mergeIndexAddr, long mergeIndexCount, long srcDataFixAddr, long srcOooFixAddr);
 }
