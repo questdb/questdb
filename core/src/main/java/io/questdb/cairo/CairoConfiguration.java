@@ -238,6 +238,8 @@ public interface CairoConfiguration {
 
     boolean getLogSqlQueryProgressExe();
 
+    String getLogTimezone();
+
     int getMaxCrashFiles();
 
     int getMaxFileNameLength();

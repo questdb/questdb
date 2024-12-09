@@ -491,6 +491,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     POSTHOG_API_KEY("posthog.api.key"),
     POSTHOG_ENABLED("posthog.enabled"),
     LOG_LEVEL_VERBOSE("log.level.verbose"),
+    LOG_TIMEZONE("log.timezone"),
     LOG_SQL_QUERY_PROGRESS_EXE("log.sql.query.progress.exe"),
     CAIRO_PARTITION_ENCODER_PARQUET_VERSION("cairo.partition.encoder.parquet.version"),
     CAIRO_PARTITION_ENCODER_PARQUET_STATISTICS_ENABLED("cairo.partition.encoder.parquet.statistics.enabled"),

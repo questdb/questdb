@@ -26,6 +26,9 @@ package io.questdb.log;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.std.Numbers;
+import org.jetbrains.annotations.Nullable;
+
+import java.util.TimeZone;
 
 public final class LogLevel {
     public static int ADVISORY = 16;
@@ -42,6 +45,10 @@ public final class LogLevel {
     public static int MAX = Numbers.msb(LogLevel.ADVISORY) + 1;
     public static int MASK = ~(-1 << (MAX));
 
+    public @Nullable
+    static String TIMEZONE;
+    static TimeZone TZ;
+
     private LogLevel() {
     }
 
@@ -52,6 +59,11 @@ public final class LogLevel {
             DEBUG_HEADER = " DEBUG ";
             ERROR_HEADER = " ERROR ";
             INFO_HEADER = " INFO ";
+        }
+
+        if (config.getLogTimezone() != null) {
+            TIMEZONE = config.getLogTimezone();
+            TZ = TimeZone.getTimeZone(TIMEZONE);
         }
     }
 }
