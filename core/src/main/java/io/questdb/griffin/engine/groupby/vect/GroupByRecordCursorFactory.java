@@ -614,8 +614,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         private class RostiRecord implements Record {
-            private final Long256Impl long256A = new Long256Impl();
-            private final Long256Impl long256B = new Long256Impl();
+            private final ObjList<Long256Impl> longs256A = new ObjList<>();
+            private final ObjList<Long256Impl> longs256B = new ObjList<>();
             private long pRow;
 
             @Override
@@ -676,12 +676,12 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
             @Override
             public Long256 getLong256A(int col) {
-                return getLong256Value(long256A, col);
+                return getLong256Value(long256A(col), col);
             }
 
             @Override
             public Long256 getLong256B(int col) {
-                return getLong256Value(long256B, col);
+                return getLong256Value(long256B(col), col);
             }
 
             public Long256 getLong256Value(Long256 dst, int col) {
@@ -735,6 +735,20 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
             private long getValueAddress(int column) {
                 return pRow + columnSkewIndex.getQuick(column);
+            }
+
+            private Long256Impl long256A(int columnIndex) {
+                if (longs256A.getQuiet(columnIndex) == null) {
+                    longs256A.extendAndSet(columnIndex, new Long256Impl());
+                }
+                return longs256A.getQuick(columnIndex);
+            }
+
+            private Long256Impl long256B(int columnIndex) {
+                if (longs256B.getQuiet(columnIndex) == null) {
+                    longs256B.extendAndSet(columnIndex, new Long256Impl());
+                }
+                return longs256B.getQuick(columnIndex);
             }
         }
     }
