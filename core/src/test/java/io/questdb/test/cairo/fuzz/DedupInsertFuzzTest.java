@@ -374,7 +374,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 rnd.nextBoolean(),
                 rnd.nextInt(1000),
                 rnd.nextInt(1000),
-                rnd.nextInt(1000),
+                fuzzer.randomiseStringLengths(rnd, 1000),
                 rnd.nextInt(1000),
                 rnd.nextInt(1000),
                 rnd.nextInt(1_000_000),
