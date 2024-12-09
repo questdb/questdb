@@ -1657,6 +1657,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
 
         @Override
+        public int getTTL() {
+            return 0;
+        }
+
+        @Override
         public CharSequence getTableName() {
             return tableName;
         }
