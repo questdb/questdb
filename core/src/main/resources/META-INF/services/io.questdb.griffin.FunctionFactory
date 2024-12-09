@@ -98,6 +98,7 @@ io.questdb.griffin.engine.functions.eq.NegContainsIPv4VarcharFunctionFactory
 # nullif
 io.questdb.griffin.engine.functions.conditional.NullIfCharFunctionFactory
 io.questdb.griffin.engine.functions.conditional.NullIfStrFunctionFactory
+io.questdb.griffin.engine.functions.conditional.NullIfVarcharFunctionFactory
 io.questdb.griffin.engine.functions.conditional.NullIfIPv4FunctionFactory
 io.questdb.griffin.engine.functions.conditional.NullIfIntFunctionFactory
 io.questdb.griffin.engine.functions.conditional.NullIfLongFunctionFactory
