@@ -1,0 +1,71 @@
+# description: Test dedup cases with ts column type
+# group: [parquet]
+
+control iso_timestamp on
+
+# Absolute path
+statement ok
+create table x (x int, ts timestamp)
+timestamp(ts) partition by DAY WAL DEDUP UPSERT KEYS(ts);
+
+# Insert some data with dups in the single commit
+statement ok
+insert into x(x, ts)
+values
+(1, '2020-01-01T00:00:00.000Z'),
+(-1, '2020-01-01T00:00:00.000Z'),
+(10, '2020-01-03T00:00:00.000Z'),
+(2, '2020-01-01T00:00:00.000Z'),
+(1, '2020-01-02T00:00:00.000Z'),
+(-1, '2020-01-02T00:00:00.000Z'),
+(3, '2020-01-01T00:00:00.000Z'),
+(20, '2020-01-03T00:00:00.000Z');
+
+# wait data inserted
+statement ok
+select wait_wal_table('x');
+
+# check dedup data
+query TIT
+select x, ts from x order by ts;
+----
+3  2020-01-01T00:00:00.000000Z
+-1 2020-01-02T00:00:00.000000Z
+20 2020-01-03T00:00:00.000000Z
+
+# Convert to parquet
+statement ok
+alter table x convert partition to parquet list '2020-01-01', '2020-01-02';
+
+# wait data inserted
+statement ok
+select wait_wal_table('x');
+
+# Insert some data with dups in the single commit
+statement ok
+insert into x(x, ts)
+values
+(1, '2020-01-01T00:00:00.000Z'),
+(-1, '2020-01-01T00:00:00.000Z'),
+(10, '2020-01-03T00:00:00.000Z'),
+(2, '2020-01-01T00:00:00.000Z'),
+(1, '2020-01-02T00:00:00.000Z'),
+(-1, '2020-01-02T00:00:00.000Z'),
+(0, '2020-01-02T00:00:00.000Z'),
+(3, '2020-01-01T00:00:00.000Z'),
+(4, '2020-01-01T00:00:00.000Z'),
+(20, '2020-01-03T00:00:00.000Z'),
+(21, '2020-01-03T00:00:00.000Z');
+
+# wait data inserted
+statement ok
+select wait_wal_table('x');
+
+# check dedup data
+query TIT
+select x, ts from x order by ts;
+----
+4  2020-01-01T00:00:00.000000Z
+0  2020-01-02T00:00:00.000000Z
+21 2020-01-03T00:00:00.000000Z
+

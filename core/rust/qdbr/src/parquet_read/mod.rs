@@ -28,6 +28,7 @@ where
     metadata: FileMetaData,
     qdb_meta: Option<QdbMeta>,
     decompress_buffer: Vec<u8>,
+    row_group_sizes_acc: AcVec<usize>,
 }
 
 #[repr(C)]
@@ -106,6 +107,7 @@ mod tests {
             0,
             QdbMetaCol {
                 column_type: ColumnTypeTag::Symbol.into_type(),
+                column_top: 0,
                 format: None, // It should error because this is missing.
             },
         );

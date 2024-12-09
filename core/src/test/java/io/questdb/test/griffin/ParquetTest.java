@@ -731,4 +731,131 @@ public class ParquetTest extends AbstractCairoTest {
             );
         });
     }
+
+    @Test
+    public void testDedupFixedKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (x int, ts timestamp) timestamp(ts) partition by day wal DEDUP UPSERT KEYS(ts, x) ;");
+
+            execute("insert into x(x,ts) values (1, '2020-01-01T00:00:00.000Z');");
+            execute("insert into x(x,ts) values (2, '2020-01-02T00:00:00.000Z');");
+            execute("insert into x(x,ts) values (3, '2020-01-03T00:00:00.000Z');");
+
+            drainWalQueue();
+
+            assertSql("x\tts\n" +
+                    "1\t2020-01-01T00:00:00.000000Z\n" +
+                    "2\t2020-01-02T00:00:00.000000Z\n" +
+                    "3\t2020-01-03T00:00:00.000000Z\n", "x");
+
+            drainWalQueue();
+
+            execute("alter table x convert partition to parquet list '2020-01-01', '2020-01-02';");
+            assertSql("x\tts\n" +
+                    "1\t2020-01-01T00:00:00.000000Z\n" +
+                    "2\t2020-01-02T00:00:00.000000Z\n" +
+                    "3\t2020-01-03T00:00:00.000000Z\n", "x");
+
+            drainWalQueue();
+
+            execute("insert into x(x,ts) values (11, '2020-01-01T00:00:00.000Z');");
+            execute("insert into x(x,ts) values (1, '2020-01-01T00:00:00.000Z');");
+            execute("insert into x(x,ts) values (2, '2020-01-02T00:00:00.000Z');");
+            execute("insert into x(x,ts) values (22, '2020-01-02T00:00:00.000Z');");
+            execute("insert into x(x,ts) values (33, '2020-01-03T00:00:00.000Z');");
+
+            drainWalQueue();
+
+            assertSql("x\tts\n" +
+                    "1\t2020-01-01T00:00:00.000000Z\n" +
+                    "11\t2020-01-01T00:00:00.000000Z\n" +
+                    "2\t2020-01-02T00:00:00.000000Z\n" +
+                    "22\t2020-01-02T00:00:00.000000Z\n" +
+                    "3\t2020-01-03T00:00:00.000000Z\n" +
+                    "33\t2020-01-03T00:00:00.000000Z\n", "x");
+        });
+    }
+
+    @Test
+    public void testDedupTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (x int, ts timestamp) timestamp(ts) partition by day wal DEDUP UPSERT KEYS(ts) ;");
+
+            execute("insert into x(x,ts) values (1, '2020-01-01T00:00:00.000Z');");
+            execute("insert into x(x,ts) values (2, '2020-01-02T00:00:00.000Z');");
+            execute("insert into x(x,ts) values (3, '2020-01-03T00:00:00.000Z');");
+
+            drainWalQueue();
+
+            assertSql("x\tts\n" +
+                    "1\t2020-01-01T00:00:00.000000Z\n" +
+                    "2\t2020-01-02T00:00:00.000000Z\n" +
+                    "3\t2020-01-03T00:00:00.000000Z\n", "x");
+
+            drainWalQueue();
+
+            execute("alter table x convert partition to parquet list '2020-01-01', '2020-01-02';");
+            assertSql("x\tts\n" +
+                    "1\t2020-01-01T00:00:00.000000Z\n" +
+                    "2\t2020-01-02T00:00:00.000000Z\n" +
+                    "3\t2020-01-03T00:00:00.000000Z\n", "x");
+
+            drainWalQueue();
+
+            execute("insert into x(x,ts) values (11, '2020-01-01T00:00:00.000Z');");
+            execute("insert into x(x,ts) values (22, '2020-01-02T00:00:00.000Z');");
+            execute("insert into x(x,ts) values (33, '2020-01-03T00:00:00.000Z');");
+
+            drainWalQueue();
+
+            assertSql("x\tts\n" +
+                    "11\t2020-01-01T00:00:00.000000Z\n" +
+                    "22\t2020-01-02T00:00:00.000000Z\n" +
+                    "33\t2020-01-03T00:00:00.000000Z\n", "x");
+        });
+    }
+
+    @Test
+    public void testDedupVarlenKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (x varchar, ts timestamp) timestamp(ts) partition by day wal DEDUP UPSERT KEYS(ts, x) ;");
+
+            execute("insert into x(x,ts) values ('1', '2020-01-01T00:00:00.000Z');");
+            execute("insert into x(x,ts) values ('2', '2020-01-02T00:00:00.000Z');");
+            execute("insert into x(x,ts) values ('3', '2020-01-03T00:00:00.000Z');");
+
+            drainWalQueue();
+
+            assertSql("x\tts\n" +
+                    "1\t2020-01-01T00:00:00.000000Z\n" +
+                    "2\t2020-01-02T00:00:00.000000Z\n" +
+                    "3\t2020-01-03T00:00:00.000000Z\n", "x");
+
+            drainWalQueue();
+
+            execute("alter table x convert partition to parquet list '2020-01-01', '2020-01-02';");
+            assertSql("x\tts\n" +
+                    "1\t2020-01-01T00:00:00.000000Z\n" +
+                    "2\t2020-01-02T00:00:00.000000Z\n" +
+                    "3\t2020-01-03T00:00:00.000000Z\n", "x");
+
+            drainWalQueue();
+
+            execute("insert into x(x,ts) values ('100000000001', '2020-01-01T00:00:00.000Z');");
+            execute("insert into x(x,ts) values ('1', '2020-01-01T00:00:00.000Z');");
+            execute("insert into x(x,ts) values ('2', '2020-01-02T00:00:00.000Z');");
+            execute("insert into x(x,ts) values ('200000000002', '2020-01-02T00:00:00.000Z');");
+            execute("insert into x(x,ts) values ('33', '2020-01-03T00:00:00.000Z');");
+
+            drainWalQueue();
+
+            assertSql("x\tts\n" +
+                    "1\t2020-01-01T00:00:00.000000Z\n" +
+                    "100000000001\t2020-01-01T00:00:00.000000Z\n" +
+                    "2\t2020-01-02T00:00:00.000000Z\n" +
+                    "200000000002\t2020-01-02T00:00:00.000000Z\n" +
+                    "3\t2020-01-03T00:00:00.000000Z\n" +
+                    "33\t2020-01-03T00:00:00.000000Z\n", "x");
+        });
+    }
 }
