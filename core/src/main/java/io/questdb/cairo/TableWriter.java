@@ -109,6 +109,7 @@ import io.questdb.std.Uuid;
 import io.questdb.std.Vect;
 import io.questdb.std.WeakClosableObjectPool;
 import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -130,6 +131,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.Arrays;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongConsumer;
@@ -212,6 +214,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final MemoryMR metaMem;
     private final TableWriterMetadata metadata;
     private final Metrics metrics;
+    private final @NotNull MicrosecondClock microsecondClock;
     private final boolean mixedIOFlag;
     private final int mkDirMode;
     private final ObjList<Runnable> nullSetters;
@@ -354,7 +357,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         this.tableToken = tableToken;
         this.o3QuickSortEnabled = configuration.isO3QuickSortEnabled();
         this.engine = cairoEngine;
-        this.lastWalCommitTimestampMicros = configuration.getMicrosecondClock().getTicks();
+        this.microsecondClock = configuration.getMicrosecondClock();
+        this.lastWalCommitTimestampMicros = microsecondClock.getTicks();
         try {
             this.path = new Path().of(root);
             this.pathRootSize = path.size();
@@ -4026,7 +4030,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         walFdCacheSize = 0;
     }
 
-    private void enforceTTL() {
 
     }
 
@@ -5307,6 +5310,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Call O3 methods to remove check TxnScoreboard and remove partition directly
         safeDeletePartitionDir(timestamp, partitionNameTxn);
         return true;
+    }
+
+    private void enforceTTL() {
+        long oldDataCutoffMicros = microsecondClock.getTicks() - TimeUnit.HOURS.toMicros(metadata.getTTL());
+        int partitionCount = getPartitionCount();
+        if (partitionCount < 2 || getPartitionTimestamp(1) >= oldDataCutoffMicros) {
+            // Fast path: the oldest partition isn't past its lifetime, return
+            return;
+        }
+        TxWriter txWriter = getTxWriter();
+        boolean isOld = false;
+        for (int i = partitionCount - 1; i >= 0; i--) {
+            long partitionTimestamp = getPartitionTimestamp(i);
+            if (partitionTimestamp != txWriter.getPartitionFloor(partitionTimestamp)) {
+                continue;
+            }
+            if (isOld) {
+                dropPartitionByExactTimestamp(partitionTimestamp);
+            } else {
+                isOld = partitionTimestamp < oldDataCutoffMicros;
+            }
+        }
     }
 
     private long findMinSplitPartitionTimestamp() {
