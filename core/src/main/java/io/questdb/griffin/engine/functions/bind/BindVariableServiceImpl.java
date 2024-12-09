@@ -173,15 +173,6 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     @Override
-    public boolean isDefined(int index) {
-        Function f = getFunction(index);
-        if (f != null) {
-            return f.getType() == ColumnType.UNDEFINED;
-        }
-        throw new IllegalStateException("variable index is out of range: " + index);
-    }
-
-    @Override
     public Function getFunction(CharSequence name) {
         assert name != null;
         assert Chars.startsWith(name, ':');
@@ -197,20 +188,6 @@ public class BindVariableServiceImpl implements BindVariableService {
         return null;
     }
 
-    private void setUndefined(int index) {
-        indexedVariables.extendPos(index + 1);
-        // variable exists
-        Function function = indexedVariables.getQuick(index);
-        if (function != null) {
-            if (function.getType() != ColumnType.UNDEFINED) {
-                Misc.free(function);
-                indexedVariables.extendAndSet(index, UndefinedFunction.INSTANCE);
-            }
-        } else {
-            indexedVariables.extendAndSet(index, UndefinedFunction.INSTANCE);
-        }
-    }
-
     @Override
     public int getIndexedVariableCount() {
         return indexedVariables.size();
@@ -219,6 +196,15 @@ public class BindVariableServiceImpl implements BindVariableService {
     @Override
     public ObjList<CharSequence> getNamedVariables() {
         return namedVariables.keys();
+    }
+
+    @Override
+    public boolean isDefined(int index) {
+        Function f = getFunction(index);
+        if (f != null) {
+            return f.getType() == ColumnType.UNDEFINED;
+        }
+        throw new IllegalStateException("variable index is out of range: " + index);
     }
 
     @Override
@@ -1299,6 +1285,20 @@ public class BindVariableServiceImpl implements BindVariableService {
             default:
                 reportError(function, ColumnType.VARCHAR, index, name);
                 break;
+        }
+    }
+
+    private void setUndefined(int index) {
+        indexedVariables.extendPos(index + 1);
+        // variable exists
+        Function function = indexedVariables.getQuick(index);
+        if (function != null) {
+            if (function.getType() != ColumnType.UNDEFINED) {
+                Misc.free(function);
+                indexedVariables.extendAndSet(index, UndefinedFunction.INSTANCE);
+            }
+        } else {
+            indexedVariables.extendAndSet(index, UndefinedFunction.INSTANCE);
         }
     }
 }
