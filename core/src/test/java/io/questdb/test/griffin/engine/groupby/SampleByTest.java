@@ -50,7 +50,11 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -2853,6 +2857,62 @@ public class SampleByTest extends AbstractCairoTest {
                     "from xx " +
                     "where s in ('a')"
             );
+        });
+    }
+
+    @Test
+    public void testPrefixedTableNames1() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE IF NOT EXISTS 'sys.telemetry_wal' ( " +
+                    "created TIMESTAMP, " +
+                    "event SHORT, " +
+                    "tableId INT, " +
+                    "walId INT, " +
+                    "seqTxn LONG, " +
+                    "rowCount LONG, " +
+                    "physicalRowCount LONG, " +
+                    "latency FLOAT " +
+                    ") timestamp(created) " +
+                    "PARTITION BY MONTH BYPASS WAL " +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            assertSql("created\tcommit_rate\n" +
+                    "2024-12-08T00:00:00.000000Z\t0\n" +
+                    "2024-12-08T08:00:00.000000Z\t0\n" +
+                    "2024-12-08T16:00:00.000000Z\t0\n", "select created, count() commit_rate\n" +
+                    "from sys.telemetry_wal\n" +
+                    "where tableId = 1017 and event = 103\n" +
+                    "and created >= '2024-12-08' and created < '2024-12-09'\n" +
+                    "sample by 8h from\n" +
+                    "'2024-12-08' to '2024-12-09'\n" +
+                    "fill(0)");
+        });
+    }
+
+    @Test
+    public void testPrefixedTableNames2() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE IF NOT EXISTS 'sys.telemetry_wal' ( " +
+                    "created TIMESTAMP, " +
+                    "event SHORT, " +
+                    "tableId INT, " +
+                    "walId INT, " +
+                    "seqTxn LONG, " +
+                    "rowCount LONG, " +
+                    "physicalRowCount LONG, " +
+                    "latency FLOAT " +
+                    ") timestamp(created) " +
+                    "PARTITION BY MONTH BYPASS WAL " +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            assertSql("created\tcommit_rate\n" +
+                    "2024-12-08T00:00:00.000000Z\t0\n" +
+                    "2024-12-08T08:00:00.000000Z\t0\n" +
+                    "2024-12-08T16:00:00.000000Z\t0\n", "select created, count() commit_rate\n" +
+                    "from sys.telemetry_wal\n" +
+                    "where tableId = 1017 and event = 103\n" +
+                    "and \"sys.telemetry_wal\".created >= '2024-12-08' and created < '2024-12-09'\n" +
+                    "sample by 8h from\n" +
+                    "'2024-12-08' to '2024-12-09'\n" +
+                    "fill(0)");
         });
     }
 

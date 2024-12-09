@@ -169,6 +169,10 @@ public final class Chars {
         return indexOf(sequence, 0, sequence.length(), term) != -1;
     }
 
+    public static boolean contains(@NotNull CharSequence sequence, @NotNull CharSequence term, int seqLo, int seqHi) {
+        return indexOf(sequence, seqLo, seqHi, term) != -1;
+    }
+
     // Term has to be lower-case.
     public static boolean containsLowerCase(@NotNull CharSequence sequence, @NotNull CharSequence termLC) {
         return indexOfLowerCase(sequence, 0, sequence.length(), termLC) != -1;
@@ -734,9 +738,14 @@ public final class Chars {
         return isQuote(open) && open == s.charAt(s.length() - 1);
     }
 
-    public static int lastIndexOf(CharSequence sequence, int sequenceLo, int sequenceHi, CharSequence term) {
+    public static int lastIndexOf(@NotNull CharSequence sequence, int sequenceLo, int sequenceHi, @NotNull CharSequence term) {
         return indexOf(sequence, sequenceLo, sequenceHi, term, -1);
     }
+
+    public static int lastIndexOf(@NotNull CharSequence sequence, @NotNull CharSequence term) {
+        return indexOf(sequence, 0, sequence.length(), term, -1);
+    }
+
 
     /**
      * Strictly greater than (&lt;) comparison of two UTF16 sequences in lexicographical
