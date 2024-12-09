@@ -886,7 +886,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 // fallback for variadic functions with UNDEFINED types: define arguments as string
                 // todo: be smarter about this, we could potentially infer type from other arguments or
                 //       function factory with variadic arguments could indicate preferred type
-                args.getQuick(pos).assignType(ColumnType.STRING, sqlExecutionContext.getBindVariableService());
+                int type = candidate.resolvePreferredVariadicType(args);
+                args.getQuick(pos).assignType(type, sqlExecutionContext.getBindVariableService());
             }
         }
 

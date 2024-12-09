@@ -97,13 +97,8 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             return new InTimestampConstFunction(args.getQuick(0), parseDiscreteTimestampValues(args, argPositions));
         }
 
-        if (args.size() == 2 && (ColumnType.isString(args.get(1).getType()) || ColumnType.isVarchar(args.get(1).getType()))) {
-            // special case - one argument and it a string
-            return new InTimestampStrFunctionFactory.EqTimestampStrFunction(args.get(0), args.get(1));
-        }
-
         if (allRuntimeConst) {
-            if (args.size() == 2 && args.get(1).getType() == ColumnType.UNDEFINED) {
+            if (args.size() == 2 && (ColumnType.isString(args.get(1).getType()) || ColumnType.isVarchar(args.get(1).getType()) || ColumnType.isUndefined(args.get(1).getType()))) {
                 // this is an odd case, we have something like this
                 //
                 // where ts in ?
@@ -116,6 +111,12 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             }
             return new InTimestampManyRuntimeConstantsFunction(new ObjList<>(args));
         }
+
+        if (args.size() == 2 && (ColumnType.isString(args.get(1).getType()) || ColumnType.isVarchar(args.get(1).getType()))) {
+            // special case - one argument and it a string
+            return new EqTimestampStrFunction(args.get(0), args.get(1));
+        }
+
         // have to copy, args is mutable
         return new InTimestampVarFunction(new ObjList<>(args));
     }
@@ -162,6 +163,61 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
+    public static class EqTimestampStrFunction extends NegatableBooleanFunction implements BinaryFunction {
+        private final LongList intervals = new LongList();
+        private final Function left;
+        private final Function right;
+
+        public EqTimestampStrFunction(Function left, Function right) {
+            this.left = left;
+            this.right = right;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            long ts = left.getTimestamp(rec);
+            if (ts == Numbers.LONG_NULL) {
+                return negated;
+            }
+            CharSequence timestampAsString = right.getStrA(rec);
+            if (timestampAsString == null) {
+                return negated;
+            }
+            intervals.clear();
+            try {
+                // we are ignoring exception contents here, so we do not need the exact position
+                parseAndApplyIntervalEx(timestampAsString, intervals, 0);
+            } catch (SqlException e) {
+                return negated;
+            }
+            return negated != isInIntervals(intervals, ts);
+        }
+
+        @Override
+        public Function getLeft() {
+            return left;
+        }
+
+        @Override
+        public Function getRight() {
+            return right;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(left);
+            if (negated) {
+                sink.val(" not");
+            }
+            sink.val(" in ").val(right);
+        }
+    }
+
     private static class InTimestampConstFunction extends NegatableBooleanFunction implements UnaryFunction {
         private final LongList inList;
         private final Function tsFunc;
@@ -192,7 +248,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class InTimestampManyRuntimeConstantsFunction extends NegatableBooleanFunction implements MultiArgFunction {
+    public static class InTimestampManyRuntimeConstantsFunction extends NegatableBooleanFunction implements MultiArgFunction {
         private final ObjList<Function> args;
         private final LongList timestampValues;
 
