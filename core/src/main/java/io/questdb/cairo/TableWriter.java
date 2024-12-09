@@ -5310,7 +5310,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void enforceTTL() {
-        long oldDataCutoffMicros = microsecondClock.getTicks() - TimeUnit.HOURS.toMicros(metadata.getTTL());
+        int ttl = metadata.getTTL();
+        if (ttl == 0) {
+            return;
+        }
+        long oldDataCutoffMicros = microsecondClock.getTicks() - TimeUnit.HOURS.toMicros(ttl);
         int partitionCount = getPartitionCount();
         if (partitionCount < 2 || getPartitionTimestamp(1) >= oldDataCutoffMicros) {
             // Fast path: the oldest partition isn't past its lifetime, return
