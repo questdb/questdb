@@ -74,7 +74,7 @@ public class PgBootstrapTest extends AbstractBootstrapTest {
     public void testClientWithEnabledTlsGetsRejected() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (ServerMain serverMain = startWithEnvVariables()) {
-                int port = serverMain.getConfiguration().getPGWireConfiguration().getDispatcherConfiguration().getBindPort();
+                int port = serverMain.getConfiguration().getPGWireConfiguration().getBindPort();
 
                 try (Connection conn = getTlsConnection(port)) {
                     conn.createStatement().execute("select 1;");
@@ -96,7 +96,7 @@ public class PgBootstrapTest extends AbstractBootstrapTest {
                     "QDB_PG_READONLY_PASSWORD", "roPassword"
             )
             ) {
-                int port = serverMain.getConfiguration().getPGWireConfiguration().getDispatcherConfiguration().getBindPort();
+                int port = serverMain.getConfiguration().getPGWireConfiguration().getBindPort();
                 assertQueryFails(
                         "roUser",
                         "roPassword",
@@ -127,7 +127,7 @@ public class PgBootstrapTest extends AbstractBootstrapTest {
                     "QDB_PG_READONLY_PASSWORD", "roPassword"
             )
             ) {
-                int port = serverMain.getConfiguration().getPGWireConfiguration().getDispatcherConfiguration().getBindPort();
+                int port = serverMain.getConfiguration().getPGWireConfiguration().getBindPort();
                 assertQueryFails(
                         "roUser",
                         "roPassword",
@@ -153,7 +153,7 @@ public class PgBootstrapTest extends AbstractBootstrapTest {
     public void testReadOnlyPgWireContext() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (ServerMain serverMain = startWithEnvVariables("QDB_PG_SECURITY_READONLY", "true")) {
-                int port = serverMain.getConfiguration().getPGWireConfiguration().getDispatcherConfiguration().getBindPort();
+                int port = serverMain.getConfiguration().getPGWireConfiguration().getBindPort();
                 assertQueryFails(
                         "admin",
                         "quest",
@@ -175,7 +175,7 @@ public class PgBootstrapTest extends AbstractBootstrapTest {
                     "QDB_PG_READONLY_PASSWORD", "roPassword"
             )
             ) {
-                int port = serverMain.getConfiguration().getPGWireConfiguration().getDispatcherConfiguration().getBindPort();
+                int port = serverMain.getConfiguration().getPGWireConfiguration().getBindPort();
                 assertQueryFails(
                         "roUser",
                         "roPassword",
@@ -206,7 +206,7 @@ public class PgBootstrapTest extends AbstractBootstrapTest {
                     "QDB_PG_SECURITY_READONLY", "true"
             )
             ) {
-                int port = serverMain.getConfiguration().getPGWireConfiguration().getDispatcherConfiguration().getBindPort();
+                int port = serverMain.getConfiguration().getPGWireConfiguration().getBindPort();
                 assertQueryFails(
                         "roUser",
                         "roPassword",

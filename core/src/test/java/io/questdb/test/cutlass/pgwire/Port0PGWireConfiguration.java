@@ -25,41 +25,21 @@
 package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
-import io.questdb.network.DefaultIODispatcherConfiguration;
-import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.std.Rnd;
 
 
 public class Port0PGWireConfiguration extends DefaultPGWireConfiguration {
     private static final String DEBUG_PGWIRE_PORT = "QDB_DEBUG_PGWIRE_PORT";
-    private final DefaultIODispatcherConfiguration ioDispatcherConfiguration;
+    int connectionLimit;
     boolean isLegacyMode;
 
     public Port0PGWireConfiguration() {
         this(-1, false);
     }
 
-    public Port0PGWireConfiguration(final int connectionLimit, boolean isLegacyMode) {
-        ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
-            @Override
-            public int getBindPort() {
-                return getPGWirePort();
-            }
-
-            @Override
-            public String getDispatcherLogName() {
-                return "pg-server";
-            }
-
-            @Override
-            public int getLimit() {
-                if (connectionLimit > -1) {
-                    return connectionLimit;
-                }
-                return super.getLimit();
-            }
-        };
+    public Port0PGWireConfiguration(int connectionLimit, boolean isLegacyMode) {
         this.isLegacyMode = isLegacyMode;
+        this.connectionLimit = connectionLimit;
     }
 
     public static int getPGWirePort() {
@@ -69,8 +49,16 @@ public class Port0PGWireConfiguration extends DefaultPGWireConfiguration {
     }
 
     @Override
-    public IODispatcherConfiguration getDispatcherConfiguration() {
-        return ioDispatcherConfiguration;
+    public int getBindPort() {
+        return getPGWirePort();
+    }
+
+    @Override
+    public int getLimit() {
+        if (connectionLimit > -1) {
+            return connectionLimit;
+        }
+        return super.getLimit();
     }
 
     @Override

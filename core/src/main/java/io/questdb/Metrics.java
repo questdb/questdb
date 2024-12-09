@@ -29,7 +29,14 @@ import io.questdb.cairo.wal.WalMetrics;
 import io.questdb.cutlass.http.processors.JsonQueryMetrics;
 import io.questdb.cutlass.line.LineMetrics;
 import io.questdb.cutlass.pgwire.PGWireMetrics;
-import io.questdb.metrics.*;
+import io.questdb.metrics.GCMetrics;
+import io.questdb.metrics.HealthMetricsImpl;
+import io.questdb.metrics.MetricsRegistry;
+import io.questdb.metrics.MetricsRegistryImpl;
+import io.questdb.metrics.NullMetricsRegistry;
+import io.questdb.metrics.Scrapable;
+import io.questdb.metrics.VirtualLongGauge;
+import io.questdb.metrics.WorkerMetrics;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
@@ -110,11 +117,11 @@ public class Metrics implements Scrapable {
         return tableWriter;
     }
 
-    public WalMetrics walMetrics() {
+    public WalMetrics wal() {
         return walMetrics;
     }
 
-    public WorkerMetrics workerMetrics() {
+    public WorkerMetrics worker() {
         return workerMetrics;
     }
 

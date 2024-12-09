@@ -24,7 +24,13 @@
 
 package io.questdb.test;
 
-import io.questdb.*;
+import io.questdb.DefaultFactoryProvider;
+import io.questdb.FactoryProvider;
+import io.questdb.MemoryConfiguration;
+import io.questdb.Metrics;
+import io.questdb.PublicPassthroughConfiguration;
+import io.questdb.ServerConfiguration;
+import io.questdb.WorkerPoolManager;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cutlass.http.HttpMinServerConfiguration;
 import io.questdb.cutlass.http.HttpServerConfiguration;
@@ -186,7 +192,7 @@ public class WorkerPoolManagerTest {
         workerPoolManager.halt();
 
         Assert.assertEquals(0, endLatch.getCount());
-        WorkerMetrics metrics = METRICS.workerMetrics();
+        WorkerMetrics metrics = METRICS.worker();
         long min = metrics.getMinElapsedMicros();
         long max = metrics.getMaxElapsedMicros();
         Assert.assertTrue(min > 0L);

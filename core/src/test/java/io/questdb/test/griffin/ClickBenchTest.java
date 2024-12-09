@@ -554,7 +554,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "            Row forward scan\n" +
                             "            Frame forward scan on: hits\n"
             ),
-            // TODO: we can extract the constant to an outer query
+            // TODO: https://github.com/questdb/questdb/issues/5198
             new TestCase(
                     "Q34",
                     "SELECT 1, URL, COUNT(*) AS c FROM hits ORDER BY c DESC LIMIT 10;",
