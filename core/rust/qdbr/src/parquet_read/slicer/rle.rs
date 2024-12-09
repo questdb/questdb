@@ -122,6 +122,7 @@ impl<T: DictDecoder> DataPageSlicer for RleDictionarySlicer<'_, '_, T> {
                 self.inner.error_value
             }
         } else {
+            // TODO: recursive call, check if this is safe
             match self.decode() {
                 Ok(()) => self.next(),
                 Err(err) => {
