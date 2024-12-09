@@ -143,7 +143,8 @@ public class CreateTableOperationBuilderImpl implements Mutable, Sinkable, Creat
                 getTimestampIndex(),
                 o3MaxLag,
                 maxUncommittedRows,
-                walEnabled
+                walEnabled,
+                0 // todo: take from the builder
         );
     }
 

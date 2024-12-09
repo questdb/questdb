@@ -111,6 +111,7 @@ public final class TableUtils {
     public static final long META_OFFSET_TIMESTAMP_INDEX = 8;
     public static final long META_OFFSET_VERSION = 12;
     public static final long META_OFFSET_WAL_ENABLED = 40; // BOOLEAN
+    public static final long META_OFFSET_TTL = 41; // INT
     public static final String META_PREV_FILE_NAME = "_meta.prev";
     /**
      * TXN file structure
@@ -1746,7 +1747,12 @@ public final class TableUtils {
         }
     }
 
-    public static void writeMetadata(TableStructure tableStruct, int tableVersion, int tableId, MemoryA mem) {
+    public static void writeMetadata(
+            TableStructure tableStruct,
+            int tableVersion,
+            int tableId,
+            MemoryA mem
+    ) {
         int count = tableStruct.getColumnCount();
         mem.putInt(count);
         mem.putInt(tableStruct.getPartitionBy());
@@ -1761,6 +1767,8 @@ public final class TableUtils {
         mem.putLong(tableStruct.getO3MaxLag());
         mem.putLong(0); // Structure version.
         mem.putInt(tableStruct.isWalEnabled() ? 1 : 0);
+        // TTL in hours, 0 = TTL is not enforced
+        mem.putInt(tableStruct.getTTL());
         mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
         assert count > 0;

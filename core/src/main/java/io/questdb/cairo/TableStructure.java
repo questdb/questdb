@@ -55,4 +55,7 @@ public interface TableStructure {
     boolean isIndexed(int columnIndex);
 
     boolean isWalEnabled();
+
+    // data TTL in hours
+    int getTTL();
 }

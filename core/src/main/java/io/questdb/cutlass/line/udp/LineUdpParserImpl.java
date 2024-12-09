@@ -631,6 +631,12 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         }
 
         @Override
+        public int getTTL() {
+            // todo: pass configuration  value instead of 0
+            return 0;
+        }
+
+        @Override
         public CharSequence getTableName() {
             return cache.get(tableName);
         }

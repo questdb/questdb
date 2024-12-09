@@ -88,6 +88,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private int partitionBy;
     private RecordCursorFactory recordCursorFactory;
     private int timestampIndex = -1;
+    private final int ttl;
     private boolean walEnabled;
 
     public CreateTableOperationImpl(
@@ -108,12 +109,12 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.likeTableName = likeTableName;
         this.likeTableNamePosition = likeTableNamePosition;
         this.ignoreIfExists = ignoreIfExists;
-
         this.selectText = null;
         this.timestampColumnName = null;
         this.timestampColumnNamePosition = 0;
         this.batchSize = 0;
         this.batchO3MaxLag = 0;
+        this.ttl = 0;
     }
 
     public CreateTableOperationImpl(
@@ -128,7 +129,8 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             int timestampIndex,
             long o3MaxLag,
             int maxUncommittedRows,
-            boolean walEnabled
+            boolean walEnabled,
+            int ttl
     ) {
         this.sqlText = sqlText;
         this.tableName = tableName;
@@ -163,6 +165,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.likeTableNamePosition = -1;
         this.batchSize = 0;
         this.batchO3MaxLag = 0;
+        this.ttl = ttl;
     }
 
     /**
@@ -275,6 +278,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             );
             augmentedColumnMetadata.put(columnNameStr, tcm);
         }
+        this.ttl = 0;
     }
 
     @Override
@@ -386,6 +390,11 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         int capacity = getHighAt(index * 2);
         assert capacity != -1 : "Symbol capacity is not set";
         return capacity;
+    }
+
+    @Override
+    public int getTTL() {
+        return ttl;
     }
 
     @Override

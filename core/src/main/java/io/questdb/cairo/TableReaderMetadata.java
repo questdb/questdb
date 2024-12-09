@@ -59,6 +59,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     private TableToken tableToken;
     private TableReaderMetadataTransitionIndex transitionIndex;
     private MemoryMR transitionMeta;
+    private int ttl;
     private boolean walEnabled;
 
     public TableReaderMetadata(CairoConfiguration configuration, TableToken tableToken) {
@@ -103,6 +104,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
         this.o3MaxLag = metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG);
         this.walEnabled = metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
+        this.ttl = metaMem.getInt(TableUtils.META_OFFSET_TTL);
 
         int shiftLeft = 0, existingIndex = 0;
         buildWriterOrderMap(metaMem, columnCount);
@@ -281,6 +283,11 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     @Override
     public int getSymbolCapacity(int columnIndex) {
         return getColumnMetadata(columnIndex).getSymbolCapacity();
+    }
+
+    @Override
+    public int getTTL() {
+        return ttl;
     }
 
     @Override
