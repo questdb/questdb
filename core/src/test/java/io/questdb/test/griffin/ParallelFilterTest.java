@@ -189,23 +189,38 @@ public class ParallelFilterTest extends AbstractCairoTest {
 
     @Test
     public void testAsyncSubQueryWithFilterOnIndexedSymbol() throws Exception {
-        testAsyncSubQueryWithFilter("SELECT count(*) " +
-                "FROM price " +
-                "WHERE type IN (SELECT id FROM mapping WHERE ext in ('s1', 's2') and substring(ext,2,1) = '1')");
+        testAsyncSubQueryWithFilter(
+                "SELECT count(*) " +
+                        "FROM price " +
+                        "WHERE type IN (SELECT id FROM mapping WHERE ext in ('s1', 's2') and substring(ext,2,1) = '1')"
+        );
     }
 
     @Test
     public void testAsyncSubQueryWithFilterOnLatestBy() throws Exception {
-        testAsyncSubQueryWithFilter("SELECT count(*) " +
-                "FROM price " +
-                "WHERE type IN (SELECT id FROM mapping WHERE ext in ('s1'))");
+        testAsyncSubQueryWithFilter(
+                "SELECT count(*) " +
+                        "FROM price " +
+                        "WHERE type IN (SELECT id FROM mapping WHERE ext in ('s1'))"
+        );
     }
 
     @Test
     public void testAsyncSubQueryWithFilterOnSymbol() throws Exception {
-        testAsyncSubQueryWithFilter("SELECT count(*) " +
-                "FROM price " +
-                "WHERE type IN (SELECT id FROM mapping WHERE ext in ('s1'))");
+        testAsyncSubQueryWithFilter(
+                "SELECT count(*) " +
+                        "FROM price " +
+                        "WHERE type IN (SELECT id FROM mapping WHERE ext in ('s1'))"
+        );
+    }
+
+    @Test
+    public void testAsyncTimestampSubQueryWithEqFilter() throws Exception {
+        testAsyncTimestampSubQueryWithFilter(
+                "select * from x where ts2 = (select min(ts) from x)",
+                "ts\tts2\tid\n" +
+                        "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\n"
+        );
     }
 
     @Test
@@ -683,13 +698,15 @@ public class ParallelFilterTest extends AbstractCairoTest {
         TestUtils.execute(
                 pool, (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
-                            "CREATE TABLE price (\n" +
+                            "CREATE TABLE price (" +
                                     "  ts TIMESTAMP," +
                                     "  type SYMBOL," +
-                                    "  value DOUBLE ) timestamp (ts) PARTITION BY DAY;", sqlExecutionContext
+                                    "  value DOUBLE" +
+                                    ") timestamp (ts) PARTITION BY DAY;",
+                            sqlExecutionContext
                     );
-                    engine.execute("insert into price select x::timestamp,  't' || (x%5), rnd_double()  from long_sequence(100000)", sqlExecutionContext);
-                    engine.execute("CREATE TABLE mapping ( id SYMBOL, ext SYMBOL, ext_in SYMBOL, ts timestamp ) timestamp(ts)", sqlExecutionContext);
+                    engine.execute("insert into price select x::timestamp, 't' || (x%5), rnd_double() from long_sequence(100000)", sqlExecutionContext);
+                    engine.execute("CREATE TABLE mapping (id SYMBOL, ext SYMBOL, ext_in SYMBOL, ts timestamp) timestamp(ts)", sqlExecutionContext);
                     engine.execute("insert into mapping select 't' || x, 's' || x, 's' || x, x::timestamp  from long_sequence(5)", sqlExecutionContext);
                     if (convertToParquet) {
                         execute(
@@ -705,6 +722,34 @@ public class ParallelFilterTest extends AbstractCairoTest {
                             query,
                             sink,
                             "count\n20000\n"
+                    );
+                },
+                configuration,
+                LOG
+        );
+    }
+
+    private void testAsyncTimestampSubQueryWithFilter(String query, String expected) throws Exception {
+        WorkerPool pool = new WorkerPool((() -> 4));
+        TestUtils.execute(
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
+                    engine.execute(
+                            "CREATE TABLE x (" +
+                                    "  ts TIMESTAMP," +
+                                    "  ts2 TIMESTAMP," +
+                                    "  id long" +
+                                    ") timestamp (ts) PARTITION BY DAY;",
+                            sqlExecutionContext
+                    );
+                    engine.execute("insert into x select x::timestamp, x::timestamp, x from long_sequence(100000)", sqlExecutionContext);
+
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            query,
+                            sink,
+                            expected
                     );
                 },
                 configuration,
