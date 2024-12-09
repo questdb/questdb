@@ -31,7 +31,6 @@ import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.client.Sender;
-import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Rnd;
@@ -58,7 +57,7 @@ public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testMemoryPressureSingleSender() throws SqlException {
+    public void testMemoryPressureSingleSender() {
         final String tn = "table1";
         final long hourAsMillis = 3_600_000L;
         final long numPartitions = 150L;

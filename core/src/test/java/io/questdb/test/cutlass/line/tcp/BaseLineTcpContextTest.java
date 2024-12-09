@@ -32,7 +32,15 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
-import io.questdb.cutlass.line.tcp.*;
+import io.questdb.cutlass.line.tcp.DefaultLineTcpReceiverConfiguration;
+import io.questdb.cutlass.line.tcp.LineTcpConnectionContext;
+import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler;
+import io.questdb.cutlass.line.tcp.LineTcpParser;
+import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
+import io.questdb.cutlass.line.tcp.NetworkIOJob;
+import io.questdb.cutlass.line.tcp.StaticChallengeResponseMatcher;
+import io.questdb.cutlass.line.tcp.SymbolCache;
+import io.questdb.cutlass.line.tcp.TableUpdateDetails;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
@@ -41,7 +49,13 @@ import io.questdb.network.IODispatcher;
 import io.questdb.network.IORequestProcessor;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Os;
+import io.questdb.std.Pool;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Utf8StringObjHashMap;
+import io.questdb.std.WeakClosableObjectPool;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -314,7 +328,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         };
         noNetworkIOJob.setScheduler(scheduler);
         context = new LineTcpConnectionContext(lineTcpConfiguration, scheduler, metrics);
-        context.of(FD, new IODispatcher<LineTcpConnectionContext>() {
+        context.of(FD, new IODispatcher<>() {
             @Override
             public void close() {
             }
@@ -385,7 +399,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         private LineTcpMeasurementScheduler scheduler;
 
         NoNetworkIOJob(LineTcpReceiverConfiguration config) {
-            unusedSymbolCaches = new WeakClosableObjectPool<SymbolCache>(() -> new SymbolCache(config), 10, true);
+            unusedSymbolCaches = new WeakClosableObjectPool<>(() -> new SymbolCache(config), 10, true);
         }
 
         @Override

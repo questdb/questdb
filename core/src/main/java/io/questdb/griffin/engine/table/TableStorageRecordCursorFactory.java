@@ -40,7 +40,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Files;
 import io.questdb.std.Misc;
@@ -76,7 +75,7 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
     }
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+    public RecordCursor getCursor(SqlExecutionContext executionContext) {
         return cursor.initialize();
     }
 

@@ -30,13 +30,39 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cutlass.http.ex.*;
+import io.questdb.cutlass.http.ex.BufferOverflowException;
+import io.questdb.cutlass.http.ex.NotEnoughLinesException;
+import io.questdb.cutlass.http.ex.RetryFailedOperationException;
+import io.questdb.cutlass.http.ex.RetryOperationException;
+import io.questdb.cutlass.http.ex.TooFewBytesReceivedException;
 import io.questdb.cutlass.http.processors.RejectProcessor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.*;
-import io.questdb.std.*;
-import io.questdb.std.str.*;
+import io.questdb.network.HeartBeatException;
+import io.questdb.network.IOContext;
+import io.questdb.network.IODispatcher;
+import io.questdb.network.IOOperation;
+import io.questdb.network.Net;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.PeerIsSlowToWriteException;
+import io.questdb.network.QueryPausedException;
+import io.questdb.network.ServerDisconnectException;
+import io.questdb.network.Socket;
+import io.questdb.network.SocketFactory;
+import io.questdb.network.SuspendEvent;
+import io.questdb.std.AssociativeCache;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.StdoutSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
@@ -188,7 +214,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     @Override
-    public void fail(HttpRequestProcessorSelector selector, HttpException e) throws PeerIsSlowToReadException, ServerDisconnectException, PeerDisconnectedException {
+    public void fail(HttpRequestProcessorSelector selector, HttpException e) throws PeerIsSlowToReadException, ServerDisconnectException {
         LOG.info().$("failed to retry query [fd=").$(getFd()).I$();
         HttpRequestProcessor processor = getHttpRequestProcessor(selector);
         failProcessor(processor, e, DISCONNECT_REASON_RETRY_FAILED);
@@ -359,7 +385,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         responseSink.resumeSend();
     }
 
-    public void scheduleRetry(HttpRequestProcessor processor, RescheduleContext rescheduleContext) throws PeerIsSlowToReadException, ServerDisconnectException, PeerDisconnectedException {
+    public void scheduleRetry(HttpRequestProcessor processor, RescheduleContext rescheduleContext) throws PeerIsSlowToReadException, ServerDisconnectException {
         try {
             pendingRetry = true;
             rescheduleContext.reschedule(this);
@@ -425,7 +451,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     @SuppressWarnings("StatementWithEmptyBody")
     private void busyRcvLoop(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext)
-            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, PeerIsSlowToWriteException {
+            throws PeerIsSlowToReadException, ServerDisconnectException, PeerIsSlowToWriteException {
         reset();
         if (configuration.getServerKeepAlive()) {
             while (handleClientRecv(selector, rescheduleContext)) ;

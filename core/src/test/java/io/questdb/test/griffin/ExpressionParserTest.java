@@ -1202,7 +1202,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testStringAggDistinct_orderByNotSupported() throws SqlException {
+    public void testStringAggDistinct_orderByNotSupported() {
         assertFail("string_agg(distinct foo, ',' order by bar)", 29, "ORDER BY not supported for string_distinct_agg");
     }
 

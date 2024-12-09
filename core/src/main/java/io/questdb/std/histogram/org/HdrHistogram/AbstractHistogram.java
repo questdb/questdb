@@ -32,7 +32,11 @@ package io.questdb.std.histogram.org.HdrHistogram;
 import io.questdb.cairo.CairoException;
 import org.jetbrains.annotations.NotNull;
 
-import java.io.*;
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+import java.io.PrintStream;
+import java.io.Serializable;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.nio.ByteBuffer;
@@ -660,7 +664,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
             totalValue += medianEquivalentValue(iterationValue.getValueIteratedTo())
                     * (double) iterationValue.getCountAtValueIteratedTo();
         }
-        return (totalValue * 1.0) / getTotalCount();
+        return (totalValue) / getTotalCount();
     }
 
     /**
@@ -2435,7 +2439,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
  */
 
 abstract class AbstractHistogramBase extends EncodableHistogram {
-    static AtomicLong constructionIdentityCount = new AtomicLong(0);
+    static final AtomicLong constructionIdentityCount = new AtomicLong(0);
     volatile boolean autoResize = false;
     int bucketCount;
     int countsArrayLength;

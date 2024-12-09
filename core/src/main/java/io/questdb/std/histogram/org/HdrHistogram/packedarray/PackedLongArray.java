@@ -30,9 +30,6 @@ package io.questdb.std.histogram.org.HdrHistogram.packedarray;
  */
 public class PackedLongArray extends AbstractPackedLongArray {
 
-    PackedLongArray() {
-    }
-
     public PackedLongArray(final int virtualLength) {
         this(virtualLength, AbstractPackedArrayContext.MINIMUM_INITIAL_PACKED_ARRAY_CAPACITY);
     }
@@ -63,9 +60,8 @@ public class PackedLongArray extends AbstractPackedLongArray {
             currentArrayContext.setVirtualLength(newVirtualArrayLength);
             return;
         }
-        AbstractPackedArrayContext oldArrayContext = currentArrayContext;
-        setArrayContext(new PackedArrayContext(newVirtualArrayLength, oldArrayContext, oldArrayContext.length()));
-        for (IterationValue v : oldArrayContext.nonZeroValues()) {
+        setArrayContext(new PackedArrayContext(newVirtualArrayLength, currentArrayContext, currentArrayContext.length()));
+        for (IterationValue v : currentArrayContext.nonZeroValues()) {
             set(v.getIndex(), v.getValue());
         }
     }

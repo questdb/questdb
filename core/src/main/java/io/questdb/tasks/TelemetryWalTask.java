@@ -37,7 +37,7 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
     public static final String TABLE_NAME = "telemetry_wal";
     public static final Telemetry.TelemetryTypeBuilder<TelemetryWalTask> WAL_TELEMETRY = configuration -> {
         String tableName = configuration.getSystemTableNamePrefix() + TABLE_NAME;
-        return new Telemetry.TelemetryType<TelemetryWalTask>() {
+        return new Telemetry.TelemetryType<>() {
             @Override
             public QueryBuilder getCreateSql(QueryBuilder builder) {
                 return builder.$("CREATE TABLE IF NOT EXISTS \"")

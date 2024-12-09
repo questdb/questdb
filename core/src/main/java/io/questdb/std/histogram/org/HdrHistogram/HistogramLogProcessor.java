@@ -32,7 +32,12 @@ package io.questdb.std.histogram.org.HdrHistogram;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.PrintStream;
-import java.util.*;
+import java.util.Date;
+import java.util.LinkedList;
+import java.util.Locale;
+import java.util.Queue;
+import java.util.Set;
+import java.util.TreeSet;
 
 /**
  * {@link io.questdb.std.histogram.org.HdrHistogram.HistogramLogProcessor} will process an input log and
@@ -77,7 +82,7 @@ public class HistogramLogProcessor extends Thread {
 
     private final HistogramLogProcessorConfiguration config;
     private int lineNumber = 0;
-    private HistogramLogReader logReader;
+    private final HistogramLogReader logReader;
 
     /**
      * Construct a {@link io.questdb.std.histogram.org.HdrHistogram.HistogramLogProcessor} with the given arguments
@@ -418,7 +423,7 @@ public class HistogramLogProcessor extends Thread {
 
     private void outputStartTime(final PrintStream log, final Double startTime) {
         log.format(Locale.US, "#[StartTime: %.3f (seconds since epoch), %s]\n",
-                startTime, (new Date((long) (startTime * 1000))).toString());
+                startTime, (new Date((long) (startTime * 1000))));
     }
 
     private void outputTimeRange(final PrintStream log, final String title) {

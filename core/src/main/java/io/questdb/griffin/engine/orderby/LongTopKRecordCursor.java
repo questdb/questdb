@@ -28,7 +28,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongLongHeap;
 import io.questdb.std.DirectLongLongMaxHeap;
@@ -99,7 +98,7 @@ class LongTopKRecordCursor implements RecordCursor {
         return baseCursor.newSymbolTable(columnIndex);
     }
 
-    public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
+    public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) {
         // assign base cursor as the first step, so that we close it in close() call
         this.baseCursor = baseCursor;
         baseRecord = baseCursor.getRecord();

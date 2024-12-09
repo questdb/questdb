@@ -746,8 +746,7 @@ abstract class AbstractPackedArrayContext implements Serializable {
         int eightsSizeMagnitude = sizeMagnitude - 3;
         int multipleOfFourSizeMagnitude = (int) Math.ceil(eightsSizeMagnitude / 4.0) * 4;
         multipleOfFourSizeMagnitude = Math.max(multipleOfFourSizeMagnitude, 8);
-        int topLevelShiftNeeded = (multipleOfFourSizeMagnitude - 4) + 3;
-        return topLevelShiftNeeded;
+        return (multipleOfFourSizeMagnitude - 4) + 3;
     }
 
     //
@@ -951,11 +950,7 @@ abstract class AbstractPackedArrayContext implements Serializable {
      * @return an Iterator over all non-Zero values in the array
      */
     Iterable<IterationValue> nonZeroValues() {
-        return new Iterable<IterationValue>() {
-            public Iterator<IterationValue> iterator() {
-                return new NonZeroValuesIterator();
-            }
-        };
+        return NonZeroValuesIterator::new;
     }
 
     void populateEquivalentEntriesWithZerosFromOther(final AbstractPackedArrayContext other) {

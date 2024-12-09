@@ -32,7 +32,7 @@ import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
 
 public class HistogramTestUtils {
-    static DoubleHistogram constructDoubleHistogram(Class c, Object... constructorArgs) {
+    static DoubleHistogram constructDoubleHistogram(Class<?> c, Object... constructorArgs) {
         try {
             Class[] argTypes;
             if (constructorArgs.length == 1) {
@@ -65,7 +65,7 @@ public class HistogramTestUtils {
         }
     }
 
-    static AbstractHistogram constructHistogram(Class c, Object... constructorArgs) {
+    static AbstractHistogram constructHistogram(Class<?> c, Object... constructorArgs) {
         try {
             Class[] argTypes;
             if (constructorArgs.length == 1) {
@@ -94,7 +94,7 @@ public class HistogramTestUtils {
         }
     }
 
-    static DoubleHistogram decodeDoubleHistogramFromCompressedByteBuffer(Class c,
+    static DoubleHistogram decodeDoubleHistogramFromCompressedByteBuffer(Class<?> c,
                                                                          final ByteBuffer buffer,
                                                                          final long minBarForHighestTrackableValue) {
         try {
@@ -112,7 +112,7 @@ public class HistogramTestUtils {
         }
     }
 
-    static AbstractHistogram decodeFromCompressedByteBuffer(Class c,
+    static AbstractHistogram decodeFromCompressedByteBuffer(Class<?> c,
                                                             final ByteBuffer buffer,
                                                             final long minBarForHighestTrackableValue) {
         try {

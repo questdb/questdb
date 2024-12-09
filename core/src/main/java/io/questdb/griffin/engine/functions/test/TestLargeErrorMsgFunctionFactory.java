@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.std.IntList;
@@ -50,7 +49,7 @@ public class TestLargeErrorMsgFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
+    ) {
         Function arg = args.getQuick(0);
         int len = arg.getInt(null);
         return new Func(Math.max(len, 1));

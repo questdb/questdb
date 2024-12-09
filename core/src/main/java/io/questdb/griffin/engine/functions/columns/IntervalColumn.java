@@ -28,10 +28,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.IntervalFunction;
-import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.std.Interval;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;

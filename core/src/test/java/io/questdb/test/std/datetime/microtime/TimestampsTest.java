@@ -55,7 +55,7 @@ public class TimestampsTest {
     }
 
     @Test
-    public void testToMicros() throws Exception {
+    public void testToMicros() {
         Assert.assertEquals(1, Timestamps.toMicros(1000, ChronoUnit.NANOS));
         Assert.assertEquals(1, Timestamps.toMicros(1, ChronoUnit.MICROS));
         Assert.assertEquals(1000, Timestamps.toMicros(1, ChronoUnit.MILLIS));

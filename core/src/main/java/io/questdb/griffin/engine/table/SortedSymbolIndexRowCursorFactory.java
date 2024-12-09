@@ -27,20 +27,24 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemory;
+import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.RowCursorFactory;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.ThreadLocal;
-import org.jetbrains.annotations.NotNull;
 
 import java.util.Comparator;
 
 public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
     private final static ThreadLocal<SortHelper> TL_SORT_HELPER = new ThreadLocal<>(SortHelper::new);
     private final int columnIndex;
-    private final IntList columnIndexes;
     private final boolean columnOrderDirectionAsc;
     private final ListBasedSymbolIndexRowCursor cursor = new ListBasedSymbolIndexRowCursor();
     private final int indexDirection;
@@ -50,13 +54,11 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
     public SortedSymbolIndexRowCursorFactory(
             int columnIndex,
             boolean columnOrderDirectionAsc,
-            int indexDirection,
-            @NotNull IntList columnIndexes
+            int indexDirection
     ) {
         this.columnIndex = columnIndex;
         this.indexDirection = indexDirection;
         this.columnOrderDirectionAsc = columnOrderDirectionAsc;
-        this.columnIndexes = columnIndexes;
     }
 
     @Override

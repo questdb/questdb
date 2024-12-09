@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.QuaternaryFunction;
@@ -44,7 +43,7 @@ public class WeightedMidPriceFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions,
-                                CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+                                CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         return new WeightedMidPriceFunction(args.getQuick(0), args.getQuick(1), args.getQuick(2), args.getQuick(3));
     }
 

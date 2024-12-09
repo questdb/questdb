@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
@@ -57,7 +56,7 @@ public class QuoteIdentFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
+    ) {
         Function arg = args.getQuick(0);
         if (arg.isConstant()) {
             CharSequence val = arg.getStrA(null);

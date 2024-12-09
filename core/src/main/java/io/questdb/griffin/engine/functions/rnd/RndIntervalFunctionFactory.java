@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntervalFunction;
-import io.questdb.griffin.engine.functions.UuidFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.ObjList;

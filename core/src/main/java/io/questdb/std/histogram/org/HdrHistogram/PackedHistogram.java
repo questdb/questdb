@@ -140,7 +140,7 @@ public class PackedHistogram extends Histogram {
      */
     public static PackedHistogram decodeFromByteBuffer(final ByteBuffer buffer,
                                                        final long minBarForHighestTrackableValue) {
-        return (PackedHistogram) decodeFromByteBuffer(buffer, PackedHistogram.class,
+        return decodeFromByteBuffer(buffer, PackedHistogram.class,
                 minBarForHighestTrackableValue);
     }
 
@@ -200,8 +200,7 @@ public class PackedHistogram extends Histogram {
 
     @Override
     long getCountAtNormalizedIndex(final int index) {
-        long count = packedCounts.get(index);
-        return count;
+        return packedCounts.get(index);
     }
 
     @Override

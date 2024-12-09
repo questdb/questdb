@@ -94,7 +94,7 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @AfterClass
-    public static void tearDownClass() throws Exception {
+    public static void tearDownClass() {
         jsonLexer.close();
         AbstractCairoTest.tearDownStatic();
     }

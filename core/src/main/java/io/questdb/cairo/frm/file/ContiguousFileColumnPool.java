@@ -29,7 +29,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.frm.FrameColumn;
 import io.questdb.cairo.frm.FrameColumnPool;
 import io.questdb.cairo.frm.FrameColumnTypePool;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 
@@ -38,7 +37,6 @@ import java.io.Closeable;
 public class ContiguousFileColumnPool implements FrameColumnPool, Closeable {
     private final ColumnTypePool columnTypePool = new ColumnTypePool();
     private final CairoConfiguration configuration;
-    private final FilesFacade ff;
     private final ListPool<ContiguousFileFixFrameColumn> fixColumnPool = new ListPool<>();
     private final ListPool<ContiguousFileFixFrameColumn> indexedColumnPool = new ListPool<>();
     private final ListPool<ContiguousFileVarFrameColumn> varColumnPool = new ListPool<>();
@@ -46,7 +44,6 @@ public class ContiguousFileColumnPool implements FrameColumnPool, Closeable {
     private boolean isClosed;
 
     public ContiguousFileColumnPool(CairoConfiguration configuration) {
-        this.ff = configuration.getFilesFacade();
         this.configuration = configuration;
     }
 
