@@ -1667,6 +1667,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
 
         @Override
+        public int getTtlHours() {
+            return 0;
+        }
+
+        @Override
         public boolean isDedupKey(int columnIndex) {
             return false;
         }

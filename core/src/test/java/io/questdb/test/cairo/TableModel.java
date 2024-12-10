@@ -42,6 +42,7 @@ public class TableModel implements TableStructure {
     private final String name;
     private final int partitionBy;
     private int timestampIndex = -1;
+    private int ttl = 0;
     private int walEnabled = -1;
 
     public TableModel(CairoConfiguration configuration, String name, int partitionBy) {
@@ -139,6 +140,11 @@ public class TableModel implements TableStructure {
         return timestampIndex;
     }
 
+    @Override
+    public int getTtlHours() {
+        return ttl;
+    }
+
     public TableModel indexed(boolean indexFlag, int indexBlockCapacity) {
         int pos = columnBits.size() - 1;
         assert pos > 0;
@@ -192,6 +198,11 @@ public class TableModel implements TableStructure {
         assert timestampIndex == -1;
         timestampIndex = columnNames.size();
         col(name, ColumnType.TIMESTAMP);
+        return this;
+    }
+
+    public TableModel ttl(int ttl) {
+        this.ttl = ttl;
         return this;
     }
 

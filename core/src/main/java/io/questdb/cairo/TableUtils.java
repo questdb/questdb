@@ -109,6 +109,7 @@ public final class TableUtils {
     public static final long META_OFFSET_PARTITION_BY = 4;
     public static final long META_OFFSET_TABLE_ID = 16;
     public static final long META_OFFSET_TIMESTAMP_INDEX = 8;
+    public static final long META_OFFSET_TTL_HOURS = 41; // INT
     public static final long META_OFFSET_VERSION = 12;
     public static final long META_OFFSET_WAL_ENABLED = 40; // BOOLEAN
     public static final String META_PREV_FILE_NAME = "_meta.prev";
@@ -1655,6 +1656,11 @@ public final class TableUtils {
                 }
             }
 
+            final int ttlHours = metaMem.getInt(META_OFFSET_TTL_HOURS);
+            if (ttlHours < 0) {
+                throw validationException(metaMem).put("TTL value must be non-negative, but found ").put(ttlHours);
+            }
+
             // validate column types and index attributes
             for (int i = 0; i < columnCount; i++) {
                 final int type = Math.abs(getColumnType(metaMem, i));
@@ -1746,7 +1752,12 @@ public final class TableUtils {
         }
     }
 
-    public static void writeMetadata(TableStructure tableStruct, int tableVersion, int tableId, MemoryA mem) {
+    public static void writeMetadata(
+            TableStructure tableStruct,
+            int tableVersion,
+            int tableId,
+            MemoryA mem
+    ) {
         int count = tableStruct.getColumnCount();
         mem.putInt(count);
         mem.putInt(tableStruct.getPartitionBy());
@@ -1760,7 +1771,8 @@ public final class TableUtils {
         mem.putInt(tableStruct.getMaxUncommittedRows());
         mem.putLong(tableStruct.getO3MaxLag());
         mem.putLong(0); // Structure version.
-        mem.putInt(tableStruct.isWalEnabled() ? 1 : 0);
+        mem.putBool(tableStruct.isWalEnabled());
+        mem.putInt(tableStruct.getTtlHours()); // 0 = unbounded TTL
         mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
         assert count > 0;

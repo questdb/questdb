@@ -745,6 +745,22 @@ public class SqlParser {
             builder.setPartitionByExpr(partitionBy);
             tok = optTok(lexer);
 
+            if (tok != null && isTtlKeyword(tok)) {
+                tok = optTok(lexer);
+                if (tok == null) {
+                    throw SqlException.position(lexer.getPosition())
+                            .put(" missing argument, should be TTL <number>");
+                }
+                try {
+                    int ttlSetting = Numbers.parseInt(tok);
+                    builder.setTtlHours(ttlSetting);
+                    tok = optTok(lexer);
+                } catch (NumericException e) {
+                    throw SqlException.position(lexer.getPosition()
+                    ).put(" invalid syntax, should be TTL <number> but was TTL ").put("");
+                }
+            }
+
             if (tok != null) {
                 if (isWalKeyword(tok)) {
                     if (!PartitionBy.isPartitioned(builder.getPartitionByFromExpr())) {
