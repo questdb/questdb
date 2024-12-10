@@ -57,8 +57,6 @@ import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.filewatch.FileWatcher;
-import io.questdb.std.filewatch.FileWatcherFactory;
-import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
@@ -309,19 +307,6 @@ public class ServerMain implements Closeable {
         final boolean isReadOnly = config.getCairoConfiguration().isReadOnlyInstance();
         final boolean walApplyEnabled = config.getCairoConfiguration().isWalApplyEnabled();
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
-
-        if (config instanceof DynamicServerConfiguration) {
-            if (((DynamicServerConfiguration) config).isConfigReloadEnabled()) {
-                try (Path path = new Path()) {
-                    path.of(cairoConfig.getConfRoot()).concat(Bootstrap.CONFIG_FILE).$();
-                    fileWatcher = FileWatcherFactory.getFileWatcher(
-                            path,
-                            (DynamicServerConfiguration) config
-                    );
-                }
-                fileWatcher.start();
-            }
-        }
 
         workerPoolManager = new WorkerPoolManager(config, metrics) {
             @Override

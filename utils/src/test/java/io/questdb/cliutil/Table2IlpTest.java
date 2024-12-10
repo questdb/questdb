@@ -40,13 +40,17 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
-import io.questdb.network.DefaultIODispatcherConfiguration;
-import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
-import org.junit.*;
+import org.junit.After;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.ClassRule;
+import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.IOException;
@@ -148,16 +152,10 @@ public class Table2IlpTest {
                 () -> new SqlExecutionContextImpl(engine, workerPool.getWorkerCount(), workerPool.getWorkerCount())
         );
 
-        final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
-            public int getBindPort() {
-                return ILP_PORT;
-            }
-        };
-
         receiver = new LineTcpReceiver(new DefaultLineTcpReceiverConfiguration() {
             @Override
-            public IODispatcherConfiguration getDispatcherConfiguration() {
-                return ioDispatcherConfiguration;
+            public int getBindPort() {
+                return ILP_PORT;
             }
 
             @Override

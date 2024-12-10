@@ -39,7 +39,11 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.io.IOException;
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.Properties;
 
 import static io.questdb.test.cutlass.pgwire.BasePGTest.assertResultSet;
@@ -158,7 +162,7 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
     }
 
     private static Connection getConnection(ServerMain serverMain) throws SQLException {
-        final int port = serverMain.getConfiguration().getPGWireConfiguration().getDispatcherConfiguration().getBindPort();
+        final int port = serverMain.getConfiguration().getPGWireConfiguration().getBindPort();
         final Properties properties = new Properties();
         properties.setProperty("user", "admin");
         properties.setProperty("password", "quest");
