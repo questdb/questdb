@@ -5054,6 +5054,9 @@ public class SqlOptimiser implements Mutable {
 
             if (Chars.indexOf(timestamp.token, '.') < 0) {
                 // prefix the timestamp column name only if the table is not dotted
+                // this is to handle cases where we use system tables, which are prefixed
+                // downstream code cannot handle `"sys.telemetry.wal".created`
+                // it will break in `where` optimisation, and later metadata lookups
                 if (Chars.indexOf(toAddWhereClause.getTableName(), '.') < 0) {
                     CharacterStoreEntry e = characterStore.newEntry();
                     e.put(toAddWhereClause.getTableName()).putAscii('.').put(timestamp.token);
