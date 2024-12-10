@@ -93,32 +93,38 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             }
         }
 
+        boolean intervalSearch = isIntervalSearch(args);
         if (allConst) {
+            if (intervalSearch) {
+                Function rightFn = args.getQuick(1);
+                CharSequence right = rightFn.getStrA(null);
+                return new EqTimestampStrConstantFunction(args.getQuick(0), right, argPositions.getQuick(1));
+            }
             return new InTimestampConstFunction(args.getQuick(0), parseDiscreteTimestampValues(args, argPositions));
         }
 
         if (allRuntimeConst) {
-            if (args.size() == 2 && ColumnType.isVarcharOrString(args.get(1).getType())) {
-                // this is an odd case, we have something like this
-                //
-                // where ts in ?
-                //
-                // Type of the runtime constant may not be known upfront.
-                // When user passes string as the value we perform the interval lookup,
-                // otherwise it is discrete value
+            if (intervalSearch) {
                 return new InTimestampRuntimeConstIntervalFunction(args.getQuick(0), args.getQuick(1), argPositions.getQuick(1));
 
             }
             return new InTimestampManyRuntimeConstantsFunction(new ObjList<>(args));
         }
 
-        if (args.size() == 2 && ColumnType.isVarcharOrString(args.get(1).getType())) {
-            // special case - one argument and it a string
+        if (intervalSearch) {
             return new EqTimestampStrFunction(args.get(0), args.get(1));
         }
 
         // have to copy, args is mutable
         return new InTimestampVarFunction(new ObjList<>(args));
+    }
+
+    private static boolean isIntervalSearch(ObjList<Function> args) {
+        if (args.size() != 2) {
+            return false;
+        }
+        Function rightFn = args.getQuick(1);
+        return ColumnType.isVarcharOrString(rightFn.getType());
     }
 
     private static LongList parseDiscreteTimestampValues(ObjList<Function> args, IntList argPositions) throws SqlException {
@@ -163,7 +169,40 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
-    public static class EqTimestampStrFunction extends NegatableBooleanFunction implements BinaryFunction {
+    private static class EqTimestampStrConstantFunction extends NegatableBooleanFunction implements UnaryFunction {
+        private final LongList intervals = new LongList();
+        private final Function left;
+
+        public EqTimestampStrConstantFunction(
+                Function left,
+                CharSequence right,
+                int rightPosition
+        ) throws SqlException {
+            this.left = left;
+            parseAndApplyIntervalEx(right, intervals, rightPosition);
+        }
+
+        @Override
+        public Function getArg() {
+            return left;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != isInIntervals(intervals, left.getTimestamp(rec));
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(left);
+            if (negated) {
+                sink.val(" not");
+            }
+            sink.val(" in ").val(intervals);
+        }
+    }
+
+    private static class EqTimestampStrFunction extends NegatableBooleanFunction implements BinaryFunction {
         private final LongList intervals = new LongList();
         private final Function left;
         private final Function right;
@@ -309,7 +348,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
-    public static class InTimestampRuntimeConstIntervalFunction extends NegatableBooleanFunction implements BinaryFunction {
+    private static class InTimestampRuntimeConstIntervalFunction extends NegatableBooleanFunction implements BinaryFunction {
         private final Function intervalFunc;
         private final int intervalFuncPos;
         private final LongList intervals = new LongList();
