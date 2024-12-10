@@ -112,17 +112,19 @@ public interface FunctionFactory {
 
     /**
      * If function has variable number of arguments, this method should return preferred type
-     * for variadic arguments.
+     * for a variadic argument at given index.
      * <p>
      * SQL Compiler will use this as a hint to determine type of variadic arguments when they have the
      * UNDEFINED type at compile time.
      * <p>
      *
-     * @param pos  position of variadic argument in the list of arguments
-     * @param args list of arguments, function type can be undefined
+     * @param sqlPos sql position of the argument being resolved
+     * @param argPos index of the argument being resolved
+     * @param args   list of arguments, function type can be undefined
      * @return preferred type for variadic arguments
+     * @throws SqlException if a function cannot resolve preferred type
      */
-    default int resolvePreferredVariadicType(int pos, ObjList<Function> args) throws SqlException {
+    default int resolvePreferredVariadicType(int sqlPos, int argPos, ObjList<Function> args) throws SqlException {
         return ColumnType.STRING;
     }
 

@@ -884,7 +884,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             } else {
                 // in case of vararg it is possible that we have more undefined variables than args in the function descriptor,
                 // assign type to all remaining undefined variables based on the preference of the candidate function factory
-                int type = candidate.resolvePreferredVariadicType(argPositions.getQuick(pos), args);
+                int type = candidate.resolvePreferredVariadicType(argPositions.getQuick(pos), pos, args);
                 args.getQuick(pos).assignType(type, sqlExecutionContext.getBindVariableService());
             }
         }
