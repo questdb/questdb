@@ -122,7 +122,7 @@ public interface FunctionFactory {
      * @return preferred type for variadic arguments
      */
     default int resolvePreferredVariadicType(ObjList<Function> args) {
-        return ColumnType.VARCHAR;
+        return ColumnType.STRING;
     }
 
 }
