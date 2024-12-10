@@ -45,6 +45,7 @@ import io.questdb.griffin.engine.functions.SwappingArgsFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InCharFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InTimestampIntervalFunctionFactory;
+import io.questdb.griffin.engine.functions.bool.InTimestampStrFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InTimestampTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InUuidFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToRegClassFunctionFactory;
@@ -2467,6 +2468,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     args.add(new StrConstant("d"));
                                 } else if (sigArgType == ColumnType.STRING && isArray) {
                                     args.add(new StringToStringArrayFunction(0, "{'test'}"));
+                                } else if (sigArgType == ColumnType.STRING && factory instanceof InTimestampStrFunctionFactory) {
+                                    args.add(new StrConstant("2022-12-12"));
                                 } else if (factory instanceof EqTimestampCursorFunctionFactory) {
                                     // 2nd arg for this function is a cursor, which is unclear how to test here
                                     // additionally, this function has separate tests

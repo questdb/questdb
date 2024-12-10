@@ -24,11 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.conditional;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.test.AbstractCairoTest;
-import org.junit.Assert;
 import org.junit.Test;
 
 public class CaseFunctionFactoryTest extends AbstractCairoTest {
@@ -155,26 +151,18 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testBindVar() throws Exception {
-        assertMemoryLeak(() -> {
-            engine.execute("create table test as (select cast(x as long) a, timestamp_sequence(0, 1000000) ts from long_sequence(5))");
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                CompiledQuery cq = compiler.compile("select \n" +
-                                "    a,\n" +
-                                "    case\n" +
-                                "        when a > 10 then $1\n" +
-                                "        else $2\n" +
-                                "    end k\n" +
-                                "from test",
-                        sqlExecutionContext
-                );
-                try {
-                    Assert.assertEquals(ColumnType.STRING, bindVariableService.getFunction(0).getType());
-                    Assert.assertEquals(ColumnType.STRING, bindVariableService.getFunction(1).getType());
-                } finally {
-                    cq.getRecordCursorFactory().close();
-                }
-            }
-        });
+        assertException(
+                "select \n" +
+                        "    a,\n" +
+                        "    case\n" +
+                        "        when a > 10 then $1\n" +
+                        "        else $2\n" +
+                        "    end k\n" +
+                        "from test",
+                "create table test as (select cast(x as long) a, timestamp_sequence(0, 1000000) ts from long_sequence(5))",
+                49,
+                "CASE values cannot be bind variables"
+        );
     }
 
     @Test

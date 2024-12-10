@@ -25,15 +25,12 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.conditional.CaseCommon;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
-
-import static io.questdb.cairo.ColumnType.STRING;
-import static io.questdb.cairo.ColumnType.UNDEFINED;
 
 public interface FunctionFactory {
     /**
@@ -120,28 +117,12 @@ public interface FunctionFactory {
      * SQL Compiler will use this as a hint to determine type of variadic arguments when they have the
      * UNDEFINED type at compile time.
      * <p>
-     * Default implementation finds common type among all arguments. This works well for most functions.
      *
      * @param args list of arguments, function type can be undefined
      * @return preferred type for variadic arguments
      */
-    default int resolvePreferredVariadicType(ObjList<Function> args) throws SqlException {
-        int commonType = UNDEFINED;
-
-        for (int i = 0, n = args.size(); i < n; i++) {
-            int currentType = args.getQuick(i).getType();
-            if (currentType == UNDEFINED) {
-                continue;
-            }
-            if (commonType == UNDEFINED) {
-                commonType = currentType;
-            } else if (commonType != currentType) {
-                commonType = CaseCommon.getCommonType(commonType, commonType, -1, null);
-            }
-        }
-        if (commonType == UNDEFINED) {
-            return STRING; // fallback to string
-        }
-        return commonType;
+    default int resolvePreferredVariadicType(ObjList<Function> args) {
+        return ColumnType.VARCHAR;
     }
+
 }

@@ -35,9 +35,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
-import static io.questdb.cairo.ColumnType.STRING;
-import static io.questdb.cairo.ColumnType.UNDEFINED;
-
 public class CaseFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
@@ -118,35 +115,5 @@ public class CaseFunctionFactory implements FunctionFactory {
         };
 
         return CaseCommon.getCaseFunction(position, returnType, picker, argsToPoke);
-    }
-
-    @Override
-    public int resolvePreferredVariadicType(ObjList<Function> args) throws SqlException {
-        int elseBranchType = UNDEFINED;
-
-        int n = args.size();
-        if (n % 2 == 1) {
-            Function elseBranch = args.getQuick(n - 1);
-            elseBranchType = elseBranch.getType();
-            n--;
-        }
-        int commonType = elseBranchType;
-
-        for (int i = 0; i < n; i += 2) {
-            int currentType = args.getQuick(i + 1).getType();
-            if (currentType == UNDEFINED) {
-                continue;
-            }
-            if (commonType == UNDEFINED) {
-                commonType = currentType;
-            } else if (commonType != currentType) {
-                commonType = CaseCommon.getCommonType(commonType, commonType, -1, null);
-            }
-        }
-
-        if (commonType == UNDEFINED) {
-            return STRING; // fallback to string
-        }
-        return commonType;
     }
 }
