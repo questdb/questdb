@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
@@ -53,7 +52,7 @@ public class Base64DecodeFunctionFactory implements FunctionFactory {
                                 ObjList<Function> args,
                                 IntList argPositions,
                                 CairoConfiguration configuration,
-                                SqlExecutionContext sqlExecutionContext) throws SqlException {
+                                SqlExecutionContext sqlExecutionContext) {
 
         Function func = args.get(0);
         return new Base64DecodeFunc(func);
