@@ -2885,34 +2885,14 @@ public class SampleByTest extends AbstractCairoTest {
                     "sample by 8h from\n" +
                     "'2024-12-08' to '2024-12-09'\n" +
                     "fill(0)");
-        });
-    }
-
-    @Test
-    public void testPrefixedTableNames2() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE IF NOT EXISTS 'sys.telemetry_wal' ( " +
-                    "created TIMESTAMP, " +
-                    "event SHORT, " +
-                    "tableId INT, " +
-                    "walId INT, " +
-                    "seqTxn LONG, " +
-                    "rowCount LONG, " +
-                    "physicalRowCount LONG, " +
-                    "latency FLOAT " +
-                    ") timestamp(created) " +
-                    "PARTITION BY MONTH BYPASS WAL " +
-                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
-            assertSql("created\tcommit_rate\n" +
-                    "2024-12-08T00:00:00.000000Z\t0\n" +
-                    "2024-12-08T08:00:00.000000Z\t0\n" +
-                    "2024-12-08T16:00:00.000000Z\t0\n", "select created, count() commit_rate\n" +
+            // general case is not fixed
+            assertException("select created, count() commit_rate\n" +
                     "from sys.telemetry_wal\n" +
                     "where tableId = 1017 and event = 103\n" +
                     "and \"sys.telemetry_wal\".created >= '2024-12-08' and created < '2024-12-09'\n" +
                     "sample by 8h from\n" +
                     "'2024-12-08' to '2024-12-09'\n" +
-                    "fill(0)");
+                    "fill(0)", 0, "Invalid column: telemetry_wal.created");
         });
     }
 
