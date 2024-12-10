@@ -2861,7 +2861,7 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPrefixedTableNames1() throws Exception {
+    public void testPrefixedTableNames() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE IF NOT EXISTS 'sys.telemetry_wal' ( " +
                     "created TIMESTAMP, " +
