@@ -116,4 +116,9 @@ public class CaseFunctionFactory implements FunctionFactory {
 
         return CaseCommon.getCaseFunction(position, returnType, picker, argsToPoke);
     }
+
+    @Override
+    public int resolvePreferredVariadicType(int pos, ObjList<Function> args) throws SqlException {
+        throw SqlException.$(pos, "CASE values cannot be bind variables");
+    }
 }

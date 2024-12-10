@@ -118,10 +118,11 @@ public interface FunctionFactory {
      * UNDEFINED type at compile time.
      * <p>
      *
+     * @param pos  position of variadic argument in the list of arguments
      * @param args list of arguments, function type can be undefined
      * @return preferred type for variadic arguments
      */
-    default int resolvePreferredVariadicType(ObjList<Function> args) {
+    default int resolvePreferredVariadicType(int pos, ObjList<Function> args) throws SqlException {
         return ColumnType.STRING;
     }
 
