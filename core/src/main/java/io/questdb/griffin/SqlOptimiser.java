@@ -5053,11 +5053,16 @@ public class SqlOptimiser implements Mutable {
             assert timestamp != null;
 
             if (Chars.indexOf(timestamp.token, '.') < 0) {
-                // prefix the timestamp column name
-                CharacterStoreEntry e = characterStore.newEntry();
-                e.put(toAddWhereClause.getTableName()).putAscii('.').put(timestamp.token);
-                CharSequence prefixedTimestamp = e.toImmutable();
-                timestamp = expressionNodePool.next().of(LITERAL, prefixedTimestamp, timestamp.precedence, timestamp.position);
+                // prefix the timestamp column name only if the table is not dotted
+                // this is to handle cases where we use system tables, which are prefixed
+                // downstream code cannot handle `"sys.telemetry.wal".created`
+                // it will break in `where` optimisation, and later metadata lookups
+                if (Chars.indexOf(toAddWhereClause.getTableName(), '.') < 0) {
+                    CharacterStoreEntry e = characterStore.newEntry();
+                    e.put(toAddWhereClause.getTableName()).putAscii('.').put(timestamp.token);
+                    CharSequence prefixedTimestamp = e.toImmutable();
+                    timestamp = expressionNodePool.next().of(LITERAL, prefixedTimestamp, timestamp.precedence, timestamp.position);
+                }
             }
 
             // construct an appropriate where clause
@@ -6462,7 +6467,7 @@ public class SqlOptimiser implements Mutable {
         public void visit(ExpressionNode node) throws SqlException {
             switch (node.type) {
                 case LITERAL:
-                    int dot = Chars.indexOf(node.token, '.');
+                    int dot = Chars.lastIndexOf(node.token, ".");
                     CharSequence name = dot == -1 ? node.token : node.token.subSequence(dot + 1, node.token.length());
                     indexes.add(validateColumnAndGetModelIndex(model, node.token, dot, node.position));
                     if (names != null) {
