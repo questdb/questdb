@@ -27,13 +27,28 @@ package io.questdb.std.ndarr;
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.CRC16XModem;
 import io.questdb.std.DirectIntSlice;
+import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.NotNull;
 
 /**
  * A view over an immutable N-dimensional Array.
  * This is a flyweight object.
  */
 public class NdArrayView {
+    private final DirectIntSlice shape = new DirectIntSlice();
+    private final DirectIntSlice strides = new DirectIntSlice();
+    private final NdArrayValuesSlice values = new NdArrayValuesSlice();
+    int valuesOffset = 0;
     private volatile short crc;
+    private int type = ColumnType.UNDEFINED;
+
+    public boolean getBoolean(DirectIntSlice coordinates) {
+        return values.getBoolean(flatIndex(coordinates));
+    }
+
+    public byte getByte(DirectIntSlice coordinates) {
+        return values.getByte(flatIndex(coordinates));
+    }
 
     /**
      * Gets the CRC value, if one was already previously calculated.
@@ -43,34 +58,38 @@ public class NdArrayView {
         return crc;
     }
 
-    public enum ValidatonStatus {
-        OK,
+    public short getCrc() {
+        if (isNull()) {
+            return 0;
+        }
 
-        /** Not an ARRAY(...) ColumnType. */
-        BAD_TYPE,
+        // Compute lazily.
+        if (crc == 0) {
+            // IMPORTANT!!
+            // Keep this logic in sync with the "intrusive"
+            // CRC logic in `NdArrayTypeDriver.writeValues`.
 
-        /** There are a different number of dimensions and strides. */
-        UNALIGNED_SHAPE_AND_STRIDES,
+            // Add the dimension information first.
+            short checksum = CRC16XModem.updateInt(CRC16XModem.init(), shape.length());
+            for (int dimIndex = 0, nDims = shape.length(); dimIndex < nDims; ++dimIndex) {
+                final int dim = shape.get(dimIndex);
+                checksum = CRC16XModem.updateInt(checksum, dim);
+            }
 
-        /** The shape contains 0 or negative dimensions. */
-        BAD_SHAPE,
-
-        /** The values vector is of an unexpected byte length. */
-        BAD_VALUES_SIZE,
-    }
-
-    private final DirectIntSlice shape = new DirectIntSlice();
-    private final DirectIntSlice strides = new DirectIntSlice();
-    private final NdArrayValuesSlice values = new NdArrayValuesSlice();
-    int valuesOffset = 0;
-    private int type = ColumnType.UNDEFINED;
-
-    public boolean getBoolean(DirectIntSlice coordinates) {
-        return values.getBoolean(flatIndex(coordinates));
-    }
-
-    public byte getByte(DirectIntSlice coordinates) {
-        return values.getByte(flatIndex(coordinates));
+            // Add the values next.
+            if ((ColumnType.getNdArrayElementTypePrecision(type) < 3) && (valuesOffset > 0)) {
+                // We don't currently support walking data that has a byte-unaligned start.
+                // In other words, a scenario where the first value is not at the start of a byte boundary.
+                // We simplify this even further by not supporting `valuesOffset` at all yet.
+                throw new UnsupportedOperationException("nyi");
+            }
+            if (!hasDefaultStrides()) {
+                throw new UnsupportedOperationException("nyi");
+            }
+            checksum = CRC16XModem.updateBytes(checksum, values.ptr(), values.size());
+            crc = CRC16XModem.finalize(checksum);
+        }
+        return crc;
     }
 
     public double getDouble(DirectIntSlice coordinates) {
@@ -89,8 +108,38 @@ public class NdArrayView {
         return values.getLong(flatIndex(coordinates));
     }
 
+    /**
+     * Get the dimensions (<i>aka shape</i>) of the array.
+     * <p>Examples shapes:
+     * <ul>
+     *     <li>A 1-D vector of 100 elements: <code>[100]</code>.</li>
+     *     <li>A 2-D matrix of 50 rows and 2 columns: <code>[50, 2]</code>.</li>
+     * </ul></p>
+     */
+    public DirectIntSlice getShape() {
+        return shape;
+    }
+
     public short getShort(DirectIntSlice coordinates) {
         return values.getShort(flatIndex(coordinates));
+    }
+
+    /**
+     * Get the array's strides, in element space.
+     * <p>The returned strides expresses the number of elements to skip
+     * to read the next element in each dimension.</p>
+     * <p><strong>IMPORTANT:</strong>
+     * <ul>
+     *     <li>A stride can be <code>0</code>, in case of broadcasting, or
+     *         <code>&lt; 0</code> in case of reversing of data.</li>
+     *     <li>Most libraries support strides expressed in the byte space.
+     *         Since we also support packed arrays (e.g. bool bit arrays),
+     *         the strides here are expressed in the element count space
+     *         instead.</li>
+     * </ul></p>
+     */
+    public DirectIntSlice getStrides() {
+        return strides;
     }
 
     /**
@@ -136,6 +185,10 @@ public class NdArrayView {
      */
     public int getValuesOffset() {
         return valuesOffset;
+    }
+
+    public boolean hasDefaultStrides() {
+        return NdArrayMeta.isDefaultStrides(shape, strides);
     }
 
     /**
@@ -185,19 +238,12 @@ public class NdArrayView {
             this.values.of(valuesPtr, valuesSize);
             this.valuesOffset = valuesOffset;
             complete = true;
-        }
-        finally {
+        } finally {
             if (!complete) {
                 reset();
             }
         }
         return ValidatonStatus.OK;
-    }
-
-    private static boolean validValuesSize(int type, int valuesOffset, int valuesLength, int valuesSize) {
-        final int totExpectedElementCapacity = valuesOffset + valuesLength;
-        final int expectedByteSize = NdArrayMeta.calcRequiredValuesByteSize(type, totExpectedElementCapacity);
-        return expectedByteSize == valuesSize;
     }
 
     /**
@@ -221,6 +267,12 @@ public class NdArrayView {
         this.crc = 0;
     }
 
+    private static boolean validValuesSize(int type, int valuesOffset, int valuesLength, int valuesSize) {
+        final int totExpectedElementCapacity = valuesOffset + valuesLength;
+        final int expectedByteSize = NdArrayMeta.calcRequiredValuesByteSize(type, totExpectedElementCapacity);
+        return expectedByteSize == valuesSize;
+    }
+
     /**
      * Convert the coordinates into an element index into the values array.
      */
@@ -236,71 +288,27 @@ public class NdArrayView {
         return valuesOffset + flatIndex;
     }
 
-    /**
-     * Get the dimensions (<i>aka shape</i>) of the array.
-     * <p>Examples shapes:
-     * <ul>
-     *     <li>A 1-D vector of 100 elements: <code>[100]</code>.</li>
-     *     <li>A 2-D matrix of 50 rows and 2 columns: <code>[50, 2]</code>.</li>
-     * </ul></p>
-     */
-    public DirectIntSlice getShape() {
-        return shape;
-    }
+    public enum ValidatonStatus {
+        OK,
 
-    /**
-     * Get the array's strides, in element space.
-     * <p>The returned strides expresses the number of elements to skip
-     * to read the next element in each dimension.</p>
-     * <p><strong>IMPORTANT:</strong>
-     * <ul>
-     *     <li>A stride can be <code>0</code>, in case of broadcasting, or
-     *         <code>&lt; 0</code> in case of reversing of data.</li>
-     *     <li>Most libraries support strides expressed in the byte space.
-     *         Since we also support packed arrays (e.g. bool bit arrays),
-     *         the strides here are expressed in the element count space
-     *         instead.</li>
-     * </ul></p>
-     */
-    public DirectIntSlice getStrides() {
-        return strides;
-    }
+        /**
+         * Not an ARRAY(...) ColumnType.
+         */
+        BAD_TYPE,
 
-    public boolean hasDefaultStrides() {
-        return NdArrayMeta.isDefaultStrides(shape, strides);
-    }
+        /**
+         * There are a different number of dimensions and strides.
+         */
+        UNALIGNED_SHAPE_AND_STRIDES,
 
-    public short getCrc() {
-        if (isNull()) {
-            return 0;
-        }
+        /**
+         * The shape contains 0 or negative dimensions.
+         */
+        BAD_SHAPE,
 
-        // Compute lazily.
-        if (crc == 0) {
-            // IMPORTANT!!
-            // Keep this logic in sync with the "intrusive"
-            // CRC logic in `NdArrayTypeDriver.writeValues`.
-
-            // Add the dimension information first.
-            short checksum = CRC16XModem.updateInt(CRC16XModem.init(), shape.length());
-            for (int dimIndex = 0, nDims = shape.length(); dimIndex < nDims; ++dimIndex) {
-                final int dim = shape.get(dimIndex);
-                checksum = CRC16XModem.updateInt(checksum, dim);
-            }
-
-            // Add the values next.
-            if ((ColumnType.getNdArrayElementTypePrecision(type) < 3) && (valuesOffset > 0)) {
-                // We don't currently support walking data that has a byte-unaligned start.
-                // In other words, a scenario where the first value is not at the start of a byte boundary.
-                // We simplify this even further by not supporting `valuesOffset` at all yet.
-                throw new UnsupportedOperationException("nyi");
-            }
-            if (!hasDefaultStrides()) {
-                throw new UnsupportedOperationException("nyi");
-            }
-            checksum = CRC16XModem.updateBytes(checksum, values.ptr(), values.size());
-            crc = CRC16XModem.finalize(checksum);
-        }
-        return crc;
+        /**
+         * The values vector is of an unexpected byte length.
+         */
+        BAD_VALUES_SIZE,
     }
 }

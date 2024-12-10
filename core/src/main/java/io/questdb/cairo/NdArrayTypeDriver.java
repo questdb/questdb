@@ -120,10 +120,9 @@ import java.io.Closeable;
  */
 public class NdArrayTypeDriver implements ColumnTypeDriver {
     public static final NdArrayTypeDriver INSTANCE = new NdArrayTypeDriver();
-    public static final int ND_ARRAY_AUX_WIDTH_BYTES = 3 * Integer.BYTES;
-    private static final int CRC16_MASK = 0xFFFF;
-    private static final int CRC16_SHIFT = 48;
-    private static final long OFFSET_MAX = (1L << 48) - 1L;
+    public static final long OFFSET_MAX = (1L << 48) - 1L;
+    public static final int CRC16_SHIFT = 48;
+    private static final int ND_ARRAY_AUX_WIDTH_BYTES = 3 * Integer.BYTES;
     private static final ThreadLocal<DirectIntList> SHAPE = new ThreadLocal<>(NdArrayTypeDriver::newShape);
     public static final Closeable THREAD_LOCAL_CLEANER = NdArrayTypeDriver::clearThreadLocals;
     private static final long U32_MASK = 0xFFFFFFFFL;
@@ -139,6 +138,23 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
         final long endOffset = dataMem.getAppendOffset();
         final int size = (int) (endOffset - beginOffset);
         writeAuxEntry(auxMem, beginOffset, crc, size);
+    }
+
+    public static long getIntAlignedLong(@NotNull MemoryR mem, long offset) {
+        final int lower = mem.getInt(offset);
+        final int upper = mem.getInt(offset + Integer.BYTES);
+        return ((long) upper << 32) | (lower & U32_MASK);
+    }
+
+    /** Number of bytes to skip to find the next aligned address/offset. */
+    public static int skipsToAlign(long unaligned, int byteAlignment) {
+        final int pastBy = (int) (unaligned % byteAlignment);
+        if (pastBy == 0) {
+            return 0;
+        }
+
+        // The number of bytes to skip is the complement of how many we're past by.
+        return byteAlignment - pastBy;
     }
 
     @Override
@@ -224,7 +240,7 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
 
     @Override
     public long getDataVectorMinEntrySize() {
-        throw new UnsupportedOperationException("nyi");
+        return 0;
     }
 
     @Override
@@ -362,13 +378,7 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
         SHAPE.close();
     }
 
-    private static long getIntAlignedLong(@NotNull MemoryR mem, long offset) {
-        final int lower = mem.getInt(offset);
-        final int upper = mem.getInt(offset + Integer.BYTES);
-        return ((long) upper << 32) | (lower & U32_MASK);
-    }
-
-    private static long getIntAlignedLong(long address) {
+    public static long getIntAlignedLong(long address) {
         final int lower = Unsafe.getUnsafe().getInt(address);
         final int upper = Unsafe.getUnsafe().getInt(address + Integer.BYTES);
         return ((long) upper << 32) | (lower & U32_MASK);
@@ -394,9 +404,9 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
         return new DirectIntList(8, MemoryTag.NATIVE_ND_ARRAY);
     }
 
-    private static void padTo(@NotNull MemoryA dataMem, long byteAlignment) {
-        final long requiredPadding = dataMem.getAppendOffset() % byteAlignment;
-        for (long paddingIndex = 0; paddingIndex < requiredPadding; ++paddingIndex) {
+    private static void padTo(@NotNull MemoryA dataMem, int byteAlignment) {
+        final int requiredPadding = skipsToAlign(dataMem.getAppendOffset(), byteAlignment);
+        for (int paddingIndex = 0; paddingIndex < requiredPadding; ++paddingIndex) {
             dataMem.putByte((byte) 0);
         }
     }
@@ -440,7 +450,7 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
         // We thus need to align accordingly. I.e., if we store doubles, we need to align on an 8-byte boundary.
         // for shorts, it's on a 2-byte boundary. For booleans, we align to the byte.
         final int bitWidth = 1 << ColumnType.getNdArrayElementTypePrecision(array.getType());
-        final int requiredByteAlignment = Math.max(1, bitWidth / 8);
+        final int requiredByteAlignment = (bitWidth + 7) / 8;
         padTo(dataMem, requiredByteAlignment);
         final short crc = writeValues(dataMem, array, bitWidth);
         // We pad at the end, ready for the next entry that starts with an int.
@@ -449,7 +459,8 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
     }
 
     private static short writeFlatValueBytes(@NotNull MemoryA dataMem, @NotNull NdArrayView array, int bitWidth, NdArrayValuesSlice values) {
-        final int bytesToSkip = array.getValuesOffset() * bitWidth / 8;
+        final int requiredByteAlignment = (bitWidth + 7) / 8;
+        final int bytesToSkip = skipsToAlign(array.getValuesOffset(), requiredByteAlignment);
         final short cachedCrc = array.getCachedCrc();
         if (cachedCrc != 0) {
             // Pre-computed checksum.
@@ -464,6 +475,7 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
             for (int index = 0, size = values.size() - bytesToSkip; index < size; ++index) {
                 final byte value = values.getByte(index);
                 crc = CRC16XModem.update(crc, value);
+                dataMem.putByte(value);
             }
             return CRC16XModem.finalize(crc);
         }

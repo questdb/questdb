@@ -165,5 +165,6 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(NATIVE_TABLE_WAL_WRITER, "NATIVE_TABLE_WAL_WRITER");
         tagNameMap.extendAndSet(NATIVE_METADATA_READER, "NATIVE_METADATA_READER");
         tagNameMap.extendAndSet(NATIVE_BIT_SET, "NATIVE_BIT_SET");
+        tagNameMap.extendAndSet(NATIVE_ND_ARRAY, "NATIVE_ND_ARRAY");
     }
 }

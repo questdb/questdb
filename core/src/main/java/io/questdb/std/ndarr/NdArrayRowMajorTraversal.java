@@ -29,8 +29,6 @@ import io.questdb.std.DirectIntSlice;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
-import io.questdb.std.ThreadLocal;
-import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
@@ -54,21 +52,47 @@ import java.io.Closeable;
 public class NdArrayRowMajorTraversal implements QuietCloseable {
     public static final io.questdb.std.ThreadLocal<NdArrayRowMajorTraversal> LOCAL = new io.questdb.std.ThreadLocal<>(NdArrayRowMajorTraversal::new);
     public static final Closeable THREAD_LOCAL_CLEANER = NdArrayRowMajorTraversal::clearThreadLocals;
-
-    public static void clearThreadLocals() {
-        LOCAL.close();
-    }
-
     private final DirectIntList coordinates = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY);
     private boolean done = false;
+    private int in = 0;
+    private int out = 0;
     /**
      * The array's shape
      */
     private DirectIntSlice shape;
 
+    public static void clearThreadLocals() {
+        LOCAL.close();
+    }
+
     @Override
     public void close() {
         Misc.free(coordinates);
+    }
+
+    /**
+     * Number of levels of nesting to bump deeper
+     * into <em>before</em> processing the coordinates returned
+     * by {@link #next()}.
+     */
+    public int getIn() {
+        return in;
+    }
+
+    /**
+     * Number of levels of nesting to bump out of
+     * <em>after</em> processing the coordinates returned by
+     * {@link #next()}.
+     */
+    public int getOut() {
+        return out;
+    }
+
+    /**
+     * There's another coordinate after this one.
+     */
+    public boolean hasNext() {
+        return !done;
     }
 
     /**
@@ -79,21 +103,35 @@ public class NdArrayRowMajorTraversal implements QuietCloseable {
             return null;
         }
 
-        int carryCounter = 0;
-        for (int dimIndex = shape.length() - 1; dimIndex >= 0; --dimIndex) {
-            int current = coordinates.get(dimIndex);
-            if (current + 1 < shape.get(dimIndex)) {
+        // If we previously bumped out, we need to bump deeper
+        // by the same level of nesting at the next (this) iteration.
+        in = out;
+        out = 0;
+
+        // The `out` variable counts how many dims _will be_ reset to zero in the call to `next()` after this one.
+        final int lastDimIndex = shape.length() - 1;
+        for (int dimIndex = lastDimIndex; dimIndex >= 0; --dimIndex) {
+            final int dim = shape.get(dimIndex);
+            final int current = coordinates.get(dimIndex);
+            if (out > 0) {
+                if (current + 1 == dim) {
+                    ++out;
+                } else {
+                    break;
+                }
+            } else if ((dimIndex == lastDimIndex) && (current + 2 == dim)) {
+                coordinates.set(dimIndex, current + 1);
+                ++out;
+            } else if (current + 1 < dim) {
                 coordinates.set(dimIndex, current + 1);
                 break;
             } else {
                 coordinates.set(dimIndex, 0);
-                ++carryCounter;
             }
         }
 
-        if (carryCounter == shape.length()) {
+        if (out == shape.length()) {
             done = true;
-            return null;
         }
 
         return coordinates.asSlice();
@@ -110,17 +148,20 @@ public class NdArrayRowMajorTraversal implements QuietCloseable {
             coordinates.add(0);
         }
         if (coordinates.size() > 0) {
+            done = false;
             coordinates.set(coordinates.size() - 1, -1);  // one before the end.
         }
-        else {
-            done = true;
-        }
+
+        // will be converted to `in == shape.length()` on first iteration.
+        out = shape.length();
         return this;
     }
 
     private void reset() {
         coordinates.clear();
         shape = null;
-        done = false;
+        done = true;
+        in = 0;
+        out = 0;
     }
 }

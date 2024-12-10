@@ -28,7 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
-import io.questdb.std.ndarr.NdArrayBuffers;
+import io.questdb.std.ndarr.NdArrayBuffer;
 import io.questdb.std.ndarr.NdArrayMeta;
 import io.questdb.std.ndarr.NdArrayView;
 import io.questdb.std.str.DirectUtf8String;
@@ -68,7 +68,7 @@ public class NdArrayParser implements QuietCloseable {
      * </ul>
      * <p>In short, negative (uncertain) dimensions are counted down, positive (determined) dimensions validate future data.</p>
      */
-    private final NdArrayBuffers bufs = new NdArrayBuffers();
+    private final NdArrayBuffer bufs = new NdArrayBuffer();
     private final DirectUtf8String parsing = new DirectUtf8String();
 
     private final NdArrayView view = new NdArrayView();

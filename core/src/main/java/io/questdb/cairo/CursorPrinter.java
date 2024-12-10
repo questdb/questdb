@@ -29,9 +29,16 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Chars;
+import io.questdb.std.Interval;
+import io.questdb.std.Numbers;
+import io.questdb.std.Uuid;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.ndarr.NdArrayJsonSerializer;
+import io.questdb.std.ndarr.NdArrayRowMajorTraversal;
+import io.questdb.std.ndarr.NdArrayView;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -162,6 +169,14 @@ public class CursorPrinter {
                 Interval interval = record.getInterval(columnIndex);
                 if (!Interval.NULL.equals(interval)) {
                     interval.toSink(sink);
+                }
+                break;
+            case ColumnType.ND_ARRAY:
+                final NdArrayView array = record.getNdArrayA(columnIndex, columnType);
+                if (array != null) {
+                    NdArrayJsonSerializer.serialize(sink, array, NdArrayRowMajorTraversal.LOCAL.get(), columnType);
+                } else {
+                    sink.put(nullStringValue);
                 }
                 break;
             default:

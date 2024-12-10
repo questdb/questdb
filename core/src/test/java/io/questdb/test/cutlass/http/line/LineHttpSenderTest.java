@@ -490,11 +490,19 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             .longColumn("l1", 23452345)
                             .arrayColumn("a1", "{6f1.0,2.5,3.0,4.5,5.0}")
                             .arrayColumn("a2", "{6s-1,0,100000000}")
-                            .atNow();
+                            .at(100000000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
 
                 serverMain.awaitTxn(tableName, 1);
+
+                serverMain.assertSql("select * from " + tableName, "x\ty\tl1\ta1\ta2\tts\n" +
+                        "42i\t" +
+                        "{6f1.0,2.5,3.0,4.5,5.0}\t" +
+                        "23452345\t" +
+                        "[1.0,2.5,3.0,4.5,5.0]\t" +
+                        "[-1,0,100000000]\t" +
+                        "1970-01-02T03:46:40.000000Z\n");
             }
         });
     }

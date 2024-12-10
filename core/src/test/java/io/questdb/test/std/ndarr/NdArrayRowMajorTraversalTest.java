@@ -37,6 +37,45 @@ public class NdArrayRowMajorTraversalTest {
     private static final Log LOG = LogFactory.getLog(NdArrayRowMajorTraversalTest.class);
 
     @Test
+    public void test1() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    DirectIntList shape = new DirectIntList(1, MemoryTag.NATIVE_ND_ARRAY);
+                    NdArrayRowMajorTraversal traversal = new NdArrayRowMajorTraversal()
+            ) {
+                shape.add(1);
+                traversal.of(shape.asSlice());
+
+                Assert.assertArrayEquals(new int[]{0}, traversal.next().toArray());
+                Assert.assertEquals(1, traversal.getIn());
+                Assert.assertEquals(1, traversal.getOut());
+                Assert.assertFalse(traversal.hasNext());
+                Assert.assertNull(traversal.next());
+            }
+        });
+    }
+
+    @Test
+    public void test1x1() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    DirectIntList shape = new DirectIntList(1, MemoryTag.NATIVE_ND_ARRAY);
+                    NdArrayRowMajorTraversal traversal = new NdArrayRowMajorTraversal()
+            ) {
+                shape.add(1);
+                shape.add(1);
+                traversal.of(shape.asSlice());
+
+                Assert.assertArrayEquals(new int[]{0, 0}, traversal.next().toArray());
+                Assert.assertEquals(2, traversal.getIn());
+                Assert.assertEquals(2, traversal.getOut());
+                Assert.assertFalse(traversal.hasNext());
+                Assert.assertNull(traversal.next());
+            }
+        });
+    }
+
+    @Test
     public void test2x3() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (
@@ -52,31 +91,49 @@ public class NdArrayRowMajorTraversalTest {
                 //   X - -
                 //   - - -
                 Assert.assertArrayEquals(new int[]{0, 0}, t.next().toArray());
+                Assert.assertEquals(2, t.getIn());
+                Assert.assertEquals(0, t.getOut());
+                Assert.assertTrue(t.hasNext());
 
                 // {0, 1}:
                 //   - X -
                 //   - - -
                 Assert.assertArrayEquals(new int[]{0, 1}, t.next().toArray());
+                Assert.assertEquals(0, t.getIn());
+                Assert.assertEquals(0, t.getOut());
+                Assert.assertTrue(t.hasNext());
 
                 // {0, 2}:
                 //   - - X
                 //   - - -
                 Assert.assertArrayEquals(new int[]{0, 2}, t.next().toArray());
+                Assert.assertEquals(0, t.getIn());
+                Assert.assertEquals(1, t.getOut());
+                Assert.assertTrue(t.hasNext());
 
                 // {1, 0}:
                 //   - - -
                 //   X - -
                 Assert.assertArrayEquals(new int[]{1, 0}, t.next().toArray());
+                Assert.assertEquals(1, t.getIn());
+                Assert.assertEquals(0, t.getOut());
+                Assert.assertTrue(t.hasNext());
 
                 // {1, 1}:
                 //   - - -
                 //   - X -
                 Assert.assertArrayEquals(new int[]{1, 1}, t.next().toArray());
+                Assert.assertEquals(0, t.getIn());
+                Assert.assertEquals(0, t.getOut());
+                Assert.assertTrue(t.hasNext());
 
                 // {1, 2}:
                 //   - - -
                 //   - - X
                 Assert.assertArrayEquals(new int[]{1, 2}, t.next().toArray());
+                Assert.assertEquals(0, t.getIn());
+                Assert.assertEquals(2, t.getOut());
+                Assert.assertFalse(t.hasNext());
 
                 // End of iteration.
                 Assert.assertNull(t.next());
@@ -110,30 +167,137 @@ public class NdArrayRowMajorTraversalTest {
                 shape.add(4);
                 traversal.of(shape.asSlice());
 
+                Assert.assertTrue(traversal.hasNext());
                 Assert.assertArrayEquals(new int[]{0, 0, 0}, traversal.next().toArray());
+                Assert.assertEquals(3, traversal.getIn());
+                Assert.assertEquals(0, traversal.getOut());
+                Assert.assertTrue(traversal.hasNext());
                 Assert.assertArrayEquals(new int[]{0, 0, 1}, traversal.next().toArray());
+                Assert.assertEquals(0, traversal.getIn());
+                Assert.assertEquals(0, traversal.getOut());
+                Assert.assertTrue(traversal.hasNext());
                 Assert.assertArrayEquals(new int[]{0, 0, 2}, traversal.next().toArray());
+                Assert.assertEquals(0, traversal.getIn());
+                Assert.assertEquals(0, traversal.getOut());
+                Assert.assertTrue(traversal.hasNext());
                 Assert.assertArrayEquals(new int[]{0, 0, 3}, traversal.next().toArray());
+                Assert.assertEquals(0, traversal.getIn());
+                Assert.assertEquals(1, traversal.getOut());
+                Assert.assertTrue(traversal.hasNext());
                 Assert.assertArrayEquals(new int[]{0, 1, 0}, traversal.next().toArray());
+                Assert.assertEquals(1, traversal.getIn());
+                Assert.assertEquals(0, traversal.getOut());
+                Assert.assertTrue(traversal.hasNext());
                 Assert.assertArrayEquals(new int[]{0, 1, 1}, traversal.next().toArray());
+                Assert.assertEquals(0, traversal.getIn());
+                Assert.assertEquals(0, traversal.getOut());
+                Assert.assertTrue(traversal.hasNext());
                 Assert.assertArrayEquals(new int[]{0, 1, 2}, traversal.next().toArray());
+                Assert.assertEquals(0, traversal.getIn());
+                Assert.assertEquals(0, traversal.getOut());
+                Assert.assertTrue(traversal.hasNext());
                 Assert.assertArrayEquals(new int[]{0, 1, 3}, traversal.next().toArray());
+                Assert.assertEquals(0, traversal.getIn());
+                Assert.assertEquals(1, traversal.getOut());
+                Assert.assertTrue(traversal.hasNext());
                 Assert.assertArrayEquals(new int[]{0, 2, 0}, traversal.next().toArray());
+                Assert.assertEquals(1, traversal.getIn());
+                Assert.assertEquals(0, traversal.getOut());
+                Assert.assertTrue(traversal.hasNext());
                 Assert.assertArrayEquals(new int[]{0, 2, 1}, traversal.next().toArray());
+                Assert.assertEquals(0, traversal.getIn());
+                Assert.assertEquals(0, traversal.getOut());
+                Assert.assertTrue(traversal.hasNext());
                 Assert.assertArrayEquals(new int[]{0, 2, 2}, traversal.next().toArray());
+                Assert.assertEquals(0, traversal.getIn());
+                Assert.assertEquals(0, traversal.getOut());
+                Assert.assertTrue(traversal.hasNext());
                 Assert.assertArrayEquals(new int[]{0, 2, 3}, traversal.next().toArray());
+                Assert.assertEquals(0, traversal.getIn());
+                Assert.assertEquals(2, traversal.getOut());
+                Assert.assertTrue(traversal.hasNext());
                 Assert.assertArrayEquals(new int[]{1, 0, 0}, traversal.next().toArray());
+                Assert.assertEquals(2, traversal.getIn());
+                Assert.assertEquals(0, traversal.getOut());
+                Assert.assertTrue(traversal.hasNext());
                 Assert.assertArrayEquals(new int[]{1, 0, 1}, traversal.next().toArray());
+                Assert.assertEquals(0, traversal.getIn());
+                Assert.assertEquals(0, traversal.getOut());
+                Assert.assertTrue(traversal.hasNext());
                 Assert.assertArrayEquals(new int[]{1, 0, 2}, traversal.next().toArray());
+                Assert.assertEquals(0, traversal.getIn());
+                Assert.assertEquals(0, traversal.getOut());
+                Assert.assertTrue(traversal.hasNext());
                 Assert.assertArrayEquals(new int[]{1, 0, 3}, traversal.next().toArray());
+                Assert.assertEquals(0, traversal.getIn());
+                Assert.assertEquals(1, traversal.getOut());
+                Assert.assertTrue(traversal.hasNext());
                 Assert.assertArrayEquals(new int[]{1, 1, 0}, traversal.next().toArray());
+                Assert.assertEquals(1, traversal.getIn());
+                Assert.assertEquals(0, traversal.getOut());
+                Assert.assertTrue(traversal.hasNext());
                 Assert.assertArrayEquals(new int[]{1, 1, 1}, traversal.next().toArray());
+                Assert.assertEquals(0, traversal.getIn());
+                Assert.assertEquals(0, traversal.getOut());
+                Assert.assertTrue(traversal.hasNext());
                 Assert.assertArrayEquals(new int[]{1, 1, 2}, traversal.next().toArray());
+                Assert.assertEquals(0, traversal.getIn());
+                Assert.assertEquals(0, traversal.getOut());
+                Assert.assertTrue(traversal.hasNext());
                 Assert.assertArrayEquals(new int[]{1, 1, 3}, traversal.next().toArray());
+                Assert.assertEquals(0, traversal.getIn());
+                Assert.assertEquals(1, traversal.getOut());
+                Assert.assertTrue(traversal.hasNext());
                 Assert.assertArrayEquals(new int[]{1, 2, 0}, traversal.next().toArray());
+                Assert.assertEquals(1, traversal.getIn());
+                Assert.assertEquals(0, traversal.getOut());
+                Assert.assertTrue(traversal.hasNext());
                 Assert.assertArrayEquals(new int[]{1, 2, 1}, traversal.next().toArray());
+                Assert.assertEquals(0, traversal.getIn());
+                Assert.assertEquals(0, traversal.getOut());
+                Assert.assertTrue(traversal.hasNext());
                 Assert.assertArrayEquals(new int[]{1, 2, 2}, traversal.next().toArray());
+                Assert.assertEquals(0, traversal.getIn());
+                Assert.assertEquals(0, traversal.getOut());
+                Assert.assertTrue(traversal.hasNext());
                 Assert.assertArrayEquals(new int[]{1, 2, 3}, traversal.next().toArray());
+                Assert.assertEquals(0, traversal.getIn());
+                Assert.assertEquals(3, traversal.getOut());
+                Assert.assertFalse(traversal.hasNext());
+                Assert.assertNull(traversal.next());
+            }
+        });
+    }
+
+    @Test
+    public void test4() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    DirectIntList shape = new DirectIntList(1, MemoryTag.NATIVE_ND_ARRAY);
+                    NdArrayRowMajorTraversal traversal = new NdArrayRowMajorTraversal()
+            ) {
+                shape.add(4);
+                traversal.of(shape.asSlice());
+
+                Assert.assertArrayEquals(new int[]{0}, traversal.next().toArray());
+                Assert.assertEquals(1, traversal.getIn());
+                Assert.assertEquals(0, traversal.getOut());
+                Assert.assertTrue(traversal.hasNext());
+
+                Assert.assertArrayEquals(new int[]{1}, traversal.next().toArray());
+                Assert.assertEquals(0, traversal.getIn());
+                Assert.assertEquals(0, traversal.getOut());
+                Assert.assertTrue(traversal.hasNext());
+
+                Assert.assertArrayEquals(new int[]{2}, traversal.next().toArray());
+                Assert.assertEquals(0, traversal.getIn());
+                Assert.assertEquals(0, traversal.getOut());
+                Assert.assertTrue(traversal.hasNext());
+
+                Assert.assertArrayEquals(new int[]{3}, traversal.next().toArray());
+                Assert.assertEquals(0, traversal.getIn());
+                Assert.assertEquals(1, traversal.getOut());
+                Assert.assertFalse(traversal.hasNext());
                 Assert.assertNull(traversal.next());
             }
         });
@@ -146,8 +310,14 @@ public class NdArrayRowMajorTraversalTest {
                     DirectIntList shape = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY);
                     NdArrayRowMajorTraversal traversal = new NdArrayRowMajorTraversal()
             ) {
+                traversal.of(shape.asSlice());
+                Assert.assertFalse(traversal.hasNext());
                 Assert.assertNull(traversal.of(shape.asSlice()).next());
+                Assert.assertFalse(traversal.hasNext());
                 Assert.assertNull(traversal.of(shape.asSlice()).next());
+                Assert.assertFalse(traversal.hasNext());
+                Assert.assertNull(traversal.of(shape.asSlice()).next());
+                Assert.assertFalse(traversal.hasNext());
                 Assert.assertNull(traversal.of(shape.asSlice()).next());
             }
         });

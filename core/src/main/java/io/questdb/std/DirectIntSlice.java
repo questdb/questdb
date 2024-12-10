@@ -25,6 +25,8 @@
 package io.questdb.std;
 
 import io.questdb.std.bytes.DirectSequence;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.TestOnly;
 
 /**
@@ -80,5 +82,23 @@ public class DirectIntSlice implements DirectSequence {
             res[i] = get(i);
         }
         return res;
+    }
+
+    @Override
+    public String toString() {
+        Utf16Sink sb = Misc.getThreadLocalSink();
+        sb.put('[');
+        final int maxElementsToPrint = 1000; // Do not try to print too much, it can hang IntelliJ debugger.
+        for (int i = 0, n = (int) Math.min(maxElementsToPrint, length); i < n; i++) {
+            if (i > 0) {
+                sb.put(',').put(' ');
+            }
+            sb.put(get(i));
+        }
+        if (size() > maxElementsToPrint) {
+            sb.put(", .. ");
+        }
+        sb.put(']');
+        return sb.toString();
     }
 }

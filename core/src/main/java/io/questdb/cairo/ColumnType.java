@@ -196,7 +196,7 @@ public final class ColumnType {
      */
     public static char getNdArrayElementTypeClass(int type) {
         if (ColumnType.tagOf(type) == ColumnType.ND_ARRAY) {
-            return (char)((type >> BITS_OFFSET) & 0x7FFF);  // 15-bit mask.
+            return (char)((type >> BITS_OFFSET >> BITS_OFFSET) & 0x7FFF);  // 15-bit mask.
         }
         return (char)-1;
     }

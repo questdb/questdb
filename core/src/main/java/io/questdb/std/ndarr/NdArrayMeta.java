@@ -27,6 +27,7 @@ package io.questdb.std.ndarr;
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectIntSlice;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -58,8 +59,8 @@ public class NdArrayMeta {
      */
     public static int calcRequiredValuesByteSize(int type, int elementsCount) {
         assert ColumnType.isNdArray(type);
-        final int typeBitWidth = 1 << ColumnType.getNdArrayElementTypePrecision(type);
-        final int requiredBits = elementsCount * typeBitWidth;
+        final int bitWidth = 1 << ColumnType.getNdArrayElementTypePrecision(type);
+        final int requiredBits = elementsCount * bitWidth;
         return (requiredBits + 7) / 8;
     }
 
@@ -68,13 +69,18 @@ public class NdArrayMeta {
      * <p>This returns the number of elements contained in the values
      * vector returned by {@link NdArrayView#getValues()}.</p>
      */
-    public static int flatLength(DirectIntSlice shape) {
-        if ((shape == null) || (shape.length() == 0)) {
+    public static int flatLength(@NotNull DirectIntSlice shape) {
+        return flatLength(shape.ptr(), shape.length());
+    }
+
+    public static int flatLength(long shapePtr, int shapeLength) {
+        if (shapeLength == 0) {
             return 0;
         }
         int length = 1;
-        for (int dimIndex = 0, nDims = shape.length(); dimIndex < nDims; ++dimIndex) {
-            final int dim = shape.get(dimIndex);
+        for (int dimIndex = 0; dimIndex < shapeLength; ++dimIndex) {
+            final long dimAddr = shapePtr + ((long) dimIndex * Integer.BYTES);
+            final int dim = Unsafe.getUnsafe().getInt(dimAddr);
             length *= dim;
         }
         return length;
@@ -85,20 +91,26 @@ public class NdArrayMeta {
      * <p>The strides are expressed in element space (not byte space).</p>
      */
     public static void setDefaultStrides(@NotNull DirectIntSlice shape, @NotNull DirectIntList strides) {
+        setDefaultStrides(shape.ptr(), shape.length(), strides);
+    }
+
+    public static void setDefaultStrides(long shapePtr, int shapeLength, @NotNull DirectIntList strides) {
         strides.clear();
-        if (shape.length() == 0) {
+        if (shapeLength == 0) {
             return;
         }
-        if (strides.getCapacity() < shape.length()) {
-            strides.setCapacity(shape.length());
+        if (strides.getCapacity() < shapeLength) {
+            strides.setCapacity(shapeLength);
         }
-        for (int dimIndex = 0, nDims = shape.length(); dimIndex < nDims; dimIndex++) {
+        for (int dimIndex = 0; dimIndex < shapeLength; dimIndex++) {
             strides.add(0);
         }
         int stride = 1;
-        for (int dimIndex = shape.length() - 1; dimIndex >= 0; --dimIndex) {
+        for (int dimIndex = shapeLength - 1; dimIndex >= 0; --dimIndex) {
             strides.set(dimIndex, stride);
-            stride *= shape.get(dimIndex);
+            final long dimAddr = shapePtr + ((long) dimIndex * Integer.BYTES);
+            final int dim = Unsafe.getUnsafe().getInt(dimAddr);
+            stride *= dim;
         }
     }
 

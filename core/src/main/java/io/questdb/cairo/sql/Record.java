@@ -28,6 +28,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
+import io.questdb.std.ndarr.NdArrayView;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.MutableUtf16Sink;
 import io.questdb.std.str.Utf16Sink;
@@ -437,6 +438,14 @@ public interface Record {
      * @return size of the varchar value or {@link TableUtils#NULL_LEN} in case of NULL
      */
     default int getVarcharSize(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    default NdArrayView getNdArrayA(int col, int columnType) {
+        throw new UnsupportedOperationException();
+    }
+
+    default NdArrayView getNdArrayB(int col, int columnType) {
         throw new UnsupportedOperationException();
     }
 

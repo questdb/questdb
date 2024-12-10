@@ -35,8 +35,11 @@ import org.jetbrains.annotations.NotNull;
 /**
  * Buffers required for an array.
  * <p>The buffers are allocated on first use.</p>
+ * <p>This is generally used when a <em>whole</em> new buffer is required.
+ * If you only need a buffer for the strides, use the more specialized
+ * {@link NdArrayMmapBuffer} instead.</p>
  */
-public class NdArrayBuffers implements QuietCloseable {
+public class NdArrayBuffer implements QuietCloseable {
     public final DirectIntList shape = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY);
     public final DirectIntList strides = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY);
     public final DirectByteSink values = new DirectByteSink(0, MemoryTag.NATIVE_ND_ARRAY);
