@@ -37,17 +37,17 @@ import java.io.Closeable;
 
 public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSinkSPI, WindowSPI, Reopenable {
     private final long[] columnOffsets;
-    private final long fixOffset;
-    private final MemoryARW mem;
-    private final RecordChainRecord recordA = new RecordChainRecord();
-    private final RecordChainRecord recordB = new RecordChainRecord();
-    private final RecordSink recordSink;
-    private final long varOffset;
+    protected final long fixOffset;
+    protected final MemoryARW mem;
+    protected final RecordChainRecord recordA;
+    protected final RecordChainRecord recordB;
+    protected final RecordSink recordSink;
+    protected final long varOffset;
     private long nextRecordOffset = -1L;
     private RecordChainRecord recordC;
-    private long recordOffset;
+    protected long recordOffset;
     private SymbolTableSource symbolTableResolver;
-    private long varAppendOffset = 0L;
+    protected long varAppendOffset = 0L;
 
     public RecordChain(
             @Transient @NotNull ColumnTypes columnTypes,
@@ -75,6 +75,8 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
             }
             this.varOffset = varOffset;
             this.fixOffset = fixOffset;
+            this.recordA = this.newChainRecord();
+            this.recordB = this.newChainRecord();
         } catch (Throwable th) {
             close();
             throw th;
@@ -138,7 +140,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     @Override
     public Record getRecordAt(long recordOffset) {
         if (recordC == null) {
-            recordC = new RecordChainRecord();
+            recordC = newChainRecord();
         }
         recordC.of(rowToDataOffset(recordOffset));
         return recordC;
@@ -334,8 +336,12 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         }
     }
 
-    private static long rowToDataOffset(long row) {
+    protected long rowToDataOffset(long row) {
         return row + 8;
+    }
+
+    protected RecordChainRecord newChainRecord() {
+        return new RecordChainRecord();
     }
 
     private void putNull() {
@@ -343,7 +349,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         recordOffset += 8;
     }
 
-    private class RecordChainRecord implements Record {
+    protected class RecordChainRecord implements Record {
         private final Interval interval = new Interval();
         long baseOffset;
         long fixedOffset;
@@ -534,7 +540,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
             return fixedOffset + columnOffsets[index];
         }
 
-        private void of(long offset) {
+        protected void of(long offset) {
             this.baseOffset = offset;
             this.fixedOffset = offset + varOffset;
         }
