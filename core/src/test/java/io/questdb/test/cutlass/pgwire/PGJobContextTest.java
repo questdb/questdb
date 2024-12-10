@@ -9490,7 +9490,7 @@ create table tab as (
                     assertResultSet(
                             "QUERY PLAN[VARCHAR]\n" +
                                     "Async Filter workers: 2\n" +
-                                    "  filter: to_str(ts) in [$0::string,'Wednesday',$1::string]\n" +
+                                    "  filter: to_str(ts) in [$0::varchar,'Wednesday',$1::varchar]\n" +
                                     "    PageFrame\n" +
                                     "        Row forward scan\n" +
                                     "        Frame forward scan on: tab\n",
