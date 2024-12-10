@@ -1461,6 +1461,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     long dstFixSize = mergeRowCount * ColumnType.sizeOf(columnType);
                     final long dstFixMemAddr = Unsafe.malloc(dstFixSize, MemoryTag.NATIVE_O3);
 
+                    // TODO(eugene): can be null in case of column top
                     final long columnDataPtr = rowGroupBuffers.getChunkDataPtr(bufferIndex);
                     // Merge column data
                     O3CopyJob.mergeCopy(
