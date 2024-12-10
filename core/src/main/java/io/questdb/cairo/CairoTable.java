@@ -45,14 +45,14 @@ public class CairoTable implements Sinkable {
     private TableToken token;
 
     public CairoTable(@NotNull TableToken token) {
-        this.setTableToken(token);
+        setTableToken(token);
         columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
         columnOrderMap = new IntList();
         columns = new ObjList<>();
     }
 
     public CairoTable(@NotNull TableToken token, CairoTable fromTab) {
-        this.setTableToken(token);
+        setTableToken(token);
         columnOrderMap = fromTab.columnOrderMap;
         columns = fromTab.columns;
         columnNameIndexMap = fromTab.columnNameIndexMap;
@@ -96,7 +96,7 @@ public class CairoTable implements Sinkable {
     }
 
     public int getId() {
-        return this.getTableToken().getTableId();
+        return getTableToken().getTableId();
     }
 
     public boolean getIsDedup() {
@@ -123,12 +123,12 @@ public class CairoTable implements Sinkable {
         return partitionBy;
     }
 
-    public String getPartitionByName() {
+    public @NotNull String getPartitionByName() {
         return PartitionBy.toString(partitionBy);
     }
 
     public @NotNull String getTableName() {
-        return this.getTableToken().getTableName();
+        return getTableToken().getTableName();
     }
 
     public TableToken getTableToken() {
