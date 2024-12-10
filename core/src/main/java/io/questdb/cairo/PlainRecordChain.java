@@ -1,0 +1,116 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2024 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo;
+
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.std.MemoryTag;
+import org.jetbrains.annotations.NotNull;
+
+public class PlainRecordChain extends RecordChain {
+
+    private final MemoryARW recordsStartOffset;
+    private long size = 0L;
+    private long nextRecordIndex = 0L;
+
+    public PlainRecordChain(@NotNull ColumnTypes columnTypes, @NotNull RecordSink recordSink, long pageSize, int maxPages) {
+        super(columnTypes, recordSink, pageSize, maxPages);
+        this.recordsStartOffset = Vm.getARWInstance(pageSize, maxPages, MemoryTag.NATIVE_RECORD_CHAIN);
+    }
+
+    public long put(Record record) {
+        long offset = beginRecord();
+        recordSink.copy(record, this);
+        return offset;
+    }
+
+    public long beginRecord() {
+        recordOffset = varAppendOffset;
+        recordsStartOffset.putLong(recordOffset);
+        size++;
+        mem.jumpTo(recordOffset + varOffset);
+        varAppendOffset = recordOffset + varOffset + fixOffset;
+        return recordOffset;
+    }
+
+    @Override
+    public boolean hasNext() {
+        if (nextRecordIndex < size) {
+            final long offset = recordsStartOffset.getLong(nextRecordIndex * 8);
+            recordA.of(offset);
+            nextRecordIndex++;
+            return true;
+        }
+        return false;
+    }
+
+    @Override
+    public void toTop() {
+        nextRecordIndex = 0;
+    }
+
+    public void toBottom() {
+        nextRecordIndex = size - 1;
+    }
+
+    public boolean hasPrev() {
+        if (nextRecordIndex >= 0) {
+            final long offset = recordsStartOffset.getLong(nextRecordIndex * 8);
+            recordA.of(offset);
+            nextRecordIndex--;
+            return true;
+        }
+        return false;
+    }
+
+    @Override
+    public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+        counter.add(size);
+    }
+
+    @Override
+    public void clear() {
+        super.clear();
+        size = 0L;
+        recordsStartOffset.close();
+    }
+
+    @Override
+    protected long rowToDataOffset(long row) {
+        return row;
+    }
+
+    @Override
+    protected RecordChainRecord newChainRecord() {
+        return new RecordChainRecord() {
+            @Override
+            public long getRowId() {
+                return baseOffset;
+            }
+        };
+    }
+}

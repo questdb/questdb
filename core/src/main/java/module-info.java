@@ -1019,6 +1019,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.window.CountVarcharWindowFunctionFactory,
             io.questdb.griffin.engine.functions.window.MaxDoubleWindowFunctionFactory,
             io.questdb.griffin.engine.functions.window.MinDoubleWindowFunctionFactory,
+            io.questdb.griffin.engine.functions.window.LastValueDoubleWindowFunctionFactory,
+            io.questdb.griffin.engine.functions.window.LastNotNullValueDoubleWindowFunctionFactory,
 
             // metadata functions
             io.questdb.griffin.engine.functions.metadata.BuildFunctionFactory,
