@@ -72,6 +72,7 @@ public class CreateTableOperationBuilderImpl implements Mutable, Sinkable, Creat
     private CharSequence selectText;
     private ExpressionNode tableNameExpr;
     private ExpressionNode timestampExpr;
+    private int ttlHours;
     private CharSequence volumeAlias;
     private boolean walEnabled;
 
@@ -103,6 +104,7 @@ public class CreateTableOperationBuilderImpl implements Mutable, Sinkable, Creat
                     ignoreIfExists, getPartitionByFromExpr(),
                     timestampExpr != null ? Chars.toString(timestampExpr.token) : null,
                     timestampExpr != null ? timestampExpr.position : 0, Chars.toString(volumeAlias),
+                    ttlHours,
                     walEnabled,
                     defaultSymbolCapacity,
                     maxUncommittedRows,
@@ -143,8 +145,8 @@ public class CreateTableOperationBuilderImpl implements Mutable, Sinkable, Creat
                 getTimestampIndex(),
                 o3MaxLag,
                 maxUncommittedRows,
-                walEnabled,
-                0 // todo: take from the builder
+                ttlHours,
+                walEnabled
         );
     }
 
@@ -285,6 +287,10 @@ public class CreateTableOperationBuilderImpl implements Mutable, Sinkable, Creat
 
     public void setTimestampExpr(ExpressionNode expr) {
         this.timestampExpr = expr;
+    }
+
+    public void setTtlHours(int ttlHours) {
+        this.ttlHours = ttlHours;
     }
 
     public void setVolumeAlias(CharSequence volumeAlias) {

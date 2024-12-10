@@ -1797,6 +1797,13 @@ public class SqlKeywords {
                 && (tok.byteAt(3) | 32) == 'e';
     }
 
+    public static boolean isTtlKeyword(CharSequence tok) {
+        return tok.length() == 3
+                && (tok.charAt(0) | 32) == 't'
+                && (tok.charAt(1) | 32) == 't'
+                && (tok.charAt(2) | 32) == 'l';
+    }
+
     public static boolean isTxnKeyword(CharSequence tok) {
         return tok.length() == 3
                 && (tok.charAt(0) | 32) == 't'
