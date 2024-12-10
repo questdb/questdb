@@ -88,7 +88,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private int partitionBy;
     private RecordCursorFactory recordCursorFactory;
     private int timestampIndex = -1;
-    private final int ttl;
+    private int ttlHours;
     private boolean walEnabled;
 
     public CreateTableOperationImpl(
@@ -114,7 +114,6 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.timestampColumnNamePosition = 0;
         this.batchSize = 0;
         this.batchO3MaxLag = 0;
-        this.ttl = 0;
     }
 
     public CreateTableOperationImpl(
@@ -129,8 +128,8 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             int timestampIndex,
             long o3MaxLag,
             int maxUncommittedRows,
-            boolean walEnabled,
-            int ttl
+            int ttlHours,
+            boolean walEnabled
     ) {
         this.sqlText = sqlText;
         this.tableName = tableName;
@@ -157,6 +156,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.timestampIndex = timestampIndex;
         this.o3MaxLag = o3MaxLag;
         this.maxUncommittedRows = maxUncommittedRows;
+        this.ttlHours = ttlHours;
         this.walEnabled = walEnabled;
 
         this.selectText = null;
@@ -165,7 +165,6 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.likeTableNamePosition = -1;
         this.batchSize = 0;
         this.batchO3MaxLag = 0;
-        this.ttl = ttl;
     }
 
     /**
@@ -204,6 +203,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             String timestampColumnName,
             int timestampColumnNamePosition,
             String volumeAlias,
+            int ttlHours,
             boolean walEnabled,
             int defaultSymbolCapacity,
             int maxUncommittedRows,
@@ -222,6 +222,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.ignoreIfExists = ignoreIfExists;
         this.timestampColumnName = timestampColumnName;
         this.timestampColumnNamePosition = timestampColumnNamePosition;
+        this.ttlHours = ttlHours;
         this.defaultSymbolCapacity = defaultSymbolCapacity;
         this.recordCursorFactory = recordCursorFactory;
         this.batchSize = batchSize;
@@ -278,7 +279,6 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             );
             augmentedColumnMetadata.put(columnNameStr, tcm);
         }
-        this.ttl = 0;
     }
 
     @Override
@@ -393,11 +393,6 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     }
 
     @Override
-    public int getTTL() {
-        return ttl;
-    }
-
-    @Override
     public CharSequence getTableName() {
         return tableName;
     }
@@ -410,6 +405,11 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     @Override
     public int getTimestampIndex() {
         return timestampIndex;
+    }
+
+    @Override
+    public int getTtlHours() {
+        return ttlHours;
     }
 
     @Override
@@ -444,6 +444,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.partitionBy = likeTableMetadata.getPartitionBy();
         this.timestampIndex = likeTableMetadata.getTimestampIndex();
         this.walEnabled = likeTableMetadata.isWalEnabled();
+        this.ttlHours = likeTableMetadata.getTtlHours();
         columnNames.clear();
         columnBits.clear();
         for (int i = 0; i < likeTableMetadata.getColumnCount(); i++) {

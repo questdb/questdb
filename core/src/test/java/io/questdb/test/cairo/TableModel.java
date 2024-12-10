@@ -131,11 +131,6 @@ public class TableModel implements TableStructure {
     }
 
     @Override
-    public int getTTL() {
-        return ttl;
-    }
-
-    @Override
     public CharSequence getTableName() {
         return name;
     }
@@ -143,6 +138,11 @@ public class TableModel implements TableStructure {
     @Override
     public int getTimestampIndex() {
         return timestampIndex;
+    }
+
+    @Override
+    public int getTtlHours() {
+        return ttl;
     }
 
     public TableModel indexed(boolean indexFlag, int indexBlockCapacity) {

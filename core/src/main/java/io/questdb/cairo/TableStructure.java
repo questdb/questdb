@@ -50,12 +50,11 @@ public interface TableStructure {
 
     int getTimestampIndex();
 
+    int getTtlHours();
+
     boolean isDedupKey(int columnIndex);
 
     boolean isIndexed(int columnIndex);
 
     boolean isWalEnabled();
-
-    // data TTL in hours
-    int getTTL();
 }

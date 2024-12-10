@@ -5307,7 +5307,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void enforceTTL() {
-        int ttl = metadata.getTTL();
+        int ttl = metadata.getTtlHours();
         if (ttl == 0) {
             return;
         }

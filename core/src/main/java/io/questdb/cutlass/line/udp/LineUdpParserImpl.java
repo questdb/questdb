@@ -631,12 +631,6 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         }
 
         @Override
-        public int getTTL() {
-            // todo: pass configuration  value instead of 0
-            return 0;
-        }
-
-        @Override
         public CharSequence getTableName() {
             return cache.get(tableName);
         }
@@ -644,6 +638,12 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         @Override
         public int getTimestampIndex() {
             return timestampIndex;
+        }
+
+        @Override
+        public int getTtlHours() {
+            // todo: pass configuration  value instead of 0
+            return 0;
         }
 
         @Override

@@ -1657,11 +1657,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
 
         @Override
-        public int getTTL() {
-            return 0;
-        }
-
-        @Override
         public CharSequence getTableName() {
             return tableName;
         }
@@ -1669,6 +1664,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         @Override
         public int getTimestampIndex() {
             return timestampColumnIndex;
+        }
+
+        @Override
+        public int getTtlHours() {
+            return 0;
         }
 
         @Override

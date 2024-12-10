@@ -144,6 +144,12 @@ public class TableStructureAdapter implements TableStructure {
     }
 
     @Override
+    public int getTtlHours() {
+        // todo: pass configuration here as the default option
+        return 0;
+    }
+
+    @Override
     public boolean isDedupKey(int columnIndex) {
         return false;
     }
@@ -177,11 +183,5 @@ public class TableStructureAdapter implements TableStructure {
             }
         }
         return this;
-    }
-
-    @Override
-    public int getTTL() {
-        // todo: pass configuration here as the default option
-        return 0;
     }
 }

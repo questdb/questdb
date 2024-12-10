@@ -108,12 +108,6 @@ public class TableStructMetadataAdapter implements TableStructure {
     }
 
     @Override
-    public int getTTL() {
-        // todo: fuzz TTL later
-        return 0;
-    }
-
-    @Override
     public CharSequence getTableName() {
         return tableName;
     }
@@ -121,6 +115,12 @@ public class TableStructMetadataAdapter implements TableStructure {
     @Override
     public int getTimestampIndex() {
         return timestampIndex;
+    }
+
+    @Override
+    public int getTtlHours() {
+        // todo: fuzz TTL later
+        return 0;
     }
 
     @Override
