@@ -2,6 +2,44 @@ variables:
   table_name: "sensor_data"
 
 tests:
+  - name: Binding in projection
+    description: Test binding variable in projection, without any function
+    prepare:
+      - action: execute
+        query: "CREATE TABLE ${table_name} (timestamp timestamp, vch varchar);"
+    steps:
+      - loop:
+          range:
+            start: 1
+            end: 10
+          as: id
+          steps:
+            - action: execute
+              query: "INSERT INTO ${table_name} (timestamp, vch) VALUES ($[1], $[2]);"
+              parameters:
+                - value: "2023-10-01T10:00:00.000000Z"
+                  type: "TIMESTAMP"
+                - value: "${id}"
+                  type: "VARCHAR"
+              expect:
+                result:
+                  - [ 1 ]
+      - action: query
+        query: "SELECT $[1], * FROM ${table_name} WHERE vch IN ($[2], $[3]);"
+        parameters:
+          - value: "42"
+            type: "VARCHAR"
+          - value: "2"
+            type: "VARCHAR"
+          - value: "3"
+            type: "VARCHAR"
+        expect:
+          result:
+            - [ '42', '2023-10-01T10:00:00.000000Z', '2' ]
+            - [ '42', '2023-10-01T10:00:00.000000Z', '3' ]
+    teardown:
+      - action: execute
+        query: "DROP TABLE IF EXISTS ${table_name};"
   - name: In Varchar Test
     description: Test inserting and selecting data with a varchar using the IN clause.
     prepare:
