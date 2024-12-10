@@ -1143,6 +1143,12 @@ public final class Timestamps {
         return sink.toString();
     }
 
+    public static String toOffsetString(long micros) {
+        Utf16Sink sink = Misc.getThreadLocalSink();
+
+        TimestampFormatUtils.append
+    }
+
     public static long toTimezone(long utcTimestamp, DateLocale locale, CharSequence timezone) throws NumericException {
         return toTimezone(utcTimestamp, locale, timezone, 0, timezone.length());
     }

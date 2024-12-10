@@ -37,6 +37,8 @@ import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
+import java.text.FieldPosition;
+
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
 public class TimestampFormatUtils {
@@ -53,6 +55,8 @@ public class TimestampFormatUtils {
     public static final DateFormat MONTH_FORMAT;
     public static final String MONTH_PATTERN = "yyyy-MM";
     public static final DateFormat NANOS_UTC_FORMAT;
+    public static final java.text.DateFormat OFFSET_FORMAT;
+    public static final String OFFSET_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSUUUXXX";
     public static final DateFormat PG_TIMESTAMP_FORMAT;
     public static final DateFormat PG_TIMESTAMP_MILLI_TIME_Z_FORMAT;
     public static final DateFormat PG_TIMESTAMP_TIME_Z_FORMAT;
@@ -129,6 +133,15 @@ public class TimestampFormatUtils {
             return;
         }
         UTC_FORMAT.format(micros, DateFormatUtils.EN_LOCALE, "Z", sink);
+    }
+
+    // yyyy-MM-ddTHH:mm:ss.SSSUUUXXX
+    public static void appendOffsetDateTime(@NotNull CharSink<?> sink, long micros) {
+
+        if (micros == Long.MIN_VALUE) {
+            return;
+        }
+        OFFSET_FORMAT.format(micros, sink, FieldPosition)
     }
 
     // YYYY-MM-DDThh:mm:ss.mmmuuuZ
@@ -455,7 +468,8 @@ public class TimestampFormatUtils {
                 DAY_PATTERN,                       // yyyy-MM-dd
                 WEEK_PATTERN,                      // YYYY-Www
                 MONTH_PATTERN,                     // yyyy-MM
-                YEAR_PATTERN                       // yyyy
+                YEAR_PATTERN,                      // yyyy
+                OFFSET_PATTERN                     // yyyy-MM-ddTHH:mm:ss.SSSUUUXXX
         };
         FORMATS = new DateFormat[patterns.length];
         CharSequenceObjHashMap<DateFormat> dateFormats = new CharSequenceObjHashMap<>();
@@ -476,5 +490,6 @@ public class TimestampFormatUtils {
         WEEK_FORMAT = dateFormats.get(WEEK_PATTERN);
         MONTH_FORMAT = dateFormats.get(MONTH_PATTERN);
         YEAR_FORMAT = dateFormats.get(YEAR_PATTERN);
+        OFFSET_FORMAT = dateFormats.get(OFFSET_PATTERN);
     }
 }
