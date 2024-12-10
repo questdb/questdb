@@ -325,6 +325,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             TableUtils.validateMeta(metaMem, null, ColumnType.VERSION);
             int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
             int timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
+            this.ttlHours = metaMem.getInt(TableUtils.META_OFFSET_TTL_HOURS);
             this.partitionBy = metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
             this.tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
             this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
