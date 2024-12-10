@@ -1656,6 +1656,11 @@ public final class TableUtils {
                 }
             }
 
+            final int ttlHours = metaMem.getInt(META_OFFSET_TTL_HOURS);
+            if (ttlHours < 0) {
+                throw validationException(metaMem).put("TTL value must be non-negative, but found ").put(ttlHours);
+            }
+
             // validate column types and index attributes
             for (int i = 0; i < columnCount; i++) {
                 final int type = Math.abs(getColumnType(metaMem, i));
