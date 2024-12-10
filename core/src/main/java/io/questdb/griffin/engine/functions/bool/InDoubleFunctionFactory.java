@@ -113,6 +113,11 @@ public class InDoubleFunctionFactory implements FunctionFactory {
         return new InDoubleVarFunction(new ObjList<>(args));
     }
 
+    @Override
+    public int resolvePreferredVariadicType(ObjList<Function> args) {
+        return ColumnType.VARCHAR;
+    }
+
     private static void parseToDouble(
             ObjList<Function> args,
             IntList argPositions,

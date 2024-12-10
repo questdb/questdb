@@ -122,11 +122,11 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public int resolvePreferredVariadicType(ObjList<Function> args) throws SqlException {
-        if (args.size() == 2) {
-            return ColumnType.VARCHAR;
-        }
-        return ColumnType.LONG;
+    public int resolvePreferredVariadicType(ObjList<Function> args) {
+        // force VARCHAR if the type is undefined
+        // so we can parse string timestamps
+        // if we indicate LONG then timestamps formatted as strings will be rejected
+        return ColumnType.VARCHAR;
     }
 
     private static LongList parseDiscreteTimestampValues(ObjList<Function> args, IntList argPositions) throws SqlException {
