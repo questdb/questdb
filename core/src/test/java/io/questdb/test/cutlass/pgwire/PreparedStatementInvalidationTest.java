@@ -948,23 +948,21 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
         assertWithPgServer(
                 CONN_AWARE_ALL,
                 (connection, binary, mode, port) ->
-                {
-                    executeStatementWhileConcurrentlyChangingSchema(
-                            connection,
-                            "DROP TABLE tango; CREATE TABLE tango as (SELECT x as y FROM long_sequence(10))",
-                            "DROP TABLE tango; CREATE TABLE tango as (SELECT x FROM long_sequence(10))",
-                            "query table",
-                            tolerateCachedPlanChangeWhenInQuirkyMode("Invalid column: y", connection), () -> {
-                                try (Statement s = connection.createStatement()) {
-                                    ResultSet rs = s.executeQuery("SELECT y FROM tango");
-                                    int rowCount = 0;
-                                    while (rs.next()) {
-                                        rowCount++;
+                        executeStatementWhileConcurrentlyChangingSchema(
+                                connection,
+                                "DROP TABLE tango; CREATE TABLE tango as (SELECT x as y FROM long_sequence(10))",
+                                "DROP TABLE tango; CREATE TABLE tango as (SELECT x FROM long_sequence(10))",
+                                "query table",
+                                tolerateCachedPlanChangeWhenInQuirkyMode("Invalid column: y", connection), () -> {
+                                    try (Statement s = connection.createStatement()) {
+                                        ResultSet rs = s.executeQuery("SELECT y FROM tango");
+                                        int rowCount = 0;
+                                        while (rs.next()) {
+                                            rowCount++;
+                                        }
+                                        Assert.assertEquals(10, rowCount);
                                     }
-                                    Assert.assertEquals(10, rowCount);
-                                }
-                            });
-                }
+                                })
         );
     }
 
