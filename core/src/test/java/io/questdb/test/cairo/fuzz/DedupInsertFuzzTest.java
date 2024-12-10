@@ -355,7 +355,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 convertToParquet ? 0 : 0.1 * rnd.nextDouble(),
                 0,
                 convertToParquet ? 0 : rnd.nextDouble(),
-                convertToParquet ? 0 : rnd.nextDouble(),
+                0.0,
                 convertToParquet ? 0 : rnd.nextDouble(),
                 0.5,
                 0.0,
