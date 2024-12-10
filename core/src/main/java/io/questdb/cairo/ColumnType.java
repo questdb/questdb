@@ -291,6 +291,10 @@ public final class ColumnType {
         return columnType == VARCHAR;
     }
 
+    public static boolean isVarcharOrString(int columnType) {
+        return columnType == VARCHAR || columnType == STRING;
+    }
+
     public static void makeUtf16DefaultString() {
         if (ALLOW_DEFAULT_STRING_CHANGE) {
             typeNameMap.put(STRING, "STRING");
