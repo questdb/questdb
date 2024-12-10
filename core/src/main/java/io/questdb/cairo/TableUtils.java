@@ -1771,9 +1771,8 @@ public final class TableUtils {
         mem.putInt(tableStruct.getMaxUncommittedRows());
         mem.putLong(tableStruct.getO3MaxLag());
         mem.putLong(0); // Structure version.
-        // TTL in hours, 0 = TTL is not enforced
-        mem.putInt(tableStruct.getTTL());
         mem.putBool(tableStruct.isWalEnabled());
+        mem.putInt(tableStruct.getTtlHours()); // 0 = unbounded TTL
         mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
         assert count > 0;
