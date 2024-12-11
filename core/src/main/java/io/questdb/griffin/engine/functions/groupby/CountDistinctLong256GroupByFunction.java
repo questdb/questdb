@@ -70,7 +70,6 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
         } else {
             mapValue.putLong(valueIndex, 0);
             mapValue.putLong(valueIndex + 1, 0);
-            ;
         }
     }
 

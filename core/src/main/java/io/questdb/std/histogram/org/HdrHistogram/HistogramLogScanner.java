@@ -210,9 +210,7 @@ public class HistogramLogScanner implements Closeable {
             final String compressedPayloadString = scanner.next();
             final ByteBuffer buffer = ByteBuffer.wrap(Base64Helper.parseBase64Binary(compressedPayloadString));
 
-            EncodableHistogram histogram = EncodableHistogram.decodeFromCompressedByteBuffer(buffer, 0);
-
-            return histogram;
+            return EncodableHistogram.decodeFromCompressedByteBuffer(buffer, 0);
         }
 
         private void allowGet() {
