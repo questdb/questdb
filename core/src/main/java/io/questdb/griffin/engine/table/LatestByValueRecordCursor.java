@@ -60,7 +60,7 @@ class LatestByValueRecordCursor extends AbstractLatestByValueRecordCursor {
     @Override
     public void of(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) {
         this.frameCursor = pageFrameCursor;
-        recordA.of(pageFrameCursor);
+        record.of(pageFrameCursor);
         recordB.of(pageFrameCursor);
         circuitBreaker = executionContext.getCircuitBreaker();
         isRecordFound = false;
@@ -94,11 +94,11 @@ class LatestByValueRecordCursor extends AbstractLatestByValueRecordCursor {
             final long partitionHi = frame.getPartitionHi() - 1;
 
             frameAddressCache.add(frameCount, frame);
-            frameMemoryPool.navigateTo(frameCount++, recordA);
+            frameMemoryPool.navigateTo(frameCount++, record);
 
             for (long row = partitionHi - partitionLo; row >= 0; row--) {
-                recordA.setRowIndex(row);
-                int key = recordA.getInt(columnIndex);
+                record.setRowIndex(row);
+                int key = record.getInt(columnIndex);
                 if (key == symbolKey) {
                     isRecordFound = true;
                     break OUT;

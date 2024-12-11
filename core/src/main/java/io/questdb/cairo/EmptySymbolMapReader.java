@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.api.MemoryR;
 
 public class EmptySymbolMapReader implements SymbolMapReader {
-
     public static final EmptySymbolMapReader INSTANCE = new EmptySymbolMapReader();
 
     @Override

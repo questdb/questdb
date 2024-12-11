@@ -27,7 +27,12 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -65,7 +70,7 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractLatestByValueReco
     @Override
     public void of(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) throws SqlException {
         this.frameCursor = pageFrameCursor;
-        recordA.of(pageFrameCursor);
+        record.of(pageFrameCursor);
         recordB.of(pageFrameCursor);
         circuitBreaker = executionContext.getCircuitBreaker();
         filter.init(pageFrameCursor, executionContext);
@@ -106,12 +111,12 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractLatestByValueReco
             final long partitionHi = frame.getPartitionHi() - 1;
 
             frameAddressCache.add(frameCount, frame);
-            frameMemoryPool.navigateTo(frameCount++, recordA);
+            frameMemoryPool.navigateTo(frameCount++, record);
 
             RowCursor cursor = indexReader.getCursor(false, symbolKey, partitionLo, partitionHi);
             while (cursor.hasNext()) {
-                recordA.setRowIndex(cursor.next() - partitionLo);
-                if (filter.getBool(recordA)) {
+                record.setRowIndex(cursor.next() - partitionLo);
+                if (filter.getBool(record)) {
                     isRecordFound = true;
                     return;
                 }

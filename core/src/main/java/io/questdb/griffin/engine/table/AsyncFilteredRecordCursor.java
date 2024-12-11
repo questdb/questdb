@@ -145,14 +145,12 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                 }
                 frameSequence.clear();
             }
-            Misc.free(frameMemoryPool);
+            freeMemoryPool();
             isOpen = false;
         }
     }
 
-    public void freeRecords() {
-        Misc.free(record);
-        Misc.free(recordB);
+    public void freeMemoryPool() {
         Misc.free(frameMemoryPool);
     }
 

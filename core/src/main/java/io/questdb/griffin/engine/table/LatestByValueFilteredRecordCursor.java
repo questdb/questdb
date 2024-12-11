@@ -65,7 +65,7 @@ class LatestByValueFilteredRecordCursor extends AbstractLatestByValueRecordCurso
     @Override
     public void of(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) throws SqlException {
         this.frameCursor = pageFrameCursor;
-        recordA.of(pageFrameCursor);
+        record.of(pageFrameCursor);
         recordB.of(pageFrameCursor);
         circuitBreaker = executionContext.getCircuitBreaker();
         filter.init(pageFrameCursor, executionContext);
@@ -102,12 +102,12 @@ class LatestByValueFilteredRecordCursor extends AbstractLatestByValueRecordCurso
             final long partitionHi = frame.getPartitionHi() - 1;
 
             frameAddressCache.add(frameCount, frame);
-            frameMemoryPool.navigateTo(frameCount++, recordA);
+            frameMemoryPool.navigateTo(frameCount++, record);
 
             for (long row = partitionHi - partitionLo; row >= 0; row--) {
-                recordA.setRowIndex(row);
-                if (filter.getBool(recordA)) {
-                    int key = recordA.getInt(columnIndex);
+                record.setRowIndex(row);
+                if (filter.getBool(record)) {
+                    int key = record.getInt(columnIndex);
                     if (key == symbolKey) {
                         isRecordFound = true;
                         break OUT;

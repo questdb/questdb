@@ -86,13 +86,13 @@ class LatestByAllRecordCursor extends AbstractDescendingRecordListCursor {
             final long partitionHi = frame.getPartitionHi() - 1;
 
             frameAddressCache.add(frameCount, frame);
-            frameMemoryPool.navigateTo(frameCount++, recordA);
-            recordA.setRowIndex(partitionHi);
+            frameMemoryPool.navigateTo(frameCount++, record);
+            record.setRowIndex(partitionHi);
 
             for (long row = partitionHi - partitionLo; row >= 0; row--) {
-                recordA.setRowIndex(row);
+                record.setRowIndex(row);
                 MapKey key = map.withKey();
-                key.put(recordA, recordSink);
+                key.put(record, recordSink);
                 if (key.create()) {
                     rows.add(Rows.toRowID(frameIndex, row));
                 }

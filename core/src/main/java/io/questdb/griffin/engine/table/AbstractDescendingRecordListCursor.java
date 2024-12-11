@@ -82,8 +82,8 @@ abstract class AbstractDescendingRecordListCursor extends AbstractPageFrameRecor
         }
         if (rowIndex > -1) {
             long rowId = rows.get(rowIndex--);
-            frameMemoryPool.navigateTo(Rows.toPartitionIndex(rowId), recordA);
-            recordA.setRowIndex(Rows.toLocalRowID(rowId));
+            frameMemoryPool.navigateTo(Rows.toPartitionIndex(rowId), record);
+            record.setRowIndex(Rows.toLocalRowID(rowId));
             return true;
         }
         return false;
@@ -96,7 +96,7 @@ abstract class AbstractDescendingRecordListCursor extends AbstractPageFrameRecor
     @Override
     public void of(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) throws SqlException {
         this.frameCursor = pageFrameCursor;
-        recordA.of(pageFrameCursor);
+        record.of(pageFrameCursor);
         recordB.of(pageFrameCursor);
         circuitBreaker = executionContext.getCircuitBreaker();
         rows.clear();

@@ -24,10 +24,29 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.DataUnavailableException;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameAddressCache;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemory;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
-import io.questdb.std.*;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.TimeFrame;
+import io.questdb.cairo.sql.TimeFrameRecordCursor;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.Rows;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -40,7 +59,7 @@ public class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
     private final IntList framePartitionIndexes = new IntList();
     private final LongList frameRowCounts = new LongList();
     private final RecordMetadata metadata;
-    private final PageFrameMemoryRecord recordA = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+    private final PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
     private final PageFrameMemoryRecord recordB = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
     private final TableReaderTimeFrame timeFrame = new TableReaderTimeFrame();
     private int frameCount = 0;
@@ -67,7 +86,7 @@ public class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
 
     @Override
     public Record getRecord() {
-        return recordA;
+        return record;
     }
 
     @Override
@@ -126,7 +145,7 @@ public class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
         frameAddressCache.of(metadata, frameCursor.getColumnIndexes());
         frameMemoryPool.of(frameAddressCache);
         reader = frameCursor.getTableReader();
-        recordA.of(frameCursor);
+        record.of(frameCursor);
         recordB.of(frameCursor);
         partitionHi = reader.getPartitionCount();
         partitionCeilMethod = PartitionBy.getPartitionCeilMethod(reader.getPartitionedBy());

@@ -32,7 +32,13 @@ import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Hash;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectString;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -71,8 +77,8 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     public void close() {
         Misc.free(indexReader);
         Misc.free(charMem);
-        this.cache.clear();
-        long fd = this.offsetMem.getFd();
+        cache.clear();
+        long fd = offsetMem.getFd();
         Misc.free(offsetMem);
         Misc.free(path);
         LOG.debug().$("closed [fd=").$(fd).$(']').$();
@@ -138,6 +144,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         return this.columnNameTxn != columnNameTxn;
     }
 
+    @Override
     public StaticSymbolTable newSymbolTableView() {
         return new SymbolTableView();
     }

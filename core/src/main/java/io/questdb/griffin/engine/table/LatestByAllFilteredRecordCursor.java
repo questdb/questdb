@@ -92,13 +92,13 @@ class LatestByAllFilteredRecordCursor extends AbstractDescendingRecordListCursor
             final long partitionHi = frame.getPartitionHi() - 1;
 
             frameAddressCache.add(frameCount, frame);
-            frameMemoryPool.navigateTo(frameCount++, recordA);
+            frameMemoryPool.navigateTo(frameCount++, record);
 
             for (long row = partitionHi - partitionLo; row >= 0; row--) {
-                recordA.setRowIndex(row);
-                if (filter.getBool(recordA)) {
+                record.setRowIndex(row);
+                if (filter.getBool(record)) {
                     MapKey key = map.withKey();
-                    key.put(recordA, recordSink);
+                    key.put(record, recordSink);
                     if (key.create()) {
                         rows.add(Rows.toRowID(frameIndex, row));
                     }

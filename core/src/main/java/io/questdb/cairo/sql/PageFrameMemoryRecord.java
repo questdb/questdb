@@ -36,11 +36,9 @@ import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.LongList;
-import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
@@ -54,7 +52,7 @@ import org.jetbrains.annotations.Nullable;
  * Must be initialized with a {@link PageFrameMemoryPool#navigateTo(int, PageFrameMemoryRecord)}
  * or {@link #init(PageFrameMemory)} call for a given page frame before any use.
  */
-public class PageFrameMemoryRecord implements Record, StableStringSource, QuietCloseable, Mutable {
+public class PageFrameMemoryRecord implements Record, StableStringSource, Mutable {
     public static final byte RECORD_A_LETTER = 0;
     public static final byte RECORD_B_LETTER = 1;
     private final ObjList<MemoryCR.ByteSequenceView> bsViews = new ObjList<>();
@@ -106,13 +104,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         auxPageAddresses = null;
         pageSizes = null;
         auxPageSizes = null;
-    }
-
-    @Override
-    public void close() {
-        Misc.freeObjListIfCloseable(symbolTableCache);
-        symbolTableCache.clear();
-        clear();
     }
 
     @Override
@@ -484,8 +475,8 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     }
 
     public void of(SymbolTableSource symbolTableSource) {
-        close();
         this.symbolTableSource = symbolTableSource;
+        symbolTableCache.clear();
     }
 
     public void setRowIndex(long rowIndex) {

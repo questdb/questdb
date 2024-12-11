@@ -26,7 +26,12 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -76,8 +81,8 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
             long rowId = rows.get(index++);
             // We inverted frame indexes when posting tasks.
             final int frameIndex = Rows.MAX_SAFE_PARTITION_INDEX - Rows.toPartitionIndex(rowId);
-            frameMemoryPool.navigateTo(frameIndex, recordA);
-            recordA.setRowIndex(Rows.toLocalRowID(rowId));
+            frameMemoryPool.navigateTo(frameIndex, record);
+            record.setRowIndex(Rows.toLocalRowID(rowId));
             return true;
         }
         return false;
@@ -86,7 +91,7 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
     @Override
     public void of(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) throws SqlException {
         this.frameCursor = pageFrameCursor;
-        recordA.of(pageFrameCursor);
+        record.of(pageFrameCursor);
         recordB.of(pageFrameCursor);
         filter.init(pageFrameCursor, executionContext);
         circuitBreaker = executionContext.getCircuitBreaker();
@@ -121,8 +126,8 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
             RowCursor cursor = indexReader.getCursor(false, symbolKey, partitionLo, partitionHi);
             while (cursor.hasNext()) {
                 final long row = cursor.next();
-                recordA.setRowIndex(row - partitionLo);
-                if (filter.getBool(recordA)) {
+                record.setRowIndex(row - partitionLo);
+                if (filter.getBool(record)) {
                     rows.add(Rows.toRowID(frameIndex, row - partitionLo));
                     found.addAt(index, symbolKey);
                     break;
@@ -148,7 +153,7 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
             final long partitionHi = frame.getPartitionHi() - 1;
 
             frameAddressCache.add(frameCount, frame);
-            frameMemoryPool.navigateTo(frameCount++, recordA);
+            frameMemoryPool.navigateTo(frameCount++, record);
 
             // Invert page frame indexes, so that they grow asc in time order.
             // That's to be able to do post-processing (sorting) of the result set.

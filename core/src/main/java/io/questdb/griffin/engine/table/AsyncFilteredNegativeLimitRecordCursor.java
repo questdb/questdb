@@ -26,8 +26,14 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.PageFrameMemory;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.log.Log;
@@ -89,12 +95,10 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
             frameSequence.await();
         }
         frameSequence.clear();
-        Misc.free(frameMemoryPool);
+        freeMemoryPool();
     }
 
-    public void freeRecords() {
-        Misc.free(record);
-        Misc.free(recordB);
+    public void freeMemoryPool() {
         Misc.free(frameMemoryPool);
     }
 

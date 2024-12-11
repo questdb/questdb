@@ -26,7 +26,11 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
@@ -69,8 +73,8 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         }
         if (index > -1) {
             final long rowId = rows.get(index);
-            frameMemoryPool.navigateTo(Rows.toPartitionIndex(rowId), recordA);
-            recordA.setRowIndex(Rows.toLocalRowID(rowId));
+            frameMemoryPool.navigateTo(Rows.toPartitionIndex(rowId), record);
+            record.setRowIndex(Rows.toLocalRowID(rowId));
             index--;
             return true;
         }
@@ -80,7 +84,7 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     @Override
     public void of(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) {
         this.frameCursor = pageFrameCursor;
-        recordA.of(pageFrameCursor);
+        record.of(pageFrameCursor);
         recordB.of(pageFrameCursor);
         circuitBreaker = executionContext.getCircuitBreaker();
         keyCount = -1;
@@ -135,7 +139,7 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             final long partitionHi = frame.getPartitionHi() - 1;
 
             frameAddressCache.add(frameCount, frame);
-            frameMemoryPool.navigateTo(frameCount++, recordA);
+            frameMemoryPool.navigateTo(frameCount++, record);
 
             for (int i = 0, n = symbolKeys.size(); i < n; i++) {
                 int symbolKey = symbolKeys.get(i);

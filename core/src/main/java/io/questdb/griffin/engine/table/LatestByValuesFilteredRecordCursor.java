@@ -33,7 +33,11 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.*;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.IntIntHashMap;
+import io.questdb.std.Numbers;
+import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -111,12 +115,12 @@ class LatestByValuesFilteredRecordCursor extends AbstractDescendingRecordListCur
             final long partitionHi = frame.getPartitionHi() - 1;
 
             frameAddressCache.add(frameCount, frame);
-            frameMemoryPool.navigateTo(frameCount++, recordA);
+            frameMemoryPool.navigateTo(frameCount++, record);
 
             for (long row = partitionHi - partitionLo; row >= 0; row--) {
-                recordA.setRowIndex(row);
-                if (filter.getBool(recordA)) {
-                    int key = TableUtils.toIndexKey(recordA.getInt(columnIndex));
+                record.setRowIndex(row);
+                if (filter.getBool(record)) {
+                    int key = TableUtils.toIndexKey(record.getInt(columnIndex));
                     int index = map.keyIndex(key);
                     if (index < 0 && map.valueAt(index) == 0) {
                         rows.add(Rows.toRowID(frameIndex, row));

@@ -25,8 +25,14 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.PageFrameAddressCache;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.Misc;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
@@ -34,7 +40,7 @@ import org.jetbrains.annotations.NotNull;
 public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCursor {
     protected final PageFrameAddressCache frameAddressCache;
     protected final PageFrameMemoryPool frameMemoryPool;
-    protected final PageFrameMemoryRecord recordA;
+    protected final PageFrameMemoryRecord record;
     protected final PageFrameMemoryRecord recordB;
     private final RecordMetadata metadata;
     protected int frameCount = 0;
@@ -45,7 +51,8 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
             @NotNull RecordMetadata metadata
     ) {
         this.metadata = metadata;
-        recordA = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+
+        record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
         recordB = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
         frameAddressCache = new PageFrameAddressCache(configuration);
         frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
@@ -64,7 +71,7 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
 
     @Override
     public Record getRecord() {
-        return recordA;
+        return record;
     }
 
     @Override

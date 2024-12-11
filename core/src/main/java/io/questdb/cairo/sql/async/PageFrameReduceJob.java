@@ -48,10 +48,10 @@ public class PageFrameReduceJob implements Job, Closeable {
 
     private final static Log LOG = LogFactory.getLog(PageFrameReduceJob.class);
     private final MessageBus messageBus;
+    private final PageFrameMemoryRecord record;
     private final int shardCount;
     private final int[] shards;
     private SqlExecutionCircuitBreakerWrapper circuitBreaker;
-    private PageFrameMemoryRecord record;
 
     // Each thread should be assigned own instance of this job, making the code effectively
     // single threaded. Such assignment is necessary for threads to have their own shard walk sequence.
@@ -135,7 +135,6 @@ public class PageFrameReduceJob implements Job, Closeable {
     @Override
     public void close() {
         circuitBreaker = Misc.free(circuitBreaker);
-        record = Misc.free(record);
     }
 
     @TestOnly

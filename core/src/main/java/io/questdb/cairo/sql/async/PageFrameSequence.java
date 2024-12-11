@@ -211,7 +211,6 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     @Override
     public void close() {
         clear();
-        localRecord = Misc.free(localRecord);
         circuitBreaker = Misc.free(circuitBreaker);
         localTask = Misc.free(localTask);
         Misc.free(atom);

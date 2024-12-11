@@ -25,7 +25,15 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemory;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.RowCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -94,8 +102,8 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             if (rowCursor != null && rowCursor.hasNext()) {
                 final int frameIndex = frameCount - 1;
                 final long rowIndex = rowCursor.next();
-                frameMemoryPool.navigateTo(frameIndex, recordA);
-                recordA.setRowIndex(rowIndex);
+                frameMemoryPool.navigateTo(frameIndex, record);
+                record.setRowIndex(rowIndex);
                 return true;
             }
 
@@ -105,8 +113,8 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
                 final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameCount++);
                 rowCursor = rowCursorFactory.getCursor(frame, frameMemory);
                 if (rowCursor.hasNext()) {
-                    recordA.init(frameMemory);
-                    recordA.setRowIndex(rowCursor.next());
+                    record.init(frameMemory);
+                    record.setRowIndex(rowCursor.next());
                     return true;
                 }
             }
@@ -128,7 +136,7 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             close();
             this.frameCursor = frameCursor;
         }
-        recordA.of(frameCursor);
+        record.of(frameCursor);
         recordB.of(frameCursor);
         rowCursorFactory.init(frameCursor, sqlExecutionContext);
         areCursorsPrepared = false;
@@ -182,8 +190,8 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         if (pageFrame != null) {
             final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
             // move to frame, rowlo doesn't matter
-            recordA.init(frameMemory);
-            recordA.setRowIndex(0);
+            record.init(frameMemory);
+            record.setRowIndex(0);
             rowCursor = rowCursorFactory.getCursor(pageFrame, frameMemory);
             rowCursor.jumpTo(skipToPosition);
         }

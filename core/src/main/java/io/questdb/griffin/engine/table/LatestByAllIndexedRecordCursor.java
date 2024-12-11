@@ -89,8 +89,8 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             final long rowId = rows.get(aIndex++) - 1;
             // We inverted frame indexes when posting tasks.
             final int frameIndex = Rows.MAX_SAFE_PARTITION_INDEX - Rows.toPartitionIndex(rowId);
-            frameMemoryPool.navigateTo(frameIndex, recordA);
-            recordA.setRowIndex(Rows.toLocalRowID(rowId));
+            frameMemoryPool.navigateTo(frameIndex, record);
+            record.setRowIndex(Rows.toLocalRowID(rowId));
             return true;
         }
         return false;
@@ -99,7 +99,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     @Override
     public void of(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) {
         this.frameCursor = pageFrameCursor;
-        recordA.of(pageFrameCursor);
+        record.of(pageFrameCursor);
         recordB.of(pageFrameCursor);
         circuitBreaker = executionContext.getCircuitBreaker();
         bus = executionContext.getMessageBus();
