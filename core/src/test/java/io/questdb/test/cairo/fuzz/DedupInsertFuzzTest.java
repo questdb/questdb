@@ -79,7 +79,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         this.convertToParquet = convertToParquet;
     }
 
-    @Parameterized.Parameters(name = "{0}")
+    @Parameterized.Parameters(name = "parquet={0}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
                 {true},
@@ -1025,11 +1025,6 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 }
             }
             foundSymbols = new boolean[symbols.length];
-        }
-
-        if (convertToParquet) {
-            // force reload parquet partitions
-            engine.releaseAllReaders();
         }
 
         try (
