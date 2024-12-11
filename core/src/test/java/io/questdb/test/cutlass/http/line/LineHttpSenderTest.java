@@ -488,8 +488,8 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             .symbol("x", "42i")
                             .symbol("y", "{6f1.0,2.5,3.0,4.5,5.0}")  // ensuring no array parsing for symbol
                             .longColumn("l1", 23452345)
-                            .arrayColumn("a1", "{6f1.0,2.5,3.0,4.5,5.0}")
-                            .arrayColumn("a2", "{6s-1,0,100000000}")
+                            .arrayColumn("a1", "{6f1.0,2.5,3.0,4.5,5.0}")  // TODO(amunra): API it's the raw buffer passed into ILP
+                            .arrayColumn("a2", "{6s-1,0,100000000}")  // TODO(amunra): API it's the raw buffer passed into ILP
                             .at(100000000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
