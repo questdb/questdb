@@ -213,7 +213,7 @@ public interface CharSink<T extends CharSink<?>> {
         return (T) this;
     }
 
-    default CharSink putSize(long bytes) {
+    default CharSink<?> putSize(long bytes) {
         long b = bytes == Long.MIN_VALUE ? Long.MAX_VALUE : Math.abs(bytes);
         return b < 1024L ? put(bytes).put(' ').put('B')
                 : b <= 0xfffccccccccccccL >> 40 ? put(Math.round(bytes / 0x1p10 * 1000.0) / 1000.0).put(" KiB")

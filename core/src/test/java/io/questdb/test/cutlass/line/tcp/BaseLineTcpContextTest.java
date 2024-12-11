@@ -328,7 +328,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         };
         noNetworkIOJob.setScheduler(scheduler);
         context = new LineTcpConnectionContext(lineTcpConfiguration, scheduler, metrics);
-        context.of(FD, new IODispatcher<LineTcpConnectionContext>() {
+        context.of(FD, new IODispatcher<>() {
             @Override
             public void close() {
             }
@@ -399,7 +399,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         private LineTcpMeasurementScheduler scheduler;
 
         NoNetworkIOJob(LineTcpReceiverConfiguration config) {
-            unusedSymbolCaches = new WeakClosableObjectPool<SymbolCache>(() -> new SymbolCache(config), 10, true);
+            unusedSymbolCaches = new WeakClosableObjectPool<>(() -> new SymbolCache(config), 10, true);
         }
 
         @Override

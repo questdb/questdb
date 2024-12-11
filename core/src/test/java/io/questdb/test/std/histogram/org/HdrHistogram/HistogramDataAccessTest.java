@@ -55,7 +55,7 @@ public class HistogramDataAccessTest {
 
     @Test
     public void scanLinearIteratorForAIOOB() {
-        List<int[]> broken = new ArrayList<int[]>();
+        List<int[]> broken = new ArrayList<>();
         // scan iterators through a range of step sizes and recorded values, looking for AIOOB:
         for (int step = 1; step < 100; step++) {
             for (int value = 1; value < 1000; value++) {
@@ -73,9 +73,9 @@ public class HistogramDataAccessTest {
     }
 
     @Test
-    public void testAllValues() throws Exception {
+    public void testAllValues() {
         int index = 0;
-        long latestValueAtIndex = 0;
+        long latestValueAtIndex;
         long totalCountToThisPoint = 0;
         long totalValueToThisPoint = 0;
         // Iterate raw data by stepping through every value that has a count recorded:
@@ -102,9 +102,7 @@ public class HistogramDataAccessTest {
 
         index = 0;
         long totalAddedCounts = 0;
-        HistogramIterationValue v1 = null;
         for (HistogramIterationValue v : histogram.allValues()) {
-            v1 = v;
             long countAddedInThisBucket = v.getCountAddedInThisIterationStep();
             if (index == 1000) {
                 Assert.assertEquals("AllValues bucket # 0 [" +
@@ -125,7 +123,7 @@ public class HistogramDataAccessTest {
     }
 
     @Test
-    public void testGetCountAtValue() throws Exception {
+    public void testGetCountAtValue() {
         Assert.assertEquals("Count of raw values at 10 msec is 0",
                 0, rawHistogram.getCountBetweenValues(10000L, 10010L));
         Assert.assertEquals("Count of values at 10 msec is 0",
@@ -137,7 +135,7 @@ public class HistogramDataAccessTest {
     }
 
     @Test
-    public void testGetCountBetweenValues() throws Exception {
+    public void testGetCountBetweenValues() {
         Assert.assertEquals("Count of raw values between 1 msec and 1 msec is 1",
                 10000, rawHistogram.getCountBetweenValues(1000L, 1000L));
         Assert.assertEquals("Count of raw values between 5 msec and 150 sec is 1",
@@ -147,14 +145,14 @@ public class HistogramDataAccessTest {
     }
 
     @Test
-    public void testGetMaxValue() throws Exception {
+    public void testGetMaxValue() {
         Assert.assertTrue(
                 histogram.valuesAreEquivalent(100L * 1000 * 1000,
                         histogram.getMaxValue()));
     }
 
     @Test
-    public void testGetMean() throws Exception {
+    public void testGetMean() {
         double expectedRawMean = ((10000.0 * 1000) + (1.0 * 100000000)) / 10001; /* direct avg. of raw results */
         double expectedMean = (1000.0 + 50000000.0) / 2; /* avg. 1 msec for half the time, and 50 sec for other half */
         // We expect to see the mean to be accurate to ~3 decimal points (~0.1%):
@@ -165,14 +163,14 @@ public class HistogramDataAccessTest {
     }
 
     @Test
-    public void testGetMinValue() throws Exception {
+    public void testGetMinValue() {
         Assert.assertTrue(
                 histogram.valuesAreEquivalent(1000,
                         histogram.getMinValue()));
     }
 
     @Test
-    public void testGetPercentileAtOrBelowValue() throws Exception {
+    public void testGetPercentileAtOrBelowValue() {
         Assert.assertEquals("Raw percentile at or below 5 msec is 99.99% +/- 0.0001",
                 99.99,
                 rawHistogram.getPercentileAtOrBelowValue(5000), 0.0001);
@@ -185,7 +183,7 @@ public class HistogramDataAccessTest {
     }
 
     @Test
-    public void testGetStdDeviation() throws Exception {
+    public void testGetStdDeviation() {
         double expectedRawMean = ((10000.0 * 1000) + (1.0 * 100000000)) / 10001; /* direct avg. of raw results */
         double expectedRawStdDev =
                 Math.sqrt(
@@ -208,7 +206,7 @@ public class HistogramDataAccessTest {
     }
 
     @Test
-    public void testGetTotalCount() throws Exception {
+    public void testGetTotalCount() {
         // The overflow value should count in the total count:
         Assert.assertEquals("Raw total count is 10,001",
                 10001L, rawHistogram.getTotalCount());
@@ -217,7 +215,7 @@ public class HistogramDataAccessTest {
     }
 
     @Test
-    public void testGetValueAtPercentile() throws Exception {
+    public void testGetValueAtPercentile() {
         Assert.assertEquals("raw 30%'ile is 1 msec +/- 0.1%",
                 1000.0, (double) rawHistogram.getValueAtPercentile(30.0),
                 1000.0 * 0.001);
@@ -258,7 +256,7 @@ public class HistogramDataAccessTest {
     }
 
     @Test
-    public void testGetValueAtPercentileExamples() throws Exception {
+    public void testGetValueAtPercentileExamples() {
         Histogram hist = new Histogram(3600000000L, 3);
         hist.recordValue(1);
         hist.recordValue(2);
@@ -273,8 +271,6 @@ public class HistogramDataAccessTest {
         hist.recordValue(2);
         hist.recordValue(2);
         hist.recordValue(2);
-
-        long val = hist.getValueAtPercentile(25);
 
         Assert.assertEquals("25%'ile is 2",
                 2, hist.getValueAtPercentile(25));
@@ -293,7 +289,7 @@ public class HistogramDataAccessTest {
     }
 
     @Test
-    public void testLinearBucketValues() throws Exception {
+    public void testLinearBucketValues() {
         int index = 0;
         // Note that using linear buckets should work "as expected" as long as the number of linear buckets
         // is lower than the resolution level determined by largestValueWithSingleUnitResolution
@@ -457,7 +453,7 @@ public class HistogramDataAccessTest {
             }
         }
 
-        List<IteratorValueSnapshot> snapshots = new ArrayList<IteratorValueSnapshot>();
+        List<IteratorValueSnapshot> snapshots = new ArrayList<>();
 
         for (HistogramIterationValue iv : h.linearBucketValues(1)) {
             snapshots.add(new IteratorValueSnapshot(iv));
@@ -490,7 +486,7 @@ public class HistogramDataAccessTest {
     }
 
     @Test
-    public void testLogarithmicBucketValues() throws Exception {
+    public void testLogarithmicBucketValues() {
         int index = 0;
         // Iterate raw data using logarithmic buckets starting at 10 msec.
         for (HistogramIterationValue v : rawHistogram.logarithmicBucketValues(10000, 2)) {
@@ -528,7 +524,7 @@ public class HistogramDataAccessTest {
     }
 
     @Test
-    public void testPercentiles() throws Exception {
+    public void testPercentiles() {
         for (HistogramIterationValue v : histogram.percentiles(5 /* ticks per half */)) {
             Assert.assertEquals("Value at Iterated-to Percentile is the same as the matching getValueAtPercentile():\n" +
                             "getPercentileLevelIteratedTo = " + v.getPercentileLevelIteratedTo() +
@@ -606,7 +602,7 @@ public class HistogramDataAccessTest {
     }
 
     @Test
-    public void testRecordedValues() throws Exception {
+    public void testRecordedValues() {
         int index = 0;
         // Iterate raw data by stepping through every value that has a count recorded:
         for (HistogramIterationValue v : rawHistogram.recordedValues()) {
@@ -677,8 +673,8 @@ public class HistogramDataAccessTest {
         Histogram histogram1 = histogram.copy();
 
         AbstractHistogram.AllValues values = histogram1.allValues();
-        ArrayList<Long> ranges = new ArrayList<Long>();
-        ArrayList<Long> counts = new ArrayList<Long>();
+        ArrayList<Long> ranges = new ArrayList<>();
+        ArrayList<Long> counts = new ArrayList<>();
         int index = 0;
         for (HistogramIterationValue value : values) {
             if (value.getCountAddedInThisIterationStep() > 0) {
@@ -694,7 +690,7 @@ public class HistogramDataAccessTest {
             histogram2.recordValueWithCount(ranges.get(i), counts.get(i));
         }
 
-        Assert.assertTrue("Histograms should be equal", histogram1.equals(histogram2));
+        Assert.assertEquals("Histograms should be equal", histogram1, histogram2);
     }
 
     private static void recordOneValueAndDisplayLinearBuckets(int value, long step) {

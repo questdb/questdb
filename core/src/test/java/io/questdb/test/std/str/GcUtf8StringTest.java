@@ -120,7 +120,7 @@ public class GcUtf8StringTest {
 
         final String src2 = "hello";
         final GcUtf8String s3 = new GcUtf8String(src2);
-        Assert.assertNotEquals(s3, src2);
+        Assert.assertNotEquals(src2, s3);
 
         // Test Utf8String vs Utf8String equality
         final GcUtf8String s4 = new GcUtf8String(src2);

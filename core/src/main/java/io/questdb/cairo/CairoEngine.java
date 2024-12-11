@@ -57,6 +57,7 @@ import io.questdb.cairo.wal.WalListener;
 import io.questdb.cairo.wal.WalReader;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SequencerMetadata;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cutlass.text.CopyContext;
 import io.questdb.griffin.CompiledQuery;
@@ -273,6 +274,7 @@ public class CairoEngine implements Closeable, WriterSource {
         awaitTxn(tableName, -1, timeout, timeoutUnit);
     }
 
+    @TestOnly
     public void awaitTxn(String tableName, long txn, long timeout, TimeUnit timeoutUnit) {
         final long startTime = configuration.getMillisecondClock().getTicks();
         long maxWait = timeoutUnit.toMillis(timeout);
@@ -963,8 +965,14 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    /**
+     * This is a workaround for notification queue full and other off-piste events. It includes a hack to
+     * prevent repeated notifications by uninitializing the writer's transaction tracker.
+     *
+     * @param tableToken the destination table for the notification.
+     */
     public void notifyWalTxnRepublisher(TableToken tableToken) {
-        tableSequencerAPI.notifyCommitReadable(tableToken, -1);
+        tableSequencerAPI.updateWriterTxns(tableToken, SeqTxnTracker.UNINITIALIZED_TXN, SeqTxnTracker.UNINITIALIZED_TXN);
         unpublishedWalTxnCount.incrementAndGet();
     }
 
