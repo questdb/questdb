@@ -357,6 +357,18 @@ public class PageFrameMemoryPool implements QuietCloseable, Mutable {
         public long getRowIdOffset() {
             return addressCache.getRowIdOffset(frameIndex);
         }
+
+        @Override
+        public boolean hasColumnTops() {
+            for (int i = 0, n = pageAddresses.size(); i < n; i++) {
+                // VARCHAR column that contains short strings will have zero data vector,
+                // so for such columns we also need to check that the aux (index) vector is zero.
+                if (pageAddresses.getQuick(i) == 0 && auxPageAddresses.getQuick(i) == 0) {
+                    return true;
+                }
+            }
+            return false;
+        }
     }
 
     private class ParquetBuffers implements QuietCloseable, Reopenable {
