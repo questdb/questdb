@@ -49,6 +49,7 @@ import io.questdb.metrics.QueryMetrics;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.FlyweightMessageContainer;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.TimeUnit;
 
@@ -58,6 +59,7 @@ public class QueryProgress extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
     private final RegisteredRecordCursor cursor;
     private final boolean jit;
+    private final QueryMetrics queryMetrics = new QueryMetrics();
     private final QueryRegistry registry;
     private final String sqlText;
     private long beginNanos;
@@ -74,18 +76,19 @@ public class QueryProgress extends AbstractRecordCursorFactory {
         this.jit = base.usesCompiledFilter();
     }
 
-    public static void logEnd(long sqlId, CharSequence sqlText, SqlExecutionContext executionContext, long beginNanos, boolean jit) {
+    public static void logEnd(
+            long sqlId, CharSequence sqlText, SqlExecutionContext executionContext, long beginNanos, boolean jit
+    ) {
+        logEnd(sqlId, sqlText, executionContext, beginNanos, jit, null);
+    }
+
+    public static void logEnd(
+            long sqlId, CharSequence sqlText, SqlExecutionContext executionContext, long beginNanos, boolean jit,
+            @Nullable QueryMetrics queryMetrics
+    ) {
         CairoEngine engine = executionContext.getCairoEngine();
         CairoConfiguration config = engine.getConfiguration();
         long durationNanos = config.getNanosecondClock().getTicks() - beginNanos;
-        if (engine.getConfiguration().isQueryMetricsEnabled()) {
-            QueryMetrics queryMetrics = new QueryMetrics();
-            queryMetrics.isJit = jit;
-            queryMetrics.timestamp = config.getMicrosecondClock().getTicks();
-            queryMetrics.queryText = sqlText;
-            queryMetrics.executionNanos = TimeUnit.NANOSECONDS.toMicros(durationNanos);
-            engine.getMessageBus().getQueryMetricsQueue().offer(queryMetrics);
-        }
         LOG.info()
                 .$("fin [id=").$(sqlId)
                 .$(", sql=`").utf8(sqlText).$('`')
@@ -94,6 +97,14 @@ public class QueryProgress extends AbstractRecordCursorFactory {
                 .$(", jit=").$(jit)
                 .$(", time=").$(durationNanos)
                 .I$();
+
+        if (queryMetrics != null && engine.getConfiguration().isQueryMetricsEnabled()) {
+            queryMetrics.isJit = jit;
+            queryMetrics.timestamp = config.getMicrosecondClock().getTicks();
+            queryMetrics.queryText = sqlText;
+            queryMetrics.executionNanos = TimeUnit.NANOSECONDS.toMicros(durationNanos);
+            engine.getMessageBus().getQueryMetricsQueue().offer(queryMetrics);
+        }
     }
 
     public static void logError(
@@ -309,7 +320,7 @@ public class QueryProgress extends AbstractRecordCursorFactory {
                 isOpen = false;
                 base.close();
                 if (!failed) {
-                    logEnd(sqlId, sqlText, executionContext, beginNanos, jit);
+                    logEnd(sqlId, sqlText, executionContext, beginNanos, jit, queryMetrics);
                 }
             }
         }

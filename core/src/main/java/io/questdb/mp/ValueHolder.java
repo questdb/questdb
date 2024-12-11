@@ -24,8 +24,8 @@
 
 package io.questdb.mp;
 
-public interface ValueHolder<T> {
-    void clear();
+import io.questdb.std.Mutable;
 
+public interface ValueHolder<T> extends Mutable {
     void copyTo(T dest);
 }
