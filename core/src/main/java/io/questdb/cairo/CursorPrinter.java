@@ -174,7 +174,10 @@ public class CursorPrinter {
             case ColumnType.ND_ARRAY:
                 final NdArrayView array = record.getNdArrayA(columnIndex, columnType);
                 if (array != null) {
-                    NdArrayJsonSerializer.serialize(sink, array, NdArrayRowMajorTraversal.LOCAL.get(), columnType);
+                    try (NdArrayRowMajorTraversal traversal = new NdArrayRowMajorTraversal()) {
+                        traversal.of(array);
+                        NdArrayJsonSerializer.serialize(sink, array, traversal, columnType);
+                    }
                 } else {
                     sink.put(nullStringValue);
                 }
