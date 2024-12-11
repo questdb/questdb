@@ -1003,7 +1003,6 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             int existingDups,
             int colType
     ) {
-
         LOG.info().$("Validating no timestamp duplicates [from=").$ts(fromTimestamp)
                 .$(", delta=").$(delta)
                 .$(", commit2Count=").$(commit2Count)
