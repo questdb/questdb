@@ -258,6 +258,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testDedupWithRandomShiftWithColumnTop() throws Exception {
+        // TODO(eugene): Enable this test when adding columns after Parquet conversion is supported
         Assume.assumeFalse(convertToParquet);
         assertMemoryLeak(() -> {
             String tableName = getTestName();
@@ -319,6 +320,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 rnd.nextDouble(),
                 rnd.nextDouble(),
                 0.1 * rnd.nextDouble(),
+                // TODO(eugene): table column manipulation is not yet supported for Parquet
                 convertToParquet ? 0 : 0.1 * rnd.nextDouble(),
                 0,
                 convertToParquet ? 0 : rnd.nextDouble(),
@@ -352,6 +354,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 rnd.nextDouble(),
                 rnd.nextDouble(),
                 0.1 * rnd.nextDouble(),
+
+                // TODO(eugene): table column manipulation is not yet supported for Parquet
                 convertToParquet ? 0 : 0.1 * rnd.nextDouble(),
                 0,
                 convertToParquet ? 0 : rnd.nextDouble(),
