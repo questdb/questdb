@@ -165,7 +165,9 @@ public class WriterReaderPhaser {
     private static final AtomicLongFieldUpdater<WriterReaderPhaser> startEpochUpdater =
             AtomicLongFieldUpdater.newUpdater(WriterReaderPhaser.class, "startEpoch");
     private final ReentrantLock readerLock = new ReentrantLock();
+    @SuppressWarnings("FieldMayBeFinal")
     private volatile long evenEndEpoch = 0;
+    @SuppressWarnings("FieldMayBeFinal")
     private volatile long oddEndEpoch = Long.MIN_VALUE;
     private volatile long startEpoch = 0;
 

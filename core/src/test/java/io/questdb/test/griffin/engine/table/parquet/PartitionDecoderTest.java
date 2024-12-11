@@ -123,12 +123,10 @@ public class PartitionDecoderTest extends AbstractCairoTest {
         final FilesFacade ff = configuration.getFilesFacade();
 
         // We first set up the table without memory limits.
-        assertMemoryLeak(() -> {
-            execute("create table x as (select" +
-                    " x id," +
-                    " timestamp_sequence(400000000000, 500) designated_ts" +
-                    " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by day");
-        });
+        assertMemoryLeak(() -> execute("create table x as (select" +
+                " x id," +
+                " timestamp_sequence(400000000000, 500) designated_ts" +
+                " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by day"));
 
         assertMemoryLeak(() -> {
             final long memInit = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
@@ -239,16 +237,18 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                 columns.add(0);
                 columns.add(ColumnType.LONG);
 
-                final CairoException badReadRowGroupStats = Assert.assertThrows(CairoException.class, () -> {
-                    partitionDecoder.readRowGroupStats(rowGroupStatBuffers, columns, 1000);
-                });
+                final CairoException badReadRowGroupStats = Assert.assertThrows(
+                        CairoException.class,
+                        () -> partitionDecoder.readRowGroupStats(rowGroupStatBuffers, columns, 1000)
+                );
                 TestUtils.assertContains(
                         badReadRowGroupStats.getMessage(),
                         "row group index 1000 out of range [0,1)");
 
-                final CairoException badDecodeRowGroup = Assert.assertThrows(CairoException.class, () -> {
-                    partitionDecoder.decodeRowGroup(rowGroupBuffers, columns, 1000, 0, 1);
-                });
+                final CairoException badDecodeRowGroup = Assert.assertThrows(
+                        CairoException.class,
+                        () -> partitionDecoder.decodeRowGroup(rowGroupBuffers, columns, 1000, 0, 1)
+                );
                 TestUtils.assertContains(
                         badDecodeRowGroup.getMessage(),
                         "row group index 1000 out of range [0,1)");
