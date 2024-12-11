@@ -598,7 +598,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                     if (col == timestampIndex) {
                         return nextBucketTimestamp;
                     } else {
-                        return getFillFunction(col).getLong(null);
+                        return getFillFunction(col).getTimestamp(null);
                     }
                 } else {
                     return baseRecord.getTimestamp(col);

@@ -96,8 +96,19 @@ public class SampleByTest extends AbstractCairoTest {
             "x::timestamp as n," +
             "FROM long_sequence(480)\n" +
             ") timestamp(ts)";
-
     private static final Log LOG = LogFactory.getLog(SampleByTest.class);
+    final String sysTelemetryWalDdl = "CREATE TABLE IF NOT EXISTS 'sys.telemetry_wal' ( " +
+            "created TIMESTAMP, " +
+            "event SHORT, " +
+            "tableId INT, " +
+            "walId INT, " +
+            "seqTxn LONG, " +
+            "rowCount LONG, " +
+            "physicalRowCount LONG, " +
+            "latency FLOAT " +
+            ") timestamp(created) " +
+            "PARTITION BY MONTH BYPASS WAL " +
+            "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;";
 
     @Test
     public void testBadFunction() throws Exception {
@@ -2863,18 +2874,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testPrefixedTableNames() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE IF NOT EXISTS 'sys.telemetry_wal' ( " +
-                    "created TIMESTAMP, " +
-                    "event SHORT, " +
-                    "tableId INT, " +
-                    "walId INT, " +
-                    "seqTxn LONG, " +
-                    "rowCount LONG, " +
-                    "physicalRowCount LONG, " +
-                    "latency FLOAT " +
-                    ") timestamp(created) " +
-                    "PARTITION BY MONTH BYPASS WAL " +
-                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            execute(sysTelemetryWalDdl);
             assertSql("created\tcommit_rate\n" +
                     "2024-12-08T00:00:00.000000Z\t0\n" +
                     "2024-12-08T08:00:00.000000Z\t0\n" +
@@ -5213,6 +5213,29 @@ public class SampleByTest extends AbstractCairoTest {
                 }
                 assertEquals(expected, sink);
             }
+        });
+    }
+
+    @Test
+
+    // used to act as FILL(null, null) due to bug in parallel fill generation
+    public void testSampleByWithMultipleParallelFill() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(sysTelemetryWalDdl);
+            assertSql("created\trow_count\tphy_row_count\n" +
+                    "2024-12-10T23:31:02.000000Z\tnull\t0\n" +
+                    "2024-12-11T07:31:02.000000Z\tnull\t0\n", "select \n" +
+                    "        created, \n" +
+                    "        sum(rowcount) row_count,\n" +
+                    "        sum(physicalRowCount) phy_row_count,\n" +
+                    "      from sys.telemetry_wal\n" +
+                    "      where tableId = 10 and \n" +
+                    "         event = 105\n" +
+                    "         and rowCount > 0 -- this is fixed clause, we have rows with - rowCount logged\n" +
+                    "      sample by 8h  \n" +
+                    "      FROM '2024-12-11T00:31:02+01:00' TO '2024-12-11T12:31:02+01:00'\n" +
+                    "      -- fill with null to avoid spurious values and division by 0\n" +
+                    "      fill(null, 0)");
         });
     }
 
@@ -12683,22 +12706,36 @@ public class SampleByTest extends AbstractCairoTest {
                         "select timestamp_sequence('2021-03-28T01:59:00.00000Z', 3*24*3600*1000000L) ts from long_sequence(6)" +
                         ") timestamp(ts)",
                 "ts",
-                false
+                true
         );
     }
 
     @Test
     public void testTimestampFillValueUnquoted() throws Exception {
-        assertException(
-                "select ts, first(ts), last(ts) " +
-                        "from trade " +
-                        "sample by 1d fill(null, 1236) align to CALENDAR;",
-                "create table trade as (" +
-                        "select timestamp_sequence('2021-03-28T01:59:00.00000Z', 3*24*3600*1000000L) ts from long_sequence(6)" +
-                        ") timestamp(ts)",
-                66,
-                "Invalid fill value: '1236'. Timestamp fill value must be in quotes."
-        );
+        assertMemoryLeak(() -> {
+            execute("create table trade as (" +
+                    "select timestamp_sequence('2021-03-28T01:59:00.00000Z', 3*24*3600*1000000L) ts from long_sequence(6)" +
+                    ") timestamp(ts)");
+            assertSql("ts\tfirst\tlast\n" +
+                    "2021-03-28T00:00:00.000000Z\t2021-03-28T01:59:00.000000Z\t2021-03-28T01:59:00.000000Z\n" +
+                    "2021-03-29T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                    "2021-03-30T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                    "2021-03-31T00:00:00.000000Z\t2021-03-31T01:59:00.000000Z\t2021-03-31T01:59:00.000000Z\n" +
+                    "2021-04-01T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                    "2021-04-02T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                    "2021-04-03T00:00:00.000000Z\t2021-04-03T01:59:00.000000Z\t2021-04-03T01:59:00.000000Z\n" +
+                    "2021-04-04T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                    "2021-04-05T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                    "2021-04-06T00:00:00.000000Z\t2021-04-06T01:59:00.000000Z\t2021-04-06T01:59:00.000000Z\n" +
+                    "2021-04-07T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                    "2021-04-08T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                    "2021-04-09T00:00:00.000000Z\t2021-04-09T01:59:00.000000Z\t2021-04-09T01:59:00.000000Z\n" +
+                    "2021-04-10T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                    "2021-04-11T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                    "2021-04-12T00:00:00.000000Z\t2021-04-12T01:59:00.000000Z\t2021-04-12T01:59:00.000000Z\n", "select ts, first(ts), last(ts) " +
+                    "from trade " +
+                    "sample by 1d fill(null, 1236) align to CALENDAR;");
+        });
     }
 
     @Test

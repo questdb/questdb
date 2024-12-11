@@ -4709,7 +4709,7 @@ public class SqlOptimiser implements Mutable {
                     sampleBy != null
                             && timestamp != null
                             && (sampleByOffset != null && SqlKeywords.isZeroOffset(sampleByOffset.token) && (sampleByTimezoneName == null || SqlKeywords.isUTC(sampleByTimezoneName.token)))
-                            && (sampleByFillSize == 0 || (sampleByFillSize > 0 && !SqlKeywords.isPrevKeyword(sampleByFill.getQuick(0).token) && !SqlKeywords.isLinearKeyword(sampleByFill.getQuick(0).token)))
+                            && (sampleByFillSize == 0 || thereAreNoPrevOrLinearFills(sampleByFill))
                             && sampleByUnit == null
                             && (sampleByFrom == null || ((sampleByFrom.type != BIND_VARIABLE) && (sampleByFrom.type != FUNCTION) && (sampleByFrom.type != OPERATION)))
             ) {
@@ -6040,6 +6040,18 @@ public class SqlOptimiser implements Mutable {
                 target.setJoinType(QueryModel.JOIN_INNER);
             }
         }
+    }
+
+    private boolean thereAreNoPrevOrLinearFills(ObjList<ExpressionNode> sampleByFill) {
+        for (int i = 0; i < sampleByFill.size(); i++) {
+            final ExpressionNode expr = sampleByFill.get(i);
+            if (
+                    SqlKeywords.isPrevKeyword(expr.token)
+                            || SqlKeywords.isLinearKeyword(expr.token)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private void traverseNamesAndIndices(QueryModel parent, ExpressionNode node) throws SqlException {
