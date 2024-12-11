@@ -475,7 +475,8 @@ public class SqlParser {
     }
 
     private @NotNull CreateTableColumnModel newCreateTableColumnModel(
-            CharSequence columnName, int columnNamePos
+            CharSequence columnName,
+            int columnNamePos
     ) throws SqlException {
         if (createTableOperationBuilder.getColumnModel(columnName) != null) {
             throw SqlException.duplicateColumn(columnNamePos, columnName);
@@ -1123,7 +1124,8 @@ public class SqlParser {
     }
 
     private void parseDeclare(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
-        while (true) { // todo: make this a safer condition
+        int contentLength = lexer.getContent().length();
+        while (lexer.getPosition() < contentLength) {
             int pos = lexer.getPosition();
 
             CharSequence tok = optTok(lexer);
@@ -1407,8 +1409,11 @@ public class SqlParser {
         return model;
     }
 
-    private QueryModel parseDmlUpdate(GenericLexer lexer, SqlParserCallback sqlParserCallback,
-                                      @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) throws SqlException {
+    private QueryModel parseDmlUpdate(
+            GenericLexer lexer,
+            SqlParserCallback sqlParserCallback,
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
+    ) throws SqlException {
         // Update QueryModel structure is
         // QueryModel with SET column expressions (updateQueryModel)
         // |-- nested QueryModel of select-virtual or select-choose of data selected for update (fromModel)
@@ -1827,8 +1832,11 @@ public class SqlParser {
         parseTableName(lexer, model);
     }
 
-    private ExecutionModel parseInsert(GenericLexer lexer, SqlParserCallback sqlParserCallback,
-                                       @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) throws SqlException {
+    private ExecutionModel parseInsert(
+            GenericLexer lexer,
+            SqlParserCallback sqlParserCallback,
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
+    ) throws SqlException {
         final InsertModel model = insertModelPool.next();
         CharSequence tok = tok(lexer, "atomic or into or batch");
         model.setBatchSize(configuration.getInsertModelBatchSize());
@@ -2119,8 +2127,11 @@ public class SqlParser {
         return model;
     }
 
-    private ExecutionModel parseSelect(GenericLexer lexer, SqlParserCallback sqlParserCallback,
-                                       @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) throws SqlException {
+    private ExecutionModel parseSelect(
+            GenericLexer lexer,
+            SqlParserCallback sqlParserCallback,
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
+    ) throws SqlException {
         lexer.unparseLast();
         final QueryModel model = parseDml(lexer, null, lexer.lastTokenPosition(), true, sqlParserCallback, decls);
         final CharSequence tok = optTok(lexer);
@@ -2651,8 +2662,11 @@ public class SqlParser {
         return null;
     }
 
-    private ExecutionModel parseUpdate(GenericLexer lexer, SqlParserCallback sqlParserCallback,
-                                       @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) throws SqlException {
+    private ExecutionModel parseUpdate(
+            GenericLexer lexer,
+            SqlParserCallback sqlParserCallback,
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
+    ) throws SqlException {
         lexer.unparseLast();
         final QueryModel model = parseDmlUpdate(lexer, sqlParserCallback, decls);
         final CharSequence tok = optTok(lexer);
@@ -2724,9 +2738,13 @@ public class SqlParser {
         }
     }
 
+    @SuppressWarnings("SameParameterValue")
     @NotNull
-    private ExecutionModel parseWith(GenericLexer lexer, SqlParserCallback sqlParserCallback,
-                                     @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) throws SqlException {
+    private ExecutionModel parseWith(
+            GenericLexer lexer,
+            SqlParserCallback sqlParserCallback,
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
+    ) throws SqlException {
         parseWithClauses(lexer, topLevelWithModel, sqlParserCallback, decls);
         CharSequence tok = tok(lexer, "'select', 'update' or name expected");
         if (isSelectKeyword(tok)) {
@@ -3023,21 +3041,24 @@ public class SqlParser {
         }
     }
 
-    private ExpressionNode rewriteKnownStatements(ExpressionNode parent,
-                                                  @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
-                                                  @Nullable CharSequence exclude) throws SqlException {
-        return rewriteDeclaredVariables(
-                rewriteJsonExtractCast(
-                        rewritePgCast(
-                                rewriteConcat(
-                                        rewriteCase(
-                                                rewriteCount(
-                                                        parent
+    private ExpressionNode rewriteKnownStatements(
+            ExpressionNode parent,
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
+            @Nullable CharSequence exclude
+    ) throws SqlException {
+        return
+                rewriteDeclaredVariables(
+                        rewriteJsonExtractCast(
+                                rewritePgCast(
+                                        rewriteConcat(
+                                                rewriteCase(
+                                                        rewriteCount(
+                                                                parent
+                                                        )
                                                 )
                                         )
                                 )
-                        )
-                ), decls, exclude);
+                        ), decls, exclude);
     }
 
     private ExpressionNode rewritePgCast(ExpressionNode parent) throws SqlException {
@@ -3253,8 +3274,7 @@ public class SqlParser {
             boolean useTopLevelWithClauses,
             SqlParserCallback sqlParserCallback,
             LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
-    )
-            throws SqlException {
+    ) throws SqlException {
         QueryModel model;
         this.subQueryMode = true;
         try {
