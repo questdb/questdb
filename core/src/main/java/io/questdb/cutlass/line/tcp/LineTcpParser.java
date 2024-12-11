@@ -193,7 +193,7 @@ public class LineTcpParser implements QuietCloseable {
         while (bufAt < bufHi) {
             DirectUtf8String soFar = new DirectUtf8String();
             soFar.of(lineStart, bufAt + 1);
-            System.err.println("entityHandler=" + entityHandler + ", braceCount=" + braceCount + ", soFar=`" + soFar + "`");
+            // System.err.println("entityHandler=" + entityHandler + ", braceCount=" + braceCount + ", soFar=`" + soFar + "`");
             byte b = Unsafe.getUnsafe().getByte(bufAt);
 
             if (nEscapedChars == 0 && !controlBytes[b & 0xff]) {
@@ -736,7 +736,7 @@ public class LineTcpParser implements QuietCloseable {
         }
 
         private boolean parse(byte last, int valueLen) {
-            System.err.println("LineTcpParser.ProtoEntity.parse :: " + ((char) last) + ", valueLen: " + valueLen);
+            // System.err.println("LineTcpParser.ProtoEntity.parse :: " + ((char) last) + ", valueLen: " + valueLen);
             switch (last) {
                 case 'i':
                     if (valueLen > 1 && value.byteAt(1) != 'x') {
