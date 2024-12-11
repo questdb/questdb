@@ -379,7 +379,7 @@ public class SqlParser {
     }
 
     private CharSequence expectTableNameOrSubQuery(GenericLexer lexer) throws SqlException {
-        return tok(lexer, "table name or sub-query");
+        return parseTableNameSansPublicSchema(lexer, "table name or sub-query");
     }
 
     private void expectTo(GenericLexer lexer) throws SqlException {
@@ -625,7 +625,7 @@ public class SqlParser {
             atomicSpecified = true;
             builder.setBatchSize(-1);
             expectTok(lexer, "table");
-            tok = tok(lexer, "table name or 'if'");
+            tok = parseTableNameSansPublicSchema(lexer, "table name or 'if'");
         } else if (SqlKeywords.isBatchKeyword(tok)) {
             batchSpecified = true;
 
@@ -642,9 +642,9 @@ public class SqlParser {
                 builder.setBatchO3MaxLag(SqlUtil.expectMicros(tok(lexer, "lag value"), pos));
                 expectTok(lexer, "table");
             }
-            tok = tok(lexer, "table name or 'if'");
+            tok = parseTableNameSansPublicSchema(lexer, "table name or 'if'");
         } else if (SqlKeywords.isTableKeyword(tok)) {
-            tok = tok(lexer, "table name or 'if'");
+            tok = parseTableNameSansPublicSchema(lexer, "table name or 'if'");
         } else {
             throw SqlException.$(lexer.lastTokenPosition(), "expected 'atomic' or 'table' or 'batch'");
         }
@@ -652,7 +652,7 @@ public class SqlParser {
         if (SqlKeywords.isIfKeyword(tok)) {
             if (SqlKeywords.isNotKeyword(tok(lexer, "'not'")) && SqlKeywords.isExistsKeyword(tok(lexer, "'exists'"))) {
                 builder.setIgnoreIfExists(true);
-                tableName = tok(lexer, "table name");
+                tableName = parseTableNameSansPublicSchema(lexer, "table name");
             } else {
                 throw SqlException.$(lexer.lastTokenPosition(), "'if not exists' expected");
             }
@@ -1087,7 +1087,7 @@ public class SqlParser {
     private void parseCreateTableLikeTable(GenericLexer lexer) throws SqlException {
         CharSequence tok;
         // todo: validate keyword usage
-        tok = tok(lexer, "table name");
+        tok = parseTableNameSansPublicSchema(lexer, "table name");
         createTableOperationBuilder.setLikeTableNameExpr(
                 nextLiteral(
                         assertNoDotsAndSlashes(
@@ -1204,11 +1204,11 @@ public class SqlParser {
             model.getWithClauses().putAll(parentWithClauses);
         }
 
-        tok = tok(lexer, "'select', 'with' or table name expected");
+        tok = parseTableNameSansPublicSchema(lexer, "'select', 'with' or table name expected");
 
         if (isWithKeyword(tok)) {
             parseWithClauses(lexer, model.getWithClauses(), sqlParserCallback);
-            tok = tok(lexer, "'select' or table name expected");
+            tok = parseTableNameSansPublicSchema(lexer, "'select' or table name expected");
         } else if (topWithClauses != null) {
             model.getWithClauses().putAll(topWithClauses);
         }
@@ -1345,7 +1345,7 @@ public class SqlParser {
         fromModel.setModelPosition(modelPosition);
         updateQueryModel.setIsUpdate(true);
         fromModel.setIsUpdate(true);
-        tok = tok(lexer, "UPDATE, WITH or table name expected");
+        tok = parseTableNameSansPublicSchema(lexer, "UPDATE, WITH or table name expected");
 
         // [update]
         if (isUpdateKeyword(tok)) {
@@ -1764,7 +1764,8 @@ public class SqlParser {
             throw SqlException.$(lexer.lastTokenPosition(), "'into' expected");
         }
 
-        tok = tok(lexer, "table name");
+        tok = parseTableNameSansPublicSchema(lexer, "table name");
+
         SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
         model.setTableName(nextLiteral(assertNoDotsAndSlashes(unquote(tok), lexer.lastTokenPosition()), lexer.lastTokenPosition()));
 
@@ -1988,7 +1989,7 @@ public class SqlParser {
         expectTok(lexer, "table");
         RenameTableModel model = renameTableModelPool.next();
 
-        CharSequence tok = tok(lexer, "from table name");
+        CharSequence tok = parseTableNameSansPublicSchema(lexer, "from table name");
         SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
 
         model.setFrom(nextLiteral(unquote(tok), lexer.lastTokenPosition()));
@@ -2002,7 +2003,7 @@ public class SqlParser {
 
         expectTok(lexer, "to");
 
-        tok = tok(lexer, "to table name");
+        tok = parseTableNameSansPublicSchema(lexer, "to table name");
         SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
         model.setTo(nextLiteral(unquote(tok), lexer.lastTokenPosition()));
 
@@ -2495,13 +2496,31 @@ public class SqlParser {
     }
 
     private void parseTableName(GenericLexer lexer, QueryModel model) throws SqlException {
-        CharSequence tok = SqlUtil.fetchNext(lexer);
-        if (tok == null) {
-            throw SqlException.position(lexer.getPosition()).put("expected a table name");
-        }
+        CharSequence tok = parseTableNameSansPublicSchema(lexer, "expected a table name");
         final CharSequence tableName = assertNoDotsAndSlashes(unquote(tok), lexer.lastTokenPosition());
         ExpressionNode tableNameExpr = expressionNodePool.next().of(ExpressionNode.LITERAL, tableName, 0, lexer.lastTokenPosition());
         model.setTableNameExpr(tableNameExpr);
+    }
+
+    private @NotNull CharSequence parseTableNameSansPublicSchema(GenericLexer lexer, String expectedList) throws SqlException {
+        CharSequence tok = tok(lexer, expectedList);
+
+        CharSequence unquoted = unquote(tok);
+        if (!isPublicKeyword(unquoted, unquoted.length())) {
+            return tok;
+        }
+
+        CharSequence tableName = GenericLexer.immutableOf(tok);
+        int pos = lexer.getPosition();
+        int last = lexer.lastTokenPosition();
+        tok = tok(lexer, expectedList);
+        if (!Chars.equals(tok, '.')) {
+            lexer.unparse(tableName, last, pos);
+            return tok(lexer, expectedList);
+        }
+
+        tok = tok(lexer, expectedList);
+        return tok;
     }
 
     private long parseTimeUnit(GenericLexer lexer) throws SqlException {
@@ -2552,7 +2571,7 @@ public class SqlParser {
             QueryModel fromModel,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        CharSequence tok = tok(lexer, "table name or alias");
+        CharSequence tok = parseTableNameSansPublicSchema(lexer, "table name or alias");
         SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
         CharSequence tableName = GenericLexer.immutableOf(unquote(tok));
         ExpressionNode tableNameExpr = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, tableName, 0, 0);
