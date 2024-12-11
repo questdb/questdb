@@ -34,10 +34,20 @@ import io.questdb.std.str.StringSink;
 
 // ColumnType layout - 32bit
 //
-// | PGWire format | Extra type information | Type discriminant (tag) |
+// | Handling bit  | Extra type information | Type discriminant (tag) |
 // +---------------+------------------------+-------------------------+
 // |    1 bit      |        23 bits         |         8 bits          |
 // +---------------+------------------------+-------------------------+
+//
+// Handling bit:
+//   Skip column use case:
+//       The top bit is set for columns that should be skipped.
+//       I.e. `if (columnType < 0) { skip }`.
+//   PG Wire Format use case:
+//       Reserved for bit-shifting operations as part of `PGOids` to
+//       determine if a PG Wire column should be handled as text or binary.
+//       Also see `bindSelectColumnFormats` and `bindVariableTypes` in
+//       `PGConnectionContext`.
 
 /**
  * Column types as numeric (integer) values

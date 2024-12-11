@@ -840,6 +840,53 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     @Test
+    public void testDetachAttachParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
+            createPopulateTable(
+                    1,
+                    tab.timestamp("ts")
+                            .col("si", ColumnType.SYMBOL).indexed(true, 250)
+                            .col("i", ColumnType.INT)
+                            .col("l", ColumnType.LONG)
+                            .col("s", ColumnType.SYMBOL)
+                            .col("vch", ColumnType.VARCHAR),
+                    10,
+                    "2022-06-01",
+                    2
+            );
+
+            String expected = "ts\tsi\ti\tl\ts\tvch\n" +
+                    "2022-06-01T04:47:59.900000Z\tPEHN\t1\t1\tSXUX\t擉q\uDAE2\uDC5E͛\n" +
+                    "2022-06-01T09:35:59.800000Z\t\t2\t2\t\t蝰L➤~2\uDAC6\uDED3ڎBH\n" +
+                    "2022-06-01T14:23:59.700000Z\tVTJW\t3\t3\tRXGZ\t\n" +
+                    "2022-06-01T19:11:59.600000Z\tVTJW\t4\t4\tGPGW\t:}w?5J8A.mS+F~W\n" +
+                    "2022-06-01T23:59:59.500000Z\tCPSW\t5\t5\tGPGW\td^Z\n" +
+                    "2022-06-02T04:47:59.400000Z\tPEHN\t6\t6\tGPGW\t篸{\uD9D7\uDFE5\uDAE9\uDF46OF\n" +
+                    "2022-06-02T09:35:59.300000Z\tVTJW\t7\t7\t\t\n" +
+                    "2022-06-02T14:23:59.200000Z\tVTJW\t8\t8\t\t䒭ܲ\u0379軦۽㒾\uD99D\uDEA7K裷\uD9CC\uDE73+\u0093ً\n" +
+                    "2022-06-02T19:11:59.100000Z\t\t9\t9\tGPGW\tK\uD8E2\uDE25ӽ-\uDBED\uDC98\n" +
+                    "2022-06-02T23:59:59.000000Z\t\t10\t10\t\ty\u0086W\n";
+
+            assertContent(expected, tableName);
+
+            engine.clear();
+            execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+            renameDetachedToAttachable(tableName, "2022-06-01");
+            execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+
+            engine.clear();
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2022-06-01'", sqlExecutionContext);
+            execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+            renameDetachedToAttachable(tableName, "2022-06-01");
+            execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+
+            assertContent(expected, tableName);
+        });
+    }
+
+    @Test
     public void testDetachAttachPartition() throws Exception {
         assertMemoryLeak(
                 () -> {
@@ -2061,7 +2108,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             assertFailure(
                     "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'",
-                    "cannot read min, max timestamp from the column"
+                    "cannot read min, max timestamp from the"
             );
         });
     }
@@ -2105,7 +2152,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             assertFailure(
                     "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampWrongDay2 + "'",
-                    "invalid timestamp column data in detached partition, data does not match partition directory name"
+                    "invalid timestamp data in detached partition, data does not match partition directory name"
             );
         });
     }
@@ -2423,14 +2470,14 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     private void renameDetachedToAttachable(String tableName, long... partitions) {
         TableToken tableToken = engine.verifyTableName(tableName);
         for (long partition : partitions) {
-            TableUtils.setSinkForPartition(
+            TableUtils.setSinkForNativePartition(
                     path.of(configuration.getRoot()).concat(tableToken),
                     PartitionBy.DAY,
                     partition,
                     -1
             );
             path.put(DETACHED_DIR_MARKER).$();
-            TableUtils.setSinkForPartition(
+            TableUtils.setSinkForNativePartition(
                     other.of(configuration.getRoot()).concat(tableToken),
                     PartitionBy.DAY,
                     partition,

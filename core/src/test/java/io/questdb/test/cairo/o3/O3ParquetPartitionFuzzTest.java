@@ -25,17 +25,13 @@
 package io.questdb.test.cairo.o3;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -56,30 +52,6 @@ import java.io.FileInputStream;
 import java.util.zip.CRC32;
 
 public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
-
-    public static GenericRecordMetadata symbolAsVarcharCopy(RecordMetadata that) {
-        if (that != null) {
-            GenericRecordMetadata metadata = new GenericRecordMetadata();
-            for (int i = 0, n = that.getColumnCount(); i < n; i++) {
-                final int columnType = that.getColumnType(i);
-                metadata.add(
-                        new TableColumnMetadata(
-                                that.getColumnName(i),
-                                columnType == ColumnType.SYMBOL ? ColumnType.VARCHAR : columnType,
-                                that.isColumnIndexed(i),
-                                that.getIndexValueBlockCapacity(i),
-                                that.isSymbolTableStatic(i),
-                                that.getMetadata(i),
-                                that.getWriterIndex(i),
-                                that.isDedupKey(i)
-                        )
-                );
-            }
-            metadata.setTimestampIndex(that.getTimestampIndex());
-            return metadata;
-        }
-        return null;
-    }
 
     @Test
     public void testFuzz() throws Exception {
@@ -160,7 +132,7 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
             String partitionName = stringSink.toString();
 
             Path parquet = Path.getThreadLocal(root).concat(tt.getDirName());
-            TableUtils.setParquetPartitionPath(parquet, xw.getPartitionBy(), partitionTs, xw.getPartitionNameTxnByPartitionTimestamp(partitionTs));
+            TableUtils.setPathForParquetPartition(parquet, xw.getPartitionBy(), partitionTs, xw.getPartitionNameTxnByPartitionTimestamp(partitionTs));
 
             final long fileSize = Files.length(parquet.$());
             final long checksumBefore = calcChecksum(parquet.toString(), fileSize);
@@ -201,7 +173,7 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
             xw.commit();
 
             Path parquet2 = Path.getThreadLocal(root).concat(tt.getDirName());
-            TableUtils.setParquetPartitionPath(parquet2, xw.getPartitionBy(), partitionTs, xw.getPartitionNameTxnByPartitionTimestamp(partitionTs));
+            TableUtils.setPathForParquetPartition(parquet2, xw.getPartitionBy(), partitionTs, xw.getPartitionNameTxnByPartitionTimestamp(partitionTs));
 
             final long fileSize2 = Files.length(parquet2.$());
             Assert.assertTrue(fileSize2 >= fileSize);
@@ -224,8 +196,7 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
 
     static void assertEquals(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String expectedSql, String parquetSql) throws SqlException {
         try (RecordCursorFactory f1 = compiler.compile(expectedSql, sqlExecutionContext).getRecordCursorFactory(); RecordCursorFactory f2 = compiler.compile(parquetSql, sqlExecutionContext).getRecordCursorFactory(); RecordCursor c1 = f1.getCursor(sqlExecutionContext); RecordCursor c2 = f2.getCursor(sqlExecutionContext)) {
-            RecordMetadata parquetMetadata = symbolAsVarcharCopy(f2.getMetadata());
-            TestUtils.assertEquals(c1, f1.getMetadata(), c2, parquetMetadata, true);
+            TestUtils.assertEquals(c1, f1.getMetadata(), c2, f2.getMetadata(), true);
         }
     }
 

@@ -88,7 +88,7 @@ public class ConcurrentQueue<T extends QueueValueHolder<T>> {
     public ConcurrentQueue(ObjectFactory<T> factory, int size) {
         assert (size & (size - 1)) == 0; // must be a power of 2
         this.factory = factory;
-        tail = head = new ConcurrentQueueSegment<T>(factory, INITIAL_SEGMENT_LENGTH);
+        tail = head = new ConcurrentQueueSegment<>(factory, INITIAL_SEGMENT_LENGTH);
     }
 
     /**
@@ -163,7 +163,7 @@ public class ConcurrentQueue<T extends QueueValueHolder<T>> {
                     // In general, we double the size of the segment, to make it less likely
                     // that we'll need to grow again.
                     int nextSize = Math.min(tail.getCapacity() * 2, MAX_SEGMENT_LENGTH);
-                    ConcurrentQueueSegment<T> newTail = new ConcurrentQueueSegment<T>(factory, nextSize);
+                    ConcurrentQueueSegment<T> newTail = new ConcurrentQueueSegment<>(factory, nextSize);
 
                     // Hook up the new tail.
                     tail.nextSegment = newTail;

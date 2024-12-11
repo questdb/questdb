@@ -37,8 +37,10 @@ import io.questdb.std.Long256Acceptor;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
 import io.questdb.std.ndarr.NdArrayMmapBuffer;
@@ -51,16 +53,19 @@ import io.questdb.std.str.Utf8SplitString;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.io.Closeable;
-
 /**
- * Must be initialized with a {@link #init(PageFrameMemory)} call
- * for a given page frame before any use.
+ * Must be initialized with a {@link PageFrameMemoryPool#navigateTo(int, PageFrameMemoryRecord)}
+ * or {@link #init(PageFrameMemory)} call for a given page frame before any use.
  */
-public class PageFrameMemoryRecord implements Record, StableStringSource, Closeable {
+public class PageFrameMemoryRecord implements Record, StableStringSource, QuietCloseable, Mutable {
+    public static final byte RECORD_A_LETTER = 0;
+    public static final byte RECORD_B_LETTER = 1;
     private final ObjList<MemoryCR.ByteSequenceView> bsViews = new ObjList<>();
     private final ObjList<DirectString> csViewsA = new ObjList<>();
     private final ObjList<DirectString> csViewsB = new ObjList<>();
+    // Letters are used for parquet buffer reference counting in PageFrameMemoryPool.
+    // RECORD_A_LETTER (0) stands for record A, RECORD_B_LETTER (1) stands for record B.
+    private final byte letter;
     private final ObjList<Long256Impl> longs256A = new ObjList<>();
     private final ObjList<Long256Impl> longs256B = new ObjList<>();
     private final ObjList<NdArrayMmapBuffer> ndArraysA = new ObjList<>();
@@ -79,10 +84,11 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, Closea
     private boolean stableStrings;
     private SymbolTableSource symbolTableSource;
 
-    public PageFrameMemoryRecord() {
+    public PageFrameMemoryRecord(byte letter) {
+        this.letter = letter;
     }
 
-    public PageFrameMemoryRecord(PageFrameMemoryRecord other) {
+    public PageFrameMemoryRecord(PageFrameMemoryRecord other, byte letter) {
         this.symbolTableSource = other.symbolTableSource;
         this.rowIndex = other.rowIndex;
         this.frameIndex = other.frameIndex;
@@ -93,12 +99,11 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, Closea
         this.pageSizes = other.pageSizes;
         this.auxPageSizes = other.auxPageSizes;
         this.stableStrings = other.stableStrings;
+        this.letter = letter;
     }
 
     @Override
-    public void close() {
-        Misc.freeObjListIfCloseable(symbolTableCache);
-        symbolTableCache.clear();
+    public void clear() {
         rowIndex = 0;
         frameIndex = -1;
         rowIdOffset = -1;
@@ -106,6 +111,13 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, Closea
         auxPageAddresses = null;
         pageSizes = null;
         auxPageSizes = null;
+    }
+
+    @Override
+    public void close() {
+        Misc.freeObjListIfCloseable(symbolTableCache);
+        symbolTableCache.clear();
+        clear();
     }
 
     @Override
@@ -261,6 +273,11 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, Closea
             return Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
         }
         return NullMemoryCMR.INSTANCE.getInt(0);
+    }
+
+    // 0 means A, 1 means B
+    public byte getLetter() {
+        return letter;
     }
 
     @Override
@@ -460,10 +477,13 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, Closea
         return TableUtils.NULL_LEN; // Column top.
     }
 
+    // Note: this method doesn't break caching in PageFrameMemoryPool
+    // as this method assumes that the record can't be used once
+    // the frame memory is switched to another frame.
     public void init(PageFrameMemory frameMemory) {
         this.frameIndex = frameMemory.getFrameIndex();
         this.frameFormat = frameMemory.getFrameFormat();
-        this.stableStrings = (frameFormat == PageFrame.NATIVE_FORMAT);
+        this.stableStrings = (frameFormat == PartitionFormat.NATIVE);
         this.rowIdOffset = frameMemory.getRowIdOffset();
         this.pageAddresses = frameMemory.getPageAddresses();
         this.auxPageAddresses = frameMemory.getAuxPageAddresses();
@@ -657,7 +677,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, Closea
     ) {
         this.frameIndex = frameIndex;
         this.frameFormat = frameFormat;
-        this.stableStrings = (frameFormat == PageFrame.NATIVE_FORMAT);
+        this.stableStrings = (frameFormat == PartitionFormat.NATIVE);
         this.rowIdOffset = rowIdOffset;
         this.pageAddresses = pageAddresses;
         this.auxPageAddresses = auxPageAddresses;
