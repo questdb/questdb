@@ -4709,7 +4709,7 @@ public class SqlOptimiser implements Mutable {
                     sampleBy != null
                             && timestamp != null
                             && (sampleByOffset != null && SqlKeywords.isZeroOffset(sampleByOffset.token) && (sampleByTimezoneName == null || SqlKeywords.isUTC(sampleByTimezoneName.token)))
-                            && (sampleByFillSize == 0 || (sampleByFillSize == 1 && !SqlKeywords.isPrevKeyword(sampleByFill.getQuick(0).token) && !SqlKeywords.isLinearKeyword(sampleByFill.getQuick(0).token)))
+                            && (sampleByFillSize == 0 || (sampleByFillSize > 0 && !SqlKeywords.isPrevKeyword(sampleByFill.getQuick(0).token) && !SqlKeywords.isLinearKeyword(sampleByFill.getQuick(0).token)))
                             && sampleByUnit == null
                             && (sampleByFrom == null || ((sampleByFrom.type != BIND_VARIABLE) && (sampleByFrom.type != FUNCTION) && (sampleByFrom.type != OPERATION)))
             ) {
