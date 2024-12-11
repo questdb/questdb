@@ -36,18 +36,20 @@ import org.jetbrains.annotations.NotNull;
 import java.io.Closeable;
 
 public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSinkSPI, WindowSPI, Reopenable {
-    private final long[] columnOffsets;
+
     protected final long fixOffset;
     protected final MemoryARW mem;
     protected final RecordChainRecord recordA;
     protected final RecordChainRecord recordB;
     protected final RecordSink recordSink;
+    protected long recordOffset;
     protected final long varOffset;
+    protected long varAppendOffset = 0L;
+
+    private final long[] columnOffsets;
     private long nextRecordOffset = -1L;
     private RecordChainRecord recordC;
-    protected long recordOffset;
     private SymbolTableSource symbolTableResolver;
-    protected long varAppendOffset = 0L;
 
     public RecordChain(
             @Transient @NotNull ColumnTypes columnTypes,
