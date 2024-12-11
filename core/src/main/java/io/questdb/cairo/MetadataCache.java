@@ -482,7 +482,8 @@ public class MetadataCache implements QuietCloseable {
 
                 column.setName(columnName); // check this, not sure the char sequence is preserved
                 column.setType(columnType);
-                column.setPosition(columnMetadata.getReplacingIndex() > -1 ? columnMetadata.getReplacingIndex(): table.getColumnCount());
+                int replacingIndex = columnMetadata.getReplacingIndex();
+                column.setPosition(replacingIndex > -1 ? replacingIndex : i);
                 column.setIsIndexed(columnMetadata.isSymbolIndexFlag());
                 column.setIndexBlockCapacity(columnMetadata.getIndexValueBlockCapacity());
                 column.setIsSymbolTableStatic(columnMetadata.isSymbolTableStatic());
@@ -506,6 +507,9 @@ public class MetadataCache implements QuietCloseable {
             table.columns.sort(comparator);
 
             for (int i = 0, n = table.columns.size(); i < n; i++) {
+                // Update column positions after sort
+                table.columns.getQuick(i).setPosition(i);
+                // Update column name index map
                 table.columnNameIndexMap.put(table.columns.getQuick(i).getName(), i);
             }
 

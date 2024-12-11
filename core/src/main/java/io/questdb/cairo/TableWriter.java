@@ -83,7 +83,6 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.std.BinarySequence;
-import io.questdb.std.Chars;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Files;
@@ -935,11 +934,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     ) {
 
         int existingColIndex = metadata.getColumnIndexQuiet(name);
-        String columnName = metadata.getColumnName(existingColIndex);
         if (existingColIndex < 0) {
             throw CairoException.nonCritical().put("cannot change column type, column does not exists [table=")
-                    .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
+                    .put(tableToken.getTableName()).put(", column=").put(name).put(']');
         }
+        String columnName = metadata.getColumnName(existingColIndex);
 
         if (existingColIndex == metadata.getTimestampIndex()) {
             throw CairoException.nonCritical().put("cannot change column type, column is the designated timestamp [table=")
@@ -3079,27 +3078,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    /**
-     * This an O(n) method to find if column by the same name already exists. The benefit of poor performance
-     * is that we don't keep column name strings on heap. We only use this method when adding new column, where
-     * high performance of name check does not matter much.
-     *
-     * @param name to check
-     * @return 0 based column index.
-     */
-    private static int getColumnIndexQuiet(MemoryMR metaMem, CharSequence name, int columnCount) {
-        long nameOffset = getColumnNameOffset(columnCount);
-        for (int i = 0; i < columnCount; i++) {
-            CharSequence col = metaMem.getStrA(nameOffset);
-            int columnType = getColumnType(metaMem, i); // Negative means deleted column
-            if (columnType > 0 && Chars.equalsIgnoreCase(col, name)) {
-                return i;
-            }
-            nameOffset += Vm.getStorageLength(col);
-        }
-        return -1;
-    }
-
     private static void linkFile(FilesFacade ff, LPSZ from, LPSZ to) {
         if (ff.exists(from)) {
             if (ff.hardLink(from, to) == FILES_RENAME_OK) {
@@ -3139,12 +3117,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private static void openMetaFile(FilesFacade ff, Path path, int rootLen, MemoryMR ddlMem, TableWriterMetadata metadata) {
         path.concat(META_FILE_NAME);
-        try {
+        try (ddlMem) {
             ddlMem.smallFile(ff, path.$(), MemoryTag.MMAP_TABLE_WRITER);
             metadata.reload(ddlMem);
         } finally {
             path.trimTo(rootLen);
-            ddlMem.close();
         }
     }
 
@@ -8859,6 +8836,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         void putUuid(int columnIndex, CharSequence uuid);
 
+        @SuppressWarnings("unused") // Used by assembler
         void putUuidUtf8(int columnIndex, Utf8Sequence uuid);
 
         void putVarchar(int columnIndex, char value);
