@@ -429,6 +429,19 @@ public class FuzzRunner {
         return transactionCount;
     }
 
+    public int randomiseStringLengths(Rnd rnd, int maxLen) {
+        // Make extremely long strings rare
+        // but still possible
+        double randomDriver = rnd.nextDouble();
+
+        // Linear up to 20 chars, then exponential
+        if (20 < maxLen) {
+            return (int) (20 * randomDriver + Math.round(Math.pow(maxLen - 20, randomDriver)));
+        } else {
+            return (int) (20 * randomDriver);
+        }
+    }
+
     public void setFuzzCounts(boolean isO3, int fuzzRowCount, int transactionCount, int strLen, int symbolStrLenMax, int symbolCountMax, int initialRowCount, int partitionCount) {
         setFuzzCounts(isO3, fuzzRowCount, transactionCount, strLen, symbolStrLenMax, symbolCountMax, initialRowCount, partitionCount, -1);
     }
@@ -902,7 +915,7 @@ public class FuzzRunner {
                         rnd.nextBoolean(),
                         rnd.nextInt(2_000_000),
                         rnd.nextInt(1000),
-                        rnd.nextInt(1000),
+                        randomiseStringLengths(rnd, 1000),
                         rnd.nextInt(1000),
                         rnd.nextInt(1000),
                         rnd.nextInt(1_000_000),

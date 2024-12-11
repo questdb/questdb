@@ -25,8 +25,18 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.cutlass.http.ex.RetryFailedOperationException;
-import io.questdb.mp.*;
-import io.questdb.network.*;
+import io.questdb.mp.MCSequence;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SCSequence;
+import io.questdb.mp.SPSequence;
+import io.questdb.mp.Sequence;
+import io.questdb.mp.SynchronizedJob;
+import io.questdb.network.IODispatcher;
+import io.questdb.network.IOOperation;
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.PeerIsSlowToWriteException;
+import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -201,9 +211,6 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
                     retry.fail(selector, e);
                 }
             }
-        } catch (PeerDisconnectedException e) {
-            HttpConnectionContext context = (HttpConnectionContext) retry;
-            dispatcher.disconnect((HttpConnectionContext) retry, IODispatcher.DISCONNECT_REASON_KICKED_OUT_AT_RECV);
         } catch (PeerIsSlowToReadException e) {
             HttpConnectionContext context = (HttpConnectionContext) retry;
             dispatcher.registerChannel(context, IOOperation.WRITE);

@@ -34,7 +34,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.log.Log;
@@ -123,7 +122,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         }
     }
 
-    public void of(LPSZ path) throws SqlException {
+    public void of(LPSZ path) {
         try {
             // Reopen the file, it could have changed
             this.fd = TableUtils.openRO(ff, path, LOG);

@@ -63,7 +63,7 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 
 public class SingleWriterDoubleRecorder implements DoubleValueRecorder {
-    private static AtomicLong instanceIdSequencer = new AtomicLong(1);
+    private static final AtomicLong instanceIdSequencer = new AtomicLong(1);
     private final long instanceId = instanceIdSequencer.getAndIncrement();
 
     private final WriterReaderPhaser recordingPhaser = new WriterReaderPhaser();
@@ -354,7 +354,7 @@ public class SingleWriterDoubleRecorder implements DoubleValueRecorder {
         }
     }
 
-    private class InternalDoubleHistogram extends DoubleHistogram {
+    private static class InternalDoubleHistogram extends DoubleHistogram {
         private final long containingInstanceId;
 
         private InternalDoubleHistogram(long id, int numberOfSignificantValueDigits) {
@@ -375,7 +375,7 @@ public class SingleWriterDoubleRecorder implements DoubleValueRecorder {
         }
     }
 
-    private class PackedInternalDoubleHistogram extends PackedDoubleHistogram {
+    private static class PackedInternalDoubleHistogram extends PackedDoubleHistogram {
         private final long containingInstanceId;
 
         private PackedInternalDoubleHistogram(long id, int numberOfSignificantValueDigits) {

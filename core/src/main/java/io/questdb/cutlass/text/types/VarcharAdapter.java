@@ -56,7 +56,7 @@ public class VarcharAdapter extends AbstractTypeAdapter {
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value, DirectUtf16Sink utf16Sink, DirectUtf8Sink utf8Sink) throws Exception {
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value, DirectUtf16Sink utf16Sink, DirectUtf8Sink utf8Sink) {
         deflateConsecutiveDoubleQuotes(value, utf8Sink);
         row.putVarchar(column, utf8Sink);
     }
