@@ -25,11 +25,14 @@
 package io.questdb.std.datetime.microtime;
 
 import io.questdb.griffin.SqlException;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.str.Utf16Sink;
-import org.jetbrains.annotations.NotNull;
 
 import java.time.Duration;
 import java.time.temporal.ChronoUnit;
@@ -129,31 +132,6 @@ public final class Timestamps {
             _d = maxDay;
         }
         return toMicros(_y, _m, _d) + getTimeMicros(micros) + (micros < 0 ? 1 : 0);
-    }
-
-    /**
-     * Convert a timestamp in arbitrary units to microseconds.
-     *
-     * @param value timestamp value
-     * @param unit  timestamp unit
-     * @return timestamp in microseconds
-     */
-    public static long toMicros(long value, ChronoUnit unit) {
-        switch (unit) {
-            case NANOS:
-                return value / 1_000;
-            case MICROS:
-                return value;
-            case MILLIS:
-                return value * 1_000;
-            case SECONDS:
-                return value * 1_000_000;
-            default:
-                Duration duration = unit.getDuration();
-                long micros = duration.getSeconds() * 1_000_000L;
-                micros += duration.getNano() / 1_000;
-                return micros * value;
-        }
     }
 
     public static long addPeriod(long lo, char type, int period) {
@@ -1099,6 +1077,31 @@ public final class Timestamps {
             return micros - (7 + (thisDow - dow)) * DAY_MICROS;
         } else {
             return micros - (thisDow - dow) * DAY_MICROS;
+        }
+    }
+
+    /**
+     * Convert a timestamp in arbitrary units to microseconds.
+     *
+     * @param value timestamp value
+     * @param unit  timestamp unit
+     * @return timestamp in microseconds
+     */
+    public static long toMicros(long value, ChronoUnit unit) {
+        switch (unit) {
+            case NANOS:
+                return value / 1_000;
+            case MICROS:
+                return value;
+            case MILLIS:
+                return value * 1_000;
+            case SECONDS:
+                return value * 1_000_000;
+            default:
+                Duration duration = unit.getDuration();
+                long micros = duration.getSeconds() * 1_000_000L;
+                micros += duration.getNano() / 1_000;
+                return micros * value;
         }
     }
 
