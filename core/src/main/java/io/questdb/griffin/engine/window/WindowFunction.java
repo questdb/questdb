@@ -49,6 +49,10 @@ public interface WindowFunction extends Function {
 
     void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order);
 
+    /**
+     * @return pass1 scan direction.
+     * Some {@link #ONE_PASS} and {@link #TWO_PASS} window functions may be more efficient when using a backward scan.
+     */
     default Pass1ScanDirection getPass1ScanDirection() {
         return Pass1ScanDirection.FORWARD;
     }

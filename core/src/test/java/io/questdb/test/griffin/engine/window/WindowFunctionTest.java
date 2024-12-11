@@ -4170,7 +4170,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     MaxDoubleWindowFunctionFactory.class,
                     MinDoubleWindowFunctionFactory.class,
                     FirstValueDoubleWindowFunctionFactory.class,
-                    FirstNotNullValueDoubleWindowFunctionFactory.class};
+                    FirstNotNullValueDoubleWindowFunctionFactory.class,
+                    LastValueDoubleWindowFunctionFactory.class,
+                    LastNotNullValueDoubleWindowFunctionFactory.class
+            };
 
             int position = -1;
             ObjList<Function> args = new ObjList<>();
