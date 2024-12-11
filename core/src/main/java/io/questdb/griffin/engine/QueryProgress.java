@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.TableToken;
@@ -43,9 +45,12 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
+import io.questdb.metrics.QueryMetrics;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.FlyweightMessageContainer;
+
+import java.util.concurrent.TimeUnit;
 
 // Factory that adds query to registry on getCursor() and removes on cursor close().
 public class QueryProgress extends AbstractRecordCursorFactory {
@@ -70,13 +75,24 @@ public class QueryProgress extends AbstractRecordCursorFactory {
     }
 
     public static void logEnd(long sqlId, CharSequence sqlText, SqlExecutionContext executionContext, long beginNanos, boolean jit) {
+        CairoEngine engine = executionContext.getCairoEngine();
+        CairoConfiguration config = engine.getConfiguration();
+        long durationNanos = config.getNanosecondClock().getTicks() - beginNanos;
+        if (engine.getConfiguration().isQueryMetricsEnabled()) {
+            QueryMetrics queryMetrics = new QueryMetrics();
+            queryMetrics.isJit = jit;
+            queryMetrics.timestamp = config.getMicrosecondClock().getTicks();
+            queryMetrics.queryText = sqlText;
+            queryMetrics.executionNanos = TimeUnit.NANOSECONDS.toMicros(durationNanos);
+            engine.getMessageBus().getQueryMetricsQueue().offer(queryMetrics);
+        }
         LOG.info()
                 .$("fin [id=").$(sqlId)
                 .$(", sql=`").utf8(sqlText).$('`')
                 .$(", principal=").$(executionContext.getSecurityContext().getPrincipal())
                 .$(", cache=").$(executionContext.isCacheHit())
                 .$(", jit=").$(jit)
-                .$(", time=").$(executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos)
+                .$(", time=").$(durationNanos)
                 .I$();
     }
 

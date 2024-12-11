@@ -75,7 +75,6 @@ import io.questdb.std.str.Path;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
-import java.util.concurrent.TimeUnit;
 
 import static io.questdb.cutlass.http.HttpConstants.URL_PARAM_LIMIT;
 import static io.questdb.cutlass.http.HttpConstants.URL_PARAM_QUERY;
@@ -537,8 +536,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 String query = state.getQuery().toString();
                 final CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
                 sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_JSON);
-                long executionStart = nanosecondClock.getTicks();
-                state.setCompilerNanos(executionStart - compilationStart);
+                state.setCompilerNanos(nanosecondClock.getTicks() - compilationStart);
                 state.setQueryType(cc.getType());
                 // todo: reconsider whether we need to keep the SqlCompiler instance open while executing the query
                 // the problem is the each instance of the compiler has just a single instance of the CompilerQuery object.
@@ -550,14 +548,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                             cc,
                             configuration.getKeepAliveHeader()
                     );
-                    if (engine.getConfiguration().isQueryMetricsEnabled()) {
-                        long executionEnd = nanosecondClock.getTicks();
-                        queryMetrics.jitMode = sqlExecutionContext.getJitMode();
-                        queryMetrics.timestamp = microsecondClock.getTicks();
-                        queryMetrics.queryText = query;
-                        queryMetrics.executionNanos = TimeUnit.NANOSECONDS.toMicros(executionEnd - executionStart);
-                        engine.getMessageBus().getQueryMetricsQueue().offer(queryMetrics);
-                    }
                     break;
                 } catch (TableReferenceOutOfDateException e) {
                     if (retries == maxSqlRecompileAttempts) {
