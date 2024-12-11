@@ -1336,6 +1336,23 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExists() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+
+            assertPlanNoLeakCheck(
+                    "select EXISTS(select * from a)",
+                    "VirtualRecord\n" +
+                            "  functions: [exists(cursor \n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: a)]\n" +
+                            "    long_sequence count: 1\n"
+            );
+        });
+    }
+
+    @Test
     public void testExplainCreateTable() throws Exception {
         assertSql("QUERY PLAN\n" +
                 "Create table: a\n", "explain create table a ( l long, d double)"

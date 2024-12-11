@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
@@ -77,6 +78,11 @@ public final class ExistsFunctionFactory implements FunctionFactory {
             try (RecordCursor cursor = arg.getRecordCursorFactory().getCursor(executionContext)) {
                 exists = cursor.hasNext();
             }
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("exists(").val(arg).val(")");
         }
     }
 }
