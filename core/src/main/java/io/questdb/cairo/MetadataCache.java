@@ -215,7 +215,7 @@ public class MetadataCache implements QuietCloseable {
                     // this corresponds to either the latest entry
                     // or to the slot of a tombstoned entry (a column altered)
                     int existingIndex = TableUtils.getReplacingColumnIndex(metaMem, writerIndex);
-                    int position = existingIndex > -1 ? existingIndex : (int) (table.getColumnCount() - 1);
+                    int position = existingIndex > -1 ? existingIndex : (table.getColumnCount() - 1);
 
                     column.setPosition(position);
                     column.setType(columnType);
@@ -463,7 +463,8 @@ public class MetadataCache implements QuietCloseable {
 
             int timestampIndex = tableMetadata.getTimestampIndex();
             table.setTimestampIndex(timestampIndex);
-            table.setIsSoftLink(engine.getConfiguration().getFilesFacade().isSoftLink(Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(tableToken.getDirNameUtf8()).$()));
+            Path tempPath = Path.getThreadLocal(engine.getConfiguration().getRoot());
+            table.setIsSoftLink(engine.getConfiguration().getFilesFacade().isSoftLink(tempPath.concat(tableToken.getDirNameUtf8()).$()));
 
             for (int i = 0; i < columnCount; i++) {
                 final TableColumnMetadata columnMetadata = tableMetadata.getColumnMetadata(i);
@@ -481,7 +482,7 @@ public class MetadataCache implements QuietCloseable {
 
                 column.setName(columnName); // check this, not sure the char sequence is preserved
                 column.setType(columnType);
-                column.setPosition(columnMetadata.getReplacingIndex() > 0 ? columnMetadata.getReplacingIndex() - 1 : i);
+                column.setPosition(columnMetadata.getReplacingIndex() > -1 ? columnMetadata.getReplacingIndex(): table.getColumnCount());
                 column.setIsIndexed(columnMetadata.isSymbolIndexFlag());
                 column.setIndexBlockCapacity(columnMetadata.getIndexValueBlockCapacity());
                 column.setIsSymbolTableStatic(columnMetadata.isSymbolTableStatic());

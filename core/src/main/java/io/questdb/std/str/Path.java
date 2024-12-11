@@ -139,7 +139,7 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
         }
     }
 
-    public Path concat(CharSequence str) {
+    public Path concat(@NotNull CharSequence str) {
         return concat(str, 0, str.length());
     }
 
@@ -171,7 +171,7 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
         return this;
     }
 
-    public Path concat(CharSequence str, int from, int to) {
+    public Path concat(@NotNull CharSequence str, int from, int to) {
         ensureSeparator();
         return put(str, from, to);
     }
@@ -463,6 +463,7 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
     }
 
     protected final void ensureSeparator() {
+        assert headPtr != 0;
         if (tailPtr > headPtr && Unsafe.getUnsafe().getByte(tailPtr - 1) != Files.SEPARATOR) {
             putByte0((byte) Files.SEPARATOR);
         }

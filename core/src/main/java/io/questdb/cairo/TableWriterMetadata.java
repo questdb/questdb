@@ -42,9 +42,8 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     private TableToken tableToken;
     private boolean walEnabled;
 
-    public TableWriterMetadata(TableToken tableToken, MemoryMR metaMem) {
+    public TableWriterMetadata(TableToken tableToken) {
         this.tableToken = tableToken;
-        reload(metaMem);
     }
 
     @Override
@@ -75,6 +74,11 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     @Override
     public int getPartitionBy() {
         return partitionBy;
+    }
+
+    public int getReplacingColumnIndex(int columnIndex) {
+        WriterTableColumnMetadata columnMeta = (WriterTableColumnMetadata) columnMetadata.get(columnIndex);
+        return columnMeta.getReplacingIndex();
     }
 
     @Override
@@ -268,9 +272,8 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         oldColumnMetadata.rename(newNameStr);
     }
 
-    public static class WriterTableColumnMetadata extends TableColumnMetadata {
+    protected static class WriterTableColumnMetadata extends TableColumnMetadata {
 
-        // todo: remove this class
         public WriterTableColumnMetadata(
                 String nameStr,
                 int type,

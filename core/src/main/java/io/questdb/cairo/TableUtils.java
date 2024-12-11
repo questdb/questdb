@@ -566,7 +566,7 @@ public final class TableUtils {
         txMem.setTruncateSize(TX_BASE_HEADER_SIZE + TX_RECORD_HEADER_SIZE);
     }
 
-    public static LPSZ dFile(Path path, CharSequence columnName, long columnTxn) {
+    public static LPSZ dFile(Path path, @NotNull CharSequence columnName, long columnTxn) {
         path.concat(columnName).put(FILE_SUFFIX_D);
         if (columnTxn > COLUMN_NAME_TXN_NONE) {
             path.put('.').put(columnTxn);
@@ -751,10 +751,6 @@ public final class TableUtils {
 
     public static int getReplacingColumnIndex(MemoryR metaMem, int columnIndex) {
         return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4 + 8 + 4 + 8) - 1;
-    }
-
-    public static int getReplacingColumnIndexRaw(MemoryR metaMem, int columnIndex) {
-        return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4 + 8 + 4 + 8);
     }
 
     public static int getSymbolCapacity(MemoryMR metaMem, int columnIndex) {
@@ -1599,19 +1595,6 @@ public final class TableUtils {
         if (nameTxn > -1L) {
             sink.put('.').put(nameTxn);
         }
-    }
-
-    /**
-     * Sets the sink to the directory of a Parquet partition taking into account the timestamp, the partitioning scheme
-     * and the partition version.
-     *
-     * @param sink        Set to the root directory for a table, this will be updated to the file of the partition
-     * @param partitionBy Partitioning scheme
-     * @param timestamp   A timestamp in the partition
-     * @param nameTxn     Partition txn suffix
-     */
-    public static void setSinkForParquetPartition(CharSink<?> sink, int partitionBy, long timestamp, long nameTxn) {
-
     }
 
     public static void setTxReaderPath(@NotNull TxReader reader, @NotNull Path path, int partitionBy) {
