@@ -401,19 +401,19 @@ public class CairoEngine implements Closeable, WriterSource {
             MemoryMARW mem,
             Path path,
             boolean ifNotExists,
-            TableStructure structure,
+            TableStructure struct,
             boolean keepLock,
             boolean inVolume
     ) {
         // todo: add securityContext.authorizeMatViewCreate();
         securityContext.authorizeTableCreate();
 
-        final TableToken tableToken = doCreateTable(mem, path, ifNotExists, structure, keepLock, inVolume);
+        final TableToken tableToken = doCreateTable(mem, path, ifNotExists, struct, keepLock, inVolume);
 
         // todo: add getDdlListener(tableToken).onMatViewCreated(securityContext, tableToken);
         getDdlListener(tableToken).onTableCreated(securityContext, tableToken);
 
-        return structure.getMatViewDefinition();
+        return struct.getMatViewDefinition();
     }
 
     public @NotNull TableToken createTable(
@@ -1390,7 +1390,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     // caller has to acquire the lock before this method is called and release the lock after the call
-    private void createTableInVolumeUnsafe(MemoryMARW mem, Path path, TableStructure structure, TableToken tableToken) {
+    private void createTableInVolumeUnsafe(MemoryMARW mem, Path path, TableStructure struct, TableToken tableToken) {
         if (TableUtils.TABLE_DOES_NOT_EXIST != TableUtils.existsInVolume(configuration.getFilesFacade(), path, tableToken.getDirName())) {
             throw CairoException.nonCritical().put("name is reserved [table=").put(tableToken.getTableName()).put(']');
         }
@@ -1403,14 +1403,14 @@ public class CairoEngine implements Closeable, WriterSource {
                 mem,
                 path,
                 tableToken.getDirName(),
-                structure,
+                struct,
                 ColumnType.VERSION,
                 tableToken.getTableId()
         );
     }
 
     // caller has to acquire the lock before this method is called and release the lock after the call
-    private void createTableUnsafe(MemoryMARW mem, Path path, TableStructure structure, TableToken tableToken) {
+    private void createTableUnsafe(MemoryMARW mem, Path path, TableStructure struct, TableToken tableToken) {
         if (TableUtils.TABLE_DOES_NOT_EXIST != TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), tableToken.getDirName())) {
             throw CairoException.nonCritical().put("name is reserved [table=").put(tableToken.getTableName()).put(']');
         }
@@ -1423,7 +1423,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 mem,
                 path,
                 tableToken.getDirName(),
-                structure,
+                struct,
                 ColumnType.VERSION,
                 tableToken.getTableId()
         );
@@ -1433,23 +1433,23 @@ public class CairoEngine implements Closeable, WriterSource {
             MemoryMARW mem,
             Path path,
             boolean ifNotExists,
-            TableStructure structure,
+            TableStructure struct,
             boolean keepLock,
             boolean inVolume
     ) {
-        assert !structure.isWalEnabled() || PartitionBy.isPartitioned(structure.getPartitionBy()) : "WAL is only supported for partitioned tables";
-        final CharSequence tableName = structure.getTableName();
+        assert !struct.isWalEnabled() || PartitionBy.isPartitioned(struct.getPartitionBy()) : "WAL is only supported for partitioned tables";
+        final CharSequence tableName = struct.getTableName();
         validNameOrThrow(tableName);
 
         final int tableId = (int) tableIdGenerator.getNextId();
 
         while (true) {
-            TableToken tableToken = lockTableName(tableName, tableId, structure.isMatView(), structure.isWalEnabled());
+            TableToken tableToken = lockTableName(tableName, tableId, struct.isMatView(), struct.isWalEnabled());
             if (tableToken == null) {
                 if (ifNotExists) {
                     tableToken = getTableTokenIfExists(tableName);
                     if (tableToken != null) {
-                        structure.init(tableToken);
+                        struct.init(tableToken);
                         return tableToken;
                     }
                     Os.pause();
@@ -1457,7 +1457,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
                 throw EntryUnavailableException.instance("table exists");
             }
-            structure.init(tableToken);
+            struct.init(tableToken);
             while (!lockTableCreate(tableToken)) {
                 Os.pause();
             }
@@ -1467,13 +1467,13 @@ public class CairoEngine implements Closeable, WriterSource {
                     boolean tableCreated = false;
                     try {
                         if (inVolume) {
-                            createTableInVolumeUnsafe(mem, path, structure, tableToken);
+                            createTableInVolumeUnsafe(mem, path, struct, tableToken);
                         } else {
-                            createTableUnsafe(mem, path, structure, tableToken);
+                            createTableUnsafe(mem, path, struct, tableToken);
                         }
 
-                        if (structure.isWalEnabled()) {
-                            tableSequencerAPI.registerTable(tableToken.getTableId(), structure, tableToken);
+                        if (struct.isWalEnabled()) {
+                            tableSequencerAPI.registerTable(tableToken.getTableId(), struct, tableToken);
                         }
                         tableCreated = true;
                     } finally {
@@ -1489,7 +1489,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     }
                 }
             } catch (Throwable th) {
-                if (structure.isWalEnabled()) {
+                if (struct.isWalEnabled()) {
                     // tableToken.getLoggingName() === tableName, table cannot be renamed while creation hasn't finished
                     tableSequencerAPI.dropTable(tableToken, true);
                 }
