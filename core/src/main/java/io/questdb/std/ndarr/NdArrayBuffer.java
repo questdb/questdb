@@ -40,9 +40,9 @@ import org.jetbrains.annotations.NotNull;
  * {@link NdArrayMmapBuffer} instead.</p>
  */
 public class NdArrayBuffer implements QuietCloseable {
-    public final DirectIntList shape = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY);
-    public final DirectIntList strides = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY);
-    public final DirectByteSink values = new DirectByteSink(0, MemoryTag.NATIVE_ND_ARRAY);
+    public final DirectIntList shape = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY_DBG2);
+    public final DirectIntList strides = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY_DBG2);
+    public final DirectByteSink values = new DirectByteSink(0, MemoryTag.NATIVE_ND_ARRAY_DBG2);
     public int type = 0;
 
     @Override

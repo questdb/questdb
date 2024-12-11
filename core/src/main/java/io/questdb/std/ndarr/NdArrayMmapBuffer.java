@@ -35,7 +35,7 @@ import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.Nullable;
 
 public class NdArrayMmapBuffer implements QuietCloseable {
-    private final DirectIntList strides = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY);
+    private final DirectIntList strides = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY_DBG3);
     private final NdArrayView view = new NdArrayView();
     private @Nullable NdArrayView viewRes = null;  // set to `view` when has value, or `null` otherwise.
 

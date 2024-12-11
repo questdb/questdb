@@ -374,7 +374,7 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
         appendNullImpl(auxMem, offset);
     }
 
-    private static void clearThreadLocals() {
+    public static void clearThreadLocals() {
         SHAPE.close();
     }
 
@@ -401,7 +401,7 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
     }
 
     private static DirectIntList newShape() {
-        return new DirectIntList(8, MemoryTag.NATIVE_ND_ARRAY);
+        return new DirectIntList(8, MemoryTag.NATIVE_ND_ARRAY_DBG1);
     }
 
     private static void padTo(@NotNull MemoryA dataMem, int byteAlignment) {
