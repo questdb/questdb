@@ -53,8 +53,7 @@ public final class PartitionBy {
     public static final int HOUR = 4;
     public static final int MONTH = 1;
     /**
-     * Data is not partitioned at all,
-     * all data is stored in a single directory
+     * Data is not partitioned at all, all data is stored in a single directory
      */
     public static final int NONE = 3;
     public static final int WEEK = 5;
