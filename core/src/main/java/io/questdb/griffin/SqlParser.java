@@ -55,6 +55,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
+import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -746,19 +747,41 @@ public class SqlParser {
             tok = optTok(lexer);
 
             if (tok != null && isTtlKeyword(tok)) {
+                int valuePos = lexer.getPosition();
                 tok = optTok(lexer);
                 if (tok == null) {
-                    throw SqlException.position(lexer.getPosition())
-                            .put(" missing argument, should be TTL <number>");
+                    throw SqlException.$(lexer.getPosition(), "missing argument, should be TTL <number> <unit>");
                 }
+                int ttlValue;
                 try {
-                    int ttlSetting = Numbers.parseInt(tok);
-                    builder.setTtlHours(ttlSetting);
-                    tok = optTok(lexer);
+                    long ttlLong = Numbers.parseLong(tok);
+                    if (ttlLong > Integer.MAX_VALUE) {
+                        throw SqlException.$(valuePos, "TTL value out of range: ").put(ttlLong)
+                                .put(". Max value: ").put(Integer.MAX_VALUE);
+                    }
+                    ttlValue = (int) ttlLong;
                 } catch (NumericException e) {
-                    throw SqlException.position(lexer.getPosition()
-                    ).put(" invalid syntax, should be TTL <number> but was TTL ").put("");
+                    throw SqlException.$(valuePos,
+                            "invalid syntax, should be TTL <number> <unit> but was TTL ").put(tok);
                 }
+                if (ttlValue <= 0) {
+                    throw SqlException.$(lexer.getPosition(), "TTL value must be positive, but was ").put(ttlValue);
+                }
+                tok = optTok(lexer);
+                if (tok == null) {
+                    throw SqlException.$(lexer.getPosition(),
+                            "missing unit, 'HOUR(S)', 'DAY(S)', 'MONTH(S)' or 'YEAR(S)' expected");
+                }
+                boolean isPlural = (tok.charAt(tok.length() - 1) | 32) == 's';
+                int unit = PartitionBy.fromString(isPlural ? tok.subSequence(0, tok.length() - 1) : tok);
+                if (unit == -1 || unit == PartitionBy.NONE) {
+                    throw SqlException.$(lexer.getPosition(),
+                                    "invalid unit, expected 'HOUR(S)', 'DAY(S)', 'MONTH(S)' or 'YEAR(S)', but was '")
+                            .put(tok).put('\'');
+                }
+                int ttlHours = Timestamps.toHours(ttlValue, unit, valuePos);
+                builder.setTtlHours(ttlHours);
+                tok = optTok(lexer);
             }
 
             if (tok != null) {
