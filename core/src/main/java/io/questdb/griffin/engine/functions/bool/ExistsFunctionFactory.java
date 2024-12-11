@@ -37,7 +37,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class ExistsFunctionFactory implements FunctionFactory {
+public final class ExistsFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "exists(C)";
