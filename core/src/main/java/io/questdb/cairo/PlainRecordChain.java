@@ -31,6 +31,12 @@ import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.std.MemoryTag;
 import org.jetbrains.annotations.NotNull;
 
+/**
+ * PlainRecordChain is similar to RecordChain, except that it stores the record's startOffset in a separate memory
+ * location instead of at the record header.
+ * This enhances its random access capability, making it behave more like an array,
+ * while sacrificing the ability to access records like a linked list.
+ */
 public class PlainRecordChain extends RecordChain {
 
     private final MemoryARW recordsStartOffset;

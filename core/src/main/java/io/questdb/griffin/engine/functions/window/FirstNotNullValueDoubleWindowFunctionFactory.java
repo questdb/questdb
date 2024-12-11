@@ -29,7 +29,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -545,7 +544,7 @@ public class FirstNotNullValueDoubleWindowFunctionFactory extends AbstractWindow
 
     // Handles first_not_null_value() over ([order by ts] range between x preceding and [ y preceding | current row ] ); no partition by key
     public static class FirstNotNullValueOverRangeFrameFunction extends
-            FirstValueDoubleWindowFunctionFactory.FirstValueOverRangeFrameFunction implements Reopenable {
+            FirstValueDoubleWindowFunctionFactory.FirstValueOverRangeFrameFunction {
 
         public FirstNotNullValueOverRangeFrameFunction(
                 long rangeLo,
@@ -635,7 +634,7 @@ public class FirstNotNullValueDoubleWindowFunctionFactory extends AbstractWindow
     // Handles first_not_null_value() over ([order by o] rows between y and z); there's no partition by.
     // Removable cumulative aggregation.
     public static class FirstNotNullValueOverRowsFrameFunction extends
-            FirstValueDoubleWindowFunctionFactory.FirstValueOverRowsFrameFunction implements Reopenable {
+            FirstValueDoubleWindowFunctionFactory.FirstValueOverRowsFrameFunction {
         private long firstNotNullIdx = -1;
 
         public FirstNotNullValueOverRowsFrameFunction(Function arg, long rowsLo, long rowsHi, MemoryARW memory) {
