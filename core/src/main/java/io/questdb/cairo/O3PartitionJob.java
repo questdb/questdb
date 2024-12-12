@@ -99,7 +99,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         try (
                 PartitionDecoder partitionDecoder = new PartitionDecoder();
                 RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
-                DirectIntList columnIdsAndTypes = new DirectIntList(2, MemoryTag.NATIVE_O3)
+                DirectIntList parquetColumns = new DirectIntList(2L * tableWriterMetadata.getColumnCount(), MemoryTag.NATIVE_O3)
         ) {
             long parquetAddr = 0;
             try (
@@ -198,10 +198,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                 long mergeRangeLo = srcOooLo;
                 for (int rowGroup = 1; rowGroup < rowGroupCount; rowGroup++) {
-                    columnIdsAndTypes.clear();
-                    columnIdsAndTypes.add(timestampIndex);
-                    columnIdsAndTypes.add(timestampColumnType);
-                    partitionDecoder.readRowGroupStats(rowGroupStatBuffers, columnIdsAndTypes, rowGroup);
+                    parquetColumns.clear();
+                    parquetColumns.add(timestampIndex);
+                    parquetColumns.add(timestampColumnType);
+                    partitionDecoder.readRowGroupStats(rowGroupStatBuffers, parquetColumns, rowGroup);
                     final long min = rowGroupStatBuffers.getMinValueLong(0);
                     final long mergeRangeHi = Vect.boundedBinarySearchIndexT(
                             sortedTimestampsAddr,
@@ -219,7 +219,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     duplicateCount += mergeRowGroup(
                             partitionDescriptor,
                             partitionUpdater,
-                            columnIdsAndTypes,
+                            parquetColumns,
                             oooColumns,
                             sortedTimestampsAddr,
                             tableWriter,
@@ -243,7 +243,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     duplicateCount += mergeRowGroup(
                             partitionDescriptor,
                             partitionUpdater,
-                            columnIdsAndTypes,
+                            parquetColumns,
                             oooColumns,
                             sortedTimestampsAddr,
                             tableWriter,
@@ -279,7 +279,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     ff,
                     partitionDecoder,
                     tableWriterMetadata,
-                    columnIdsAndTypes,
+                    parquetColumns,
                     rowGroupBuffers
             );
         } catch (Throwable th) {
@@ -1273,7 +1273,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     private static long mergeRowGroup(
             PartitionDescriptor partitionDescriptor,
             PartitionUpdater partitionUpdater,
-            DirectIntList columnsIdsAndTypes,
+            DirectIntList parquetColumns,
             ReadOnlyObjList<? extends MemoryCR> oooColumns,
             long sortedTimestampsAddr,
             TableWriter tableWriter,
@@ -1289,8 +1289,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long dedupColSinkAddr
     ) {
         // decode column chunks for the row group in advance
-        columnsIdsAndTypes.clear();
+        parquetColumns.clear();
         int timestampColumnChunkIndex = -1;
+        // TODO(eugene): Verify Parquet and TableWriter metadata consistency.
+        // Currently assuming metadata is in sync and consistent, as there were no column operations.
+        // After table DDL implementation, this may no longer hold true, so index remapping is required.
         final int columnCount = tableWriterMetadata.getColumnCount();
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             int columnType = tableWriterMetadata.getColumnType(columnIndex);
@@ -1298,14 +1301,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 continue;
             }
             if (columnIndex == timestampIndex) {
-                timestampColumnChunkIndex = (int) columnsIdsAndTypes.size() / 2;
+                timestampColumnChunkIndex = (int) parquetColumns.size() / 2;
             }
-            columnsIdsAndTypes.add(columnIndex);
-            columnsIdsAndTypes.add(columnType);
+            parquetColumns.add(columnIndex);
+            parquetColumns.add(columnType);
         }
 
         final int rowGroupSize = decoder.metadata().rowGroupSize(rowGroupIndex);
-        decoder.decodeRowGroup(rowGroupBuffers, columnsIdsAndTypes, rowGroupIndex, 0, rowGroupSize);
+        decoder.decodeRowGroup(rowGroupBuffers, parquetColumns, rowGroupIndex, 0, rowGroupSize);
 
         assert timestampColumnChunkIndex > -1;
         final long timestampDataPtr = rowGroupBuffers.getChunkDataPtr(timestampColumnChunkIndex);
@@ -1344,8 +1347,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 } else {
                     int dedupColumnIndex = 0;
                     dedupCommitAddresses.clear(dedupColSinkAddr);
-                    for (int bufferIndex = 0, n = (int) columnsIdsAndTypes.size() / 2; bufferIndex < n; bufferIndex++) {
-                        int columnIndex = columnsIdsAndTypes.get(bufferIndex * 2L);
+                    for (int bufferIndex = 0, n = (int) parquetColumns.size() / 2; bufferIndex < n; bufferIndex++) {
+                        int columnIndex = parquetColumns.get(bufferIndex * 2L);
                         int columnType = tableWriterMetadata.getColumnType(columnIndex);
                         assert columnIndex >= 0;
                         assert columnType >= 0;
@@ -1413,8 +1416,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         try {
             partitionDescriptor.of(tableWriter.getTableToken().getTableName(), mergeRowCount, timestampIndex);
 
-            for (int bufferIndex = 0, n = (int) columnsIdsAndTypes.size() / 2; bufferIndex < n; bufferIndex++) {
-                int columnIndex = columnsIdsAndTypes.get(bufferIndex * 2L);
+            for (int bufferIndex = 0, n = (int) parquetColumns.size() / 2; bufferIndex < n; bufferIndex++) {
+                int columnIndex = parquetColumns.get(bufferIndex * 2L);
                 int columnType = tableWriterMetadata.getColumnType(columnIndex);
                 assert columnIndex >= 0;
                 assert columnType >= 0;
@@ -2124,7 +2127,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             FilesFacade ff,
             PartitionDecoder partitionDecoder,
             TableRecordMetadata tableWriterMetadata,
-            DirectIntList columnIdsAndTypes,
+            DirectIntList parquetColumns,
             RowGroupBuffers rowGroupBuffers
     ) {
         long parquetAddr = 0;
@@ -2198,9 +2201,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                         final long columnTop = tableWriter.getColumnVersionReader().getColumnTop(partitionTimestamp, columnIndex);
                         if (columnTop > -1 && newPartitionSize > columnTop) {
-                            columnIdsAndTypes.clear();
-                            columnIdsAndTypes.add(parquetColumnIndex);
-                            columnIdsAndTypes.add(ColumnType.SYMBOL);
+                            parquetColumns.clear();
+                            parquetColumns.add(parquetColumnIndex);
+                            parquetColumns.add(ColumnType.SYMBOL);
 
                             long rowCount = 0;
                             final int rowGroupCount = parquetMetadata.rowGroupCount();
@@ -2213,7 +2216,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                                 partitionDecoder.decodeRowGroup(
                                         rowGroupBuffers,
-                                        columnIdsAndTypes,
+                                        parquetColumns,
                                         rowGroupIndex,
                                         (int) Math.max(0, columnTop - rowCount),
                                         rowGroupSize
