@@ -7752,9 +7752,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlMem.putInt(metadata.getMaxUncommittedRows());
             ddlMem.putLong(metadata.getO3MaxLag());
 
-            metadata.setMetadataVersion(txWriter.getMetadataVersion() + 1);
+            int version = txWriter.getMetadataVersion() + 1;
+            metadata.setMetadataVersion(version);
             ddlMem.putLong(metadata.getMetadataVersion());
             ddlMem.putBool(metadata.isWalEnabled());
+            ddlMem.putInt(TableUtils.calculateMetadataMinorFormatVersion(version + columnCount));
 
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
@@ -8836,7 +8838,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         void putUuid(int columnIndex, CharSequence uuid);
 
-        @SuppressWarnings("unused") // Used by assembler
+        @SuppressWarnings("unused")
+            // Used by assembler
         void putUuidUtf8(int columnIndex, Utf8Sequence uuid);
 
         void putVarchar(int columnIndex, char value);

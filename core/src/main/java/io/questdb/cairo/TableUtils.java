@@ -99,9 +99,10 @@ public final class TableUtils {
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
     public static final long META_COLUMN_DATA_SIZE = 32;
     public static final String META_FILE_NAME = "_meta";
+    public static final short META_MINOR_VERSION_LATEST = 1;
     public static final long META_OFFSET_COLUMN_TYPES = 128;
     public static final long META_OFFSET_COUNT = 0;
-    public static final long META_OFFSET_MAX_UNCOMMITTED_ROWS = 20; // LONG
+    public static final long META_OFFSET_MAX_UNCOMMITTED_ROWS = 20; // INT
     public static final long META_OFFSET_METADATA_VERSION = 32; // LONG
     public static final long META_OFFSET_O3_MAX_LAG = 24; // LONG
     // INT - symbol map count, this is a variable part of transaction file
@@ -111,6 +112,7 @@ public final class TableUtils {
     public static final long META_OFFSET_TIMESTAMP_INDEX = 8;
     public static final long META_OFFSET_VERSION = 12;
     public static final long META_OFFSET_WAL_ENABLED = 40; // BOOLEAN
+    public static final long META_OFFSET_META_FORMAT_MINOR_VERSION = META_OFFSET_WAL_ENABLED + 1; // INT
     public static final String META_PREV_FILE_NAME = "_meta.prev";
     /**
      * TXN file structure
@@ -219,6 +221,10 @@ public final class TableUtils {
     public static void allocateDiskSpaceToPage(FilesFacade ff, long fd, long size) {
         size = Files.ceilPageSize(size);
         allocateDiskSpace(ff, fd, size);
+    }
+
+    public static int calculateMetadataMinorFormatVersion(int metadataVersion) {
+        return Numbers.encodeLowHighShorts(Numbers.decodeLowShort(metadataVersion), META_MINOR_VERSION_LATEST);
     }
 
     public static int calculateTxRecordSize(int bytesSymbols, int bytesPartitions) {
@@ -1743,7 +1749,8 @@ public final class TableUtils {
         mem.putInt(tableStruct.getMaxUncommittedRows());
         mem.putLong(tableStruct.getO3MaxLag());
         mem.putLong(0); // Structure version.
-        mem.putInt(tableStruct.isWalEnabled() ? 1 : 0);
+        mem.putBool(tableStruct.isWalEnabled());
+        mem.putInt(TableUtils.calculateMetadataMinorFormatVersion(count));
         mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
         assert count > 0;
@@ -1911,23 +1918,12 @@ public final class TableUtils {
         }
     }
 
-    static void openMetaSwapFileByIndex(FilesFacade ff, MemoryMA mem, Path path, int rootLen, int swapIndex) {
-        try {
-            path.concat(META_SWAP_FILE_NAME);
-            if (swapIndex > 0) {
-                path.put('.').put(swapIndex);
-            }
-            mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
-        } finally {
-            path.trimTo(rootLen);
-        }
-    }
-
     public interface FailureCloseable {
         void close(long prevSize);
     }
 
     static {
+        //noinspection ConstantValue
         assert TX_OFFSET_LAG_MAX_TIMESTAMP_64 + 8 <= TX_OFFSET_MAP_WRITER_COUNT_32;
     }
 }

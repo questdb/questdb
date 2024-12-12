@@ -86,52 +86,52 @@ public class EngineMigrationTest extends AbstractCairoTest {
 
     @Test
     public void test416() throws IOException, SqlException {
-        doMigration("/migration/data_416.zip", false, false, false, false, false);
+        doMigration("/migration/data_416.zip", false, false, false, false, false, false);
     }
 
     @Test
     public void test417() throws IOException, SqlException {
-        doMigration("/migration/data_417.zip", true, false, false, false, false);
+        doMigration("/migration/data_417.zip", true, false, false, false, false, false);
     }
 
     @Test
     public void test419() throws IOException, SqlException {
-        doMigration("/migration/data_419.zip", true, false, false, false, false);
+        doMigration("/migration/data_419.zip", true, false, false, false, false, true);
     }
 
     @Test
     public void test420() throws IOException, SqlException {
-        doMigration("/migration/data_420.zip", true, false, false, false, false);
+        doMigration("/migration/data_420.zip", true, false, false, false, false, true);
     }
 
     @Test
     public void test421() throws IOException, SqlException {
-        doMigration("/migration/data_421.zip", true, true, false, false, false);
+        doMigration("/migration/data_421.zip", true, true, false, false, false, true);
     }
 
     @Test
     public void test422() throws IOException, SqlException {
-        doMigration("/migration/data_422.zip", true, true, false, false, false);
+        doMigration("/migration/data_422.zip", true, true, false, false, false, true);
     }
 
     @Test
     public void test423() throws IOException, SqlException {
-        doMigration("/migration/data_423.zip", true, true, false, false, false);
+        doMigration("/migration/data_423.zip", true, true, false, false, false, true);
     }
 
     @Test
     public void test424() throws IOException, SqlException {
-        doMigration("/migration/data_424.zip", true, true, true, false, false);
+        doMigration("/migration/data_424.zip", true, true, true, false, false, true);
     }
 
     @Test
     public void test425() throws IOException, SqlException {
-        doMigration("/migration/data_425.zip", true, true, true, true, false);
+        doMigration("/migration/data_425.zip", true, true, true, true, false, true);
     }
 
     @Test
     public void test426() throws IOException, SqlException {
-        doMigration("/migration/data_426.zip", true, true, true, true, true);
+        doMigration("/migration/data_426.zip", true, true, true, true, true, false);
     }
 
     @Test
@@ -248,6 +248,130 @@ public class EngineMigrationTest extends AbstractCairoTest {
 
         // Check txn file is upgraded
         checkTxnFile(config.getFilesFacade(), config, token, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE);
+    }
+
+    private static void assertCairoMetadata(CharSequence expected, String tableName, boolean ignoreMaxLag) {
+        try (MetadataCacheReader ro = engine.getMetadataCache().readLock()) {
+            TableToken token = engine.verifyTableName(tableName);
+            CairoTable table = ro.getTable(token);
+            Assert.assertNotNull(table);
+            sink.clear();
+            table.toSink(sink);
+            expected = expected.toString().replace("id=1", "id=" + token.getTableId());
+            CharSequence actual = sink;
+            if (table.getPartitionBy() == PartitionBy.NONE || ignoreMaxLag) {
+                // Some older files contains o3MaxLag as 0 for no good reason for non-partitioned tables
+                actual = sink.toString().replace("o3MaxLag=0,", "o3MaxLag=300000000,");
+            }
+            TestUtils.assertEquals(expected, actual);
+        }
+    }
+
+    private static void assertStandardTable(boolean ignoreMaxLag, String tableName, String partitionBy) {
+        String columns = "\t\tCairoColumn [name=a, position=0, type=BYTE, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=0]\n" +
+                "\t\tCairoColumn [name=b, position=1, type=CHAR, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=1]\n" +
+                "\t\tCairoColumn [name=c, position=2, type=SHORT, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=2]\n" +
+                "\t\tCairoColumn [name=d, position=3, type=INT, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=3]\n" +
+                "\t\tCairoColumn [name=e, position=4, type=LONG, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=4]\n" +
+                "\t\tCairoColumn [name=f, position=5, type=FLOAT, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=5]\n" +
+                "\t\tCairoColumn [name=g, position=6, type=DOUBLE, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=6]\n" +
+                "\t\tCairoColumn [name=h, position=7, type=DATE, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=7]\n" +
+                "\t\tCairoColumn [name=i, position=8, type=TIMESTAMP, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=8]\n" +
+                "\t\tCairoColumn [name=j, position=9, type=STRING, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=9]\n" +
+                "\t\tCairoColumn [name=k, position=10, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=false, indexBlockCapacity=0, writerIndex=10]\n" +
+                "\t\tCairoColumn [name=l, position=11, type=BOOLEAN, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=11]\n" +
+                "\t\tCairoColumn [name=m, position=12, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=true, indexBlockCapacity=256, writerIndex=12]\n" +
+                "\t\tCairoColumn [name=n, position=13, type=LONG256, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=13]\n" +
+                "\t\tCairoColumn [name=o, position=14, type=BINARY, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=14]\n" +
+                "\t\tCairoColumn [name=ts, position=15, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=15]";
+
+        assertCairoMetadata(
+                "CairoTable [name=" + tableName + ", id=1, directoryName=" + tableName + ", isDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=" + partitionBy + ", timestampIndex=15, timestampName=ts, walEnabled=false, columnCount=16]\n" +
+                        columns,
+                tableName,
+                ignoreMaxLag
+        );
+    }
+
+    private static void assertShortTableMeta(boolean ignoreMaxLag, String... params) {
+        for (int i = 0; i < params.length; i += 2) {
+            String tableName = params[i];
+            String partitionBy = params[i + 1];
+                assertCairoMetadata(
+                        "CairoTable [name=" + tableName + ", id=1, directoryName=" + tableName + ", isDedup=false, isSoftLink=false, metadataVersion=1, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=" + partitionBy + ", timestampIndex=2, timestampName=ts, walEnabled=false, columnCount=4]\n" +
+                                "\t\tCairoColumn [name=x, position=0, type=LONG, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=0]\n" +
+                                "\t\tCairoColumn [name=m, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=true, indexBlockCapacity=256, writerIndex=1]\n" +
+                                "\t\tCairoColumn [name=ts, position=2, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=2]\n" +
+                                "\t\tCairoColumn [name=y, position=3, type=LONG, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=256, writerIndex=3]",
+                        tableName,
+                        ignoreMaxLag
+                );
+        }
+    }
+
+    private static void assertShort2TableMeta(boolean ignoreMaxLag, String... params) {
+        for (int i = 0; i < params.length; i += 2) {
+            String tableName = params[i];
+            String partitionBy = params[i + 1];
+            assertCairoMetadata(
+                    "CairoTable [name=" + tableName + ", id=1, directoryName=" + tableName + ", isDedup=false, isSoftLink=false, metadataVersion=2, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=" + partitionBy + ", timestampIndex=2, timestampName=ts, walEnabled=false, columnCount=5]\n" +
+                            "\t\tCairoColumn [name=x, position=0, type=LONG, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=0]\n" +
+                            "\t\tCairoColumn [name=m, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=true, indexBlockCapacity=256, writerIndex=1]\n" +
+                            "\t\tCairoColumn [name=ts, position=2, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=2]\n" +
+                            "\t\tCairoColumn [name=день, position=3, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=false, indexBlockCapacity=256, writerIndex=3]\n" +
+                            "\t\tCairoColumn [name=str, position=4, type=STRING, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=256, writerIndex=4]",
+                    tableName,
+                    ignoreMaxLag
+            );
+        }
+    }
+
+    private static void assertShortWalTableMeta(boolean ignoreMaxLag, String... params) {
+        for (int i = 0; i < params.length; i += 2) {
+            String tableName = params[i];
+            String partitionBy = params[i + 1];
+            assertCairoMetadata(
+                    "CairoTable [name=" + tableName + ", id=1, directoryName=" + tableName + "~14, isDedup=false, isSoftLink=false, metadataVersion=2, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=" + partitionBy + ", timestampIndex=2, timestampName=ts, walEnabled=true, columnCount=5]\n" +
+                            "\t\tCairoColumn [name=x, position=0, type=LONG, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=0]\n" +
+                            "\t\tCairoColumn [name=m, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=true, indexBlockCapacity=256, writerIndex=1]\n" +
+                            "\t\tCairoColumn [name=ts, position=2, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=2]\n" +
+                            "\t\tCairoColumn [name=день, position=3, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=false, indexBlockCapacity=256, writerIndex=3]\n" +
+                            "\t\tCairoColumn [name=str, position=4, type=STRING, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=256, writerIndex=4]",
+                    tableName,
+                    ignoreMaxLag
+            );
+        }
+    }
+
+    private static void assertTableMeta(boolean ignoreMaxLag, String... params) {
+        for (int i = 0; i < params.length; i += 2) {
+            String tableName = params[i];
+            String partitionBy = params[i + 1];
+            if (partitionBy.equals("NONE_NTS")) {
+                assertCairoMetadata(
+                        "CairoTable [name=" + tableName + ", id=1, directoryName=" + tableName + ", isDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=NONE, timestampIndex=-1, timestampName=, walEnabled=false, columnCount=15]\n" +
+                                "\t\tCairoColumn [name=a, position=0, type=BYTE, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=0]\n" +
+                                "\t\tCairoColumn [name=b, position=1, type=CHAR, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=1]\n" +
+                                "\t\tCairoColumn [name=c, position=2, type=SHORT, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=2]\n" +
+                                "\t\tCairoColumn [name=d, position=3, type=INT, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=3]\n" +
+                                "\t\tCairoColumn [name=e, position=4, type=LONG, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=4]\n" +
+                                "\t\tCairoColumn [name=f, position=5, type=FLOAT, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=5]\n" +
+                                "\t\tCairoColumn [name=g, position=6, type=DOUBLE, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=6]\n" +
+                                "\t\tCairoColumn [name=h, position=7, type=DATE, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=7]\n" +
+                                "\t\tCairoColumn [name=i, position=8, type=TIMESTAMP, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=8]\n" +
+                                "\t\tCairoColumn [name=j, position=9, type=STRING, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=9]\n" +
+                                "\t\tCairoColumn [name=k, position=10, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=false, indexBlockCapacity=0, writerIndex=10]\n" +
+                                "\t\tCairoColumn [name=l, position=11, type=BOOLEAN, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=11]\n" +
+                                "\t\tCairoColumn [name=m, position=12, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=true, indexBlockCapacity=256, writerIndex=12]\n" +
+                                "\t\tCairoColumn [name=n, position=13, type=LONG256, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=13]\n" +
+                                "\t\tCairoColumn [name=o, position=14, type=BINARY, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=14]",
+                        tableName,
+                        ignoreMaxLag
+                );
+            } else {
+                assertStandardTable(ignoreMaxLag, tableName, partitionBy);
+            }
+        }
     }
 
     private static void checkTxnFile(FilesFacade ff, CairoConfiguration config, TableToken tokenDef, int rowCount, int lagTxnCount, long maxValue, long minValue) {
@@ -930,6 +1054,43 @@ public class EngineMigrationTest extends AbstractCairoTest {
         );
     }
 
+    private void assertMetadataCache(boolean withO3, boolean withColTops, boolean withColTopO3, boolean withWalTxn, boolean ignoreMaxLag) {
+
+        assertTableMeta(ignoreMaxLag,
+                "t_none_nts", "NONE_NTS",
+                "t_none", "NONE",
+                "t_day", "DAY",
+                "t_month", "MONTH",
+                "t_year", "YEAR"
+        );
+
+        if (withO3) {
+            assertTableMeta(ignoreMaxLag,
+                    "t_day_ooo", "DAY",
+                    "t_month_ooo", "MONTH",
+                    "t_year_ooo", "YEAR"
+            );
+        }
+
+        if (withColTops) {
+            assertShortTableMeta(ignoreMaxLag,
+                    "t_col_top_none", "NONE"
+            );
+        }
+
+        if (withColTopO3) {
+            assertShort2TableMeta(ignoreMaxLag,
+                    "t_col_top_ooo_day", "DAY"
+            );
+        }
+
+        if (withWalTxn) {
+            assertShortWalTableMeta(ignoreMaxLag,
+                    "t_col_top_ooo_day_wal", "DAY"
+            );
+        }
+    }
+
     private void assertMissingPartitions() throws SqlException {
         execute("alter table t_col_top_день_missing_parts drop partition where ts < '1970-01-02'");
         assertSql(
@@ -1359,16 +1520,18 @@ public class EngineMigrationTest extends AbstractCairoTest {
                 " rnd_bin(2,10, 2) o";
     }
 
-    private void doMigration(String dataZip, boolean freeTableId, boolean withO3, boolean withColTops, boolean withColTopO3, boolean withWalTxn) throws IOException, SqlException {
+    private void doMigration(String dataZip, boolean freeTableId, boolean withO3, boolean withColTops, boolean withColTopO3, boolean withWalTxn, boolean ignoreMaxLag) throws IOException, SqlException {
         if (freeTableId) {
             engine.getTableIdGenerator().close();
         }
         replaceDbContent(dataZip);
         EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, true);
         engine.reloadTableNames();
+        engine.getMetadataCache().onStartupAsyncHydrator();
         assertData(withO3, withColTops, withColTopO3, withWalTxn);
         appendData(withColTopO3, withWalTxn);
         assertAppendedData(withColTopO3, withWalTxn);
+        assertMetadataCache(withO3, withColTops, withColTopO3, withWalTxn, ignoreMaxLag);
     }
 
     private void generateMigrationTables() throws SqlException, NumericException {
