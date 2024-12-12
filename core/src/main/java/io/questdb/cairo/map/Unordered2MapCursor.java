@@ -40,6 +40,7 @@ public final class Unordered2MapCursor implements MapRecordCursor {
     private long memLimit;
     private long memStart;
     private int remaining;
+    private long rowNumber = 0;
 
     Unordered2MapCursor(Unordered2MapRecord record, Unordered2Map map) {
         this.recordA = record;
@@ -74,7 +75,7 @@ public final class Unordered2MapCursor implements MapRecordCursor {
     @Override
     public boolean hasNext() {
         if (remaining > 0) {
-            recordA.of(address);
+            recordA.of(address, rowNumber++);
             skipToNonZeroKey();
             remaining--;
             return true;
@@ -86,7 +87,7 @@ public final class Unordered2MapCursor implements MapRecordCursor {
     public void longTopK(DirectLongLongHeap heap, Function recordFunction) {
         // First, we handle zero key.
         if (hasZero) {
-            recordA.of(memStart);
+            recordA.of(memStart, 0);
             long v = recordFunction.getLong(recordA);
             heap.add(memStart, v);
         }
@@ -94,7 +95,7 @@ public final class Unordered2MapCursor implements MapRecordCursor {
         // Then we handle all non-zero keys.
         for (long addr = memStart + entrySize; addr < memLimit; addr += entrySize) {
             if (!map.isZeroKey(addr)) {
-                recordA.of(addr);
+                recordA.of(addr, 0);
                 long v = recordFunction.getLong(recordA);
                 heap.add(addr, v);
             }
@@ -102,8 +103,8 @@ public final class Unordered2MapCursor implements MapRecordCursor {
     }
 
     @Override
-    public void recordAt(Record record, long atRowId) {
-        ((Unordered2MapRecord) record).of(atRowId);
+    public void recordAt(Record record, long atRowId, long rowNumber) {
+        ((Unordered2MapRecord) record).of(atRowId, rowNumber);
     }
 
     @Override
@@ -118,6 +119,7 @@ public final class Unordered2MapCursor implements MapRecordCursor {
         if (!hasZero) {
             skipToNonZeroKey();
         }
+        rowNumber = 0;
     }
 
     private void skipToNonZeroKey() {

@@ -93,7 +93,7 @@ public final class UnorderedVarcharMapCursor implements MapRecordCursor {
     }
 
     @Override
-    public void recordAt(Record record, long atRowId) {
+    public void recordAt(Record record, long atRowId, long rowNumber) {
         ((UnorderedVarcharMapRecord) record).of(atRowId);
     }
 

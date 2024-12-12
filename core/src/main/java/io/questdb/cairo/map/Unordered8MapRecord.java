@@ -52,6 +52,7 @@ final class Unordered8MapRecord implements MapRecord {
     private final long[] valueOffsets;
     private final long valueSize;
     private long limit;
+    private long rowNumber;
     private long startAddress;
     private IntList symbolTableIndex;
     private RecordCursor symbolTableResolver;
@@ -271,6 +272,11 @@ final class Unordered8MapRecord implements MapRecord {
     }
 
     @Override
+    public long getRowNumber() {
+        return rowNumber;
+    }
+
+    @Override
     public short getShort(int columnIndex) {
         return Unsafe.getUnsafe().getShort(addressOfColumn(columnIndex));
     }
@@ -295,8 +301,9 @@ final class Unordered8MapRecord implements MapRecord {
         return Hash.hashLong64(Unsafe.getUnsafe().getLong(startAddress));
     }
 
-    public void of(long address) {
+    public void of(long address, long rowNumber) {
         this.startAddress = address;
+        this.rowNumber = rowNumber;
     }
 
     public void setLimit(long limit) {

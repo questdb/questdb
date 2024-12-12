@@ -139,4 +139,12 @@ public interface PageFrame {
      * Return low row index within the frame's partition, inclusive.
      */
     long getPartitionLo();
+
+    /**
+     * If the data set is split into multiple page frame, this would be offset in rows from top of the data
+     * set. This value can be used to compute row_number of the result set.
+     *
+     * @return offset of the page frame in rows from the top of the data set.
+     */
+    long getRowLo();
 }

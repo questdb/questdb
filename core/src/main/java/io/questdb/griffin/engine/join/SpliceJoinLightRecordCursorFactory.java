@@ -304,7 +304,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
             if (rowid == NULL_ROWID) {
                 record.of(masterRecord, nullSlaveRecord);
             } else {
-                slaveCursor.recordAt(slaveRecord2, rowid);
+                slaveCursor.recordAt(slaveRecord2, rowid, 0);
                 record.of(masterRecord, slaveRecord2);
             }
         }
@@ -329,7 +329,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
             if (rowid == NULL_ROWID) {
                 record.of(nullMasterRecord, slaveRecord);
             } else {
-                masterCursor.recordAt(masterRecord2, rowid);
+                masterCursor.recordAt(masterRecord2, rowid, 0);
                 record.of(masterRecord2, slaveRecord);
             }
         }

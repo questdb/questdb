@@ -31,7 +31,7 @@ public interface NoRandomAccessRecordCursor extends RecordCursor {
     }
 
     @Override
-    default void recordAt(Record record, long atRowId) {
+    default void recordAt(Record record, long atRowId, long rowNumber) {
         throw new UnsupportedOperationException();
     }
 }

@@ -22,40 +22,40 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine;
+package io.questdb.griffin.engine.functions;
 
-import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-public class SingleValueRecordCursor implements NoRandomAccessRecordCursor {
-    private final Record record;
-    private int remaining = 1;
+public class RowNumberFunctionFactory implements FunctionFactory {
+    private static final RowNumberFunction INSTANCE = new RowNumberFunction();
 
-    public SingleValueRecordCursor(Record record) {
-        this.record = record;
+    @Override
+    public String getSignature() {
+        return "row_number()";
     }
 
     @Override
-    public void close() {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        return INSTANCE;
     }
 
-    @Override
-    public Record getRecord() {
-        return record;
-    }
-
-    @Override
-    public boolean hasNext() {
-        return remaining-- > 0;
-    }
-
-    @Override
-    public long size() {
-        return 1;
-    }
-
-    @Override
-    public void toTop() {
-        remaining = 1;
+    private static final class RowNumberFunction extends LongFunction {
+        @Override
+        public long getLong(Record rec) {
+            return rec.getRowNumber();
+        }
     }
 }

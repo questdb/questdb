@@ -56,6 +56,7 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
     private final long valueSize;
     private long keyAddress;
     private long limit;
+    private long rowNumber;
     private IntList symbolTableIndex;
     private RecordCursor symbolTableResolver;
     private long valueAddress;
@@ -316,6 +317,11 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
     }
 
     @Override
+    public long getRowNumber() {
+        return rowNumber;
+    }
+
+    @Override
     public short getShort(int columnIndex) {
         return Unsafe.getUnsafe().getShort(addressOfColumn(columnIndex));
     }
@@ -341,9 +347,10 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
     }
 
     @Override
-    public void of(long address) {
+    public void of(long address, long rowNumber) {
         this.keyAddress = address;
         this.valueAddress = address + keySize;
+        this.rowNumber = rowNumber;
     }
 
     @Override

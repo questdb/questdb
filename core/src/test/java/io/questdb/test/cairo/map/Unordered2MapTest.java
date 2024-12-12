@@ -169,7 +169,7 @@ public class Unordered2MapTest extends AbstractCairoTest {
                         byte b2 = rnd.nextByte();
                         String key = b1 + "," + b2;
                         long rowId = keyToRowIds.get(key);
-                        cursor.recordAt(record, rowId);
+                        cursor.recordAt(record, rowId, 0);
 
                         // value part, it comes first in record
                         int col = 0;
@@ -756,7 +756,7 @@ public class Unordered2MapTest extends AbstractCairoTest {
                     Assert.assertNotSame(recordB, recordA);
 
                     for (int i = 0, n = rowIds.size(); i < n; i++) {
-                        cursor.recordAt(recordB, rowIds.getQuick(i));
+                        cursor.recordAt(recordB, rowIds.getQuick(i), 0);
                         Assert.assertEquals(recordB.getShort(1) * 2, recordB.getInt(0));
                     }
                 }
@@ -816,7 +816,7 @@ public class Unordered2MapTest extends AbstractCairoTest {
                 DirectLongLongHeap.Cursor heapCursor = heap.getCursor();
                 for (int i = 0; i < heapCapacity; i++) {
                     Assert.assertTrue(heapCursor.hasNext());
-                    mapCursor.recordAt(mapRecord, heapCursor.index());
+                    mapCursor.recordAt(mapRecord, heapCursor.index(), 0);
                     Assert.assertEquals(heapCursor.value(), mapRecord.getLong(0));
                 }
             }

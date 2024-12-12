@@ -101,7 +101,7 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
         do {
             parent = offset;
             final int ref = refOf(offset);
-            sourceCursor.recordAt(rightRecord, rowId(ref));
+            sourceCursor.recordAt(rightRecord, rowId(ref), 0);
             cmp = comparator.compare(rightRecord);
             if (cmp < 0) {
                 offset = leftOf(offset);

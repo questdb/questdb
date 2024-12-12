@@ -103,8 +103,8 @@ class ExceptRecordCursor extends AbstractSetRecordCursor {
     }
 
     @Override
-    public void recordAt(Record record, long atRowId) {
-        cursorA.recordAt(record, atRowId);
+    public void recordAt(Record record, long atRowId, long rowNumber) {
+        cursorA.recordAt(record, atRowId, rowNumber);
     }
 
     @Override

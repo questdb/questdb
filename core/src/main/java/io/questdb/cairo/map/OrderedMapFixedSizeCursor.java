@@ -38,6 +38,7 @@ class OrderedMapFixedSizeCursor implements OrderedMapCursor {
     private long heapStart;
     private int remaining;
     private int size;
+    private long rowNumber = 0;
 
     OrderedMapFixedSizeCursor(OrderedMapFixedSizeRecord record, OrderedMap map) {
         assert map.keySize() != -1;
@@ -72,7 +73,7 @@ class OrderedMapFixedSizeCursor implements OrderedMapCursor {
     @Override
     public boolean hasNext() {
         if (remaining > 0) {
-            recordA.of(heapAddr);
+            recordA.of(heapAddr, rowNumber++);
             heapAddr += entrySize;
             remaining--;
             return true;
@@ -92,15 +93,15 @@ class OrderedMapFixedSizeCursor implements OrderedMapCursor {
     @Override
     public void longTopK(DirectLongLongHeap heap, Function recordFunction) {
         for (long addr = heapStart, lim = heapStart + entrySize * size; addr < lim; addr += entrySize) {
-            recordA.of(addr);
+            recordA.of(addr, 0);
             long v = recordFunction.getLong(recordA);
             heap.add(addr, v);
         }
     }
 
     @Override
-    public void recordAt(Record record, long atRowId) {
-        ((OrderedMapFixedSizeRecord) record).of(atRowId);
+    public void recordAt(Record record, long atRowId, long rowNumber) {
+        ((OrderedMapFixedSizeRecord) record).of(atRowId, rowNumber);
     }
 
     @Override
@@ -112,5 +113,6 @@ class OrderedMapFixedSizeCursor implements OrderedMapCursor {
     public void toTop() {
         heapAddr = heapStart;
         remaining = size;
+        rowNumber = 0;
     }
 }

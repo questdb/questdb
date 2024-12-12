@@ -1006,6 +1006,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.str.SplitPartCharFunctionFactory,
             io.questdb.griffin.engine.functions.str.SplitPartVarcharFunctionFactory,
 
+            // build-in
+            io.questdb.griffin.engine.functions.RowNumberFunctionFactory,
             // window functions
             io.questdb.griffin.engine.functions.window.RowNumberFunctionFactory,
             io.questdb.griffin.engine.functions.window.RankFunctionFactory,

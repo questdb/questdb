@@ -315,7 +315,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     cursor.toTop();
 
                     // 3. random access
-                    cursor.recordAt(record, rowid);
+                    cursor.recordAt(record, rowid, 0);
                     l = record.getLong(factory.getMetadata().getColumnIndex("l"));
                     Assert.assertEquals(4, l);
 
@@ -364,7 +364,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     Assert.assertEquals(5, l);
 
                     // 2. random access
-                    cursor.recordAt(record, rowid);
+                    cursor.recordAt(record, rowid, 0);
                     l = record.getLong(factory.getMetadata().getColumnIndex("l"));
                     Assert.assertEquals(4, l);
 

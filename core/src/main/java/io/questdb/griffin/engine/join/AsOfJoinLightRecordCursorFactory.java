@@ -32,7 +32,10 @@ import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -184,7 +187,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                 long slaveRowID = this.lastSlaveRowID;
                 if (slaveTimestamp <= masterTimestamp) {
                     if (lastSlaveRowID != Numbers.LONG_NULL) {
-                        slaveCursor.recordAt(slaveRecord, lastSlaveRowID);
+                        slaveCursor.recordAt(slaveRecord, lastSlaveRowID, 0);
                         key = joinKeyMap.withKey();
                         key.put(slaveRecord, slaveKeySink);
                         value = key.createValue();
@@ -213,7 +216,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                 key.put(masterRecord, masterKeySink);
                 value = key.findValue();
                 if (value != null) {
-                    slaveCursor.recordAt(slaveRecord, value.getLong(0));
+                    slaveCursor.recordAt(slaveRecord, value.getLong(0), 0);
                     record.hasSlave(true);
                 } else {
                     record.hasSlave(false);

@@ -28,7 +28,7 @@ interface OrderedMapRecord extends MapRecord {
 
     OrderedMapRecord clone();
 
-    void of(long address);
+    void of(long address, long rowNumber);
 
     void setLimit(long limit);
 }

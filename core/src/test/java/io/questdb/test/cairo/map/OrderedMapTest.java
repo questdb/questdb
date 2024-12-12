@@ -1689,7 +1689,7 @@ public class OrderedMapTest extends AbstractCairoTest {
 
                     rnd.reset();
                     for (int i = 0, n = rowIds.size(); i < n; i++) {
-                        cursor.recordAt(recordB, rowIds.getQuick(i));
+                        cursor.recordAt(recordB, rowIds.getQuick(i), 0);
                         Assert.assertEquals((i + 1) * 2, recordB.getInt(0));
                         TestUtils.assertEquals(rnd.nextString(10), recordB.getStrA(1));
                     }
@@ -1726,7 +1726,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                 DirectLongLongHeap.Cursor heapCursor = heap.getCursor();
                 for (int i = 0; i < heapCapacity; i++) {
                     Assert.assertTrue(heapCursor.hasNext());
-                    mapCursor.recordAt(mapRecord, heapCursor.index());
+                    mapCursor.recordAt(mapRecord, heapCursor.index(), 0);
                     Assert.assertEquals(heapCursor.value(), mapRecord.getLong(0));
                 }
             }
@@ -1761,7 +1761,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                 DirectLongLongHeap.Cursor heapCursor = heap.getCursor();
                 for (int i = 0; i < heapCapacity; i++) {
                     Assert.assertTrue(heapCursor.hasNext());
-                    mapCursor.recordAt(mapRecord, heapCursor.index());
+                    mapCursor.recordAt(mapRecord, heapCursor.index(), 0);
                     Assert.assertEquals(heapCursor.value(), mapRecord.getLong(0));
                 }
             }

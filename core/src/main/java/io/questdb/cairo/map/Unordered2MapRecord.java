@@ -54,6 +54,7 @@ final class Unordered2MapRecord implements MapRecord {
     private long startAddress;
     private IntList symbolTableIndex;
     private RecordCursor symbolTableResolver;
+    private long rowNumber;
 
     Unordered2MapRecord(
             long valueSize,
@@ -294,8 +295,14 @@ final class Unordered2MapRecord implements MapRecord {
         return 0; // no-op
     }
 
-    public void of(long address) {
+    @Override
+    public long getRowNumber() {
+        return rowNumber;
+    }
+
+    public void of(long address, long rowNumber) {
         this.startAddress = address;
+        this.rowNumber = rowNumber;
     }
 
     public void setLimit(long limit) {

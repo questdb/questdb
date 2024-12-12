@@ -64,6 +64,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     // The OG rows remaining, used to reset the counter when re-running cursor from top().
     private long ogRowsRemaining;
     private PageFrameMemoryRecord recordB;
+    private long rowNumber;
     private DirectLongList rows;
     // Artificial limit on remaining rows to be returned from this cursor.
     // It is typically copied from LIMIT clause on SQL statement.
@@ -190,6 +191,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         // We have rows in the current frame we still need to dispatch
         if (frameRowIndex < frameRowCount) {
             record.setRowIndex(rows.get(rowIndex()));
+            record.setRowNumber(rowNumber++);
             frameRowIndex++;
             return checkLimit();
         }
@@ -204,6 +206,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
             fetchNextFrame();
             if (frameRowCount > 0 && frameRowIndex < frameRowCount) {
                 record.setRowIndex(rows.get(rowIndex()));
+                record.setRowNumber(rowNumber++);
                 frameRowIndex++;
                 return checkLimit();
             }
@@ -221,10 +224,11 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void recordAt(Record record, long atRowId) {
+    public void recordAt(Record record, long atRowId, long rowNumber) {
         final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
         frameMemoryPool.navigateTo(Rows.toPartitionIndex(atRowId), frameMemoryRecord);
         frameMemoryRecord.setRowIndex(Rows.toLocalRowID(atRowId));
+        frameMemoryRecord.setRowNumber(rowNumber);
     }
 
     @Override
@@ -290,6 +294,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         rowsRemaining = ogRowsRemaining;
         frameIndex = -1;
         allFramesActive = true;
+        rowNumber = 0;
     }
 
     private boolean checkLimit() {

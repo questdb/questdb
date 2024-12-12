@@ -25,9 +25,19 @@
 package io.questdb.griffin.engine.window;
 
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.RecordChain;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -340,8 +350,8 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
         }
 
         @Override
-        public void recordAt(Record record, long atRowId) {
-            recordChain.recordAt(record, atRowId);
+        public void recordAt(Record record, long atRowId, long rowNumber) {
+            recordChain.recordAt(record, atRowId, rowNumber);
         }
 
         @Override
@@ -365,7 +375,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             if (orderedGroupCount > 0) {
                 while (baseCursor.hasNext()) {
                     recordChainOffset = recordChain.put(record, recordChainOffset);
-                    recordChain.recordAt(chainRecord, recordChainOffset);
+                    recordChain.recordAt(chainRecord, recordChainOffset, 0);
                     for (int i = 0; i < orderedGroupCount; i++) {
                         circuitBreaker.statefulThrowExceptionIfTripped();
                         orderedSources.getQuick(i).put(chainRecord, recordChain, chainRightRecord, comparators.getQuick(i));
@@ -390,7 +400,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                     while (cursor.hasNext()) {
                         circuitBreaker.statefulThrowExceptionIfTripped();
                         offset = cursor.next();
-                        recordChain.recordAt(chainRecord, offset);
+                        recordChain.recordAt(chainRecord, offset, 0);
                         for (int j = 0; j < functionCount; j++) {
                             functions.getQuick(j).pass1(chainRecord, offset, recordChain);
                         }
@@ -442,7 +452,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                     while (cursor.hasNext()) {
                         circuitBreaker.statefulThrowExceptionIfTripped();
                         offset = cursor.next();
-                        recordChain.recordAt(chainRecord, offset);
+                        recordChain.recordAt(chainRecord, offset, 0);
                         for (int j = 0; j < functionCount; j++) {
                             functions.getQuick(j).pass2(chainRecord, offset, recordChain);
                         }

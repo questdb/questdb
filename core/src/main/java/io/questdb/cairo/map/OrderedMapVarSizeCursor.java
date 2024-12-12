@@ -39,6 +39,7 @@ class OrderedMapVarSizeCursor implements OrderedMapCursor {
     private long heapStart;
     private int remaining;
     private int size;
+    private long rowNumber = 0;
 
     OrderedMapVarSizeCursor(OrderedMapVarSizeRecord record, OrderedMap map) {
         assert map.keySize() == -1;
@@ -73,7 +74,7 @@ class OrderedMapVarSizeCursor implements OrderedMapCursor {
     @Override
     public boolean hasNext() {
         if (remaining > 0) {
-            recordA.of(heapAddr);
+            recordA.of(heapAddr, rowNumber++);
             final int keySize = Unsafe.getUnsafe().getInt(heapAddr);
             heapAddr = Bytes.align8b(heapAddr + OrderedMap.VAR_KEY_HEADER_SIZE + keySize + valueSize);
             remaining--;
@@ -95,7 +96,7 @@ class OrderedMapVarSizeCursor implements OrderedMapCursor {
     public void longTopK(DirectLongLongHeap heap, Function recordFunction) {
         long addr = heapStart;
         for (int i = 0; i < size; i++) {
-            recordA.of(addr);
+            recordA.of(addr, 0);
             long v = recordFunction.getLong(recordA);
             heap.add(addr, v);
             addr += Bytes.align8b(OrderedMap.VAR_KEY_HEADER_SIZE + recordA.keySize() + valueSize);
@@ -103,8 +104,8 @@ class OrderedMapVarSizeCursor implements OrderedMapCursor {
     }
 
     @Override
-    public void recordAt(Record record, long atRowId) {
-        ((OrderedMapVarSizeRecord) record).of(atRowId);
+    public void recordAt(Record record, long atRowId, long rowNumber) {
+        ((OrderedMapVarSizeRecord) record).of(atRowId, rowNumber);
     }
 
     @Override
@@ -116,5 +117,6 @@ class OrderedMapVarSizeCursor implements OrderedMapCursor {
     public void toTop() {
         heapAddr = heapStart;
         remaining = size;
+        rowNumber = 0;
     }
 }

@@ -448,7 +448,7 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
                 DirectLongLongHeap.Cursor heapCursor = heap.getCursor();
                 for (int i = 0; i < heapCapacity; i++) {
                     Assert.assertTrue(heapCursor.hasNext());
-                    mapCursor.recordAt(mapRecord, heapCursor.index());
+                    mapCursor.recordAt(mapRecord, heapCursor.index(), 0);
                     Assert.assertEquals(heapCursor.value(), mapRecord.getLong(0));
                 }
             }

@@ -991,6 +991,9 @@ io.questdb.griffin.engine.functions.str.TrimVarcharFunctionFactory
 io.questdb.griffin.engine.functions.str.LTrimVarcharFunctionFactory
 io.questdb.griffin.engine.functions.str.RTrimVarcharFunctionFactory
 
+# built-in
+io.questdb.griffin.engine.functions.window.RowNumberFunctionFactory
+
 # window functions
 io.questdb.griffin.engine.functions.window.RowNumberFunctionFactory
 io.questdb.griffin.engine.functions.window.RankFunctionFactory

@@ -25,7 +25,10 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -167,7 +170,7 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFa
                 boolean slaveHasNext = slaveCursor.hasNext();
                 if (latestSlaveRowID != Long.MIN_VALUE) {
                     record.hasSlave(true);
-                    slaveCursor.recordAt(slaveRecB, latestSlaveRowID);
+                    slaveCursor.recordAt(slaveRecB, latestSlaveRowID, 0);
                 }
                 if (slaveHasNext) {
                     slaveTimestamp = slaveRecA.getTimestamp(slaveTimestampIndex);

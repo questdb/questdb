@@ -24,10 +24,22 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.*;
-import io.questdb.cairo.map.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapFactory;
+import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapRecord;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -122,6 +134,7 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
         private boolean isOpen;
         private RecordCursor mapCursor;
         private MapRecord mapRecord;
+        private long rowNumber = 0;
 
         public LatestByLightRecordCursor(Map latestByMap) {
             this.latestByMap = latestByMap;
@@ -166,7 +179,7 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
             circuitBreaker.statefulThrowExceptionIfTripped();
             final MapValue value = mapRecord.getValue();
             final long rowId = value.getLong(ROW_ID_VALUE_IDX);
-            baseCursor.recordAt(baseRecord, rowId);
+            baseCursor.recordAt(baseRecord, rowId, rowNumber++);
             return true;
         }
 
@@ -187,8 +200,8 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
         }
 
         @Override
-        public void recordAt(Record record, long atRowId) {
-            baseCursor.recordAt(record, atRowId);
+        public void recordAt(Record record, long atRowId, long rowNumber) {
+            baseCursor.recordAt(record, atRowId, rowNumber);
         }
 
         @Override
@@ -201,6 +214,7 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
             if (mapCursor != null) {
                 mapCursor.toTop();
             }
+            rowNumber = 0;
         }
 
         private void buildMap() {

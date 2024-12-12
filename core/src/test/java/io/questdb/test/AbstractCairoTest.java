@@ -266,7 +266,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
             final Record rec = cursor.getRecord();
             CursorPrinter.println(metadata, sink);
             for (int i = 0, n = rows.size(); i < n; i++) {
-                cursor.recordAt(rec, rows.getQuick(i));
+                cursor.recordAt(rec, rows.getQuick(i), 0);
                 TestUtils.println(rec, metadata, sink);
             }
 
@@ -277,7 +277,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
             final Record factRec = cursor.getRecordB();
             CursorPrinter.println(metadata, sink);
             for (int i = 0, n = rows.size(); i < n; i++) {
-                cursor.recordAt(factRec, rows.getQuick(i));
+                cursor.recordAt(factRec, rows.getQuick(i), 0);
                 TestUtils.println(factRec, metadata, sink);
             }
 
@@ -296,7 +296,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
                 // no obliterate record with absolute positioning
                 for (int i = 0, n = rows.size(); i < n; i++) {
-                    cursor.recordAt(factRec, rows.getQuick(i));
+                    cursor.recordAt(factRec, rows.getQuick(i), 0);
                 }
 
                 // not continue normal fetch
@@ -314,7 +314,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
             }
 
             try {
-                cursor.recordAt(record, 0);
+                cursor.recordAt(record, 0, 0);
                 Assert.fail();
             } catch (UnsupportedOperationException ignore) {
             }

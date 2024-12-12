@@ -55,6 +55,7 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
     private final int pageFrameMinRows;
     private final LongList pageSizes = new LongList();
     private final int workerCount;
+    private long pageFrameRowLo = 0;
     private PartitionFrameCursor partitionFrameCursor;
     private TableReader reader;
     private long reenterPageFrameRowLimit;
@@ -171,6 +172,7 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
         partitionFrameCursor.toTop();
         reenterPartitionFrame = false;
         reenterParquetDecoder = null;
+        pageFrameRowLo = 0;
         clearAddresses();
     }
 
@@ -259,6 +261,8 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
         frame.rowGroupLo = -1;
         frame.rowGroupHi = -1;
         frame.partitionIndex = reenterPartitionIndex;
+        frame.rowLo = pageFrameRowLo;
+        pageFrameRowLo += partitionHi - partitionLo;
         return frame;
     }
 
@@ -295,6 +299,7 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
         frame.rowGroupLo = (int) (adjustedLo - rowCount);
         frame.rowGroupHi = (int) (partitionHi - rowCount);
         frame.partitionIndex = reenterPartitionIndex;
+        frame.rowLo = partitionHi - adjustedLo;
         return frame;
     }
 
@@ -308,6 +313,7 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
         private int rowGroupHi;
         private int rowGroupIndex;
         private int rowGroupLo;
+        private long rowLo;
 
         @Override
         public long getAuxPageAddress(int columnIndex) {
@@ -384,6 +390,11 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
         @Override
         public long getPartitionLo() {
             return partitionLo;
+        }
+
+        @Override
+        public long getRowLo() {
+            return rowLo;
         }
     }
 }

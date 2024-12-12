@@ -24,8 +24,11 @@
 
 package io.questdb.griffin.engine.orderby;
 
+import io.questdb.cairo.sql.DelegatingRecordCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.Misc;
@@ -53,6 +56,7 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
     private long rowsLeft;
     private long rowsSoFar;
     private boolean timestampInitialized;
+    private long rowNumber = 0;
 
     public LimitedSizePartiallySortedLightRecordCursor(
             LimitedSizeLongTreeChain chain,
@@ -103,7 +107,7 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
             isChainBuilt = true;
         }
         if (rowsLeft-- > 0 && chainCursor.hasNext()) {
-            baseCursor.recordAt(baseRecord, chainCursor.next());
+            baseCursor.recordAt(baseRecord, chainCursor.next(), rowNumber++);
             return true;
         }
         return false;
@@ -132,8 +136,8 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
     }
 
     @Override
-    public void recordAt(Record record, long atRowId) {
-        baseCursor.recordAt(record, atRowId);
+    public void recordAt(Record record, long atRowId, long rowNumber) {
+        baseCursor.recordAt(record, atRowId, rowNumber);
     }
 
     @Override
@@ -151,6 +155,7 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
         }
 
         rowsLeft = Math.max(chain.size() - skipFirst - skipLast, 0);
+        rowNumber = 0;
     }
 
     private void buildChain() {

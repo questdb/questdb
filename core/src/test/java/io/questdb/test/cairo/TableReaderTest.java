@@ -3794,7 +3794,7 @@ public class TableReaderTest extends AbstractCairoTest {
         timestamp = ts;
         final Record rec = cursor.getRecordB();
         for (int i = 0; i < count; i++) {
-            cursor.recordAt(rec, rows.getQuick(i));
+            cursor.recordAt(rec, rows.getQuick(i), 0);
             asserter.assertRecord(rec, rnd, timestamp += increment, blob);
         }
     }
@@ -4500,7 +4500,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 Rnd exp = new Rnd();
                 final Record rec = cursor.getRecordB();
                 for (int i = 0, n = rows.size(); i < n; i++) {
-                    cursor.recordAt(rec, rows.getQuick(i));
+                    cursor.recordAt(rec, rows.getQuick(i), 0);
                     BATCH1_ASSERTER.assertRecord(rec, exp, ts += inc, blob);
                 }
             }

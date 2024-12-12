@@ -1169,8 +1169,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         }
 
         @Override
-        public void recordAt(Record record, long atRowId) {
-            recordCursor.recordAt(record, atRowId);
+        public void recordAt(Record record, long atRowId, long rowNumber) {
+            recordCursor.recordAt(record, atRowId, rowNumber);
         }
 
         @Override

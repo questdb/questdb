@@ -44,6 +44,7 @@ class LongTopKRecordCursor implements RecordCursor {
     private SqlExecutionCircuitBreaker circuitBreaker;
     private boolean initialized;
     private boolean isOpen;
+    private long rowNumber = 0;
 
     public LongTopKRecordCursor(int columnIndex, int lo, boolean ascending) {
         this.columnIndex = columnIndex;
@@ -83,11 +84,12 @@ class LongTopKRecordCursor implements RecordCursor {
     public boolean hasNext() {
         if (!initialized) {
             topK();
+            rowNumber = 0;
             initialized = true;
         }
         if (rowIdCursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
-            baseCursor.recordAt(baseRecord, rowIdCursor.index());
+            baseCursor.recordAt(baseRecord, rowIdCursor.index(), rowNumber++);
             return true;
         }
         return false;
@@ -113,8 +115,8 @@ class LongTopKRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void recordAt(Record record, long atRowId) {
-        baseCursor.recordAt(record, atRowId);
+    public void recordAt(Record record, long atRowId, long rowNumber) {
+        baseCursor.recordAt(record, atRowId, rowNumber);
     }
 
     @Override

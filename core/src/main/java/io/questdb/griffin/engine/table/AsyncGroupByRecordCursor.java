@@ -157,9 +157,9 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void recordAt(Record record, long atRowId) {
+    public void recordAt(Record record, long atRowId, long rowNumber) {
         if (mapCursor != null) {
-            mapCursor.recordAt(((VirtualRecord) record).getBaseRecord(), atRowId);
+            mapCursor.recordAt(((VirtualRecord) record).getBaseRecord(), atRowId, rowNumber);
         }
     }
 
