@@ -102,7 +102,7 @@ public interface MetadataServiceStub extends MetadataService {
 
     @Override
     default void setMetaMaxUncommittedRows(int maxUncommittedRows) {
-        throw CairoException.critical(0).put("change max uncommitted does not update sequencer metadata");
+        throw CairoException.critical(0).put("change of max uncommitted does not update sequencer metadata");
     }
 
     @Override
