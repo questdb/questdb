@@ -802,8 +802,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return metadataVersion;
     }
 
-    public int getModelAliasIndex(CharSequence column, int start, int end) {
-        int index = modelAliasIndexes.keyIndex(column, start, end);
+    public int getModelAliasIndex(CharSequence modelAlias, int start, int end) {
+        if (modelAlias.charAt(start) == '\"' && modelAlias.charAt(end - 1) == '\"') {
+            start++;
+            end--;
+        }
+        int index = modelAliasIndexes.keyIndex(modelAlias, start, end);
         if (index < 0) {
             return modelAliasIndexes.valueAt(index);
         }
