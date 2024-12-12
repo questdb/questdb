@@ -1209,7 +1209,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             metrics.tableWriter().incrementCommits();
 
             shrinkO3Mem();
-            enforceTTL();
+            enforceTtl();
         }
 
         // Nothing was committed to the table, only copied to LAG.
@@ -4049,7 +4049,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             noOpRowCount = 0L;
-            enforceTTL();
+            enforceTtl();
         }
     }
 
@@ -5332,7 +5332,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return true;
     }
 
-    private void enforceTTL() {
+    private void enforceTtl() {
         int ttl = metadata.getTtlHours();
         if (ttl == 0) {
             return;
