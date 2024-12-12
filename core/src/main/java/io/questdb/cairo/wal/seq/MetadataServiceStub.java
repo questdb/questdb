@@ -76,6 +76,10 @@ public interface MetadataServiceStub extends MetadataService {
     default void enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
     }
 
+    default void forceRemovePartitions(LongList partitionTimestamps) {
+        throw CairoException.critical(0).put("recover partitions does not update sequencer metadata");
+    }
+
     @Override
     default int getMetaMaxUncommittedRows() {
         throw new UnsupportedOperationException();
@@ -89,10 +93,6 @@ public interface MetadataServiceStub extends MetadataService {
     @Override
     default UpdateOperator getUpdateOperator() {
         throw new UnsupportedOperationException();
-    }
-
-    default void forceRemovePartitions(LongList partitionTimestamps) {
-        throw CairoException.critical(0).put("recover partitions does not update sequencer metadata");
     }
 
     @Override
@@ -120,4 +120,3 @@ public interface MetadataServiceStub extends MetadataService {
         // no-op
     }
 }
-
