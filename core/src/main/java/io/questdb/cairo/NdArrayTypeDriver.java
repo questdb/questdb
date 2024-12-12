@@ -127,6 +127,7 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
     public static final Closeable THREAD_LOCAL_CLEANER = NdArrayTypeDriver::clearThreadLocals;
     private static final long U32_MASK = 0xFFFFFFFFL;
 
+    // TODO(amunra): Take traversal as arg, drop use of thread local.
     public static void appendValue(@NotNull MemoryA auxMem, @NotNull MemoryA dataMem, @Nullable NdArrayView array) {
         if ((array == null) || array.isNull()) {
             appendNullImpl(auxMem, dataMem);

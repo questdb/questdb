@@ -68,8 +68,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     private final byte letter;
     private final ObjList<Long256Impl> longs256A = new ObjList<>();
     private final ObjList<Long256Impl> longs256B = new ObjList<>();
-    private final ObjList<NdArrayMmapBuffer> ndArraysA = new ObjList<>();
-    private final ObjList<NdArrayMmapBuffer> ndArraysB = new ObjList<>();
+    private final ObjList<NdArrayMmapBuffer> ndArrays = new ObjList<>();
     private final ObjList<SymbolTable> symbolTableCache = new ObjList<>();
     private final ObjList<Utf8SplitString> utf8ViewsA = new ObjList<>();
     private final ObjList<Utf8SplitString> utf8ViewsB = new ObjList<>();
@@ -115,8 +114,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public void close() {
-        Misc.freeObjListIfCloseable(ndArraysA);
-        Misc.freeObjListIfCloseable(ndArraysB);
         Misc.freeObjListIfCloseable(symbolTableCache);
         symbolTableCache.clear();
         clear();
@@ -338,12 +335,8 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return Numbers.ipv4ToLong(getIPv4(columnIndex));
     }
 
-    public NdArrayView getNdArrayA(int columnIndex, int columnType) {
-        return getNdArray(ndArraysA, columnIndex, columnType);
-    }
-
-    public NdArrayView getNdArrayB(int columnIndex, int columnType) {
-        return getNdArray(ndArraysB, columnIndex, columnType);
+    public NdArrayView getNdArray(int columnIndex, int columnType) {
+        return getNdArray(ndArrays, columnIndex, columnType);
     }
 
     @Override

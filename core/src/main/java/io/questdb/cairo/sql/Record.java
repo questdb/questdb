@@ -441,11 +441,7 @@ public interface Record {
         throw new UnsupportedOperationException();
     }
 
-    default NdArrayView getNdArrayA(int col, int columnType) {
-        throw new UnsupportedOperationException();
-    }
-
-    default NdArrayView getNdArrayB(int col, int columnType) {
+    default NdArrayView getNdArray(int col, int columnType) {
         throw new UnsupportedOperationException();
     }
 

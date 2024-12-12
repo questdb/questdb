@@ -172,7 +172,7 @@ public class CursorPrinter {
                 }
                 break;
             case ColumnType.ND_ARRAY:
-                final NdArrayView array = record.getNdArrayA(columnIndex, columnType);
+                final NdArrayView array = record.getNdArray(columnIndex, columnType);
                 if (array != null) {
                     try (NdArrayRowMajorTraversal traversal = new NdArrayRowMajorTraversal()) {
                         traversal.of(array);

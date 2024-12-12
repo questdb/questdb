@@ -35,7 +35,7 @@ import org.jetbrains.annotations.NotNull;
  * <p>Note that, unlike in most array implementations,
  * the strides are defined in element space, thus are the same regardless of type.</p>
  */
-public class NdArrayMeta {
+public class NdArrayMeta {  // TODO(amunra): Rename to `NdArrayMetaUtils`.
 
     /**
      * Maximum size of any given dimension.

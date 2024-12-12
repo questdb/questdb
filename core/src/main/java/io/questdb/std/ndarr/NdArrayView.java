@@ -27,8 +27,6 @@ package io.questdb.std.ndarr;
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.CRC16XModem;
 import io.questdb.std.DirectIntSlice;
-import io.questdb.std.str.CharSink;
-import org.jetbrains.annotations.NotNull;
 
 /**
  * A view over an immutable N-dimensional Array.
