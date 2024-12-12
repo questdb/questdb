@@ -65,8 +65,7 @@ public class LtLong256FunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             final Long256 lv = left.getLong256A(rec);
-            final Long256 rv = right.getLong256B(rec);
-
+            final Long256 rv = right.getLong256A(rec);
             if (lv.equals(Long256Impl.NULL_LONG256) || rv.equals(Long256Impl.NULL_LONG256)) {
                 return false;
             }

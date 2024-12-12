@@ -95,11 +95,7 @@ public class LtStrVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return Utf8s.lessThan(
-                    constant,
-                    right.getVarcharB(rec),
-                    negated
-            );
+            return Utf8s.lessThan(constant, right.getVarcharA(rec), negated);
         }
 
         @Override

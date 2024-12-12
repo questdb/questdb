@@ -55,16 +55,13 @@ import org.jetbrains.annotations.Nullable;
  * The last accessed key column offset is cached to speed up sequential access.
  */
 final class OrderedMapVarSizeRecord implements OrderedMapRecord {
-    private final DirectBinarySequence[] bs;
-    private final DirectString[] csA;
-    private final DirectString[] csB;
+    private final DirectBinarySequence[] bsViews;
+    private final DirectString[] csViews;
     private final Interval[] intervals;
-    private final Long256Impl[] keyLong256A;
-    private final Long256Impl[] keyLong256B;
     private final ColumnTypes keyTypes;
+    private final Long256Impl[] longs256;
     private final int splitIndex;
-    private final DirectUtf8String[] usA;
-    private final DirectUtf8String[] usB;
+    private final DirectUtf8String[] usViews;
     private final OrderedMapValue value;
     private final long[] valueOffsets;
     private final long valueSize;
@@ -101,13 +98,10 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
             nColumns = keyTypes.getColumnCount();
         }
 
-        DirectString[] csA = null;
-        DirectString[] csB = null;
-        DirectUtf8String[] usA = null;
-        DirectUtf8String[] usB = null;
-        DirectBinarySequence[] bs = null;
-        Long256Impl[] long256A = null;
-        Long256Impl[] long256B = null;
+        DirectString[] csViews = null;
+        DirectUtf8String[] usViews = null;
+        DirectBinarySequence[] bsViews = null;
+        Long256Impl[] longs256 = null;
         Interval[] intervals = null;
 
         final ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
@@ -116,34 +110,28 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
             keyTypesCopy.add(columnType);
             switch (ColumnType.tagOf(columnType)) {
                 case ColumnType.STRING:
-                    if (csA == null) {
-                        csA = new DirectString[nColumns];
-                        csB = new DirectString[nColumns];
+                    if (csViews == null) {
+                        csViews = new DirectString[nColumns];
                     }
-                    csA[i + keyIndexOffset] = new DirectString();
-                    csB[i + keyIndexOffset] = new DirectString();
+                    csViews[i + keyIndexOffset] = new DirectString();
                     break;
                 case ColumnType.VARCHAR:
-                    if (usA == null) {
-                        usA = new DirectUtf8String[nColumns];
-                        usB = new DirectUtf8String[nColumns];
+                    if (usViews == null) {
+                        usViews = new DirectUtf8String[nColumns];
                     }
-                    usA[i + keyIndexOffset] = new DirectUtf8String();
-                    usB[i + keyIndexOffset] = new DirectUtf8String();
+                    usViews[i + keyIndexOffset] = new DirectUtf8String();
                     break;
                 case ColumnType.BINARY:
-                    if (bs == null) {
-                        bs = new DirectBinarySequence[nColumns];
+                    if (bsViews == null) {
+                        bsViews = new DirectBinarySequence[nColumns];
                     }
-                    bs[i + keyIndexOffset] = new DirectBinarySequence();
+                    bsViews[i + keyIndexOffset] = new DirectBinarySequence();
                     break;
                 case ColumnType.LONG256:
-                    if (long256A == null) {
-                        long256A = new Long256Impl[nColumns];
-                        long256B = new Long256Impl[nColumns];
+                    if (longs256 == null) {
+                        longs256 = new Long256Impl[nColumns];
                     }
-                    long256A[i + keyIndexOffset] = new Long256Impl();
-                    long256B[i + keyIndexOffset] = new Long256Impl();
+                    longs256[i + keyIndexOffset] = new Long256Impl();
                     break;
                 case ColumnType.INTERVAL:
                     if (intervals == null) {
@@ -160,23 +148,18 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
         if (valueTypes != null) {
             for (int i = 0, n = valueTypes.getColumnCount(); i < n; i++) {
                 if (ColumnType.tagOf(valueTypes.getColumnType(i)) == ColumnType.LONG256) {
-                    if (long256A == null) {
-                        long256A = new Long256Impl[nColumns];
-                        long256B = new Long256Impl[nColumns];
+                    if (longs256 == null) {
+                        longs256 = new Long256Impl[nColumns];
                     }
-                    long256A[i] = new Long256Impl();
-                    long256B[i] = new Long256Impl();
+                    longs256[i] = new Long256Impl();
                 }
             }
         }
 
-        this.csA = csA;
-        this.csB = csB;
-        this.usA = usA;
-        this.usB = usB;
-        this.bs = bs;
-        this.keyLong256A = long256A;
-        this.keyLong256B = long256B;
+        this.csViews = csViews;
+        this.usViews = usViews;
+        this.bsViews = bsViews;
+        this.longs256 = longs256;
         this.intervals = intervals;
     }
 
@@ -185,13 +168,10 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
             long[] valueOffsets,
             ColumnTypes keyTypes,
             int splitIndex,
-            DirectString[] csA,
-            DirectString[] csB,
-            DirectUtf8String[] usA,
-            DirectUtf8String[] usB,
-            DirectBinarySequence[] bs,
-            Long256Impl[] keyLong256A,
-            Long256Impl[] keyLong256B,
+            DirectString[] csViews,
+            DirectUtf8String[] usViews,
+            DirectBinarySequence[] bsViews,
+            Long256Impl[] longs256,
             Interval[] intervals
     ) {
         this.valueSize = valueSize;
@@ -199,87 +179,72 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
         this.keyTypes = keyTypes;
         this.splitIndex = splitIndex;
         this.value = new OrderedMapValue(valueSize, valueOffsets);
-        this.csA = csA;
-        this.csB = csB;
-        this.usA = usA;
-        this.usB = usB;
-        this.bs = bs;
-        this.keyLong256A = keyLong256A;
-        this.keyLong256B = keyLong256B;
+        this.csViews = csViews;
+        this.usViews = usViews;
+        this.bsViews = bsViews;
+        this.longs256 = longs256;
         this.intervals = intervals;
     }
 
     @SuppressWarnings("MethodDoesntCallSuperMethod")
     @Override
     public OrderedMapVarSizeRecord clone() {
-        final DirectString[] csA;
-        final DirectString[] csB;
-        final DirectUtf8String[] usA;
-        final DirectUtf8String[] usB;
-        final DirectBinarySequence[] bs;
-        final Long256Impl[] long256A;
-        final Long256Impl[] long256B;
+        final DirectString[] csViews;
+        final DirectUtf8String[] usViews;
+        final DirectBinarySequence[] bsViews;
+        final Long256Impl[] longs256;
         final Interval[] intervals;
 
         // csA and csB are pegged, checking one for null should be enough
-        if (this.csA != null) {
-            int n = this.csA.length;
-            csA = new DirectString[n];
-            csB = new DirectString[n];
+        if (this.csViews != null) {
+            int n = this.csViews.length;
+            csViews = new DirectString[n];
 
             for (int i = 0; i < n; i++) {
-                if (this.csA[i] != null) {
-                    csA[i] = new DirectString();
-                    csB[i] = new DirectString();
+                if (this.csViews[i] != null) {
+                    csViews[i] = new DirectString();
                 }
             }
         } else {
-            csA = null;
-            csB = null;
+            csViews = null;
         }
 
-        if (this.usA != null) {
-            int n = this.usA.length;
-            usA = new DirectUtf8String[n];
-            usB = new DirectUtf8String[n];
+        if (this.usViews != null) {
+            int n = this.usViews.length;
+            usViews = new DirectUtf8String[n];
 
             for (int i = 0; i < n; i++) {
-                if (this.usA[i] != null) {
-                    usA[i] = new DirectUtf8String();
-                    usB[i] = new DirectUtf8String();
+                if (this.usViews[i] != null) {
+                    usViews[i] = new DirectUtf8String();
                 }
             }
         } else {
-            usA = null;
-            usB = null;
+            usViews = null;
         }
 
-        if (this.bs != null) {
-            int n = this.bs.length;
-            bs = new DirectBinarySequence[n];
+        if (this.bsViews != null) {
+            int n = this.bsViews.length;
+            bsViews = new DirectBinarySequence[n];
             for (int i = 0; i < n; i++) {
-                if (this.bs[i] != null) {
-                    bs[i] = new DirectBinarySequence();
+                if (this.bsViews[i] != null) {
+                    bsViews[i] = new DirectBinarySequence();
                 }
             }
         } else {
-            bs = null;
+            bsViews = null;
         }
 
-        if (this.keyLong256A != null) {
-            int n = this.keyLong256A.length;
-            long256A = new Long256Impl[n];
-            long256B = new Long256Impl[n];
+        if (this.longs256 != null) {
+            int n = this.longs256.length;
+            longs256 = new Long256Impl[n];
 
             for (int i = 0; i < n; i++) {
-                if (this.keyLong256A[i] != null) {
-                    long256A[i] = new Long256Impl();
-                    long256B[i] = new Long256Impl();
+                if (this.longs256[i] != null) {
+                    longs256[i] = new Long256Impl();
                 }
             }
         } else {
-            long256A = null;
-            long256B = null;
+            longs256 = null;
         }
 
         if (this.intervals != null) {
@@ -294,7 +259,7 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
             intervals = null;
         }
 
-        return new OrderedMapVarSizeRecord(valueSize, valueOffsets, keyTypes, splitIndex, csA, csB, usA, usB, bs, long256A, long256B, intervals);
+        return new OrderedMapVarSizeRecord(valueSize, valueOffsets, keyTypes, splitIndex, csViews, usViews, bsViews, longs256, intervals);
     }
 
     @Override
@@ -317,7 +282,7 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
         if (len == TableUtils.NULL_LEN) {
             return null;
         }
-        DirectBinarySequence bs = this.bs[columnIndex];
+        DirectBinarySequence bs = this.bsViews[columnIndex];
         bs.of(address + Integer.BYTES, len);
         return bs;
     }
@@ -413,12 +378,14 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
 
     @Override
     public Long256 getLong256A(int columnIndex) {
-        return getLong256Generic(keyLong256A, columnIndex);
+        Long256Impl long256 = longs256[columnIndex];
+        long256.fromAddress(addressOfColumn(columnIndex));
+        return long256;
     }
 
     @Override
     public Long256 getLong256B(int columnIndex) {
-        return getLong256Generic(keyLong256B, columnIndex);
+        return getLong256A(columnIndex);
     }
 
     @Override
@@ -435,12 +402,14 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
 
     @Override
     public CharSequence getStrA(int columnIndex) {
-        return getStr0(columnIndex, csA[columnIndex]);
+        long address = addressOfColumn(columnIndex);
+        int len = Unsafe.getUnsafe().getInt(address);
+        return len == TableUtils.NULL_LEN ? null : csViews[columnIndex].of(address + Integer.BYTES, address + Integer.BYTES + len * 2L);
     }
 
     @Override
     public CharSequence getStrB(int columnIndex) {
-        return getStr0(columnIndex, csB[columnIndex]);
+        return getStrA(columnIndex);
     }
 
     @Override
@@ -465,12 +434,13 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
 
     @Override
     public Utf8Sequence getVarcharA(int columnIndex) {
-        return getVarchar0(columnIndex, usA[columnIndex]);
+        long address = addressOfColumn(columnIndex);
+        return VarcharTypeDriver.getPlainValue(address, usViews[columnIndex]);
     }
 
     @Override
     public Utf8Sequence getVarcharB(int columnIndex) {
-        return getVarchar0(columnIndex, usB[columnIndex]);
+        return getVarcharA(columnIndex);
     }
 
     @Override
@@ -555,23 +525,5 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
         lastKeyOffset = (int) (addr - keyAddress);
         lastKeyIndex = i;
         return addr;
-    }
-
-    @NotNull
-    private Long256 getLong256Generic(Long256Impl[] keyLong256, int columnIndex) {
-        Long256Impl long256 = keyLong256[columnIndex];
-        long256.fromAddress(addressOfColumn(columnIndex));
-        return long256;
-    }
-
-    private CharSequence getStr0(int index, DirectString cs) {
-        long address = addressOfColumn(index);
-        int len = Unsafe.getUnsafe().getInt(address);
-        return len == TableUtils.NULL_LEN ? null : cs.of(address + Integer.BYTES, address + Integer.BYTES + len * 2L);
-    }
-
-    private Utf8Sequence getVarchar0(int index, DirectUtf8String us) {
-        long address = addressOfColumn(index);
-        return VarcharTypeDriver.getPlainValue(address, us);
     }
 }

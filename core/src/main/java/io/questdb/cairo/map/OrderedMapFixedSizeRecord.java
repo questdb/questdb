@@ -48,9 +48,8 @@ import org.jetbrains.annotations.Nullable;
 final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
     private final long[] columnOffsets;
     private final Interval[] intervals;
-    private final Long256Impl[] keyLong256A;
-    private final Long256Impl[] keyLong256B;
     private final long keySize;
+    private final Long256Impl[] longs256;
     private final OrderedMapValue value;
     private final long[] valueOffsets;
     private final long valueSize;
@@ -87,8 +86,7 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
 
         columnOffsets = new long[nColumns];
 
-        Long256Impl[] long256A = null;
-        Long256Impl[] long256B = null;
+        Long256Impl[] longs256 = null;
         Interval[] intervals = null;
 
         int offset = 0;
@@ -96,12 +94,10 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
             final int columnType = keyTypes.getColumnType(i);
             switch (ColumnType.tagOf(columnType)) {
                 case ColumnType.LONG256:
-                    if (long256A == null) {
-                        long256A = new Long256Impl[nColumns];
-                        long256B = new Long256Impl[nColumns];
+                    if (longs256 == null) {
+                        longs256 = new Long256Impl[nColumns];
                     }
-                    long256A[i + keyIndexOffset] = new Long256Impl();
-                    long256B[i + keyIndexOffset] = new Long256Impl();
+                    longs256[i + keyIndexOffset] = new Long256Impl();
                     break;
                 case ColumnType.INTERVAL:
                     if (intervals == null) {
@@ -124,12 +120,10 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
             for (int i = 0, n = valueTypes.getColumnCount(); i < n; i++) {
                 int columnType = valueTypes.getColumnType(i);
                 if (ColumnType.tagOf(columnType) == ColumnType.LONG256) {
-                    if (long256A == null) {
-                        long256A = new Long256Impl[nColumns];
-                        long256B = new Long256Impl[nColumns];
+                    if (longs256 == null) {
+                        longs256 = new Long256Impl[nColumns];
                     }
-                    long256A[i] = new Long256Impl();
-                    long256B[i] = new Long256Impl();
+                    longs256[i] = new Long256Impl();
                 }
                 final int size = ColumnType.sizeOf(columnType);
                 if (size <= 0) {
@@ -140,8 +134,7 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
             }
         }
 
-        this.keyLong256A = long256A;
-        this.keyLong256B = long256B;
+        this.longs256 = longs256;
         this.intervals = intervals;
     }
 
@@ -150,8 +143,7 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
             long valueSize,
             long[] valueOffsets,
             long[] columnOffsets,
-            Long256Impl[] keyLong256A,
-            Long256Impl[] keyLong256B,
+            Long256Impl[] longs256,
             Interval[] intervals
     ) {
         this.keySize = keySize;
@@ -159,32 +151,27 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
         this.valueOffsets = valueOffsets;
         this.columnOffsets = columnOffsets;
         this.value = new OrderedMapValue(valueSize, valueOffsets);
-        this.keyLong256A = keyLong256A;
-        this.keyLong256B = keyLong256B;
+        this.longs256 = longs256;
         this.intervals = intervals;
     }
 
     @SuppressWarnings("MethodDoesntCallSuperMethod")
     @Override
     public OrderedMapFixedSizeRecord clone() {
-        final Long256Impl[] long256A;
-        final Long256Impl[] long256B;
+        final Long256Impl[] longs256;
         final Interval[] intervals;
 
-        if (this.keyLong256A != null) {
-            int n = this.keyLong256A.length;
-            long256A = new Long256Impl[n];
-            long256B = new Long256Impl[n];
+        if (this.longs256 != null) {
+            int n = this.longs256.length;
+            longs256 = new Long256Impl[n];
 
             for (int i = 0; i < n; i++) {
-                if (this.keyLong256A[i] != null) {
-                    long256A[i] = new Long256Impl();
-                    long256B[i] = new Long256Impl();
+                if (this.longs256[i] != null) {
+                    longs256[i] = new Long256Impl();
                 }
             }
         } else {
-            long256A = null;
-            long256B = null;
+            longs256 = null;
         }
 
         if (this.intervals != null) {
@@ -199,7 +186,7 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
             intervals = null;
         }
 
-        return new OrderedMapFixedSizeRecord(keySize, valueSize, valueOffsets, columnOffsets, long256A, long256B, intervals);
+        return new OrderedMapFixedSizeRecord(keySize, valueSize, valueOffsets, columnOffsets, longs256, intervals);
     }
 
     @Override
@@ -300,12 +287,14 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
 
     @Override
     public Long256 getLong256A(int columnIndex) {
-        return getLong256Generic(keyLong256A, columnIndex);
+        Long256Impl long256 = longs256[columnIndex];
+        long256.fromAddress(addressOfColumn(columnIndex));
+        return long256;
     }
 
     @Override
     public Long256 getLong256B(int columnIndex) {
-        return getLong256Generic(keyLong256B, columnIndex);
+        return getLong256A(columnIndex);
     }
 
     @Override
@@ -359,12 +348,5 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
 
     private long addressOfColumn(int index) {
         return keyAddress + columnOffsets[index];
-    }
-
-    @NotNull
-    private Long256 getLong256Generic(Long256Impl[] keyLong256, int columnIndex) {
-        Long256Impl long256 = keyLong256[columnIndex];
-        long256.fromAddress(addressOfColumn(columnIndex));
-        return long256;
     }
 }
