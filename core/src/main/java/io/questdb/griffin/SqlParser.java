@@ -175,6 +175,11 @@ public class SqlParser {
         return SqlException.unexpectedToken(lexer.lastTokenPosition(), token);
     }
 
+    private static SqlException errUnexpected(GenericLexer lexer, CharSequence token, @NotNull CharSequence extraMessage) {
+        return SqlException.unexpectedToken(lexer.lastTokenPosition(), token, extraMessage);
+    }
+
+
     private static boolean isValidSampleByPeriodLetter(CharSequence token) {
         if (token.length() != 1) return false;
         switch (token.charAt(0)) {
@@ -1150,7 +1155,7 @@ public class SqlParser {
             CharSequence expectWalrus = optTok(lexer);
 
             if (expectWalrus == null || !Chars.equals(expectWalrus, ":=")) {
-                throw SqlException.$(lexer.lastTokenPosition(), "expected variable assignment operator `:=`");
+                throw errUnexpected(lexer, expectWalrus, "expected variable assignment operator `:=`");
             }
 
             lexer.goToPosition(pos);
@@ -1158,12 +1163,12 @@ public class SqlParser {
             ExpressionNode expr = expr(lexer, model, sqlParserCallback, model.getDecls(), tok);
 
             if (expr == null) {
-                throw SqlException.$(lexer.lastTokenPosition(), "empty declaration");
+                throw errUnexpected(lexer, tok, "declaration was empty or could not be parsed");
             }
 
             if (!Chars.equalsIgnoreCase(expr.lhs.token, tok)) {
                 // could be a `DECLARE @x := (1,2,3)` situation
-                throw SqlException.$(lexer.lastTokenPosition(), "unexpected bind expression - bracket lists not supported");
+                throw errUnexpected(lexer, tok, "unexpected bind expression - bracket lists are not supported");
             }
 
             if (model.getDecls().size() > 0) {
@@ -2139,7 +2144,7 @@ public class SqlParser {
             return model;
         }
         if (Chars.equals(tok, ":=")) {
-            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']').put(" - perhaps `DECLARE` was misspelled?");
+            throw errUnexpected(lexer, tok, "perhaps `DECLARE` was misspelled?");
         }
         throw errUnexpected(lexer, tok);
     }

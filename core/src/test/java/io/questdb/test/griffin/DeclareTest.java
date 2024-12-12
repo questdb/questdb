@@ -136,6 +136,15 @@ public class DeclareTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclareGivesMoreUsefulErrorWhenUsingTheWrongBindOperator() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(tradesDdl);
+            drainWalQueue();
+            assertException("declare @ts = timestamp select @ts from trades", 12, "expected variable assignment operator `:=`");
+        });
+    }
+
+    @Test
     public void testDeclareInsertIntoSelect() throws Exception {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
@@ -753,7 +762,7 @@ public class DeclareTest extends AbstractSqlParserTest {
                     "        Interval forward scan on: trades\n" +
                     "          intervals: [(\"2024-01-01T00:00:00.000000Z\",\"2024-01-01T00:00:00.000000Z\"),(\"2024-08-23T00:00:00.000000Z\",\"2024-08-23T00:00:00.000000Z\")]\n";
             assertPlanNoLeakCheck("declare @ts1 := '2024-01-01', @ts2 := '2024-08-23' select timestamp, count() from trades where timestamp IN (@ts1, @ts2);", plan);
-            assertException("declare @ts := ('2024-01-01', '2024-08-23') select timestamp, count() from trades where timestamp IN @ts", 44, "bracket lists not supported");
+            assertException("declare @ts := ('2024-01-01', '2024-08-23') select timestamp, count() from trades where timestamp IN @ts", 44, "bracket lists are not supported");
         });
     }
 
