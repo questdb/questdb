@@ -941,6 +941,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         if (parquetMem != null && parquetMem != NullMemoryCMR.INSTANCE) {
                             parquetMem.of(ff, path.$(), parquetSize, parquetSize, MemoryTag.MMAP_TABLE_READER);
                         } else {
+                            // Don't keep fd around to close/open reconciled parquet partitions instead of mremap'ping them.
                             parquetMem = new MemoryCMRDetachedImpl(ff, path.$(), parquetSize, MemoryTag.MMAP_TABLE_READER, false);
                             parquetPartitions.setQuick(partitionIndex, parquetMem);
                         }
@@ -1430,6 +1431,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         if (parquetMem == null || parquetMem == NullMemoryCMR.INSTANCE) {
             return false;
         }
+        // We don't keep fd around when mmap'ping parquet files, so the only case
+        // when the below call returns true is when the file size didn't change.
         return ((MemoryCMRDetachedImpl) parquetMem).tryChangeSize(parquetSize);
     }
 
