@@ -147,7 +147,7 @@ public final class ColumnType {
     public static int buildNdArrayType(char typeClass, byte typePrecision) {
         assert typeClass > 0;  // to avoid taking up the last reserved bit.
         if (
-                // N.B.: Types which we currently don't support are commented out.
+            // N.B.: Types which we currently don't support are commented out.
                 (typePrecision == 0 && typeClass == 'u') ||  // boolean
 //                        (typePrecision == 1 && typeClass == 'u') ||
 //                        (typePrecision == 2 && typeClass == 'u') ||
@@ -167,6 +167,30 @@ public final class ColumnType {
             return ND_ARRAY | (elementType << BITS_OFFSET);
         } else {
             return -1;
+        }
+    }
+
+    /**
+     * Used to create an array type (if possible) from a scalar value.
+     */
+    public static int buildNdArrayTypeFromScalar(int scalarType) {
+        switch (scalarType) {
+            case BOOLEAN:
+                return buildNdArrayType('u', (byte) 0);
+            case BYTE:
+                return buildNdArrayType('s', (byte) 3);
+            case SHORT:
+                return buildNdArrayType('s', (byte) 4);
+            case INT:
+                return buildNdArrayType('s', (byte) 5);
+            case LONG:
+                return buildNdArrayType('s', (byte) 6);
+            case FLOAT:
+                return buildNdArrayType('f', (byte) 5);
+            case DOUBLE:
+                return buildNdArrayType('f', (byte) 6);
+            default:
+                return -1;
         }
     }
 
@@ -199,6 +223,18 @@ public final class ColumnType {
         return mkGeoHashType(bits, (short) (GEOBYTE + pow2SizeOfBits(bits)));
     }
 
+    public static int getNdArrayCommonWideningType(int typeA, int typeB) {
+        assert isNdArray(typeA);
+        assert isNdArray(typeB);
+        final char typeClass = getNdArrayCommonWideningTypeClass(
+                getNdArrayElementTypeClass(typeA),
+                getNdArrayElementTypeClass(typeB));
+        final byte precision = (byte) Math.max(
+                getNdArrayElementTypePrecision(typeA),
+                getNdArrayElementTypePrecision(typeB));
+        return buildNdArrayType(typeClass, precision);
+    }
+
     /**
      * Get the N-dimensional array element type's class.
      * <p>'s' for a signed integer, 'u' for an unsigned integer, 'f' for a floating point number.</p>
@@ -206,9 +242,9 @@ public final class ColumnType {
      */
     public static char getNdArrayElementTypeClass(int type) {
         if (ColumnType.tagOf(type) == ColumnType.ND_ARRAY) {
-            return (char)((type >> BITS_OFFSET >> BITS_OFFSET) & 0x7FFF);  // 15-bit mask.
+            return (char) ((type >> BITS_OFFSET >> BITS_OFFSET) & 0x7FFF);  // 15-bit mask.
         }
-        return (char)-1;
+        return (char) -1;
     }
 
     /**
@@ -313,6 +349,10 @@ public final class ColumnType {
         }
     }
 
+    public static boolean isGenericType(int columnType) {
+        return isGeoHash(columnType) || isNdArray(columnType);
+    }
+
     public static boolean isGeoHash(int columnType) {
         return (columnType & TYPE_FLAG_GEO_HASH) != 0;
     }
@@ -357,8 +397,21 @@ public final class ColumnType {
     }
 
     public static boolean isToSameOrWider(int fromType, int toType) {
-        return (tagOf(fromType) == tagOf(toType) && (getGeoHashBits(fromType) == 0 || getGeoHashBits(fromType) >= getGeoHashBits(toType)))
-                || isBuiltInWideningCast(fromType, toType)
+        if (fromType == toType) {
+            return true;
+        }
+        final short fromTag = tagOf(fromType);
+        final short toTag = tagOf(toType);
+        if (fromTag == toTag) {
+            if ((fromTag == GEOHASH) && getGeoHashBits(fromType) >= getGeoHashBits(toType)) {
+                assert getGeoHashBits(fromType) != 0;
+                return true;
+            }
+            if ((fromTag == ND_ARRAY) && (fromType == toType)) {
+                return true;
+            }
+        }
+        return isBuiltInWideningCast(fromType, toType)
                 || isStringCast(fromType, toType)
                 || isVarcharCast(fromType, toType)
                 || isGeoHashWideningCast(fromType, toType)
@@ -485,6 +538,19 @@ public final class ColumnType {
 
     public static int typeOf(CharSequence name) {
         return nameTypeMap.get(name);
+    }
+
+    /**
+     * Find the common widening type class for the specified pair.
+     * Unsigned -> Signed -> Floating
+     */
+    private static char getNdArrayCommonWideningTypeClass(char tc1, char tc2) {
+        assert tc1 == 'u' || tc1 == 's' || tc1 == 'f';
+        assert tc2 == 'u' || tc2 == 's' || tc2 == 'f';
+        // This works, but by coincidence.
+        // Replace with a weights table if adding another type where the
+        // type class letter does not reverse-sort.
+        return (char) Math.min(tc1, tc2);
     }
 
     private static boolean isGeoHashWideningCast(int fromType, int toType) {
@@ -648,6 +714,7 @@ public final class ColumnType {
         typeNameMap.put(ARRAY_STRING, "text[]");
         typeNameMap.put(IPv4, "IPv4");
         typeNameMap.put(INTERVAL, "INTERVAL");
+        typeNameMap.put(NULL, "NULL");
 
         nameTypeMap.put("boolean", BOOLEAN);
         nameTypeMap.put("byte", BYTE);
