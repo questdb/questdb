@@ -2069,6 +2069,26 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStringIPv4() throws Exception {
+        testUnionAll(
+                "b\n" +
+                        "JWCPSWHYR\n" +
+                        "EHNRX\n" +
+                        "SXUXI\n" +
+                        "TGPGW\n" +
+                        "YUDEYYQEHB\n" +
+                        "101.77.34.89\n" +
+                        "66.56.51.126\n" +
+                        "74.188.217.59\n" +
+                        "249.60.8.8\n" +
+                        "230.202.108.161\n",
+                "create table y as (select rnd_ipv4() a from long_sequence(5))",
+                "create table x as (select rnd_str() b from long_sequence(5))",
+                true
+        );
+    }
+
+    @Test
     public void testStringNull() throws Exception {
         testUnionAllWithNull(
                 "a\tc\n" +
