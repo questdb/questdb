@@ -148,6 +148,13 @@ public class TtlTest extends AbstractCairoTest {
     @Test
     public void testSyntaxOutOfRange() {
         try {
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL -1 HOURS");
+            fail("Invalid syntax accepted");
+        } catch (SqlException e) {
+            assertEquals("[70] invalid syntax, should be TTL <number> <unit> but was TTL -",
+                    e.getMessage());
+        }
+        try {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 2_147_483_648 HOURS");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
