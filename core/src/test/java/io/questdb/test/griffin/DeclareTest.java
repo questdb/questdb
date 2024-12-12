@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.griffin.model.ExecutionModel;
 import org.junit.Test;
 
@@ -122,6 +123,15 @@ public class DeclareTest extends AbstractSqlParserTest {
             drainWalQueue();
             assertModel("create batch 1000000 table foo as (select-virtual 1 + 2 column from (long_sequence(1)))",
                     "CREATE TABLE foo AS (DECLARE @x := 1, @y := 2 SELECT @x + @y)", ExecutionModel.CREATE_TABLE);
+        });
+    }
+
+    @Test
+    public void testDeclareGivesMoreUsefulErrorWhenMispellingDeclare() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(tradesDdl);
+            drainWalQueue();
+            assertException("delcare @ts := timestamp select @ts from trades", 12, "perhaps `DECLARE` was misspelled?");
         });
     }
 
@@ -746,4 +756,36 @@ public class DeclareTest extends AbstractSqlParserTest {
             assertException("declare @ts := ('2024-01-01', '2024-08-23') select timestamp, count() from trades where timestamp IN @ts", 44, "bracket lists not supported");
         });
     }
+
+    @Test
+    public void testDeclareWorksWithJit() throws Exception {
+        assertMemoryLeak(() -> {
+            String plan = "Async{JIT}Filter workers: 1\n" +
+                    "  filter: id<4\n" +
+                    "    PageFrame\n" +
+                    "        Row forward scan\n" +
+                    "        Frame forward scan on: x\n";
+
+            String replacement = sqlExecutionContext.getJitMode() == SqlJitMode.JIT_MODE_ENABLED ?
+                    " JIT " : " ";
+            plan = plan.replace("{JIT}", replacement);
+
+            execute(
+                    "create table x as (\n" +
+                            "  select x id, timestamp_sequence(0,1000000000) as ts\n" +
+                            "  from long_sequence(10)\n" +
+                            ") timestamp(ts) partition by hour;"
+            );
+            assertPlanNoLeakCheck("declare @id := id, @val := 4 select * from x where @id < @val", plan);
+            assertPlanNoLeakCheck("declare @expr := (id < 4) select * from x where @expr", plan);
+            assertSql(
+                    "id\tts\n" +
+                            "1\t1970-01-01T00:00:00.000000Z\n" +
+                            "2\t1970-01-01T00:16:40.000000Z\n" +
+                            "3\t1970-01-01T00:33:20.000000Z\n",
+                    "x where id < 4"
+            );
+        });
+    }
+
 }

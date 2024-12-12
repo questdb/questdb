@@ -2138,6 +2138,9 @@ public class SqlParser {
         if (tok == null || Chars.equals(tok, ';')) {
             return model;
         }
+        if (Chars.equals(tok, ":=")) {
+            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']').put(" - perhaps `DECLARE` was misspelled?");
+        }
         throw errUnexpected(lexer, tok);
     }
 
