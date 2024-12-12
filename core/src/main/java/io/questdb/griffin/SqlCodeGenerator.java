@@ -87,6 +87,8 @@ import io.questdb.griffin.engine.functions.cast.CastDoubleToVarcharFunctionFacto
 import io.questdb.griffin.engine.functions.cast.CastFloatToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastFloatToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastGeoHashToGeoHashFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastIPv4ToStrFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastIPv4ToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIntToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIntToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIntervalToStrFunctionFactory;
@@ -337,7 +339,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 22, 11, 11, 11, 26, 11, 11, 11, 11, 11, 22,},
             {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 23, 11, 11, 26, 11, 11, 11, 11, 11, 23,},
             {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 24, 11, 26, 11, 11, 11, 11, 11, 24,},
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 25, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 25, 26, 11, 11, 11, 11, 11, 25,},
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 25, 26, 11, 11, 11, 11, 11, 25,},
             {26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 11, 26, 26, -1, -1, -1, -1, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26,},
             {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 27, 11, 11, 11, 11, 27,},
             {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 28, 11, 11, 11, 28,},
@@ -1610,6 +1612,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         fromType,
                                         toType
                                 );
+                            case ColumnType.IPv4:
+                                castFunctions.add(new CastIPv4ToStrFunctionFactory.Func(new IPv4Column(i)));
+                                break;
                         }
                         break;
                     case ColumnType.SYMBOL:
@@ -1862,6 +1867,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 break;
                             case ColumnType.UUID:
                                 castFunctions.add(new CastUuidToVarcharFunctionFactory.Func(new UuidColumn(i)));
+                                break;
+                            case ColumnType.IPv4:
+                                castFunctions.add(new CastIPv4ToVarcharFunctionFactory.Func(new IPv4Column(i)));
                                 break;
                             case ColumnType.SYMBOL:
                                 castFunctions.add(
