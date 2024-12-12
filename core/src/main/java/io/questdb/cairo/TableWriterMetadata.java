@@ -181,6 +181,10 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         this.o3MaxLag = o3MaxLagUs;
     }
 
+    public void setTtlHours(int ttlHours) {
+        this.ttlHours = ttlHours;
+    }
+
     public void updateTableToken(TableToken tableToken) {
         this.tableToken = tableToken;
     }

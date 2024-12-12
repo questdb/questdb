@@ -34,6 +34,24 @@ import static org.junit.Assert.fail;
 public class TtlTest extends AbstractCairoTest {
 
     @Test
+    public void testAlterTableSetTtl() throws Exception {
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR");
+        execute("INSERT INTO tango VALUES (0), (3_600_000_000), (7_200_000_001)");
+        assertQuery("ts\n" +
+                        "1970-01-01T00:00:00.000000Z\n" +  // with TTL of 1 hour, this row would be evictable
+                        "1970-01-01T01:00:00.000000Z\n" +
+                        "1970-01-01T02:00:00.000001Z\n",
+                "tango", "ts", true, true);
+        execute("ALTER TABLE tango SET TTL 1 HOUR");
+        execute("INSERT INTO tango VALUES (7_200_000_002)"); // insert something just to trigger commit
+        assertQuery("ts\n" +
+                        "1970-01-01T01:00:00.000000Z\n" +
+                        "1970-01-01T02:00:00.000001Z\n" +
+                        "1970-01-01T02:00:00.000002Z\n",
+                "tango", "ts", true, true);
+    }
+
+    @Test
     public void testDayExactlyAtTtl() throws Exception {
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 DAY");
         execute("INSERT INTO tango VALUES (0), (86_400_000_000), (172_800_000_000)");

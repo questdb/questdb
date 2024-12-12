@@ -1426,7 +1426,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
                 }
             } else if (SqlKeywords.isSetKeyword(tok)) {
-                tok = expectToken(lexer, "'param' or 'type'");
+                tok = expectToken(lexer, "'param', 'ttl' or 'type'");
                 if (SqlKeywords.isParamKeyword(tok)) {
                     final int paramNamePosition = lexer.getPosition();
                     tok = expectToken(lexer, "param name");
@@ -1438,6 +1438,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'=' expected");
                     }
+                } else if (SqlKeywords.isTtlKeyword(tok)) {
+                    int ttlHours = SqlParser.parseTtlHours(lexer);
+                    compiledQuery.ofAlter(alterOperationBuilder.ofSetTtlHours(
+                            tableNamePosition, tableToken, tableMetadata.getTableId(), ttlHours).build());
                 } else if (SqlKeywords.isTypeKeyword(tok)) {
                     tok = expectToken(lexer, "'bypass' or 'wal'");
                     if (SqlKeywords.isBypassKeyword(tok)) {

@@ -2960,6 +2960,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    @Override
+    public void setMetaTtlHours(int ttlHours) {
+        try {
+            commit();
+            long metaSize = copyMetadataAndUpdateVersion();
+            openMetaSwapFileByIndex(ff, ddlMem, path, pathSize, this.metaSwapIndex);
+            try {
+                ddlMem.jumpTo(META_OFFSET_TTL_HOURS);
+                ddlMem.putInt(ttlHours);
+                ddlMem.jumpTo(metaSize);
+            } finally {
+                ddlMem.close();
+            }
+
+            finishMetaSwapUpdate();
+            metadata.setTtlHours(ttlHours);
+
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.hydrateTable(metadata);
+            }
+
+        } finally {
+            ddlMem.close();
+        }
+    }
+
     public void setSeqTxn(long seqTxn) {
         assert txWriter.getLagRowCount() == 0 && txWriter.getLagTxnCount() == 0;
         txWriter.setSeqTxn(seqTxn);
