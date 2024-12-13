@@ -37,7 +37,7 @@ public class TelemetryTask implements AbstractTelemetryTask {
     public static final String TABLE_NAME = "telemetry";
 
     private static final Log LOG = LogFactory.getLog(TelemetryTask.class);
-    public static final Telemetry.TelemetryTypeBuilder<TelemetryTask> TELEMETRY = configuration -> new Telemetry.TelemetryType<TelemetryTask>() {
+    public static final Telemetry.TelemetryTypeBuilder<TelemetryTask> TELEMETRY = configuration -> new Telemetry.TelemetryType<>() {
         private final TelemetryTask systemStatusTask = new TelemetryTask();
 
         @Override
