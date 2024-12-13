@@ -87,6 +87,8 @@ public interface CompiledQuery {
     @Transient
     OperationFuture execute(SqlExecutionContext context, SCSequence eventSubSeq, boolean closeOnDone) throws SqlException;
 
+    boolean executedAtParseTime();
+
     /**
      * Returns number of rows changed by this command. Used e.g. in pg wire protocol.
      *
@@ -103,7 +105,7 @@ public interface CompiledQuery {
 
     RecordCursorFactory getRecordCursorFactory();
 
-    String getSqlStatement();
+    String getSqlText();
 
     /**
      * Returns statement name for DEALLOCATE statement. Used e.g. in pg wire protocol.
@@ -118,5 +120,5 @@ public interface CompiledQuery {
 
     CompiledQuery withContext(SqlExecutionContext sqlExecutionContext);
 
-    void withSqlStatement(String sqlStatement);
+    void withSqlText(String sqlText);
 }

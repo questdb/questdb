@@ -86,6 +86,7 @@ public class QueryModelTest {
         model.setFillTo(newExpressionNode());
         model.setFillFrom(newExpressionNode());
         model.setFillStride(newExpressionNode());
+        model.setAllowPropagationOfOrderByAdvice(false);
 
         Assert.assertNotEquals(QueryModel.FACTORY.newInstance(), model);
 

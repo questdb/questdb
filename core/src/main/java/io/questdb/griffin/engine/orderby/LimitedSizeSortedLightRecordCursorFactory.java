@@ -27,7 +27,11 @@ package io.questdb.griffin.engine.orderby;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ListColumnFilter;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.DelegatingRecordCursor;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -265,4 +269,3 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         Misc.free(cursor);
     }
 }
-

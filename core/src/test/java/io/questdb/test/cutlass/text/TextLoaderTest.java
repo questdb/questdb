@@ -1675,6 +1675,34 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLoadingSlashAndQuoteEscaped() throws Exception {
+        assertNoLeak(textLoader -> {
+            final String workingCsv = "\"json\"\n" +
+                    "\"{\"\"filed1\"\":1, \"\"filed2\"\":1, \"\"filed3\"\":\"\"admin\"\", \"\"filed4\"\":1}\"\n";
+
+            final String brokenCsv = "\"json\"\n" +
+                    "\"{\\\"filed1\"\\\":1, \\\"filed2\\\":1, \\\"filed3\\\":\\\"admin\\\", \\\"filed4\\\":1}\"";
+
+            configureLoaderDefaults(textLoader);
+            textLoader.setForceHeaders(true);
+            textLoader.configureColumnDelimiter((byte) ',');
+            textLoader.setDelimiter((byte) ',');
+            playText0(textLoader, brokenCsv, 1024, NOOP_TRANSFORMER);
+            assertTable("json\n");
+            textLoader.clear();
+
+            configureLoaderDefaults(textLoader);
+            textLoader.setForceHeaders(true);
+            textLoader.configureColumnDelimiter((byte) ',');
+            textLoader.setDelimiter((byte) ',');
+            playText0(textLoader, workingCsv, 1024, NOOP_TRANSFORMER);
+            assertTable("json\n" +
+                    "{\"filed1\":1, \"filed2\":1, \"filed3\":\"admin\", \"filed4\":1}\n");
+            textLoader.clear();
+        });
+    }
+
+    @Test
     public void testMissingColumnHeader() throws Exception {
         assertNoLeak(textLoader -> {
             // header is present except one column, which has null header

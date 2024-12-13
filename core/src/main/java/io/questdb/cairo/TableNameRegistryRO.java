@@ -58,10 +58,10 @@ public class TableNameRegistryRO extends AbstractTableNameRegistry {
 
     @Override
     public TableToken getTableToken(CharSequence tableName) {
-        TableToken record = tableNameToTableTokenMap.get(tableName);
+        TableToken record = super.getTableToken(tableName);
         if (record == null && clockMs.getTicks() - lastReloadTimestampMs > autoReloadTimeout) {
             reloadThrottled();
-            return tableNameToTableTokenMap.get(tableName);
+            return super.getTableToken(tableName);
         }
         return record;
     }

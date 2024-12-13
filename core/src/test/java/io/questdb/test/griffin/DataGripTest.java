@@ -36,7 +36,7 @@ public class DataGripTest extends AbstractCairoTest {
     public void testGetCurrentDatabase() throws SqlException {
         assertQueryNoLeakCheck(
                 "id\tname\tdescription\tis_template\tallow_connections\towner\n" +
-                        "1\tquestdb\t\tfalse\ttrue\tpublic\n",
+                        "1\tqdb\t\tfalse\ttrue\tpublic\n",
                 "select N.oid::bigint as id,\n" +
                         "       datname as name,\n" +
                         "       D.description,\n" +
@@ -77,7 +77,7 @@ public class DataGripTest extends AbstractCairoTest {
     public void testGetDatabases() throws SqlException {
         assertQueryNoLeakCheck(
                 "id\tname\tdescription\tis_template\tallow_connections\towner\n" +
-                        "1\tquestdb\t\tfalse\ttrue\tpublic\n",
+                        "1\tqdb\t\tfalse\ttrue\tpublic\n",
                 "select N.oid::bigint as id,\n" +
                         "       datname as name,\n" +
                         "       D.description,\n" +

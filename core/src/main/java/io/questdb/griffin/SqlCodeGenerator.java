@@ -221,6 +221,7 @@ import io.questdb.griffin.engine.table.FilterOnExcludedValuesRecordCursorFactory
 import io.questdb.griffin.engine.table.FilterOnSubQueryRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilterOnValuesRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.FwdPageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.LatestByAllFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByAllIndexedRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByAllSymbolsFilteredRecordCursorFactory;
@@ -235,7 +236,6 @@ import io.questdb.griffin.engine.table.LatestByValueFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValueIndexedFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValueIndexedRowCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValuesIndexedFilteredRecordCursorFactory;
-import io.questdb.griffin.engine.table.PageFrameFwdRowCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.engine.table.SortedSymbolIndexRecordCursorFactory;
@@ -2012,9 +2012,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             int timestampIndex = groupByFactory.getMetadata().getColumnIndexQuiet(alias);
 
             int samplingIntervalEnd = TimestampSamplerFactory.findIntervalEndIndex(fillStride.token, fillStride.position);
-            assert samplingIntervalEnd < fillStride.token.length();
             long samplingInterval = TimestampSamplerFactory.parseInterval(fillStride.token, samplingIntervalEnd, fillStride.position);
             assert samplingInterval > 0;
+            assert samplingIntervalEnd < fillStride.token.length();
             char samplingIntervalUnit = fillStride.token.charAt(samplingIntervalEnd);
             TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(samplingInterval, samplingIntervalUnit, fillStride.position);
 
@@ -5190,40 +5190,28 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         model.setWhereClause(withinExtracted);
 
         boolean orderDescendingByDesignatedTimestampOnly = isOrderDescendingByDesignatedTimestampOnly(model);
+        if (withinExtracted != null) {
+            CharSequence preferredKeyColumn = null;
+            if (latestByColumnCount == 1) {
+                final int latestByIndex = listColumnFilterA.getColumnIndexFactored(0);
 
-        if (withinExtracted != null || executionContext.overrideIntrinsics(reader.getTableToken())) {
-
-            final IntrinsicModel intrinsicModel;
-            if (withinExtracted != null) {
-                CharSequence preferredKeyColumn = null;
-
-                if (latestByColumnCount == 1) {
-                    final int latestByIndex = listColumnFilterA.getColumnIndexFactored(0);
-
-                    if (ColumnType.isSymbol(myMeta.getColumnType(latestByIndex))) {
-                        preferredKeyColumn = latestBy.getQuick(0).token;
-                    }
+                if (ColumnType.isSymbol(myMeta.getColumnType(latestByIndex))) {
+                    preferredKeyColumn = latestBy.getQuick(0).token;
                 }
-
-                intrinsicModel = whereClauseParser.extract(
-                        model,
-                        withinExtracted,
-                        metadata,
-                        preferredKeyColumn,
-                        readerTimestampIndex,
-                        functionParser,
-                        myMeta,
-                        executionContext,
-                        latestByColumnCount > 1,
-                        reader
-                );
-            } else {
-                intrinsicModel = whereClauseParser.getEmpty();
             }
 
-            // When we run materialized view refresh we want to restrict queries to the base table
-            // to the timestamp range that is updated by the previous transactions.
-            executionContext.overrideWhereIntrinsics(reader.getTableToken(), intrinsicModel);
+            final IntrinsicModel intrinsicModel = whereClauseParser.extract(
+                    model,
+                    withinExtracted,
+                    metadata,
+                    preferredKeyColumn,
+                    readerTimestampIndex,
+                    functionParser,
+                    myMeta,
+                    executionContext,
+                    latestByColumnCount > 1,
+                    reader
+            );
 
             // intrinsic parser can collapse where clause when removing parts it can replace
             // need to make sure that filter is updated on the model in case it is processed up the call stack
@@ -5587,7 +5575,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (orderDescendingByDesignatedTimestampOnly) {
                 rowFactory = new BwdPageFrameRowCursorFactory();
             } else {
-                rowFactory = new PageFrameFwdRowCursorFactory();
+                rowFactory = new FwdPageFrameRowCursorFactory();
             }
 
             model.setWhereClause(intrinsicModel.filter);
@@ -5618,7 +5606,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 rowCursorFactory = new BwdPageFrameRowCursorFactory();
             } else {
                 cursorFactory = new FullFwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
-                rowCursorFactory = new PageFrameFwdRowCursorFactory();
+                rowCursorFactory = new FwdPageFrameRowCursorFactory();
             }
 
             return new PageFrameRecordCursorFactory(
@@ -5672,7 +5660,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
             symbolKeysOnly &= ColumnType.isSymbol(keyTypes.getColumnType(i));
         }
-
         if (symbolKeysOnly) {
             IntList partitionByColumnIndexes = new IntList(listColumnFilterA.size());
             for (int i = 0, n = listColumnFilterA.size(); i < n; i++) {

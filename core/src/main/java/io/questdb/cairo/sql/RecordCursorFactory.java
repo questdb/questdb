@@ -197,7 +197,6 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * Closes everything but base factory and filter.
      */
     default void halfClose() {
-
     }
 
     /**
@@ -206,6 +205,13 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * by re-applying limit logic).
      */
     default boolean implementsLimit() {
+        return false;
+    }
+
+    /**
+     * Returns true when factory's record cursor supports optimized top K (ORDER BY + LIMIT N) loop.
+     */
+    default boolean recordCursorSupportsLongTopK() {
         return false;
     }
 

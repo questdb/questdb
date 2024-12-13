@@ -246,7 +246,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private boolean sendParameterDescription;
     private boolean sendRNQ = true; /* send ReadyForQuery message */
     private SqlExecutionContextImpl sqlExecutionContext;
-    private long statementTimeout = -1L;
+    private long sqlTimeout = -1L;
     private SuspendEvent suspendEvent;
     private boolean tlsSessionStarting = false;
     private long totalReceived = 0;
@@ -437,7 +437,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         rowCount = 0;
         sendParameterDescription = false;
         sendRNQ = false;
-        statementTimeout = -1L;
+        sqlTimeout = -1L;
         suspendEvent = null;
         tlsSessionStarting = false;
         totalReceived = 0;
@@ -668,10 +668,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     @Override
-    public void setStatementTimeout(long statementTimeout) {
-        this.statementTimeout = statementTimeout;
-        if (statementTimeout > 0) {
-            circuitBreaker.setTimeout(statementTimeout);
+    public void setSqlTimeout(long sqlTimeout) {
+        this.sqlTimeout = sqlTimeout;
+        if (sqlTimeout > 0) {
+            circuitBreaker.setTimeout(sqlTimeout);
         }
     }
 
@@ -1676,9 +1676,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // check if there is pending writer, which would be pending if there is active transaction
         // when we have writer, execution is synchronous
         TableToken tableToken = op.getTableToken();
-        if (tableToken == null) {
-            throw CairoException.critical(0).put("invalid update operation plan cached, table token is null");
-        }
         final int index = pendingWriters.keyIndex(tableToken);
         if (index < 0) {
             op.withContext(sqlExecutionContext);
@@ -1689,18 +1686,18 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         } else {
             // execute against writer from the engine, or async
             try (OperationFuture fut = cq.execute(sqlExecutionContext, tempSequence, false)) {
-                if (statementTimeout > 0) {
+                if (sqlTimeout > 0) {
                     // Timeout is explicitly enforced here as during async execution we cannot rely on CircuitBreaker
                     // to enforce it. Why? When a TableWriter in unavailable then an async task will be put into
                     // TableWriter's task queue and will be executed when TableWriter becomes available. However, during this
                     // queueing there is nothing enforcing timeout. So we have to do it here.
                     // Alternatively, we could introduce timeout enforcement in the tasks queue. But it's not clear if it's worth the effort.
-                    if (fut.await(statementTimeout) != QUERY_COMPLETE) {
+                    if (fut.await(sqlTimeout) != QUERY_COMPLETE) {
                         if (op.isWriterClosePending()) {
                             // Writer has not tried to execute the command
                             freeUpdateCommand(op);
                         }
-                        throw SqlException.$(0, "UPDATE query timeout ").put(statementTimeout).put(" ms");
+                        throw SqlException.$(0, "UPDATE query timeout ").put(sqlTimeout).put(" ms");
                     }
                 } else {
                     // Default timeouts, can be different for select and update part
@@ -3091,7 +3088,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
 
         @Override
-        public void preCompile(SqlCompiler compiler) {
+        public boolean preCompile(SqlCompiler compiler, CharSequence sqlText) {
             sendRNQ = true;
             prepareForNewBatchQuery();
             PGConnectionContext.this.typesAndInsert = null;
@@ -3099,6 +3096,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             PGConnectionContext.this.typesAndSelect = null;
             circuitBreaker.resetTimer();
             sqlExecutionContext.initNow();
+            return true;
         }
     }
 
@@ -3225,7 +3223,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             if (sendBufferPtr + size < sendBufferLimit) {
                 return;
             }
-            throw NoSpaceLeftInResponseBufferException.INSTANCE;
+            throw NoSpaceLeftInResponseBufferException.instance(size);
         }
 
         void putZ(CharSequence value) {

@@ -231,20 +231,10 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testRegularUserCanNotCancelQueries() throws Exception {
-        assertException("cancel query 123456789", 13, "Write permission denied", regularUserContext1);
+        assertException("cancel query 123456789", 13, "Query cancellation is disabled", regularUserContext1);
     }
 
     private static class AdminContext extends AllowAllSecurityContext {
-        @Override
-        public void authorizeAdminAction() {
-            // do nothing
-        }
-
-        @Override
-        public void authorizeCancelQuery() {
-            // do nothing
-        }
-
         @Override
         public String getPrincipal() {
             return "admin";
@@ -253,8 +243,8 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
 
     private static class UserContext extends ReadOnlySecurityContext {
         @Override
-        public void authorizeAdminAction() {
-            throw new CairoException();
+        public void authorizeSqlEngineAdmin() {
+            throw CairoException.authorization().put("Access denied for ").put(getPrincipal()).put(" [SQL ENGINE ADMIN]");
         }
 
         @Override

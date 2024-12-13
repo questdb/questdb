@@ -626,24 +626,26 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             }
         };
 
-        assertMemoryLeak(ff, () -> {
-            TableToken tt1;
-            tt1 = createTableWal("tab1");
-            Assert.assertTrue(engine.isWalTable(tt1));
+        assertMemoryLeak(
+                ff, () -> {
+                    TableToken tt1;
+                    tt1 = createTableWal("tab1");
+                    Assert.assertTrue(engine.isWalTable(tt1));
 
-            execute("alter table tab1 set type bypass wal");
-            execute("drop table tab1");
-            createTableNonWal("tab1");
+                    execute("alter table tab1 set type bypass wal");
+                    execute("drop table tab1");
+                    createTableNonWal("tab1");
 
-            simulateEngineRestart();
-            engine.reconcileTableNameRegistryState();
+                    simulateEngineRestart();
+                    engine.reconcileTableNameRegistryState();
 
-            execute("drop table tab1");
-            createTableWal("tab1");
+                    execute("drop table tab1");
+                    createTableWal("tab1");
 
-            simulateEngineRestart();
-            engine.reconcileTableNameRegistryState();
-        });
+                    simulateEngineRestart();
+                    engine.reconcileTableNameRegistryState();
+                }
+        );
     }
 
     @Test

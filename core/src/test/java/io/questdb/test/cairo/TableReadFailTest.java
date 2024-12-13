@@ -25,7 +25,13 @@
 package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
@@ -137,6 +143,7 @@ public class TableReadFailTest extends AbstractCairoTest {
 
                 // this should time out
                 try {
+                    spinLockTimeout = 100;
                     reader.reload();
                     Assert.fail();
                 } catch (CairoException e) {
@@ -213,17 +220,19 @@ public class TableReadFailTest extends AbstractCairoTest {
         CreateTableTestUtils.createAllTable(engine, PartitionBy.DAY);
         TestUtils.assertMemoryLeak(() -> {
             try {
-                newOffPoolReader(new DefaultTestCairoConfiguration(root) {
-                    @Override
-                    public @NotNull FilesFacade getFilesFacade() {
-                        return ff;
-                    }
+                newOffPoolReader(
+                        new DefaultTestCairoConfiguration(root) {
+                            @Override
+                            public @NotNull FilesFacade getFilesFacade() {
+                                return ff;
+                            }
 
-                    @Override
-                    public long getSpinLockTimeout() {
-                        return 1;
-                    }
-                }, "all").close();
+                            @Override
+                            public long getSpinLockTimeout() {
+                                return 1;
+                            }
+                        }, "all"
+                ).close();
                 Assert.fail();
             } catch (CairoException ignore) {
             }

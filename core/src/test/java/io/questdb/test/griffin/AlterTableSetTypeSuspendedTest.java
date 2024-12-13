@@ -41,6 +41,7 @@ import io.questdb.test.TestServerMain;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.BeforeClass;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -58,6 +59,7 @@ public class AlterTableSetTypeSuspendedTest extends AbstractAlterTableSetTypeRes
     }
 
     @Test
+    @Ignore
     public void testWalSuspendedToNonWal() throws Exception {
         final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {

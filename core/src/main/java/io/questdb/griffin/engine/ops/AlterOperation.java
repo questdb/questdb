@@ -89,6 +89,30 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         this.command = DO_NOTHING;
     }
 
+    public static AlterOperation deepCloneOf(AlterOperation other) {
+        LongList extraInfo = new LongList(other.extraInfo);
+        ObjList<CharSequence> charSequenceObjList = new ObjList<>(other.extraStrInfo.size());
+        for (int i = 0, n = other.extraStrInfo.size(); i < n; i++) {
+            charSequenceObjList.add(Chars.toString(other.extraStrInfo.getStrA(i)));
+        }
+
+        AlterOperation alterOperation = new AlterOperation(extraInfo, charSequenceObjList);
+        alterOperation.command = other.command;
+        alterOperation.tableToken = other.tableToken;
+        alterOperation.tableNamePosition = other.tableNamePosition;
+
+        if (other.activeExtraStrInfo == other.extraStrInfo) {
+            alterOperation.activeExtraStrInfo = alterOperation.extraStrInfo;
+        } else if (other.activeExtraStrInfo == other.directExtraStrInfo) {
+            alterOperation.activeExtraStrInfo = alterOperation.directExtraStrInfo;
+        } else {
+            assert false;
+        }
+        alterOperation.init(other.getCmdType(), other.getCommandName(), other.tableToken, other.getTableId(), other.getTableVersion(), other.tableNamePosition);
+
+        return alterOperation;
+    }
+
     public static long getFlags(boolean indexed, boolean dedupKey) {
         long flags = 0;
         if (indexed) {
@@ -432,7 +456,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             long partitionTimestamp = extraInfo.getQuick(i * 2);
             if (!svc.convertPartition(partitionTimestamp)) {
                 throw CairoException.partitionManipulationRecoverable()
-                        .put("could not convert partition to parquet [table=").put(tableToken != null ? tableToken.getTableName() : "<null>")
+                        .put("could not convert partition to parquet [table=").put(getTableToken().getTableName())
                         .put(", partitionTimestamp=").ts(partitionTimestamp)
                         .put(", partitionBy=").put(PartitionBy.toString(svc.getPartitionBy()))
                         .put(']')
@@ -480,7 +504,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             long partitionTimestamp = extraInfo.getQuick(i * 2);
             if (!svc.removePartition(partitionTimestamp)) {
                 throw CairoException.partitionManipulationRecoverable()
-                        .put("could not remove partition [table=").put(tableToken != null ? tableToken.getTableName() : "<null>")
+                        .put("could not remove partition [table=").put(getTableToken().getTableName())
                         .put(", partitionTimestamp=").ts(partitionTimestamp)
                         .put(", partitionBy=").put(PartitionBy.toString(svc.getPartitionBy()))
                         .put(']')
@@ -498,7 +522,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         try {
             svc.setMetaO3MaxLag(o3MaxLag);
         } catch (CairoException e) {
-            LOG.error().$("could not change o3MaxLag [table=").utf8(tableToken != null ? tableToken.getTableName() : "<null>")
+            LOG.error().$("could not change o3MaxLag [table=").utf8(getTableToken().getTableName())
                     .$(", errno=").$(e.getErrno())
                     .$(", error=").$(e.getFlyweightMessage())
                     .I$();
