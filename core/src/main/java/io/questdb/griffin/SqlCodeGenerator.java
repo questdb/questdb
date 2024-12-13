@@ -2020,15 +2020,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             char samplingIntervalUnit = fillStride.token.charAt(samplingIntervalEnd);
             TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(samplingInterval, samplingIntervalUnit, fillStride.position);
 
-            // scan direction of fill range is not asc or desc, but unknown, since we get
-            // records in arbitrary order, and then fill asc
-            // therefore it is safe to set the timestamp index as it won't be misinterpreted as
-            // ASC i.e designated
-            GenericRecordMetadata fillMetadata = GenericRecordMetadata.copyOfSansTimestamp(groupByFactory.getMetadata());
-            fillMetadata.setTimestampIndex(timestampIndex);
-
             return new FillRangeRecordCursorFactory(
-                    fillMetadata,
+                    groupByFactory.getMetadata(),
                     groupByFactory,
                     fillFromFunc,
                     fillToFunc,
@@ -3019,7 +3012,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 listColumnFilterA.clear();
                 intHashSet.clear();
 
-                int orderedByTimestampIndex = -1;
+                int orderedByTimestampIndex = Integer.MIN_VALUE;
                 // column index sign indicates direction
                 // therefore 0 index is not allowed
                 for (int i = 0; i < orderByColumnCount; i++) {
@@ -3045,6 +3038,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (intHashSet.add(index)) {
                         if (orderByColumnNameToIndexMap.get(column) == QueryModel.ORDER_DIRECTION_DESCENDING) {
                             listColumnFilterA.add(-index - 1);
+                            if (i == 0 && metadata.getColumnType(index) == ColumnType.TIMESTAMP) {
+                                orderedByTimestampIndex = -index - 1;
+                            }
                         } else {
                             listColumnFilterA.add(index + 1);
                             if (i == 0 && metadata.getColumnType(index) == ColumnType.TIMESTAMP) {
@@ -3085,7 +3081,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     orderedMetadata = GenericRecordMetadata.copyOf(metadata);
                 } else {
                     orderedMetadata = GenericRecordMetadata.copyOfSansTimestamp(metadata);
-                    orderedMetadata.setTimestampIndex(orderedByTimestampIndex);
+                    if (orderedByTimestampIndex != Integer.MIN_VALUE) {
+                        if (orderedByTimestampIndex > -1) {
+                            orderedMetadata.setTimestampIndex(orderedByTimestampIndex);
+                        } else {
+                            orderedMetadata.setTimestampIndex(-orderedByTimestampIndex - 1);
+                        }
+                    }
                 }
                 final Function loFunc = getLoFunction(model, executionContext);
                 final Function hiFunc = getHiFunction(model, executionContext);
@@ -4287,7 +4289,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         valueTypes.getColumnCount()
                 );
             }
-            
+
             guardAgainstFillWithKeyedGroupBy(model, keyTypes);
 
             return generateFill(
