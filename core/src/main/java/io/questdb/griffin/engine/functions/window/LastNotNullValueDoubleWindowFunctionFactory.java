@@ -55,6 +55,7 @@ import io.questdb.std.Vect;
 // Returns value evaluated at the row that is the last not null row of the window frame.
 public class LastNotNullValueDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
+    public static final ArrayColumnTypes LAST_NOT_NULL_VALUE_PARTITION_ROWS_COLUMN_TYPES;
     private static final String NAME = "last_not_null_value";
     private static final String SIGNATURE = NAME + "(D)";
 
@@ -115,16 +116,10 @@ public class LastNotNullValueDoubleWindowFunctionFactory extends AbstractWindowF
                     }
 
                     int timestampIndex = windowContext.getTimestampIndex();
-                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-                    columnTypes.add(ColumnType.LONG);  // native array start offset, requires updating on resize
-                    columnTypes.add(ColumnType.LONG);   // native buffer size
-                    columnTypes.add(ColumnType.LONG);   // native buffer capacity
-                    columnTypes.add(ColumnType.LONG);   // index of last buffered element
-
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            columnTypes
+                            LastValueDoubleWindowFunctionFactory.LAST_VALUE_PARTITION_RANGE_COLUMN_TYPES
                     );
 
                     final int initialBufferSize = configuration.getSqlWindowInitialRangeBufferSize();
@@ -178,17 +173,11 @@ public class LastNotNullValueDoubleWindowFunctionFactory extends AbstractWindowF
                 }
                 //between [unbounded | x] preceding and [x preceding | current row] (but not unbounded preceding to current row )
                 else {
-                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-                    columnTypes.add(ColumnType.DOUBLE);
-                    columnTypes.add(ColumnType.LONG); // position of current oldest element
-                    columnTypes.add(ColumnType.LONG); // start offset of native array
-
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            columnTypes
+                            LAST_NOT_NULL_VALUE_PARTITION_ROWS_COLUMN_TYPES
                     );
-
                     MemoryARW mem = Vm.getARWInstance(configuration.getSqlWindowStorePageSize(),
                             configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER
                     );
@@ -214,7 +203,7 @@ public class LastNotNullValueDoubleWindowFunctionFactory extends AbstractWindowF
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     // same as for rows because calculation stops at current rows even if there are 'equal' following rows
                     // if lower bound is unbounded then it's the same as over ()
-                    return new LastNotNullValueOverWholeResultSetFunction(args.get(0));
+                    return new LastNotNullOverUnboundedRowsFrameFunction(args.get(0));
                 } // range between [unbounded | x] preceding and [y preceding | current row]
                 else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
@@ -556,7 +545,7 @@ public class LastNotNullValueDoubleWindowFunctionFactory extends AbstractWindowF
                         }
                     } // else keep lastValue
                 } else {
-                    double last = memory.getDouble(startOffset + loIdx % bufferSize);
+                    double last = memory.getDouble(startOffset + loIdx % bufferSize * Double.BYTES);
                     if (Numbers.isFinite(last)) {
                         this.lastValue = last;
                     } else {
@@ -776,7 +765,7 @@ public class LastNotNullValueDoubleWindowFunctionFactory extends AbstractWindowF
                     }
                 } // else keep lastValue
             } else {
-                double last = buffer.getDouble(loIdx % bufferSize);
+                double last = buffer.getDouble(loIdx % bufferSize * Double.BYTES);
                 if (Numbers.isFinite(last)) {
                     this.lastValue = last;
                 } else {
@@ -863,7 +852,7 @@ public class LastNotNullValueDoubleWindowFunctionFactory extends AbstractWindowF
     // Handles:
     // - last_not_null_value(a) over (partition by x rows between unbounded preceding and [current row | x preceding ])
     // - last_not_null_value(a) over (partition by x order by ts range between unbounded preceding and [current row | x preceding])
-    static class LastNotNullValueOverUnboundedPartitionRowsFrameFunction extends BasePartitionedDoubleWindowFunction {
+    public static class LastNotNullValueOverUnboundedPartitionRowsFrameFunction extends BasePartitionedDoubleWindowFunction {
 
         private double value;
 
@@ -924,7 +913,7 @@ public class LastNotNullValueDoubleWindowFunctionFactory extends AbstractWindowF
     }
 
     // Handles last_not_null_value() over (rows between unbounded preceding and current row); there's no partition by.
-    static class LastNotNullOverUnboundedRowsFrameFunction extends BaseDoubleWindowFunction {
+    public static class LastNotNullOverUnboundedRowsFrameFunction extends BaseDoubleWindowFunction {
 
         private double lastValue = Double.NaN;
 
@@ -1034,5 +1023,12 @@ public class LastNotNullValueDoubleWindowFunctionFactory extends AbstractWindowF
             value = Double.NaN;
             found = false;
         }
+    }
+
+    static {
+        LAST_NOT_NULL_VALUE_PARTITION_ROWS_COLUMN_TYPES = new ArrayColumnTypes();
+        LAST_NOT_NULL_VALUE_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.DOUBLE);
+        LAST_NOT_NULL_VALUE_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG); // start offset of native array
+        LAST_NOT_NULL_VALUE_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG); // count of values in buffer
     }
 }
