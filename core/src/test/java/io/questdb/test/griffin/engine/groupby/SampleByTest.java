@@ -5114,9 +5114,48 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByWithFilterAndOrderByAndLimit() throws Exception {
+//        assertMemoryLeak(() -> {
+//            execute("create table trades as " +
+//                    "(" +
+//                    "select" +
+//                    " rnd_str('btcusdt', 'ethusdt') market_id," +
+//                    " rnd_double(0) * 100 price," +
+//                    " rnd_double(0) * 100 amount," +
+//                    " timestamp_sequence(172800000000, 3600000) created_at" +
+//                    " from long_sequence(20)" +
+//                    ") timestamp(created_at) partition by day");
+//            assertPlanNoLeakCheck("select * from (" +
+//                    "  select" +
+//                    "    first(price) AS open," +
+//                    "    max(price) AS high," +
+//                    "    min(price) AS low," +
+//                    "    last(price) AS close," +
+//                    "    sum(amount) AS volume," +
+//                    "    created_at as timestamp" +
+//                    "  from trades" +
+//                    "  where market_id = 'btcusdt' AND created_at > dateadd('m', -60, 172800000000)" +
+//                    "  sample by 60m" +
+//                    "  fill(null, null, null, null, 0) align to calendar" +
+//                    ") order by timestamp desc limit 0, 1", "Limit lo: 0 hi: 1\n" +
+//                    "    Sort\n" +
+//                    "      keys: [timestamp desc]\n" +
+//                    "        Fill Range\n" +
+//                    "          stride: '60m'\n" +
+//                    "          values: [nullnull,null,null,0,]\n" +
+//                    "            Async Group By workers: 1\n" +
+//                    "              keys: [timestamp]\n" +
+//                    "              values: [first(price),max(price),min(price),last(price),sum(amount)]\n" +
+//                    "              filter: market_id='btcusdt'\n" +
+//                    "                PageFrame\n" +
+//                    "                    Row forward scan\n" +
+//                    "                    Interval forward scan on: trades\n" +
+//                    "                      intervals: [(\"1970-01-02T23:00:00.000001Z\",\"MAX\")]\n");
+//        });
+
+
         assertQuery(
                 "open\thigh\tlow\tclose\tvolume\ttimestamp\n" +
-                        "22.463013424972587\t90.75843364017028\t16.381374773748515\t75.88175403454873\t440.2232295756601\t1970-01-03T00:00:00.000000Z\n",
+                        "65.51335839796312\t94.55893004802432\t18.336217509438512\t77.0079809007092\t519.2795145577336\t1970-01-03T00:00:00.000000Z\n",
                 "select * from (" +
                         "  select" +
                         "    first(price) AS open," +
@@ -5139,7 +5178,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " timestamp_sequence(172800000000, 3600000) created_at" +
                         " from long_sequence(20)" +
                         ") timestamp(created_at) partition by day",
-                null,
+                "timestamp###DESC",
                 true,
                 false
         );
@@ -5229,7 +5268,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 3600000000) created_at" + // 1 hour step
                         " from long_sequence(10)" + // 10 rows
                         ") timestamp(created_at) partition by day",
-                null,
+                "created_at###DESC",
                 true,
                 false
         );
