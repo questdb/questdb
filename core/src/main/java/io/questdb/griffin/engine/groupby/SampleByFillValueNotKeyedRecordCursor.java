@@ -125,7 +125,6 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
         if (baseRecord == null && sampleToFunc != TimestampConstant.NULL && !endFill) {
             endFill = true;
             upperBound = sampleToFunc.getTimestamp(null);
-            baseRecord = baseCursor.getRecord();
             nextSamplePeriod(upperBound);
         }
 

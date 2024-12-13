@@ -26,8 +26,11 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -245,7 +248,9 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
             // looks like we need to populate key map
             // at the start of this loop 'lastTimestamp' will be set to timestamp
             // of first record in base cursor
-            groupByFunctionsUpdater.updateNew(mapValue, baseRecord, rowId++);
+            if (baseRecord != null) {
+                groupByFunctionsUpdater.updateNew(mapValue, baseRecord, rowId++);
+            }
             isNotKeyedLoopInitialized = true;
         }
 

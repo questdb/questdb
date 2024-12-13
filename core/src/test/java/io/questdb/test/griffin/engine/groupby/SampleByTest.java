@@ -111,6 +111,62 @@ public class SampleByTest extends AbstractCairoTest {
             "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;";
 
     @Test
+    public void testAccidentalAccessOfUninitialisedRecord() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE 'abdf' ( \n" +
+                    "\tcreated TIMESTAMP,\n" +
+                    "\tevent SHORT,\n" +
+                    "\ttableId INT,\n" +
+                    "\twalId INT,\n" +
+                    "\tseqTxn LONG,\n" +
+                    "\trowCount LONG,\n" +
+                    "\tphysicalRowCount LONG,\n" +
+                    "\tlatency FLOAT\n" +
+                    ") timestamp(created) PARTITION BY MONTH BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            execute("insert into 'abdf' (created, event, tableId, walId, seqTxn, rowCount, physicalRowCount, latency)\n" +
+                    "                    values ('2024-08-12T08:28:46.430588Z', 105, 17, -1, 1, -1, -1, 8.411),\n" +
+                    "                    ('2024-08-12T08:28:46.431871Z', 104, 17, -1, 1, -1, -1, 1.313),\n" +
+                    "                    ('2024-08-12T08:28:55.906230Z', 105, 17, 1, 2, -1, -1, 4.547)");
+            drainWalQueue();
+
+            assertSql("time\tnumOfWalApplies\tnumOfRowsApplied\tnumOfRowsWritten\tavgWalAmplification\n" +
+                            "2024-08-12T08:28:46.430588Z\t2\t-2\t-2\t1.0\n" +
+                            "2024-08-12T16:28:46.430588Z\tnull\tnull\tnull\t1.0\n" +
+                            "2024-08-13T00:28:46.430588Z\tnull\tnull\tnull\t1.0\n",
+                    "select\n" +
+                            "    created time,\n" +
+                            "    count(rowCount) numOfWalApplies,\n" +
+                            "    sum(rowCount) numOfRowsApplied,\n" +
+                            "    sum(physicalRowCount) numOfRowsWritten,\n" +
+                            "    coalesce(avg(physicalRowCount/rowCount), 1) avgWalAmplification\n" +
+                            "from abdf\n" +
+                            "where tableId = 17 and \n" +
+                            "event = 105\n" +
+                            "sample by 8h\n" +
+                            "FROM '2024-08-12T08:28:46.430588Z' TO '2024-08-13T08:28:46.430588Z'\n" +
+                            "fill(null);");
+
+            assertSql("time\tnumOfWalApplies\tnumOfRowsApplied\tnumOfRowsWritten\tavgWalAmplification\n" +
+                            "2024-08-12T08:28:46.430588Z\t2\t-2\t-2\t1.0\n" +
+                            "2024-08-12T16:28:46.430588Z\tnull\t5\t3\t1.0\n" +
+                            "2024-08-13T00:28:46.430588Z\tnull\t5\t3\t1.0\n",
+                    "select\n" +
+                            "    created time,\n" +
+                            "    count(rowCount) numOfWalApplies,\n" +
+                            "    sum(rowCount) numOfRowsApplied,\n" +
+                            "    sum(physicalRowCount) numOfRowsWritten,\n" +
+                            "    coalesce(avg(physicalRowCount/rowCount), 1) avgWalAmplification\n" +
+                            "from abdf\n" +
+                            "where tableId = 17 and \n" +
+                            "event = 105\n" +
+                            "sample by 8h\n" +
+                            "FROM '2024-08-12T08:28:46.430588Z' TO '2024-08-13T08:28:46.430588Z'\n" +
+                            "fill(null, 5, 3, 1);");
+        });
+    }
+
+    @Test
     public void testBadFunction() throws Exception {
         assertException(
                 "select b, sum(a), sum(c), k from x sample by 3h fill(20.56)",
@@ -2899,6 +2955,53 @@ public class SampleByTest extends AbstractCairoTest {
                             "'2024-12-08' to '2024-12-09'\n" +
                             "fill(0)"
             );
+        });
+    }
+
+    @Test
+
+    public void testQueryCorrectlyFillsSides() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(sysTelemetryWalDdl);
+            drainWalQueue();
+            assertSql("created\twriteAmplification\n" +
+                            "2024-12-10T23:31:02.000000Z\tnull\n" +
+                            "2024-12-11T00:31:02.000000Z\tnull\n" +
+                            "2024-12-11T01:31:02.000000Z\tnull\n" +
+                            "2024-12-11T02:31:02.000000Z\tnull\n" +
+                            "2024-12-11T03:31:02.000000Z\tnull\n" +
+                            "2024-12-11T04:31:02.000000Z\tnull\n" +
+                            "2024-12-11T05:31:02.000000Z\tnull\n" +
+                            "2024-12-11T06:31:02.000000Z\tnull\n" +
+                            "2024-12-11T07:31:02.000000Z\tnull\n" +
+                            "2024-12-11T08:31:02.000000Z\tnull\n" +
+                            "2024-12-11T09:31:02.000000Z\tnull\n" +
+                            "2024-12-11T10:31:02.000000Z\tnull\n",
+                    "select \n" +
+                            "  created,\n" +
+                            "  -- coars, actual write amplification bucketed in 1s buckets\n" +
+                            "  phy_row_count/row_count writeAmplification\n" +
+                            "from (  \n" +
+                            "  select \n" +
+                            "    created, \n" +
+                            "    sum(phy_row_count) over (order by created rows between 59 PRECEDING and CURRENT row) phy_row_count,\n" +
+                            "    sum(row_count) over (order by created rows between 59 PRECEDING and CURRENT row) row_count\n" +
+                            "    from (\n" +
+                            "      select \n" +
+                            "        created, \n" +
+                            "        sum(rowcount) row_count,\n" +
+                            "        sum(physicalRowCount) phy_row_count,\n" +
+                            "      from sys.telemetry_wal\n" +
+                            "      where tableId = 10 and \n" +
+                            "         event = 105\n" +
+                            "         and rowCount > 0 -- this is fixed clause, we have rows with - rowCount logged\n" +
+                            "      sample by 1h\n" +
+                            "      FROM '2024-12-11T00:31:02+01:00' TO '2024-12-11T12:31:02+01:00'\n" +
+                            "      -- fill with null to avoid spurious values and division by 0\n" +
+                            "      fill(null,null)\n" +
+                            "      \n" +
+                            "  )\n" +
+                            ");");
         });
     }
 
