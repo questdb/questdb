@@ -293,7 +293,6 @@ import java.io.Closeable;
 import java.util.ArrayDeque;
 
 import static io.questdb.cairo.ColumnType.getGeoHashBits;
-import static io.questdb.cairo.ColumnType.isNdArray;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
@@ -328,7 +327,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             {11,  1, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 11, 11,  1}, //  1 = BOOLEAN
             {11, 11,  2,  3, 11,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 11, 11,  2}, //  2 = BYTE
             {11, 11,  3,  3,  3,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 11, 11,  3}, //  3 = SHORT
-            {11, 11, 11,  3,  4,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 11, 11, 11}, //  4 = CHAR
+            {11, 11, 11,  3,  4,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 11, 11,  4}, //  4 = CHAR
             {11, 11,  5,  5,  5,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 11, 11,  5}, //  5 = INT
             {11, 11,  6,  6,  6,  6,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 11, 11,  6}, //  6 = LONG
             {11, 11,  7,  7,  7,  7,  7,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 11, 11,  7}, //  7 = DATE
@@ -352,12 +351,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 25, 26, -1, 11, 11, 11, 11, 11, 25}, // 25 = IPv4
             {26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 11, 26, 26, -1, -1, -1, -1, 26, 26, 26, 26, 26, 26, 26, 26, 26, -1, 26, 26, 26, 26, 26, 26}, // 26 = VARCHAR
             {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 27 = ARRAY
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 27, 11, 11, 11, 11, 27}, // 28 = regclass
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 28, 11, 11, 11, 28}, // 29 = regprocedure
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 29, 11, 11, 29}, // 30 = text[]
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 30, 11, 30}, // 31 = PARAMETER
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 11, 31, 31}, // 32 = INTERVAL
-            { 0,  1,  2,  3, 11,  5,  6,  7,  8,  9, 10, 11, 11, 13, -1, -1, -1, -1, 18, 19, 20, 21, 22, 23, 24, 25, 26, -1, 27, 28, 29, 30, 31, 32}  // 33 = NULL
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 28, 11, 11, 11, 11, 28}, // 28 = regclass
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 29, 11, 11, 11, 29}, // 29 = regprocedure
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 30, 11, 11, 30}, // 30 = text[]
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 31, 11, 31}, // 31 = PARAMETER
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 11, 32, 32}, // 32 = INTERVAL
+            { 0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 11, 13, -1, -1, -1, -1, 18, 19, 20, 21, 22, 23, 24, 25, 26, -1, 28, 29, 30, 31, 32, 33}  // 33 = NULL
     };
     // @formatter:on
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> avgConstructors = new IntObjHashMap<>();
@@ -455,7 +454,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             for (int typeB = 0; typeB <= ColumnType.NULL; typeB++) {
                 final boolean vsGenericType =
                         isGeoHashType(typeA) || isGeoHashType(typeB) ||
-                        ColumnType.isGenericType(typeA) || ColumnType.isGenericType(typeB);
+                                ColumnType.isGenericType(typeA) || ColumnType.isGenericType(typeB);
                 final int outType = vsGenericType ? -1 : castToType(typeA, typeB);
                 expected[typeA][typeB] = outType;
             }
@@ -613,10 +612,22 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 : (isStringyType(typeA) && isStringyType(typeB)) ? ColumnType.STRING
                 : (isStringyType(typeA) && isParseableType(typeB)) ? typeA
                 : (isStringyType(typeB) && isParseableType(typeA)) ? typeB
-                : ((typeA == ColumnType.TIMESTAMP) && (typeB == ColumnType.LONG)) ? typeA
-                : ((typeA == ColumnType.LONG) && (typeB == ColumnType.TIMESTAMP)) ? typeB
+
+                // NULL casts to any other type, except for symbols which can't cross keys.
+                : ((typeA == ColumnType.NULL) && (typeB != ColumnType.SYMBOL)) ? typeB
+                : ((typeB == ColumnType.NULL) && (typeA != ColumnType.SYMBOL)) ? typeA
+
+                // cast long and timestamp to timestamp in unions instead of longs.
+                : ((typeA == ColumnType.TIMESTAMP) && (typeB == ColumnType.LONG)) ? ColumnType.TIMESTAMP
+                : ((typeA == ColumnType.LONG) && (typeB == ColumnType.TIMESTAMP)) ? ColumnType.TIMESTAMP
+
+                // Varchars take priority over strings.
                 : (typeA == ColumnType.VARCHAR || typeB == ColumnType.VARCHAR) ? ColumnType.VARCHAR
                 : ((typeA == ColumnType.STRING) || (typeB == ColumnType.STRING)) ? ColumnType.STRING
+
+                // cast booleans vs anything other than varchars to strings.
+                : ((typeA == ColumnType.BOOLEAN) || (typeB == ColumnType.BOOLEAN)) ? ColumnType.STRING
+
                 : (ColumnType.isToSameOrWider(typeB, typeA) && typeA != ColumnType.SYMBOL && typeA != ColumnType.CHAR) ? typeA
                 : (ColumnType.isToSameOrWider(typeA, typeB) && typeB != ColumnType.SYMBOL && typeB != ColumnType.CHAR) ? typeB
                 : ColumnType.STRING;
