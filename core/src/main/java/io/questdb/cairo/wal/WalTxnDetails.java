@@ -106,28 +106,15 @@ public class WalTxnDetails {
         final long lastSeqTxn = getLastSeqTxn();
         long loadFromSeqTxn = appliedSeqTxn + 1;
 
-        transactionMeta.clear();
-        this.startSeqTxn = loadFromSeqTxn;
-
-//        if (lastSeqTxn <= loadFromSeqTxn) {
-//            int shift = (int) (appliedSeqTxn - this.startSeqTxn + 1);
-//            if (shift < 0) {
-//                // This can happen after a rollback and lag txns being discarded.
-//                // In this case we have to clear everything.
-//                transactionMeta.clear();
-//                this.startSeqTxn = loadFromSeqTxn;
-//            } else {
-//                int size = transactionMeta.size();
-//                transactionMeta.removeIndexBlock(0, shift * TXN_METADATA_LONGS_SIZE);
-//                this.startSeqTxn = appliedSeqTxn + 1;
-//                if (transactionMeta.size() > 0) {
-//                    transactionMeta.set(COMMIT_TO_TIMESTAMP_OFFSET, -1);
-//                }
-//            }
-//        } else {
-//            transactionMeta.clear();
-//            this.startSeqTxn = loadFromSeqTxn;
-//        }
+        if (lastSeqTxn >= loadFromSeqTxn && startSeqTxn < loadFromSeqTxn) {
+            int shift = (int) (loadFromSeqTxn - startSeqTxn);
+            transactionMeta.removeIndexBlock(0, shift * TXN_METADATA_LONGS_SIZE);
+            this.startSeqTxn = loadFromSeqTxn;
+            loadFromSeqTxn = lastSeqTxn + 1;
+        } else {
+            transactionMeta.clear();
+            this.startSeqTxn = loadFromSeqTxn;
+        }
 
         loadTransactionDetails(tempPath, transactionLogCursor, loadFromSeqTxn, rootLen, maxCommittedTimestamp);
 
