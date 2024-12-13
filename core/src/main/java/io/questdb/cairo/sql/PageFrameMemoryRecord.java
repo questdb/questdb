@@ -115,6 +115,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     @Override
     public void close() {
         Misc.freeObjListIfCloseable(symbolTableCache);
+        Misc.freeObjList(ndArrays);
         symbolTableCache.clear();
         clear();
     }
