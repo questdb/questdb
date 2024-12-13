@@ -111,7 +111,7 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
-    default void setMetaTtlHours(int ttlHours) {
+    default void setMetaTtlHoursOrMonths(int ttlHoursOrMonths) {
         throw CairoException.critical(0).put("change of TTL does not update sequencer metadata");
     }
 

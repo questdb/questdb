@@ -2961,7 +2961,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void setMetaTtlHours(int ttlHours) {
+    public void setMetaTtlHoursOrMonths(int ttlHours) {
         try {
             commit();
             long metaSize = copyMetadataAndUpdateVersion();
@@ -5333,28 +5333,57 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void enforceTtl() {
-        int ttl = metadata.getTtlHours();
+        int ttl = metadata.getTtlHoursOrMonths();
         if (ttl == 0) {
             return;
         }
-        long oldDataCutoffMicros = getMaxTimestamp() - TimeUnit.HOURS.toMicros(ttl);
         int partitionCount = getPartitionCount();
-        if (partitionCount < 2 || getPartitionTimestamp(1) >= oldDataCutoffMicros) {
-            // Fast path: the oldest partition isn't past its lifetime, return
+        if (partitionCount < 2) {
             return;
         }
-        TxWriter txWriter = getTxWriter();
-        boolean isOld = false;
-        for (int i = partitionCount - 1; i >= 0; i--) {
-            long partitionTimestamp = getPartitionTimestamp(i);
-            if (partitionTimestamp != txWriter.getPartitionFloor(partitionTimestamp)) {
-                continue;
+        long maxTimestamp = getMaxTimestamp();
+        long partition1Timestamp = getPartitionTimestamp(1);
+        if (ttl > 0) {
+            // TTL unit is HOURS
+            long evictionThresholdMicros = maxTimestamp - TimeUnit.HOURS.toMicros(ttl);
+            if (partition1Timestamp > evictionThresholdMicros) {
+                // Fast path: the oldest partition isn't past its lifetime, return
+                return;
             }
-            if (isOld) {
-                dropPartitionByExactTimestamp(partitionTimestamp);
-            } else {
-                isOld = partitionTimestamp < oldDataCutoffMicros;
+            TxWriter txWriter = getTxWriter();
+            boolean isOld = false;
+            for (int i = partitionCount - 1; i >= 0; i--) {
+                long partitionTimestamp = getPartitionTimestamp(i);
+                if (partitionTimestamp != txWriter.getPartitionFloor(partitionTimestamp)) {
+                    continue;
+                }
+                if (isOld) {
+                    dropPartitionByExactTimestamp(partitionTimestamp);
+                } else {
+                    isOld = partitionTimestamp <= evictionThresholdMicros;
+                }
             }
+        } else {
+            // ttl < 0 => TTL unit is MONTHS
+            int ttlMonths = -ttl;
+            if (Timestamps.getMonthsBetween(partition1Timestamp, maxTimestamp) < ttlMonths) {
+                // Fast path: the oldest partition isn't past its lifetime, return
+                return;
+            }
+            TxWriter txWriter = getTxWriter();
+            boolean isOld = false;
+            for (int i = partitionCount - 1; i >= 0; i--) {
+                long partitionTimestamp = getPartitionTimestamp(i);
+                if (partitionTimestamp != txWriter.getPartitionFloor(partitionTimestamp)) {
+                    continue;
+                }
+                if (isOld) {
+                    dropPartitionByExactTimestamp(partitionTimestamp);
+                } else {
+                    isOld = Timestamps.getMonthsBetween(partitionTimestamp, maxTimestamp) >= ttlMonths;
+                }
+            }
+
         }
     }
 

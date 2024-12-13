@@ -1085,7 +1085,23 @@ public final class Timestamps {
         }
     }
 
-    public static int toHours(int value, int partitionByUnit, int tokenPos) throws SqlException {
+    /**
+     * Returns a duration value in TTL format: if positive, it's in hours; if negative, it's in months (and
+     * the actual value is positive)
+     *
+     * @param value           the number of units, must be a non-negative number
+     * @param partitionByUnit the time unit, one of `PartitionBy` constants
+     * @param tokenPos        the position of the number token in the SQL string
+     * @return the TTL value as described
+     * @throws SqlException if the passed value is out of range
+     */
+    public static int toHoursOrMonths(int value, int partitionByUnit, int tokenPos) throws SqlException {
+        if (value < 0) {
+            throw new AssertionError("The value must be non-negative");
+        }
+        if (value == 0) {
+            return 0;
+        }
         switch (partitionByUnit) {
             case PartitionBy.HOUR:
                 return value;
@@ -1104,19 +1120,14 @@ public final class Timestamps {
                 }
                 return WEEK_DAYS * DAY_HOURS * value;
             case PartitionBy.MONTH:
-                int maxMonths = Integer.MAX_VALUE / YEAR_HOURS;
-                if (value > maxMonths) {
-                    throw SqlException.$(tokenPos, "value out of range: ")
-                            .put(value).put(" months. Max value: ").put(maxMonths).put(" months");
-                }
-                return (YEAR_HOURS * value) / YEAR_MONTHS;
+                return -value;
             case PartitionBy.YEAR:
-                int maxYears = Integer.MAX_VALUE / YEAR_HOURS;
+                int maxYears = Integer.MAX_VALUE / YEAR_MONTHS;
                 if (value > maxYears) {
                     throw SqlException.$(tokenPos, "value out of range: ")
                             .put(value).put(" years. Max value: ").put(maxYears).put(" years");
                 }
-                return YEAR_HOURS * value;
+                return -(YEAR_MONTHS * value);
             default:
                 throw new AssertionError("invalid value for partitionByUnit: " + partitionByUnit);
         }

@@ -516,7 +516,7 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
 
         @Override
-        public int getTtlHours() {
+        public int getTtlHoursOrMonths() {
             return 0;
         }
 

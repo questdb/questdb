@@ -118,7 +118,7 @@ public class TableStructMetadataAdapter implements TableStructure {
     }
 
     @Override
-    public int getTtlHours() {
+    public int getTtlHoursOrMonths() {
         // todo: fuzz TTL later
         return 0;
     }

@@ -43,7 +43,7 @@ public class CairoTable implements Sinkable {
     private int partitionBy;
     private int timestampIndex;
     private TableToken token;
-    private int ttlHours;
+    private int ttlHoursOrMonths;
 
     public CairoTable(@NotNull TableToken token) {
         setTableToken(token);
@@ -62,7 +62,7 @@ public class CairoTable implements Sinkable {
         this.maxUncommittedRows = fromTab.getMaxUncommittedRows();
         this.o3MaxLag = fromTab.getO3MaxLag();
         this.timestampIndex = fromTab.getTimestampIndex();
-        this.ttlHours = fromTab.getTtlHours();
+        this.ttlHoursOrMonths = fromTab.getTtlHoursOrMonths();
         this.isSoftLink = fromTab.getIsSoftLink();
         this.isDedup = fromTab.getIsDedup();
     }
@@ -151,8 +151,8 @@ public class CairoTable implements Sinkable {
         return null;
     }
 
-    public int getTtlHours() {
-        return ttlHours;
+    public int getTtlHoursOrMonths() {
+        return ttlHoursOrMonths;
     }
 
     public boolean getWalEnabled() {
@@ -191,8 +191,8 @@ public class CairoTable implements Sinkable {
         this.timestampIndex = timestampIndex;
     }
 
-    public void setTtlHours(int ttlHours) {
-        this.ttlHours = ttlHours;
+    public void setTtlHoursOrMonths(int ttlHoursOrMonths) {
+        this.ttlHoursOrMonths = ttlHoursOrMonths;
     }
 
     @Override
@@ -209,7 +209,12 @@ public class CairoTable implements Sinkable {
         sink.put("partitionBy=").put(getPartitionByName()).put(", ");
         sink.put("timestampIndex=").put(getTimestampIndex()).put(", ");
         sink.put("timestampName=").put(getTimestampName()).put(", ");
-        sink.put("ttlHours=").put(getTtlHours()).put(", ");
+        int ttlHoursOrMonths = getTtlHoursOrMonths();
+        if (ttlHoursOrMonths >= 0) {
+            sink.put("ttlHours=").put(ttlHoursOrMonths).put(", ");
+        } else {
+            sink.put("ttlMonths=").put(-ttlHoursOrMonths).put(", ");
+        }
         sink.put("walEnabled=").put(getWalEnabled()).put(", ");
         sink.put("columnCount=").put(getColumnCount()).put("]");
         sink.put('\n');

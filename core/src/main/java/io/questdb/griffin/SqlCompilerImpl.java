@@ -1439,9 +1439,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         throw SqlException.$(lexer.lastTokenPosition(), "'=' expected");
                     }
                 } else if (SqlKeywords.isTtlKeyword(tok)) {
-                    int ttlHours = SqlParser.parseTtlHours(lexer);
-                    compiledQuery.ofAlter(alterOperationBuilder.ofSetTtlHours(
-                            tableNamePosition, tableToken, tableMetadata.getTableId(), ttlHours).build());
+                    int ttlHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
+                    compiledQuery.ofAlter(alterOperationBuilder.ofSetTtlHoursOrMonths(
+                            tableNamePosition, tableToken, tableMetadata.getTableId(), ttlHoursOrMonths).build());
                 } else if (SqlKeywords.isTypeKeyword(tok)) {
                     tok = expectToken(lexer, "'bypass' or 'wal'");
                     if (SqlKeywords.isBypassKeyword(tok)) {

@@ -88,7 +88,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private int partitionBy;
     private RecordCursorFactory recordCursorFactory;
     private int timestampIndex = -1;
-    private int ttlHours;
+    private int ttlHoursOrMonths;
     private boolean walEnabled;
 
     public CreateTableOperationImpl(
@@ -128,7 +128,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             int timestampIndex,
             long o3MaxLag,
             int maxUncommittedRows,
-            int ttlHours,
+            int ttlHoursOrMonths,
             boolean walEnabled
     ) {
         this.sqlText = sqlText;
@@ -156,7 +156,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.timestampIndex = timestampIndex;
         this.o3MaxLag = o3MaxLag;
         this.maxUncommittedRows = maxUncommittedRows;
-        this.ttlHours = ttlHours;
+        this.ttlHoursOrMonths = ttlHoursOrMonths;
         this.walEnabled = walEnabled;
 
         this.selectText = null;
@@ -203,7 +203,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             String timestampColumnName,
             int timestampColumnNamePosition,
             String volumeAlias,
-            int ttlHours,
+            int ttlHoursOrMonths,
             boolean walEnabled,
             int defaultSymbolCapacity,
             int maxUncommittedRows,
@@ -222,7 +222,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.ignoreIfExists = ignoreIfExists;
         this.timestampColumnName = timestampColumnName;
         this.timestampColumnNamePosition = timestampColumnNamePosition;
-        this.ttlHours = ttlHours;
+        this.ttlHoursOrMonths = ttlHoursOrMonths;
         this.defaultSymbolCapacity = defaultSymbolCapacity;
         this.recordCursorFactory = recordCursorFactory;
         this.batchSize = batchSize;
@@ -408,8 +408,8 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     }
 
     @Override
-    public int getTtlHours() {
-        return ttlHours;
+    public int getTtlHoursOrMonths() {
+        return ttlHoursOrMonths;
     }
 
     @Override
@@ -444,7 +444,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.partitionBy = likeTableMetadata.getPartitionBy();
         this.timestampIndex = likeTableMetadata.getTimestampIndex();
         this.walEnabled = likeTableMetadata.isWalEnabled();
-        this.ttlHours = likeTableMetadata.getTtlHours();
+        this.ttlHoursOrMonths = likeTableMetadata.getTtlHoursOrMonths();
         columnNames.clear();
         columnBits.clear();
         for (int i = 0; i < likeTableMetadata.getColumnCount(); i++) {

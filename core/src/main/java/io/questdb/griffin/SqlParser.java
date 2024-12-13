@@ -166,7 +166,11 @@ public class SqlParser {
                 && (tok.charAt(5) | 32) == 'c';
     }
 
-    public static int parseTtlHours(GenericLexer lexer) throws SqlException {
+    /**
+     * Parses a value and time unit into a TTL value. If the returned value is positive, the time unit
+     * is hours. If it's negative, the time unit is months (and the actual value is positive).
+     */
+    public static int parseTtlHoursOrMonths(GenericLexer lexer) throws SqlException {
         CharSequence tok;
         int valuePos = lexer.getPosition();
         tok = SqlUtil.fetchNext(lexer);
@@ -200,7 +204,7 @@ public class SqlParser {
                             "invalid unit, expected 'HOUR(S)', 'DAY(S)', 'MONTH(S)' or 'YEAR(S)', but was '")
                     .put(tok).put('\'');
         }
-        return Timestamps.toHours(ttlValue, unit, valuePos);
+        return Timestamps.toHoursOrMonths(ttlValue, unit, valuePos);
     }
 
     private static SqlException err(GenericLexer lexer, @Nullable CharSequence tok, @NotNull String msg) {
@@ -784,8 +788,8 @@ public class SqlParser {
             tok = optTok(lexer);
 
             if (tok != null && isTtlKeyword(tok)) {
-                int ttlHours = parseTtlHours(lexer);
-                builder.setTtlHours(ttlHours);
+                int ttlHours = parseTtlHoursOrMonths(lexer);
+                builder.setTtlHoursOrMonths(ttlHours);
                 tok = optTok(lexer);
             }
 

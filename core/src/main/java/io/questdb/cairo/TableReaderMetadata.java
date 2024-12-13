@@ -301,7 +301,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
-    public int getTtlHours() {
+    public int getTtlHoursOrMonths() {
         return ttlHours;
     }
 

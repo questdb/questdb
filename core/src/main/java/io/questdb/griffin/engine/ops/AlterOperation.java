@@ -189,7 +189,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     applyParamO3MaxLag(svc);
                     break;
                 case SET_TTL_HOURS:
-                    applyTtlHours(svc);
+                    applyTtlHoursOrMonths(svc);
                     break;
                 case RENAME_TABLE:
                     applyRenameTable(svc);
@@ -580,10 +580,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         );
     }
 
-    private void applyTtlHours(MetadataService svc) {
-        int ttlHours = (int) extraInfo.get(0);
+    private void applyTtlHoursOrMonths(MetadataService svc) {
+        int ttlHoursOrMonths = (int) extraInfo.get(0);
         try {
-            svc.setMetaTtlHours(ttlHours);
+            svc.setMetaTtlHoursOrMonths(ttlHoursOrMonths);
         } catch (CairoException e) {
             e.position(tableNamePosition);
             throw e;

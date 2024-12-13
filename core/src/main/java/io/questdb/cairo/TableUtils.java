@@ -1656,11 +1656,6 @@ public final class TableUtils {
                 }
             }
 
-            final int ttlHours = metaMem.getInt(META_OFFSET_TTL_HOURS);
-            if (ttlHours < 0) {
-                throw validationException(metaMem).put("TTL value must be non-negative, but found ").put(ttlHours);
-            }
-
             // validate column types and index attributes
             for (int i = 0; i < columnCount; i++) {
                 final int type = Math.abs(getColumnType(metaMem, i));
@@ -1772,7 +1767,7 @@ public final class TableUtils {
         mem.putLong(tableStruct.getO3MaxLag());
         mem.putLong(0); // Structure version.
         mem.putBool(tableStruct.isWalEnabled());
-        mem.putInt(tableStruct.getTtlHours()); // 0 = unbounded TTL
+        mem.putInt(tableStruct.getTtlHoursOrMonths()); // 0 = unbounded TTL
         mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
         assert count > 0;

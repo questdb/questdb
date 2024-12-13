@@ -144,7 +144,7 @@ public class TableStructureAdapter implements TableStructure {
     }
 
     @Override
-    public int getTtlHours() {
+    public int getTtlHoursOrMonths() {
         // todo: pass configuration here as the default option
         return 0;
     }

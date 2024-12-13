@@ -141,7 +141,7 @@ public class TableModel implements TableStructure {
     }
 
     @Override
-    public int getTtlHours() {
+    public int getTtlHoursOrMonths() {
         return ttl;
     }
 

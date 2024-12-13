@@ -245,11 +245,11 @@ public class AlterOperationBuilder implements Mutable {
         return this;
     }
 
-    public AlterOperationBuilder ofSetTtlHours(int tableNamePosition, TableToken tableToken, int tableId, int ttlHours) {
+    public AlterOperationBuilder ofSetTtlHoursOrMonths(int tableNamePosition, TableToken tableToken, int tableId, int ttlHoursOrMonths) {
         this.command = SET_TTL_HOURS;
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;
-        this.extraInfo.add(ttlHours);
+        this.extraInfo.add(ttlHoursOrMonths);
         this.tableId = tableId;
         return this;
 
