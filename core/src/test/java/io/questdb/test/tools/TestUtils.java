@@ -539,6 +539,24 @@ public final class TestUtils {
         }
     }
 
+    public static void assertEquals(Long256 expected, Long256 actual) {
+        if (expected == actual) {
+            return;
+        }
+        if (actual == null) {
+            Assert.fail("Expected " + toHexString(expected) + ", but was: null");
+        }
+
+        if (
+                expected.getLong0() != actual.getLong0()
+                        || expected.getLong1() != actual.getLong1()
+                        || expected.getLong2() != actual.getLong2()
+                        || expected.getLong3() != actual.getLong3()
+        ) {
+            Assert.assertEquals(toHexString(expected), toHexString(actual));
+        }
+    }
+
     public static void assertEqualsExactOrder(
             RecordCursor cursorExpected, RecordMetadata metadataExpected,
             RecordCursor cursorActual, RecordMetadata metadataActual, boolean genericStringMatch
@@ -1726,22 +1744,6 @@ public final class TestUtils {
                 throw new AssertionError(String.format("Row %d column %s[%s] %s", rowIndex, columnName,
                         ColumnType.nameOf(columnType), e.getMessage()));
             }
-        }
-    }
-
-    private static void assertEquals(Long256 expected, Long256 actual) {
-        if (expected == actual) return;
-        if (actual == null) {
-            Assert.fail("Expected " + toHexString(expected) + ", but was: null");
-        }
-
-        if (
-                expected.getLong0() != actual.getLong0()
-                        || expected.getLong1() != actual.getLong1()
-                        || expected.getLong2() != actual.getLong2()
-                        || expected.getLong3() != actual.getLong3()
-        ) {
-            Assert.assertEquals(toHexString(expected), toHexString(actual));
         }
     }
 
