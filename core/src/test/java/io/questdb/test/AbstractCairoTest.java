@@ -1266,13 +1266,21 @@ public abstract class AbstractCairoTest extends AbstractTest {
             int index = factory.getMetadata().getColumnIndexQuiet(expectedTimestamp);
             Assert.assertTrue("Column '" + expectedTimestamp + "' can't be found in metadata", index > -1);
             Assert.assertNotEquals("Expected non-negative value as timestamp index", -1, index);
-            Assert.assertEquals("Timestamp column index", index, factory.getMetadata().getTimestampIndex());
-            assertTimestampColumnValues(factory, sqlExecutionContext, expectAscendingOrder);
+
+            // only assert that designated timestamp is set when ascending order is expected
+            if (expectAscendingOrder) {
+                Assert.assertEquals("Timestamp column index", index, factory.getMetadata().getTimestampIndex());
+            }
+
+            assertTimestampColumnValues(factory, sqlExecutionContext, expectAscendingOrder, index);
         }
     }
 
     protected static void assertTimestampColumnValues(RecordCursorFactory factory, SqlExecutionContext sqlExecutionContext, boolean isAscending) throws SqlException {
-        int index = factory.getMetadata().getTimestampIndex();
+        assertTimestampColumnValues(factory, sqlExecutionContext, isAscending, factory.getMetadata().getTimestampIndex());
+    }
+
+    protected static void assertTimestampColumnValues(RecordCursorFactory factory, SqlExecutionContext sqlExecutionContext, boolean isAscending, int index) throws SqlException {
         long timestamp = isAscending ? Long.MIN_VALUE : Long.MAX_VALUE;
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             final Record record = cursor.getRecord();

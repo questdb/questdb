@@ -3073,8 +3073,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
 
                 GenericRecordMetadata orderedMetadata;
-                int firstOrderByColumnIndex = metadata.getColumnIndexQuiet(orderByColumnNames.getQuick(0));
-                if (firstOrderByColumnIndex == timestampIndex) {
+                CharSequence firstOrderByName = orderByColumnNames.getQuick(0);
+                int firstOrderByColumnIndex = metadata.getColumnIndexQuiet(firstOrderByName);
+                // only copy the metadata up if this order by aligns with the underlying factory
+                // and the designated timestamp is ascending
+                if (firstOrderByColumnIndex == timestampIndex
+                        && orderByColumnNameToIndexMap.get(firstOrderByName) == ORDER_DIRECTION_ASCENDING) {
                     orderedMetadata = GenericRecordMetadata.copyOf(metadata);
                 } else {
                     orderedMetadata = GenericRecordMetadata.copyOfSansTimestamp(metadata);
