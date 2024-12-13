@@ -1929,7 +1929,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return castFunctions;
     }
 
-    private RecordCursorFactory generateFill(QueryModel model, RecordCursorFactory groupByFactory, SqlExecutionContext executionContext) throws SqlException {
+    private RecordCursorFactory generateFill(RecordCursorFactory groupByFactory, QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         // locate fill
         QueryModel curr = model;
 
@@ -2019,7 +2019,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             assert samplingIntervalEnd < fillStride.token.length();
             char samplingIntervalUnit = fillStride.token.charAt(samplingIntervalEnd);
             TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(samplingInterval, samplingIntervalUnit, fillStride.position);
-            
+
             // scan direction of fill range is not asc or desc, but unknown, since we get
             // records in arbitrary order, and then fill asc
             // therefore it is safe to set the timestamp index as it won't be misinterpreted as
@@ -4085,7 +4085,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     guardAgainstFillWithKeyedGroupBy(model, keyTypes);
 
                     return generateFill(
-                            model,
                             new GroupByRecordCursorFactory(
                                     configuration,
                                     factory,
@@ -4097,6 +4096,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     tempKeyIndex.getQuick(0),
                                     tempSymbolSkewIndexes
                             ),
+                            model,
                             executionContext
                     );
                 }
@@ -4230,7 +4230,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     guardAgainstFillWithKeyedGroupBy(model, keyTypes);
 
                     return generateFill(
-                            model,
                             new AsyncGroupByRecordCursorFactory(
                                     asm,
                                     configuration,
@@ -4271,6 +4270,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     ),
                                     executionContext.getSharedWorkerCount()
                             ),
+                            model,
                             executionContext
                     );
                 }
@@ -4292,7 +4292,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             guardAgainstFillWithKeyedGroupBy(model, keyTypes);
 
             return generateFill(
-                    model,
                     new io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory(
                             asm,
                             configuration,
@@ -4305,6 +4304,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             keyFunctions,
                             recordFunctions
                     ),
+                    model,
                     executionContext
             );
         } catch (Throwable e) {
