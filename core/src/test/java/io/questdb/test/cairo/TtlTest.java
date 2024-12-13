@@ -54,63 +54,63 @@ public class TtlTest extends AbstractCairoTest {
     @Test
     public void testDayExactlyAtTtl() throws Exception {
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 DAY");
-        execute("INSERT INTO tango VALUES (0), (86_400_000_000), (172_800_000_000)");
+        execute("INSERT INTO tango VALUES ('1970-01-01T00:00:00'), ('1970-01-01T23:00:00'), ('1970-01-02T00:59:59.999999')");
         assertQuery("ts\n" +
                         "1970-01-01T00:00:00.000000Z\n" +
-                        "1970-01-02T00:00:00.000000Z\n" +
-                        "1970-01-03T00:00:00.000000Z\n",
+                        "1970-01-01T23:00:00.000000Z\n" +
+                        "1970-01-02T00:59:59.999999Z\n",
                 "tango", "ts", true, true);
     }
 
     @Test
     public void testDayOneMicrosBeyondTtl() throws Exception {
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 DAY");
-        execute("INSERT INTO tango VALUES (0), (86_400_000_000), (172_800_000_001)");
+        execute("INSERT INTO tango VALUES ('1970-01-01T00:00:00'), ('1970-01-01T23:00:00'), ('1970-01-02T01:00:00')");
         assertQuery("ts\n" +
-                        "1970-01-02T00:00:00.000000Z\n" +
-                        "1970-01-03T00:00:00.000001Z\n",
+                        "1970-01-01T23:00:00.000000Z\n" +
+                        "1970-01-02T01:00:00.000000Z\n",
                 "tango", "ts", true, true);
     }
 
     @Test
     public void testHourExactlyAtTtl() throws Exception {
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 HOUR");
-        execute("INSERT INTO tango VALUES (0), (3_600_000_000), (7_200_000_000)");
+        execute("INSERT INTO tango VALUES ('1970-01-01T00:00:00'), ('1970-01-01T01:00:00'), ('1970-01-01T01:59:59.999999')");
         assertQuery("ts\n" +
                         "1970-01-01T00:00:00.000000Z\n" +
                         "1970-01-01T01:00:00.000000Z\n" +
-                        "1970-01-01T02:00:00.000000Z\n",
+                        "1970-01-01T01:59:59.999999Z\n",
                 "tango", "ts", true, true);
     }
 
     @Test
     public void testHourOneMicrosBeyondTtl() throws Exception {
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 HOUR");
-        execute("INSERT INTO tango VALUES (0), (3_600_000_000), (7_200_000_001)");
+        execute("INSERT INTO tango VALUES ('1970-01-01T00:00:00'), ('1970-01-01T01:00:00'), ('1970-01-01T02:00:00')");
         assertQuery("ts\n" +
                         "1970-01-01T01:00:00.000000Z\n" +
-                        "1970-01-01T02:00:00.000001Z\n",
+                        "1970-01-01T02:00:00.000000Z\n",
                 "tango", "ts", true, true);
     }
 
     @Test
     public void testMonthExactlyAtTtl() throws Exception {
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 MONTH");
-        execute("INSERT INTO tango VALUES ('1970-01-01T04:20:00.0Z'), ('1970-02-01T04:20:00.0Z'), ('1970-03-01T03:59:59.999999Z')");
+        execute("INSERT INTO tango VALUES ('1970-02-01T04:20:00.0Z'), ('1970-02-10T04:20:00.0Z'), ('1970-03-01T04:59:59.999999Z')");
         assertQuery("ts\n" +
-                        "1970-01-01T04:20:00.000000Z\n" +
                         "1970-02-01T04:20:00.000000Z\n" +
-                        "1970-03-01T03:59:59.999999Z\n",
+                        "1970-02-10T04:20:00.000000Z\n" +
+                        "1970-03-01T04:59:59.999999Z\n",
                 "tango", "ts", true, true);
     }
 
     @Test
     public void testMonthOneMicrosBeyondTtl() throws Exception {
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 MONTH");
-        execute("INSERT INTO tango VALUES ('1970-01-01T04:20:00Z'), ('1970-02-01T04:20:00Z'), ('1970-03-01T04:00:00Z')");
+        execute("INSERT INTO tango VALUES ('1970-02-01T04:20:00.0Z'), ('1970-02-10T04:20:00.0Z'), ('1970-03-01T05:00:00')");
         assertQuery("ts\n" +
-                        "1970-02-01T04:20:00.000000Z\n" +
-                        "1970-03-01T04:00:00.000000Z\n",
+                        "1970-02-10T04:20:00.000000Z\n" +
+                        "1970-03-01T05:00:00.000000Z\n",
                 "tango", "ts", true, true);
     }
 
@@ -194,17 +194,17 @@ public class TtlTest extends AbstractCairoTest {
                     e.getMessage());
         }
         try {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 244_979 MONTHS");
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 2_147_483_648 MONTHS");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[70] value out of range: 244979 months. Max value: 244978 months",
+            assertEquals("[70] TTL value out of range: 2147483648. Max value: 2147483647",
                     e.getMessage());
         }
         try {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 244_979 YEARS");
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 178_956_971 YEARS");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[70] value out of range: 244979 years. Max value: 244978 years",
+            assertEquals("[70] value out of range: 178956971 years. Max value: 178956970 years",
                     e.getMessage());
         }
     }
@@ -231,42 +231,42 @@ public class TtlTest extends AbstractCairoTest {
     @Test
     public void testWeekExactlyAtTtl() throws Exception {
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 WEEK");
-        execute("INSERT INTO tango VALUES (0), (604_800_000_000), (1_209_600_000_000)");
+        execute("INSERT INTO tango VALUES ('1970-01-01'), ('1970-01-03'), ('1970-01-08T00:59:59.999999')");
         assertQuery("ts\n" +
                         "1970-01-01T00:00:00.000000Z\n" +
-                        "1970-01-08T00:00:00.000000Z\n" +
-                        "1970-01-15T00:00:00.000000Z\n",
+                        "1970-01-03T00:00:00.000000Z\n" +
+                        "1970-01-08T00:59:59.999999Z\n",
                 "tango", "ts", true, true);
     }
 
     @Test
     public void testWeekOneMicrosBeyondTtl() throws Exception {
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 WEEK");
-        execute("INSERT INTO tango VALUES (0), (604_800_000_000), (1_209_600_000_001)");
+        execute("INSERT INTO tango VALUES ('1970-01-01'), ('1970-01-03'), ('1970-01-08T01:00:00')");
         assertQuery("ts\n" +
-                        "1970-01-08T00:00:00.000000Z\n" +
-                        "1970-01-15T00:00:00.000001Z\n",
+                        "1970-01-03T00:00:00.000000Z\n" +
+                        "1970-01-08T01:00:00.000000Z\n",
                 "tango", "ts", true, true);
     }
 
     @Test
     public void testYearExactlyAtTtl() throws Exception {
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 YEAR");
-        execute("INSERT INTO tango VALUES ('1970-01-01T04:20:00.0Z'), ('1971-01-01T04:20:00.0Z'), ('1972-01-01T03:59:59.999999Z')");
+        execute("INSERT INTO tango VALUES ('1970-01-01T04:20:00.0Z'), ('1970-12-01'), ('1971-01-01T04:59:59.999999')");
         assertQuery("ts\n" +
                         "1970-01-01T04:20:00.000000Z\n" +
-                        "1971-01-01T04:20:00.000000Z\n" +
-                        "1972-01-01T03:59:59.999999Z\n",
+                        "1970-12-01T00:00:00.000000Z\n" +
+                        "1971-01-01T04:59:59.999999Z\n",
                 "tango", "ts", true, true);
     }
 
     @Test
     public void testYearOneMicrosBeyondTtl() throws Exception {
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 YEAR");
-        execute("INSERT INTO tango VALUES ('1970-01-01T04:20:00.0Z'), ('1971-01-01T04:20:00.0Z'), ('1972-01-01T04:00:00Z')");
+        execute("INSERT INTO tango VALUES ('1970-01-01T04:20:00.0Z'), ('1970-12-01'), ('1971-01-01T05:00:00')");
         assertQuery("ts\n" +
-                        "1971-01-01T04:20:00.000000Z\n" +
-                        "1972-01-01T04:00:00.000000Z\n",
+                        "1970-12-01T00:00:00.000000Z\n" +
+                        "1971-01-01T05:00:00.000000Z\n",
                 "tango", "ts", true, true);
     }
 }
