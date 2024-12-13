@@ -4287,8 +4287,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         valueTypes.getColumnCount()
                 );
             }
-
-
+            
             guardAgainstFillWithKeyedGroupBy(model, keyTypes);
 
             return generateFill(
