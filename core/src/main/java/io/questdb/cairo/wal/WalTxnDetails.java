@@ -27,6 +27,7 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
 import io.questdb.std.LongHashSet;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
@@ -38,13 +39,19 @@ import static io.questdb.cairo.wal.WalUtils.*;
 public class WalTxnDetails {
     public static final long FORCE_FULL_COMMIT = Long.MAX_VALUE;
     public static final long LAST_ROW_COMMIT = Long.MAX_VALUE - 1;
-    private static final int MIN_TIMESTAMP_OFFSET = 1;
+    private static final int SEQ_TXN_OFFSET = 0;
+    private static final int COMMIT_TO_TIMESTAMP_OFFSET = SEQ_TXN_OFFSET + 1;
+    private static final int MIN_TIMESTAMP_OFFSET = COMMIT_TO_TIMESTAMP_OFFSET + 1;
     private static final int MAX_TIMESTAMP_OFFSET = MIN_TIMESTAMP_OFFSET + 1;
     private static final int WAL_ID_SEG_ID_OFFSET = MAX_TIMESTAMP_OFFSET + 1;
-    public static final int TXN_METADATA_LONGS_SIZE = WAL_ID_SEG_ID_OFFSET + 1;
+    private static final int TXN_DETAIL_RECORD_SIZE = 4;
+    private static final int WAL_TXN_ROW_LO_OFFSET = WAL_ID_SEG_ID_OFFSET + 1;
+    private static final int WAL_TXN_ROW_HI_OFFSET = WAL_TXN_ROW_LO_OFFSET + 1;
+    public static final int TXN_METADATA_LONGS_SIZE = WAL_TXN_ROW_HI_OFFSET + 1;
     private final LongHashSet futureWalSegments = new LongHashSet();
     private final int maxLookahead;
     private final LongList transactionMeta = new LongList();
+    private final IntList txnDetails = new IntList();
     private final WalEventReader walEventReader;
     private long startSeqTxn = 0;
 
@@ -54,7 +61,7 @@ public class WalTxnDetails {
     }
 
     public long getCommitToTimestamp(long seqTxn) {
-        long value = transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE));
+        long value = transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE) + COMMIT_TO_TIMESTAMP_OFFSET);
         return value == LAST_ROW_COMMIT ? FORCE_FULL_COMMIT : value;
     }
 
@@ -93,32 +100,36 @@ public class WalTxnDetails {
             final Path tempPath,
             final TransactionLogCursor transactionLogCursor,
             final int rootLen,
-            final long committedSeqTxn,
+            long appliedSeqTxn,
             final long maxCommittedTimestamp
     ) {
-        if (committedSeqTxn <= getLastSeqTxn()) {
-            int shift = (int) (committedSeqTxn - startSeqTxn + 1);
-            if (shift < 0) {
-                // This can happen after a rollback. In this case we have to clear everything.
-                transactionMeta.clear();
-                startSeqTxn = -1;
-            } else {
-                transactionMeta.removeIndexBlock(0, shift * TXN_METADATA_LONGS_SIZE);
-                startSeqTxn = committedSeqTxn + 1;
-                if (transactionMeta.size() > 0) {
-                    transactionMeta.set(0, -1);
-                }
-            }
-        } else {
-            transactionMeta.clear();
-            startSeqTxn = -1;
-        }
+        final long lastSeqTxn = getLastSeqTxn();
+        long loadFromSeqTxn = appliedSeqTxn + 1;
 
-        if (transactionLogCursor.getVersion() == WAL_SEQUENCER_FORMAT_VERSION_V1) {
-            loadTransactionDetailsV1(tempPath, transactionLogCursor, rootLen, maxCommittedTimestamp);
-        } else {
-            loadTransactionDetailsV2(transactionLogCursor, maxCommittedTimestamp);
-        }
+        transactionMeta.clear();
+        this.startSeqTxn = loadFromSeqTxn;
+
+//        if (lastSeqTxn <= loadFromSeqTxn) {
+//            int shift = (int) (appliedSeqTxn - this.startSeqTxn + 1);
+//            if (shift < 0) {
+//                // This can happen after a rollback and lag txns being discarded.
+//                // In this case we have to clear everything.
+//                transactionMeta.clear();
+//                this.startSeqTxn = loadFromSeqTxn;
+//            } else {
+//                int size = transactionMeta.size();
+//                transactionMeta.removeIndexBlock(0, shift * TXN_METADATA_LONGS_SIZE);
+//                this.startSeqTxn = appliedSeqTxn + 1;
+//                if (transactionMeta.size() > 0) {
+//                    transactionMeta.set(COMMIT_TO_TIMESTAMP_OFFSET, -1);
+//                }
+//            }
+//        } else {
+//            transactionMeta.clear();
+//            this.startSeqTxn = loadFromSeqTxn;
+//        }
+
+        loadTransactionDetails(tempPath, transactionLogCursor, loadFromSeqTxn, rootLen, maxCommittedTimestamp);
 
         // set commit to timestamp moving backwards
         long runningMinTimestamp = LAST_ROW_COMMIT;
@@ -145,8 +156,8 @@ public class WalTxnDetails {
             }
             runningMinTimestamp = Math.min(runningMinTimestamp, currentMinTimestamp);
 
-            if (transactionMeta.get(i) != FORCE_FULL_COMMIT) {
-                transactionMeta.set(i, commitToTimestamp);
+            if (transactionMeta.get(i + COMMIT_TO_TIMESTAMP_OFFSET) != FORCE_FULL_COMMIT) {
+                transactionMeta.set(i + COMMIT_TO_TIMESTAMP_OFFSET, commitToTimestamp);
             } else {
                 // Force full commit before this record
                 runningMinTimestamp = FORCE_FULL_COMMIT;
@@ -157,9 +168,9 @@ public class WalTxnDetails {
         // the all future min timestamp are greater than current max timestamp.
         for (int i = 0, n = transactionMeta.size(); i < n; i += TXN_METADATA_LONGS_SIZE) {
 
-            long commitToTimestamp = transactionMeta.get(i);
+            long commitToTimestamp = transactionMeta.get(i + COMMIT_TO_TIMESTAMP_OFFSET);
             if (commitToTimestamp < maxCommittedTimestamp) {
-                transactionMeta.set(i, Long.MIN_VALUE);
+                transactionMeta.set(i + COMMIT_TO_TIMESTAMP_OFFSET, Long.MIN_VALUE);
             }
         }
 
@@ -180,7 +191,9 @@ public class WalTxnDetails {
         return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + MAX_TIMESTAMP_OFFSET));
     }
 
-    private void loadTransactionDetailsV1(Path tempPath, TransactionLogCursor transactionLogCursor, int rootLen, long maxCommittedTimestamp) {
+    private void loadTransactionDetails(Path tempPath, TransactionLogCursor transactionLogCursor, long loadFromSeqTxn, int rootLen, long maxCommittedTimestamp) {
+        transactionLogCursor.setPosition(loadFromSeqTxn - 1);
+
         try (WalEventReader eventReader = walEventReader) {
 
             int prevWalId = Integer.MIN_VALUE;
@@ -188,81 +201,79 @@ public class WalTxnDetails {
             int prevSegmentTxn = Integer.MIN_VALUE;
             WalEventCursor walEventCursor = null;
 
-            long runningMaxTimestamp = maxCommittedTimestamp;
-            int i = 0;
-            while (i++ < maxLookahead && transactionLogCursor.hasNext()) {
+            txnDetails.clear();
+            int txnsToLoad = (int) Math.min(maxLookahead, transactionLogCursor.getMaxTxn() - loadFromSeqTxn + 1) * TXN_DETAIL_RECORD_SIZE;
+            txnDetails.checkCapacity(txnsToLoad);
 
-                final int walId = transactionLogCursor.getWalId();
-                final int segmentId = transactionLogCursor.getSegmentId();
-                final int segmentTxn = transactionLogCursor.getSegmentTxn();
-                if (startSeqTxn == -1) {
-                    startSeqTxn = transactionLogCursor.getTxn();
-                }
-                assert startSeqTxn + transactionMeta.size() / TXN_METADATA_LONGS_SIZE == transactionLogCursor.getTxn();
+            // Load the map of outstanding WAL transactions to load necessary details from WAL-E files efficiently.
+            for (int i = 0; i < maxLookahead && transactionLogCursor.hasNext(); i++) {
+                assert i + loadFromSeqTxn == transactionLogCursor.getTxn();
+                txnDetails.add(transactionLogCursor.getWalId());
+                txnDetails.add(transactionLogCursor.getSegmentId());
+                txnDetails.add(transactionLogCursor.getSegmentTxn());
+                txnDetails.add(i);
+            }
+
+            int lastWalId = -1;
+            int lastSegmentId = -1;
+            int lastSegmentTxn = -2;
+
+            txnDetails.sortGroups(TXN_DETAIL_RECORD_SIZE);
+            int incrementalLoadStartIndex = transactionMeta.size();
+
+            for (int i = 0, size = txnDetails.size() / TXN_DETAIL_RECORD_SIZE; i < size; i++) {
+                int walId = txnDetails.get(TXN_DETAIL_RECORD_SIZE * i);
+                int segmentId = txnDetails.get(TXN_DETAIL_RECORD_SIZE * i + 1);
+                int segmentTxn = txnDetails.get(TXN_DETAIL_RECORD_SIZE * i + 2);
+                long segTxn = txnDetails.get(TXN_DETAIL_RECORD_SIZE * i + 3) + loadFromSeqTxn;
 
                 if (walId > 0) {
-                    tempPath.trimTo(rootLen).concat(WAL_NAME_BASE).put(walId).slash().put(segmentId);
 
-                    if (prevWalId != walId || prevSegmentId != segmentId || prevSegmentTxn + 1 != segmentTxn) {
-                        walEventCursor = openWalEFile(tempPath, eventReader, segmentTxn, transactionLogCursor.getTxn());
-                        prevWalId = walId;
-                        prevSegmentId = segmentId;
-                        prevSegmentTxn = segmentTxn;
-                    } else {
-                        // This is same WALE file, just read next txn transaction.
-                        if (!walEventCursor.hasNext()) {
-                            walEventCursor = openWalEFile(tempPath, eventReader, segmentTxn, transactionLogCursor.getTxn());
+                    // Switch to the WAL-E file or scroll to the transaction
+                    if (lastWalId == walId && segmentId == lastSegmentId) {
+                        assert segmentTxn > lastSegmentTxn;
+                        //noinspection StatementWithEmptyBody
+                        while (lastSegmentTxn++ < segmentTxn && walEventCursor.hasNext()) {
+                            // Skip uncommitted transactions
                         }
+                        if (lastSegmentTxn != segmentTxn) {
+                            walEventCursor = openWalEFile(tempPath, eventReader, segmentTxn, segTxn);
+                            lastSegmentTxn = segmentTxn;
+                        }
+                    } else {
+                        tempPath.trimTo(rootLen).concat(WAL_NAME_BASE).put(walId).slash().put(segmentId);
+                        walEventCursor = openWalEFile(tempPath, eventReader, segmentTxn, segTxn);
+                        lastWalId = walId;
+                        lastSegmentId = segmentId;
+                        lastSegmentTxn = segmentTxn;
                     }
 
                     final byte walTxnType = walEventCursor.getType();
                     if (walTxnType == DATA) {
                         WalEventCursor.DataInfo commitInfo = walEventCursor.getDataInfo();
+                        transactionMeta.add(segTxn);
                         transactionMeta.add(-1); // commit to timestamp
                         transactionMeta.add(commitInfo.getMinTimestamp());
                         transactionMeta.add(commitInfo.getMaxTimestamp());
                         transactionMeta.add(Numbers.encodeLowHighInts(segmentId, walId));
-                        runningMaxTimestamp = Math.max(commitInfo.getMaxTimestamp(), runningMaxTimestamp);
+                        transactionMeta.add(commitInfo.getStartRowID());
+                        transactionMeta.add(commitInfo.getEndRowID());
                         continue;
                     }
                 }
                 // If there is ALTER or UPDATE, we have to flush everything without keeping anything in the lag.
+                transactionMeta.add(segTxn);
                 transactionMeta.add(FORCE_FULL_COMMIT); // commit to timestamp
-                transactionMeta.add(runningMaxTimestamp); // min timestamp
-                transactionMeta.add(runningMaxTimestamp); // max timestamp
+                transactionMeta.add(-1); // min timestamp
+                transactionMeta.add(-1); // max timestamp
                 transactionMeta.add(Numbers.encodeLowHighInts(segmentId, walId));
+                transactionMeta.add(-1);
+                transactionMeta.add(-1);
             }
+
+            transactionMeta.sortGroups(TXN_METADATA_LONGS_SIZE, incrementalLoadStartIndex, transactionMeta.size());
         } finally {
             tempPath.trimTo(rootLen);
-        }
-    }
-
-    private void loadTransactionDetailsV2(TransactionLogCursor transactionLogCursor, long maxCommittedTimestamp) {
-        long runningMaxTimestamp = maxCommittedTimestamp;
-        int i = 0;
-        while (i++ < maxLookahead && transactionLogCursor.hasNext()) {
-
-            final int walId = transactionLogCursor.getWalId();
-            final int segmentId = transactionLogCursor.getSegmentId();
-            if (startSeqTxn == -1) {
-                startSeqTxn = transactionLogCursor.getTxn();
-            }
-            assert startSeqTxn + transactionMeta.size() / TXN_METADATA_LONGS_SIZE == transactionLogCursor.getTxn();
-
-            if (transactionLogCursor.getTxnRowCount() > 0) {
-                transactionMeta.add(-1); // commit to timestamp
-                transactionMeta.add(transactionLogCursor.getTxnMinTimestamp());
-                long txnMaxTimestamp = transactionLogCursor.getTxnMaxTimestamp();
-                transactionMeta.add(txnMaxTimestamp);
-                transactionMeta.add(Numbers.encodeLowHighInts(segmentId, walId));
-                runningMaxTimestamp = Math.max(txnMaxTimestamp, runningMaxTimestamp);
-                continue;
-            }
-            // If there is ALTER or UPDATE, we have to flush everything without keeping anything in the lag.
-            transactionMeta.add(FORCE_FULL_COMMIT); // commit to timestamp
-            transactionMeta.add(runningMaxTimestamp); // min timestamp
-            transactionMeta.add(runningMaxTimestamp); // max timestamp
-            transactionMeta.add(Numbers.encodeLowHighInts(segmentId, walId));
         }
     }
 }

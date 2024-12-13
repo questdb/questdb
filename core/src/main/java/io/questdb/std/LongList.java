@@ -441,6 +441,42 @@ public class LongList implements Mutable, LongVec, Sinkable {
         LongSort.sort(this, 0, size() - 1);
     }
 
+    /**
+     * Sorts groups of N elements. The size of the group is specified by {@code groupSize}.
+     * Comparison between groups is done by comparing the first element of each group, then
+     * if the first elements are equal the second elements are compared and so on.
+     *
+     * @param groupSize size of the group
+     */
+    public void sortGroups(int groupSize) {
+        if (groupSize > 0 && pos % groupSize == 0) {
+            LongGroupSort.quickSort(groupSize, data, 0, pos / groupSize);
+            return;
+        }
+        throw new IllegalStateException("sorting not supported for group size: " + groupSize + ", length: " + pos);
+    }
+
+    /**
+     * Sorts groups of N elements. The size of the group is specified by {@code groupSize}.
+     * Comparison between groups is done by comparing the first element of each group, then
+     * if the first elements are equal the second elements are compared and so on.
+     *
+     * @param groupSize size of the group
+     * @param lo        low index to sort the array from
+     * @param hi        high index to sort the array to
+     */
+    public void sortGroups(int groupSize, int lo, int hi) {
+        if (groupSize > 0 && pos % groupSize == 0 && lo % groupSize == 0 && hi % groupSize == 0 && hi <= pos) {
+            LongGroupSort.quickSort(groupSize, data, lo / groupSize, hi / groupSize);
+            return;
+        }
+        throw new IllegalStateException("sorting not supported for group size: " + groupSize
+                + ", lo:" + lo
+                + ", hi:" + hi
+                + ", length: " + pos
+        );
+    }
+
     public LongList subset(int lo, int hi) {
         int _hi = Math.min(hi, pos);
         LongList that = new LongList(_hi - lo);

@@ -257,7 +257,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
 
         @Override
         public long getMaxTxn() {
-            return txnCount - 1;
+            return txnCount;
         }
 
         @Override
