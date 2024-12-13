@@ -2941,7 +2941,6 @@ public class SampleByTest extends AbstractCairoTest {
                     "sample by 8h from\n" +
                     "'2024-12-08' to '2024-12-09'\n" +
                     "fill(0)");
-            // general case is not fixed
             assertSql(
                     "created\tcommit_rate\n" +
                             "2024-12-08T00:00:00.000000Z\t0\n" +

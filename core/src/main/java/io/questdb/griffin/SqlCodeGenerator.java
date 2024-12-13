@@ -2020,8 +2020,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             char samplingIntervalUnit = fillStride.token.charAt(samplingIntervalEnd);
             TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(samplingInterval, samplingIntervalUnit, fillStride.position);
 
+            // scan direction of fill range is not asc or desc, but unknown, since we get
+            // records in arbitrary order, and then fill asc
+            // therefore it is safe to set the timestamp index as it won't be misinterpreted as
+            // ASC i.e designated
+            GenericRecordMetadata fillMetadata = GenericRecordMetadata.copyOfSansTimestamp(groupByFactory.getMetadata());
+            fillMetadata.setTimestampIndex(timestampIndex);
+
             return new FillRangeRecordCursorFactory(
-                    groupByFactory.getMetadata(),
+                    fillMetadata,
                     groupByFactory,
                     fillFromFunc,
                     fillToFunc,
@@ -3077,7 +3084,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 GenericRecordMetadata orderedMetadata;
                 int firstOrderByColumnIndex = metadata.getColumnIndexQuiet(orderByColumnNames.getQuick(0));
-                if (firstOrderByColumnIndex == timestampIndex) {
+                if (firstOrderByColumnIndex == timestampIndex && preSortedByTs) {
                     orderedMetadata = GenericRecordMetadata.copyOf(metadata);
                 } else {
                     orderedMetadata = GenericRecordMetadata.copyOfSansTimestamp(metadata);
