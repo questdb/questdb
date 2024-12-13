@@ -111,6 +111,13 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         return immutableOf(value);
     }
 
+    public static CharSequence unquoteIfNoDots(CharSequence value) {
+        if (Chars.isQuoted(value) && Chars.indexOf(value, '.') == -1) {
+            return value.subSequence(1, value.length() - 1);
+        }
+        return immutableOf(value);
+    }
+
     public void backTo(int position, CharSequence lastSeen) {
         if (position < 0 || position > _len) {
             throw new IndexOutOfBoundsException();
