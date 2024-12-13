@@ -55,7 +55,9 @@ import io.questdb.std.Vect;
 // Returns value evaluated at the row that is the last row of the window frame.
 public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
-    protected static final ArrayColumnTypes LAST_VALUE_COLUMN_TYPES;
+    public static final ArrayColumnTypes LAST_VALUE_COLUMN_TYPES;
+    public static final ArrayColumnTypes LAST_VALUE_PARTITION_ROWS_COLUMN_TYPES;
+    public static final ArrayColumnTypes LAST_VALUE_PARTITION_RANGE_COLUMN_TYPES;
     private static final String NAME = "last_value";
     private static final String SIGNATURE = NAME + "(D)";
 
@@ -111,17 +113,10 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
                     }
 
                     int timestampIndex = windowContext.getTimestampIndex();
-
-                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-                    columnTypes.add(ColumnType.LONG);  // native array start offset, requires updating on resize
-                    columnTypes.add(ColumnType.LONG);   // native buffer size
-                    columnTypes.add(ColumnType.LONG);   // native buffer capacity
-                    columnTypes.add(ColumnType.LONG);   // index of last buffered element
-
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            columnTypes
+                            LAST_VALUE_PARTITION_RANGE_COLUMN_TYPES
                     );
 
                     final int initialBufferSize = configuration.getSqlWindowInitialRangeBufferSize();
@@ -166,14 +161,10 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
                     );
                 } //between [unbounded | x] preceding and x preceding
                 else {
-                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-                    columnTypes.add(ColumnType.LONG); // position of current oldest element
-                    columnTypes.add(ColumnType.LONG); // start offset of native array
-                    columnTypes.add(ColumnType.LONG); // count of values in buffer
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            columnTypes
+                            LAST_VALUE_PARTITION_ROWS_COLUMN_TYPES
                     );
 
                     MemoryARW mem = Vm.getARWInstance(configuration.getSqlWindowStorePageSize(),
@@ -871,7 +862,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
     // Handles:
     // - last_value(a) over (partition by x rows between [unbounded preceding | x preceding] and current row)
     // - last_value(a) over (partition by x order by ts range between  [unbounded preceding | x preceding] and current row)
-    static class LastValueIncludeCurrentPartitionRowsFrameFunction extends BasePartitionedDoubleWindowFunction {
+    public static class LastValueIncludeCurrentPartitionRowsFrameFunction extends BasePartitionedDoubleWindowFunction {
 
         private double value;
         private final long rowsLo;
@@ -931,7 +922,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
     }
 
     // Handles last_value() over (rows/range between [unbounded preceding x preceding] and current row); there's no partition by.
-    static class LastValueIncludeCurrentFrameFunction extends BaseDoubleWindowFunction {
+    public static class LastValueIncludeCurrentFrameFunction extends BaseDoubleWindowFunction {
 
         private double value = Double.NaN;
         private final long rowsLo;
@@ -1046,5 +1037,14 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
     static {
         LAST_VALUE_COLUMN_TYPES = new ArrayColumnTypes();
         LAST_VALUE_COLUMN_TYPES.add(ColumnType.DOUBLE);
+        LAST_VALUE_PARTITION_ROWS_COLUMN_TYPES = new ArrayColumnTypes();
+        LAST_VALUE_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG); // position of current oldest element
+        LAST_VALUE_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG); // start offset of native array
+        LAST_VALUE_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG); // count of values in buffer
+        LAST_VALUE_PARTITION_RANGE_COLUMN_TYPES = new ArrayColumnTypes();
+        LAST_VALUE_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // native array start offset, requires updating on resize
+        LAST_VALUE_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // native buffer size
+        LAST_VALUE_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // native buffer capacity
+        LAST_VALUE_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // index of last buffered element
     }
 }
