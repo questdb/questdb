@@ -327,7 +327,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             {11,  1, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 11, 11,  1}, //  1 = BOOLEAN
             {11, 11,  2,  3, 11,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 11, 11,  2}, //  2 = BYTE
             {11, 11,  3,  3,  3,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 11, 11,  3}, //  3 = SHORT
-            {11, 11, 11,  3,  4,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 11, 11,  4}, //  4 = CHAR
+            {11, 11, 11,  3,  4,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 11, 11, 11}, //  4 = CHAR
             {11, 11,  5,  5,  5,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 11, 11,  5}, //  5 = INT
             {11, 11,  6,  6,  6,  6,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 11, 11,  6}, //  6 = LONG
             {11, 11,  7,  7,  7,  7,  7,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 11, 11,  7}, //  7 = DATE
@@ -356,7 +356,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 30, 11, 11, 30}, // 30 = text[]
             {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 31, 11, 31}, // 31 = PARAMETER
             {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 11, 32, 32}, // 32 = INTERVAL
-            { 0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 11, 13, -1, -1, -1, -1, 18, 19, 20, 21, 22, 23, 24, 25, 26, -1, 28, 29, 30, 31, 32, 33}  // 33 = NULL
+            { 0,  1,  2,  3, 11,  5,  6,  7,  8,  9, 10, 11, 11, 13, -1, -1, -1, -1, 18, 19, 20, 21, 22, 23, 24, 25, 26, -1, 28, 29, 30, 31, 32, 33}  // 33 = NULL
     };
     // @formatter:on
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> avgConstructors = new IntObjHashMap<>();
@@ -613,9 +613,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 : (isStringyType(typeA) && isParseableType(typeB)) ? typeA
                 : (isStringyType(typeB) && isParseableType(typeA)) ? typeB
 
-                // NULL casts to any other type, except for symbols which can't cross keys.
-                : ((typeA == ColumnType.NULL) && (typeB != ColumnType.SYMBOL)) ? typeB
-                : ((typeB == ColumnType.NULL) && (typeA != ColumnType.SYMBOL)) ? typeA
+                // NULL casts to any other nullable type, except for symbols which can't cross symbol tables.
+                : ((typeA == ColumnType.NULL) && ColumnType.isCastableFromNull(typeB) && (typeB != ColumnType.SYMBOL)) ? typeB
+                : ((typeB == ColumnType.NULL) && ColumnType.isCastableFromNull(typeA) && (typeA != ColumnType.SYMBOL)) ? typeA
 
                 // cast long and timestamp to timestamp in unions instead of longs.
                 : ((typeA == ColumnType.TIMESTAMP) && (typeB == ColumnType.LONG)) ? ColumnType.TIMESTAMP

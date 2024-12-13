@@ -302,6 +302,18 @@ public final class ColumnType {
                 || (fromType == STRING && (toType >= BYTE && toType <= DOUBLE));
     }
 
+    /**
+     * Checks if a type can be cast from NULL to the specified type.
+     */
+    public static boolean isCastableFromNull(int columnType) {
+        switch (tagOf(columnType)) {
+            case CHAR:
+                return false;
+            default:
+                return true;
+        }
+    }
+
     public static boolean isChar(int columnType) {
         return columnType == CHAR;
     }
