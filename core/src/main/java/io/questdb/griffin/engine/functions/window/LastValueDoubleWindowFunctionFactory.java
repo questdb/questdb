@@ -98,6 +98,9 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
                     );
                 } // between [unbounded preceding | x preceding] and current row
                 else if (rowsHi == 0) {
+                    if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
+                        throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
+                    }
                     //same as for rows because calculation stops at current rows even if there are 'equal' following rows
                     return new LastValueIncludeCurrentPartitionRowsFrameFunction(
                             rowsLo,
@@ -190,8 +193,10 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
                     return new LastValueOverWholeResultSetFunction(args.get(0));
                 } // between unbounded preceding and current row
                 else if (rowsHi == 0) {
+                    if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
+                        throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
+                    }
                     // same as for rows because calculation stops at current rows even if there are 'equal' following rows
-                    // if lower bound is unbounded then it's the same as over ()
                     return new LastValueIncludeCurrentFrameFunction(rowsLo, true, args.get(0));
                 } // range between [unbounded | x] preceding and [y preceding | current row]
                 else {
@@ -917,7 +922,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
             } else {
                 sink.val(Math.abs(rowsLo));
             }
-            sink.val(" preceding and current row )");
+            sink.val(" preceding and current row)");
         }
     }
 
@@ -972,16 +977,16 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
             sink.val('(').val(arg).val(')');
             sink.val(" over (");
             if (isRange) {
-                sink.val(" range between ");
+                sink.val("range between ");
             } else {
-                sink.val(" rows between ");
+                sink.val("rows between ");
             }
             if (rowsLo == Long.MIN_VALUE) {
                 sink.val("unbounded");
             } else {
                 sink.val(Math.abs(rowsLo));
             }
-            sink.val(" preceding and current row )");
+            sink.val(" preceding and current row)");
         }
 
         @Override

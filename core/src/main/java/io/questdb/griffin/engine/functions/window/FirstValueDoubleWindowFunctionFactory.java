@@ -1115,7 +1115,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
             sink.val(" over (");
             sink.val("partition by ");
             sink.val(partitionByRecord.getFunctions());
-            sink.val(" rows between unbounded preceding and current row )");
+            sink.val(" rows between unbounded preceding and current row)");
         }
     }
 

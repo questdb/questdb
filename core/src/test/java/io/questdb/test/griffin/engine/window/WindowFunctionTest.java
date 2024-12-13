@@ -77,6 +77,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             },
             {
                     "j" // min
+            },
+            {
+                    "i", "j", // last_value
+            },
+            {
+                    "i", "j", // last_not_null_value
             }
     };
 
@@ -221,18 +227,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab select (100000+x)::timestamp, x/4, x, 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(90000)");
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.189996Z\t22499\t89996\t49996.0\t3.999729996E9\t9996.0\t9996.0\t80001\t80001\t80001\t80001\t80001\t89996.0\t9996.0\n" +
-                            "1970-01-01T00:00:00.189997Z\t22499\t89997\t49997.0\t3.999809997E9\t9997.0\t9997.0\t80001\t80001\t80001\t80001\t80001\t89997.0\t9997.0\n" +
-                            "1970-01-01T00:00:00.189998Z\t22499\t89998\t49998.0\t3.999889998E9\t9998.0\t9998.0\t80001\t80001\t80001\t80001\t80001\t89998.0\t9998.0\n" +
-                            "1970-01-01T00:00:00.189999Z\t22499\t89999\t49999.0\t3.999969999E9\t9999.0\t9999.0\t80001\t80001\t80001\t80001\t80001\t89999.0\t9999.0\n" +
-                            "1970-01-01T00:00:00.190000Z\t22500\t90000\t50000.0\t4.00005E9\t10000.0\t10000.0\t80001\t80001\t80001\t80001\t80001\t90000.0\t10000.0\n",
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tlast_value\tfirst_not_null_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.189996Z\t22499\t89996\t49996.0\t3.999729996E9\t9996.0\t89996.0\t9996.0\t89996.0\t80001\t80001\t80001\t80001\t80001\t89996.0\t9996.0\n" +
+                            "1970-01-01T00:00:00.189997Z\t22499\t89997\t49997.0\t3.999809997E9\t9997.0\t89997.0\t9997.0\t89997.0\t80001\t80001\t80001\t80001\t80001\t89997.0\t9997.0\n" +
+                            "1970-01-01T00:00:00.189998Z\t22499\t89998\t49998.0\t3.999889998E9\t9998.0\t89998.0\t9998.0\t89998.0\t80001\t80001\t80001\t80001\t80001\t89998.0\t9998.0\n" +
+                            "1970-01-01T00:00:00.189999Z\t22499\t89999\t49999.0\t3.999969999E9\t9999.0\t89999.0\t9999.0\t89999.0\t80001\t80001\t80001\t80001\t80001\t89999.0\t9999.0\n" +
+                            "1970-01-01T00:00:00.190000Z\t22500\t90000\t50000.0\t4.00005E9\t10000.0\t90000.0\t10000.0\t90000.0\t80001\t80001\t80001\t80001\t80001\t90000.0\t10000.0\n",
                     "select * from (" +
                             "select ts, i, j, " +
                             "avg(j) over (order by ts range between 80000 preceding and current row), " +
                             "sum(j) over (order by ts range between 80000 preceding and current row), " +
                             "first_value(j) over (order by ts range between 80000 preceding and current row), " +
+                            "last_value(j) over (order by ts range between 80000 preceding and current row), " +
                             "first_not_null_value(j) over (order by ts range between 80000 preceding and current row), " +
+                            "last_not_null_value(j) over (order by ts range between 80000 preceding and current row), " +
                             "count(*) over (order by ts range between 80000 preceding and current row), " +
                             "count(j) over (order by ts range between 80000 preceding and current row), " +
                             "count(s) over (order by ts range between 80000 preceding and current row), " +
@@ -253,17 +261,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab select (100000+x)::timestamp, x/4, x, 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(90000)");
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.189996Z\t22499\t89996\t49996.0\t3.999729996E9\t9996.0\t9996.0\t80001\t80001\t80001\t80001\t80001\t89996.0\t9996.0\n" +
-                            "1970-01-01T00:00:00.189997Z\t22499\t89997\t49997.0\t3.999809997E9\t9997.0\t9997.0\t80001\t80001\t80001\t80001\t80001\t89997.0\t9997.0\n" +
-                            "1970-01-01T00:00:00.189998Z\t22499\t89998\t49998.0\t3.999889998E9\t9998.0\t9998.0\t80001\t80001\t80001\t80001\t80001\t89998.0\t9998.0\n" +
-                            "1970-01-01T00:00:00.189999Z\t22499\t89999\t49999.0\t3.999969999E9\t9999.0\t9999.0\t80001\t80001\t80001\t80001\t80001\t89999.0\t9999.0\n" +
-                            "1970-01-01T00:00:00.190000Z\t22500\t90000\t50000.0\t4.00005E9\t10000.0\t10000.0\t80001\t80001\t80001\t80001\t80001\t90000.0\t10000.0\n",
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tlast_value\tfirst_not_null_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.189996Z\t22499\t89996\t49996.0\t3.999729996E9\t9996.0\t89996.0\t9996.0\t89996.0\t80001\t80001\t80001\t80001\t80001\t89996.0\t9996.0\n" +
+                            "1970-01-01T00:00:00.189997Z\t22499\t89997\t49997.0\t3.999809997E9\t9997.0\t89997.0\t9997.0\t89997.0\t80001\t80001\t80001\t80001\t80001\t89997.0\t9997.0\n" +
+                            "1970-01-01T00:00:00.189998Z\t22499\t89998\t49998.0\t3.999889998E9\t9998.0\t89998.0\t9998.0\t89998.0\t80001\t80001\t80001\t80001\t80001\t89998.0\t9998.0\n" +
+                            "1970-01-01T00:00:00.189999Z\t22499\t89999\t49999.0\t3.999969999E9\t9999.0\t89999.0\t9999.0\t89999.0\t80001\t80001\t80001\t80001\t80001\t89999.0\t9999.0\n" +
+                            "1970-01-01T00:00:00.190000Z\t22500\t90000\t50000.0\t4.00005E9\t10000.0\t90000.0\t10000.0\t90000.0\t80001\t80001\t80001\t80001\t80001\t90000.0\t10000.0\n",
                     "select * from (select ts, i, j, " +
                             "avg(j) over (order by ts range between 80000 preceding and current row), " +
                             "sum(j) over (order by ts range between 80000 preceding and current row), " +
                             "first_value(j) over (order by ts range between 80000 preceding and current row), " +
+                            "last_value(j) over (order by ts range between 80000 preceding and current row), " +
                             "first_not_null_value(j) over (order by ts range between 80000 preceding and current row), " +
+                            "last_not_null_value(j) over (order by ts range between 80000 preceding and current row), " +
                             "count(*) over (order by ts range between 80000 preceding and current row), " +
                             "count(j) over (order by ts range between 80000 preceding and current row), " +
                             "count(s) over (order by ts range between 80000 preceding and current row), " +
@@ -288,14 +298,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab select x::timestamp, x/10000, x, 'k' || (x%10) ::symbol, x::double, 'k' || x from long_sequence(39999)");
             execute("insert into tab select (100000+x)::timestamp, (100000+x)%4, (100000+x), 'k' || (x%10) ::symbol, x::double, 'k' || x from long_sequence(4*90000)");
 
-            String expected = "ts\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                    "1970-01-01T00:00:00.460000Z\t460000\t420000.0\t3.360042E10\t380000.0\t380000.0\t80001\t80001\t80001\t80001\t80001\t460000.0\t380000.0\n";
+            String expected = "ts\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                    "1970-01-01T00:00:00.460000Z\t460000\t420000.0\t3.360042E10\t380000.0\t380000.0\t460000.0\t460000.0\t80001\t80001\t80001\t80001\t80001\t460000.0\t380000.0\n";
 
             // cross-check with re-write using aggregate functions
             assertSql(
                     expected,
                     " select max(ts) as ts, max(j) j, avg(j) as avg, sum(j::double) as sum, last(j::double) as first_value, " +
                             "last_not_null(j::double) as first_not_null_value," +
+                            "first(j::double) as last_value, first_not_null(j::double) as last_not_null_value," +
                             "count(*) as count, count(j::double) as count1, count(s) as count2, count(d) as count3, count(c) as count4, " +
                             "max(j::double) as max, min(j::double) as min " +
                             "from " +
@@ -312,6 +323,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "sum(j) over (order by ts rows between 80000 preceding and current row), " +
                             "first_value(j) over (order by ts rows between 80000 preceding and current row), " +
                             "first_not_null_value(j) over (order by ts rows between 80000 preceding and current row), " +
+                            "last_value(j) over (order by ts rows between 80000 preceding and current row), " +
+                            "last_not_null_value(j) over (order by ts rows between 80000 preceding and current row), " +
                             "count(*) over (order by ts rows between 80000 preceding and current row), " +
                             "count(j) over (order by ts rows between 80000 preceding and current row), " +
                             "count(s) over (order by ts rows between 80000 preceding and current row), " +
@@ -337,14 +350,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab select x::timestamp, x/10000, x, 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(39999)");
             execute("insert into tab select (100000+x)::timestamp, rnd_long(1,10000,10), rnd_long(1,100000,10), 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(1000000)");
 
-            String expected = "ts\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                    "1970-01-01T00:00:01.100000Z\t49980.066958378644\t3.815028491E9\t2073.0\t2073.0\t80001\t76331\t80001\t80001\t80001\t100000.0\t3.0\n";
+            String expected = "ts\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                    "1970-01-01T00:00:01.100000Z\t49980.066958378644\t3.815028491E9\t2073.0\t2073.0\t46392.0\t46392.0\t80001\t76331\t80001\t80001\t80001\t100000.0\t3.0\n";
 
             // cross-check with re-write using aggregate functions
             assertSql(
                     expected,
-                    " select max(ts) as ts, avg(j) as avg, sum(j::double) as sum, last(j::double) as first_value, " +
+                    " select max(ts) as ts, avg(j) as avg, sum(j::double) as sum, last(j::double) as first_value," +
                             "last_not_null(j::double) as first_not_null_value, " +
+                            "first(j::double) as last_value, first_not_null(j::double) as last_not_null_value, " +
                             "count(*) as count, count(j::double) as count1, count(s) as count2, count(d) as count3, count(c) as count4, " +
                             "max(j::double) as max, min(j::double) as min " +
                             "from " +
@@ -360,6 +374,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "sum(j) over (order by ts rows between 80000 preceding and current row), " +
                             "first_value(j) over (order by ts rows between 80000 preceding and current row), " +
                             "first_not_null_value(j) over (order by ts rows between 80000 preceding and current row), " +
+                            "last_value(j) over (order by ts rows between 80000 preceding and current row), " +
+                            "last_not_null_value(j) over (order by ts rows between 80000 preceding and current row), " +
                             "count(*) over (order by ts rows between 80000 preceding and current row), " +
                             "count(j) over (order by ts rows between 80000 preceding and current row), " +
                             "count(s) over (order by ts rows between 80000 preceding and current row), " +
@@ -387,17 +403,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // trigger removal of rows below lo boundary AND resize of buffer
             execute("insert into tab select (100000+x)::timestamp, (100000+x)%4, (100000+x), 'k' || (x%20) ::symbol, x*2::double, 'k' || x from long_sequence(4*90000)");
 
-            String expected = "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                    "1970-01-01T00:00:00.460000Z\t0\t460000\t420000.0\t8.40042E9\t380000.0\t380000.0\t20001\t20001\t20001\t20001\t20001\t460000.0\t380000.0\n" +
-                    "1970-01-01T00:00:00.459997Z\t1\t459997\t419997.0\t8.400359997E9\t379997.0\t379997.0\t20001\t20001\t20001\t20001\t20001\t459997.0\t379997.0\n" +
-                    "1970-01-01T00:00:00.459998Z\t2\t459998\t419998.0\t8.400379998E9\t379998.0\t379998.0\t20001\t20001\t20001\t20001\t20001\t459998.0\t379998.0\n" +
-                    "1970-01-01T00:00:00.459999Z\t3\t459999\t419999.0\t8.400399999E9\t379999.0\t379999.0\t20001\t20001\t20001\t20001\t20001\t459999.0\t379999.0\n";
+            String expected = "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                    "1970-01-01T00:00:00.460000Z\t0\t460000\t420000.0\t8.40042E9\t380000.0\t380000.0\t460000.0\t460000.0\t20001\t20001\t20001\t20001\t20001\t460000.0\t380000.0\n" +
+                    "1970-01-01T00:00:00.459997Z\t1\t459997\t419997.0\t8.400359997E9\t379997.0\t379997.0\t459997.0\t459997.0\t20001\t20001\t20001\t20001\t20001\t459997.0\t379997.0\n" +
+                    "1970-01-01T00:00:00.459998Z\t2\t459998\t419998.0\t8.400379998E9\t379998.0\t379998.0\t459998.0\t459998.0\t20001\t20001\t20001\t20001\t20001\t459998.0\t379998.0\n" +
+                    "1970-01-01T00:00:00.459999Z\t3\t459999\t419999.0\t8.400399999E9\t379999.0\t379999.0\t459999.0\t459999.0\t20001\t20001\t20001\t20001\t20001\t459999.0\t379999.0\n";
 
             // cross-check with re-write using aggregate functions
             assertSql(
                     expected,
                     "select max(ts) as ts, i, max(j) as j, avg(j) as avg, sum(j::double) as sum, first(j::double) as first_value, " +
                             "first_not_null(j::double) as first_not_null_value, " +
+                            "last(j::double) as last_value, last_not_null(j::double) as last_not_null_value, " +
                             "count(*) as count, count(j::double) as count1, count(s) as count2, count(d) as count3, count(c) as count4, " +
                             "max(j::double) as max, min(j::double) as min " +
                             "from (" +
@@ -418,6 +435,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "sum(j) over (partition by i order by ts range between 80000 preceding and current row), " +
                             "first_value(j) over (partition by i order by ts range between 80000 preceding and current row), " +
                             "first_not_null_value(j) over (partition by i order by ts range between 80000 preceding and current row), " +
+                            "last_value(j) over (partition by i order by ts range between 80000 preceding and current row), " +
+                            "last_not_null_value(j) over (partition by i order by ts range between 80000 preceding and current row), " +
                             "count(*) over (partition by i order by ts range between 80000 preceding and current row), " +
                             "count(j) over (partition by i order by ts range between 80000 preceding and current row), " +
                             "count(s) over (partition by i order by ts range between 80000 preceding and current row), " +
@@ -450,34 +469,35 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "rnd_varchar('aaa', 'vvvv', 'quest') " +
                     "from long_sequence(1000000)");
 
-            String expected = "ts\ti\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                    "1970-01-01T00:00:01.099993Z\tnull\t500.195891634415\t1680158.0\t201.0\t201.0\t3664\t3359\t3664\t3377\t3664\t1000.0\t1.0\n" +
-                    "1970-01-01T00:00:01.099950Z\t1\t495.24524012503554\t1742768.0\t915.0\t915.0\t3845\t3519\t3845\t3520\t3845\t1000.0\t1.0\n" +
-                    "1970-01-01T00:00:01.099955Z\t2\t495.3698069046226\t1693174.0\t80.0\t80.0\t3781\t3418\t3781\t3475\t3781\t1000.0\t1.0\n" +
-                    "1970-01-01T00:00:01.099983Z\t3\t505.02330264672037\t1755461.0\t807.0\t807.0\t3786\t3476\t3786\t3452\t3786\t1000.0\t1.0\n" +
-                    "1970-01-01T00:00:01.099989Z\t4\t507.0198750709824\t1785724.0\t423.0\t423.0\t3834\t3522\t3834\t3528\t3834\t1000.0\t1.0\n" +
-                    "1970-01-01T00:00:01.099999Z\t5\t505.02770562770564\t1749921.0\t986.0\t986.0\t3786\t3465\t3786\t3467\t3786\t1000.0\t1.0\n" +
-                    "1970-01-01T00:00:01.099992Z\t6\t500.087528604119\t1748306.0\t455.0\t455.0\t3847\t3496\t3847\t3565\t3847\t1000.0\t1.0\n" +
-                    "1970-01-01T00:00:01.100000Z\t7\t504.07134703196346\t1766266.0\t598.0\t598.0\t3810\t3504\t3810\t3517\t3810\t1000.0\t2.0\n" +
-                    "1970-01-01T00:00:01.099981Z\t8\t507.53068086298686\t1811377.0\t89.0\t89.0\t3894\t3569\t3894\t3612\t3894\t1000.0\t1.0\n" +
-                    "1970-01-01T00:00:01.099925Z\t9\t509.7903642099226\t1777639.0\t999.0\t999.0\t3789\t3487\t3789\t3441\t3789\t999.0\t1.0\n" +
-                    "1970-01-01T00:00:01.099947Z\t10\t499.44085417252035\t1777510.0\tnull\t122.0\t3878\t3559\t3878\t3564\t3878\t1000.0\t2.0\n" +
-                    "1970-01-01T00:00:01.099995Z\t11\t503.51796493245183\t1751739.0\t257.0\t257.0\t3819\t3479\t3819\t3506\t3819\t1000.0\t1.0\n" +
-                    "1970-01-01T00:00:01.099998Z\t12\t502.48197940503434\t1756677.0\t270.0\t270.0\t3820\t3496\t3820\t3498\t3820\t1000.0\t1.0\n" +
-                    "1970-01-01T00:00:01.099963Z\t13\t495.9894586894587\t1740923.0\t478.0\t478.0\t3825\t3510\t3825\t3484\t3825\t1000.0\t1.0\n" +
-                    "1970-01-01T00:00:01.099997Z\t14\t502.76085680751174\t1713409.0\t60.0\t60.0\t3691\t3408\t3691\t3399\t3691\t1000.0\t1.0\n" +
-                    "1970-01-01T00:00:01.099990Z\t15\t497.3836206896552\t1730895.0\t750.0\t750.0\t3796\t3480\t3796\t3475\t3796\t1000.0\t1.0\n" +
-                    "1970-01-01T00:00:01.099996Z\t16\t509.6849587716804\t1792562.0\t141.0\t141.0\t3826\t3517\t3826\t3517\t3826\t1000.0\t1.0\n" +
-                    "1970-01-01T00:00:01.099968Z\t17\t504.3433173212772\t1784871.0\t659.0\t659.0\t3855\t3539\t3855\t3522\t3855\t1000.0\t1.0\n" +
-                    "1970-01-01T00:00:01.099994Z\t18\t503.6875531613269\t1776506.0\t485.0\t485.0\t3860\t3527\t3860\t3518\t3860\t1000.0\t1.0\n" +
-                    "1970-01-01T00:00:01.099986Z\t19\t503.60588901472255\t1778736.0\t855.0\t855.0\t3845\t3532\t3845\t3542\t3845\t1000.0\t1.0\n" +
-                    "1970-01-01T00:00:01.099988Z\t20\t505.3122460824144\t1741306.0\t37.0\t37.0\t3767\t3446\t3767\t3443\t3767\t1000.0\t1.0\n";
+            String expected = "ts\ti\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                    "1970-01-01T00:00:01.099993Z\tnull\t500.195891634415\t1680158.0\t201.0\t201.0\t555.0\t555.0\t3664\t3359\t3664\t3377\t3664\t1000.0\t1.0\n" +
+                    "1970-01-01T00:00:01.099950Z\t1\t495.24524012503554\t1742768.0\t915.0\t915.0\t351.0\t351.0\t3845\t3519\t3845\t3520\t3845\t1000.0\t1.0\n" +
+                    "1970-01-01T00:00:01.099955Z\t2\t495.3698069046226\t1693174.0\t80.0\t80.0\t818.0\t818.0\t3781\t3418\t3781\t3475\t3781\t1000.0\t1.0\n" +
+                    "1970-01-01T00:00:01.099983Z\t3\t505.02330264672037\t1755461.0\t807.0\t807.0\t655.0\t655.0\t3786\t3476\t3786\t3452\t3786\t1000.0\t1.0\n" +
+                    "1970-01-01T00:00:01.099989Z\t4\t507.0198750709824\t1785724.0\t423.0\t423.0\t634.0\t634.0\t3834\t3522\t3834\t3528\t3834\t1000.0\t1.0\n" +
+                    "1970-01-01T00:00:01.099999Z\t5\t505.02770562770564\t1749921.0\t986.0\t986.0\t724.0\t724.0\t3786\t3465\t3786\t3467\t3786\t1000.0\t1.0\n" +
+                    "1970-01-01T00:00:01.099992Z\t6\t500.087528604119\t1748306.0\t455.0\t455.0\tnull\t319.0\t3847\t3496\t3847\t3565\t3847\t1000.0\t1.0\n" +
+                    "1970-01-01T00:00:01.100000Z\t7\t504.07134703196346\t1766266.0\t598.0\t598.0\t633.0\t633.0\t3810\t3504\t3810\t3517\t3810\t1000.0\t2.0\n" +
+                    "1970-01-01T00:00:01.099981Z\t8\t507.53068086298686\t1811377.0\t89.0\t89.0\t487.0\t487.0\t3894\t3569\t3894\t3612\t3894\t1000.0\t1.0\n" +
+                    "1970-01-01T00:00:01.099925Z\t9\t509.7903642099226\t1777639.0\t999.0\t999.0\t319.0\t319.0\t3789\t3487\t3789\t3441\t3789\t999.0\t1.0\n" +
+                    "1970-01-01T00:00:01.099947Z\t10\t499.44085417252035\t1777510.0\tnull\t122.0\t841.0\t841.0\t3878\t3559\t3878\t3564\t3878\t1000.0\t2.0\n" +
+                    "1970-01-01T00:00:01.099995Z\t11\t503.51796493245183\t1751739.0\t257.0\t257.0\t62.0\t62.0\t3819\t3479\t3819\t3506\t3819\t1000.0\t1.0\n" +
+                    "1970-01-01T00:00:01.099998Z\t12\t502.48197940503434\t1756677.0\t270.0\t270.0\t456.0\t456.0\t3820\t3496\t3820\t3498\t3820\t1000.0\t1.0\n" +
+                    "1970-01-01T00:00:01.099963Z\t13\t495.9894586894587\t1740923.0\t478.0\t478.0\t472.0\t472.0\t3825\t3510\t3825\t3484\t3825\t1000.0\t1.0\n" +
+                    "1970-01-01T00:00:01.099997Z\t14\t502.76085680751174\t1713409.0\t60.0\t60.0\t602.0\t602.0\t3691\t3408\t3691\t3399\t3691\t1000.0\t1.0\n" +
+                    "1970-01-01T00:00:01.099990Z\t15\t497.3836206896552\t1730895.0\t750.0\t750.0\t784.0\t784.0\t3796\t3480\t3796\t3475\t3796\t1000.0\t1.0\n" +
+                    "1970-01-01T00:00:01.099996Z\t16\t509.6849587716804\t1792562.0\t141.0\t141.0\t204.0\t204.0\t3826\t3517\t3826\t3517\t3826\t1000.0\t1.0\n" +
+                    "1970-01-01T00:00:01.099968Z\t17\t504.3433173212772\t1784871.0\t659.0\t659.0\t949.0\t949.0\t3855\t3539\t3855\t3522\t3855\t1000.0\t1.0\n" +
+                    "1970-01-01T00:00:01.099994Z\t18\t503.6875531613269\t1776506.0\t485.0\t485.0\t795.0\t795.0\t3860\t3527\t3860\t3518\t3860\t1000.0\t1.0\n" +
+                    "1970-01-01T00:00:01.099986Z\t19\t503.60588901472255\t1778736.0\t855.0\t855.0\t233.0\t233.0\t3845\t3532\t3845\t3542\t3845\t1000.0\t1.0\n" +
+                    "1970-01-01T00:00:01.099988Z\t20\t505.3122460824144\t1741306.0\t37.0\t37.0\t15.0\t15.0\t3767\t3446\t3767\t3443\t3767\t1000.0\t1.0\n";
 
             // cross-check with re-write using aggregate functions
             assertSql(
                     expected,
                     "select max(ts) as ts, i, avg(j) as avg, sum(j::double) as sum, first(j::double) as first_value, " +
                             "first_not_null(j::double) as first_not_null_value, " +
+                            "last(j::double) as last_value, last_not_null(j::double) as last_not_null_value, " +
                             "count(*) as count, count(j::double) as count1, count(s) as count2, count(d) as count3, count(c) as count4, " +
                             "max(j::double) as max, min(j::double) as min " +
                             "from (" +
@@ -498,6 +518,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "last(sum) as sum, " +
                             "last(first_value) as first_value, " +
                             "last(first_not_null_value) as first_not_null_value, " +
+                            "last(last_value) as last_value, " +
+                            "last(last_not_null_value) as last_not_null_value, " +
                             "last(count) as count, " +
                             "last(count1) as count1, " +
                             "last(count2) as count2, " +
@@ -512,6 +534,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "    sum(j) over (partition by i order by ts range between 80000 preceding and current row) sum, " +
                             "    first_value(j) over (partition by i order by ts range between 80000 preceding and current row) first_value, " +
                             "    first_not_null_value(j) over (partition by i order by ts range between 80000 preceding and current row) first_not_null_value, " +
+                            "    last_value(j) over (partition by i order by ts range between 80000 preceding and current row) last_value, " +
+                            "    last_not_null_value(j) over (partition by i order by ts range between 80000 preceding and current row) last_not_null_value, " +
                             "    count(*) over (partition by i order by ts range between 80000 preceding and current row) count, " +
                             "    count(j) over (partition by i order by ts range between 80000 preceding and current row) count1, " +
                             "    count(s) over (partition by i order by ts range between 80000 preceding and current row) count2, " +
@@ -538,17 +562,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab select x::timestamp, x/10000, x, 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(39999)");
             execute("insert into tab select (100000+x)::timestamp, (100000+x)%4, (100000+x), 'k' || (x%20) ::symbol, x*2::double, 'k' || x from long_sequence(4*90000)");
 
-            String expected = "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                    "1970-01-01T00:00:00.460000Z\t0\t460000\t300000.0\t2.40003E10\t140000.0\t140000.0\t80001\t80001\t80001\t80001\t80001\t460000.0\t140000.0\n" +
-                    "1970-01-01T00:00:00.459997Z\t1\t459997\t299997.0\t2.4000059997E10\t139997.0\t139997.0\t80001\t80001\t80001\t80001\t80001\t459997.0\t139997.0\n" +
-                    "1970-01-01T00:00:00.459998Z\t2\t459998\t299998.0\t2.4000139998E10\t139998.0\t139998.0\t80001\t80001\t80001\t80001\t80001\t459998.0\t139998.0\n" +
-                    "1970-01-01T00:00:00.459999Z\t3\t459999\t299999.0\t2.4000219999E10\t139999.0\t139999.0\t80001\t80001\t80001\t80001\t80001\t459999.0\t139999.0\n";
+            String expected = "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                    "1970-01-01T00:00:00.460000Z\t0\t460000\t300000.0\t2.40003E10\t140000.0\t140000.0\t460000.0\t460000.0\t80001\t80001\t80001\t80001\t80001\t460000.0\t140000.0\n" +
+                    "1970-01-01T00:00:00.459997Z\t1\t459997\t299997.0\t2.4000059997E10\t139997.0\t139997.0\t459997.0\t459997.0\t80001\t80001\t80001\t80001\t80001\t459997.0\t139997.0\n" +
+                    "1970-01-01T00:00:00.459998Z\t2\t459998\t299998.0\t2.4000139998E10\t139998.0\t139998.0\t459998.0\t459998.0\t80001\t80001\t80001\t80001\t80001\t459998.0\t139998.0\n" +
+                    "1970-01-01T00:00:00.459999Z\t3\t459999\t299999.0\t2.4000219999E10\t139999.0\t139999.0\t459999.0\t459999.0\t80001\t80001\t80001\t80001\t80001\t459999.0\t139999.0\n";
 
             // cross-check with re-write using aggregate functions
             assertSql(
                     expected,
                     " select max(ts) as ts, i, max(j) j, avg(j::double) as avg, sum(j::double) as sum, last(j::double) as first_value, " +
-                            "last_not_null(j::double) as first_not_null_value, count(*) as count, count(j::double) as count1, count(s) as count2, " +
+                            "last_not_null(j::double) as first_not_null_value, first(j::double) as last_value, first_not_null(j::double) as last_not_null_value," +
+                            "count(*) as count, count(j::double) as count1, count(s) as count2, " +
                             "count(d) as count3, count(c) as count4, max(j::double) as max, min(j::double) as min " +
                             "from " +
                             "( select ts, i, j, s, d, c, row_number() over (partition by i order by ts desc) as rn from tab order by ts desc) " +
@@ -565,6 +590,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "sum(j) over (partition by i order by ts rows between 80000 preceding and current row), " +
                             "first_value(j) over (partition by i order by ts rows between 80000 preceding and current row), " +
                             "first_not_null_value(j) over (partition by i order by ts rows between 80000 preceding and current row), " +
+                            "last_value(j) over (partition by i order by ts rows between 80000 preceding and current row), " +
+                            "last_not_null_value(j) over (partition by i order by ts rows between 80000 preceding and current row), " +
                             "count(*) over (partition by i order by ts rows between 80000 preceding and current row), " +
                             "count(j) over (partition by i order by ts rows between 80000 preceding and current row), " +
                             "count(s) over (partition by i order by ts rows between 80000 preceding and current row), " +
@@ -591,22 +618,24 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // tests when frame doesn't end on current row and time gaps between values are bigger than hi bound
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                            "1970-01-01T00:00:01.000000Z\t0\t1\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:02.000000Z\t0\t2\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:03.000000Z\t0\t3\t1.5\t3.0\t1.0\t1.0\t2\t2\t2\t2\t2\t2.0\t1.0\n" +
-                            "1970-01-01T00:00:04.000000Z\t1\t4\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:05.000000Z\t1\t0\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
-                            "1970-01-01T00:00:06.000000Z\t1\t1\t2.0\t4.0\t4.0\t4.0\t2\t2\t2\t2\t2\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:07.000000Z\t1\t2\t1.6666666666666667\t5.0\t4.0\t4.0\t3\t3\t3\t3\t3\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:08.000000Z\t2\t3\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:09.000000Z\t2\t4\t3.0\t3.0\t3.0\t3.0\t1\t1\t1\t1\t1\t3.0\t3.0\n" +
-                            "1970-01-01T00:00:10.000000Z\t2\t0\t3.5\t7.0\t3.0\t3.0\t2\t2\t2\t2\t2\t4.0\t3.0\n",
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                            "1970-01-01T00:00:01.000000Z\t0\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:02.000000Z\t0\t2\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:03.000000Z\t0\t3\t1.5\t3.0\t1.0\t1.0\t2.0\t2.0\t2\t2\t2\t2\t2\t2.0\t1.0\n" +
+                            "1970-01-01T00:00:04.000000Z\t1\t4\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:05.000000Z\t1\t0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
+                            "1970-01-01T00:00:06.000000Z\t1\t1\t2.0\t4.0\t4.0\t4.0\t0.0\t0.0\t2\t2\t2\t2\t2\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:07.000000Z\t1\t2\t1.6666666666666667\t5.0\t4.0\t4.0\t1.0\t1.0\t3\t3\t3\t3\t3\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:08.000000Z\t2\t3\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:09.000000Z\t2\t4\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t1\t1\t1\t1\t1\t3.0\t3.0\n" +
+                            "1970-01-01T00:00:10.000000Z\t2\t0\t3.5\t7.0\t3.0\t3.0\t4.0\t4.0\t2\t2\t2\t2\t2\t4.0\t3.0\n",
                     "select ts, i, j, " +
                             "avg(j) over (partition by i order by ts range between unbounded preceding and 1 preceding), " +
                             "sum(j) over (partition by i order by ts range between unbounded preceding and 1 preceding), " +
                             "first_value(j) over (partition by i order by ts range between unbounded preceding and 1 preceding), " +
                             "first_not_null_value(j) over (partition by i order by ts range between unbounded preceding and 1 preceding), " +
+                            "last_value(j) over (partition by i order by ts range between unbounded preceding and 1 preceding), " +
+                            "last_not_null_value(j) over (partition by i order by ts range between unbounded preceding and 1 preceding), " +
                             "count(*) over (partition by i order by ts range between unbounded preceding and 1 preceding), " +
                             "count(j) over (partition by i order by ts range between unbounded preceding and 1 preceding), " +
                             "count(s) over (partition by i order by ts range between unbounded preceding and 1 preceding), " +
@@ -621,22 +650,24 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                            "1970-01-01T00:00:10.000000Z\t2\t0\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:09.000000Z\t2\t4\t0.0\t0.0\t0.0\t0.0\t1\t1\t1\t1\t1\t0.0\t0.0\n" +
-                            "1970-01-01T00:00:08.000000Z\t2\t3\t2.0\t4.0\t0.0\t0.0\t2\t2\t2\t2\t2\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:07.000000Z\t1\t2\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:06.000000Z\t1\t1\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\n" +
-                            "1970-01-01T00:00:05.000000Z\t1\t0\t1.5\t3.0\t2.0\t2.0\t2\t2\t2\t2\t2\t2.0\t1.0\n" +
-                            "1970-01-01T00:00:04.000000Z\t1\t4\t1.0\t3.0\t2.0\t2.0\t3\t3\t3\t3\t3\t2.0\t0.0\n" +
-                            "1970-01-01T00:00:03.000000Z\t0\t3\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:02.000000Z\t0\t2\t3.0\t3.0\t3.0\t3.0\t1\t1\t1\t1\t1\t3.0\t3.0\n" +
-                            "1970-01-01T00:00:01.000000Z\t0\t1\t2.5\t5.0\t3.0\t3.0\t2\t2\t2\t2\t2\t3.0\t2.0\n",
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                            "1970-01-01T00:00:10.000000Z\t2\t0\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:09.000000Z\t2\t4\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t1\t1\t1\t1\t1\t0.0\t0.0\n" +
+                            "1970-01-01T00:00:08.000000Z\t2\t3\t2.0\t4.0\t0.0\t0.0\t4.0\t4.0\t2\t2\t2\t2\t2\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:07.000000Z\t1\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:06.000000Z\t1\t1\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\n" +
+                            "1970-01-01T00:00:05.000000Z\t1\t0\t1.5\t3.0\t2.0\t2.0\t1.0\t1.0\t2\t2\t2\t2\t2\t2.0\t1.0\n" +
+                            "1970-01-01T00:00:04.000000Z\t1\t4\t1.0\t3.0\t2.0\t2.0\t0.0\t0.0\t3\t3\t3\t3\t3\t2.0\t0.0\n" +
+                            "1970-01-01T00:00:03.000000Z\t0\t3\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:02.000000Z\t0\t2\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t1\t1\t1\t1\t1\t3.0\t3.0\n" +
+                            "1970-01-01T00:00:01.000000Z\t0\t1\t2.5\t5.0\t3.0\t3.0\t2.0\t2.0\t2\t2\t2\t2\t2\t3.0\t2.0\n",
                     "select ts, i, j, " +
                             "avg(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
                             "sum(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
                             "first_value(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
                             "first_not_null_value(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
+                            "last_value(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
+                            "last_not_null_value(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
                             "count(*) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
                             "count(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
                             "count(s) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
@@ -651,22 +682,24 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                            "1970-01-01T00:00:01.000000Z\t0\t1\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:02.000000Z\t0\t2\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:03.000000Z\t0\t3\t1.5\t3.0\t1.0\t1.0\t2\t2\t2\t2\t2\t2.0\t1.0\n" +
-                            "1970-01-01T00:00:04.000000Z\t1\t4\t2.0\t6.0\t1.0\t1.0\t3\t3\t3\t3\t3\t3.0\t1.0\n" +
-                            "1970-01-01T00:00:05.000000Z\t1\t0\t2.5\t10.0\t1.0\t1.0\t4\t4\t4\t4\t4\t4.0\t1.0\n" +
-                            "1970-01-01T00:00:06.000000Z\t1\t1\t2.0\t10.0\t1.0\t1.0\t5\t5\t5\t5\t5\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:07.000000Z\t1\t2\t1.8333333333333333\t11.0\t1.0\t1.0\t6\t6\t6\t6\t6\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:08.000000Z\t2\t3\t1.8571428571428572\t13.0\t1.0\t1.0\t7\t7\t7\t7\t7\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:09.000000Z\t2\t4\t2.0\t16.0\t1.0\t1.0\t8\t8\t8\t8\t8\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:10.000000Z\t2\t0\t2.2222222222222223\t20.0\t1.0\t1.0\t9\t9\t9\t9\t9\t4.0\t0.0\n",
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                            "1970-01-01T00:00:01.000000Z\t0\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:02.000000Z\t0\t2\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:03.000000Z\t0\t3\t1.5\t3.0\t1.0\t1.0\t2.0\t2.0\t2\t2\t2\t2\t2\t2.0\t1.0\n" +
+                            "1970-01-01T00:00:04.000000Z\t1\t4\t2.0\t6.0\t1.0\t1.0\t3.0\t3.0\t3\t3\t3\t3\t3\t3.0\t1.0\n" +
+                            "1970-01-01T00:00:05.000000Z\t1\t0\t2.5\t10.0\t1.0\t1.0\t4.0\t4.0\t4\t4\t4\t4\t4\t4.0\t1.0\n" +
+                            "1970-01-01T00:00:06.000000Z\t1\t1\t2.0\t10.0\t1.0\t1.0\t0.0\t0.0\t5\t5\t5\t5\t5\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:07.000000Z\t1\t2\t1.8333333333333333\t11.0\t1.0\t1.0\t1.0\t1.0\t6\t6\t6\t6\t6\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:08.000000Z\t2\t3\t1.8571428571428572\t13.0\t1.0\t1.0\t2.0\t2.0\t7\t7\t7\t7\t7\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:09.000000Z\t2\t4\t2.0\t16.0\t1.0\t1.0\t3.0\t3.0\t8\t8\t8\t8\t8\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:10.000000Z\t2\t0\t2.2222222222222223\t20.0\t1.0\t1.0\t4.0\t4.0\t9\t9\t9\t9\t9\t4.0\t0.0\n",
                     "select ts, i, j, " +
                             "avg(j) over (order by ts range between unbounded preceding and 1 preceding), " +
                             "sum(j) over (order by ts range between unbounded preceding and 1 preceding), " +
                             "first_value(j) over (order by ts range between unbounded preceding and 1 preceding), " +
                             "first_not_null_value(j) over (order by ts range between unbounded preceding and 1 preceding), " +
+                            "last_value(j) over (order by ts range between unbounded preceding and 1 preceding), " +
+                            "last_not_null_value(j) over (order by ts range between unbounded preceding and 1 preceding), " +
                             "count(*) over (order by ts range between unbounded preceding and 1 preceding), " +
                             "count(j) over (order by ts range between unbounded preceding and 1 preceding), " +
                             "count(s) over (order by ts range between unbounded preceding and 1 preceding), " +
@@ -681,22 +714,24 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                            "1970-01-01T00:00:10.000000Z\t2\t0\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:09.000000Z\t2\t4\t0.0\t0.0\t0.0\t0.0\t1\t1\t1\t1\t1\t0.0\t0.0\n" +
-                            "1970-01-01T00:00:08.000000Z\t2\t3\t2.0\t4.0\t0.0\t0.0\t2\t2\t2\t2\t2\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:07.000000Z\t1\t2\t2.3333333333333335\t7.0\t0.0\t0.0\t3\t3\t3\t3\t3\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:06.000000Z\t1\t1\t2.25\t9.0\t0.0\t0.0\t4\t4\t4\t4\t4\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:05.000000Z\t1\t0\t2.0\t10.0\t0.0\t0.0\t5\t5\t5\t5\t5\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:04.000000Z\t1\t4\t1.6666666666666667\t10.0\t0.0\t0.0\t6\t6\t6\t6\t6\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:03.000000Z\t0\t3\t2.0\t14.0\t0.0\t0.0\t7\t7\t7\t7\t7\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:02.000000Z\t0\t2\t2.125\t17.0\t0.0\t0.0\t8\t8\t8\t8\t8\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:01.000000Z\t0\t1\t2.111111111111111\t19.0\t0.0\t0.0\t9\t9\t9\t9\t9\t4.0\t0.0\n",
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                            "1970-01-01T00:00:10.000000Z\t2\t0\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:09.000000Z\t2\t4\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t1\t1\t1\t1\t1\t0.0\t0.0\n" +
+                            "1970-01-01T00:00:08.000000Z\t2\t3\t2.0\t4.0\t0.0\t0.0\t4.0\t4.0\t2\t2\t2\t2\t2\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:07.000000Z\t1\t2\t2.3333333333333335\t7.0\t0.0\t0.0\t3.0\t3.0\t3\t3\t3\t3\t3\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:06.000000Z\t1\t1\t2.25\t9.0\t0.0\t0.0\t2.0\t2.0\t4\t4\t4\t4\t4\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:05.000000Z\t1\t0\t2.0\t10.0\t0.0\t0.0\t1.0\t1.0\t5\t5\t5\t5\t5\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:04.000000Z\t1\t4\t1.6666666666666667\t10.0\t0.0\t0.0\t0.0\t0.0\t6\t6\t6\t6\t6\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:03.000000Z\t0\t3\t2.0\t14.0\t0.0\t0.0\t4.0\t4.0\t7\t7\t7\t7\t7\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:02.000000Z\t0\t2\t2.125\t17.0\t0.0\t0.0\t3.0\t3.0\t8\t8\t8\t8\t8\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:01.000000Z\t0\t1\t2.111111111111111\t19.0\t0.0\t0.0\t2.0\t2.0\t9\t9\t9\t9\t9\t4.0\t0.0\n",
                     "select ts, i, j, " +
                             "avg(j) over (order by ts desc range between unbounded preceding and 1 preceding), " +
                             "sum(j) over (order by ts desc range between unbounded preceding and 1 preceding), " +
                             "first_value(j) over (order by ts desc range between unbounded preceding and 1 preceding), " +
                             "first_not_null_value(j) over (order by ts desc range between unbounded preceding and 1 preceding), " +
+                            "last_value(j) over (order by ts desc range between unbounded preceding and 1 preceding), " +
+                            "last_not_null_value(j) over (order by ts desc range between unbounded preceding and 1 preceding), " +
                             "count(*) over (order by ts desc range between unbounded preceding and 1 preceding), " +
                             "count(j) over (order by ts desc range between unbounded preceding and 1 preceding), " +
                             "count(s) over (order by ts desc range between unbounded preceding and 1 preceding), " +
@@ -716,19 +751,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // tests for between X preceding and [Y preceding | current row]
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.8571428571428572\t13.0\t1.0\t1.0\t7\t7\t7\t7\t7\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t1.8571428571428572\t13.0\t1.0\t1.0\t7\t7\t7\t7\t7\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\t1.8571428571428572\t13.0\t1.0\t1.0\t7\t7\t7\t7\t7\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t1.8571428571428572\t13.0\t1.0\t1.0\t7\t7\t7\t7\t7\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t1.8571428571428572\t13.0\t1.0\t1.0\t7\t7\t7\t7\t7\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.8571428571428572\t13.0\t1.0\t1.0\t7\t7\t7\t7\t7\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t1.8571428571428572\t13.0\t1.0\t1.0\t7\t7\t7\t7\t7\t4.0\t0.0\n",
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.8571428571428572\t13.0\t1.0\t1.0\t2.0\t2.0\t7\t7\t7\t7\t7\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t1.8571428571428572\t13.0\t1.0\t1.0\t2.0\t2.0\t7\t7\t7\t7\t7\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t1.8571428571428572\t13.0\t1.0\t1.0\t2.0\t2.0\t7\t7\t7\t7\t7\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t1.8571428571428572\t13.0\t1.0\t1.0\t2.0\t2.0\t7\t7\t7\t7\t7\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t1.8571428571428572\t13.0\t1.0\t1.0\t2.0\t2.0\t7\t7\t7\t7\t7\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.8571428571428572\t13.0\t1.0\t1.0\t2.0\t2.0\t7\t7\t7\t7\t7\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t1.8571428571428572\t13.0\t1.0\t1.0\t2.0\t2.0\t7\t7\t7\t7\t7\t4.0\t0.0\n",
                     "select ts, i, j, " +
                             "avg(j) over (), " +
                             "sum(j) over (), " +
                             "first_value(j) over (), " +
                             "first_not_null_value(j) over (), " +
+                            "last_value(j) over (), " +
+                            "last_not_null_value(j) over (), " +
                             "count(*) over (), " +
                             "count(j) over (), " +
                             "count(s) over (), " +
@@ -743,19 +780,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t2.0\t6.0\t1.0\t1.0\t3\t3\t3\t3\t3\t3.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t6.0\t1.0\t1.0\t3\t3\t3\t3\t3\t3.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\t2.0\t6.0\t1.0\t1.0\t3\t3\t3\t3\t3\t3.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t1.75\t7.0\t4.0\t4.0\t4\t4\t4\t4\t4\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t1.75\t7.0\t4.0\t4.0\t4\t4\t4\t4\t4\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.75\t7.0\t4.0\t4.0\t4\t4\t4\t4\t4\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t1.75\t7.0\t4.0\t4.0\t4\t4\t4\t4\t4\t4.0\t0.0\n",
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t2.0\t6.0\t1.0\t1.0\t3.0\t3.0\t3\t3\t3\t3\t3\t3.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t6.0\t1.0\t1.0\t3.0\t3.0\t3\t3\t3\t3\t3\t3.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t2.0\t6.0\t1.0\t1.0\t3.0\t3.0\t3\t3\t3\t3\t3\t3.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t1.75\t7.0\t4.0\t4.0\t2.0\t2.0\t4\t4\t4\t4\t4\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t1.75\t7.0\t4.0\t4.0\t2.0\t2.0\t4\t4\t4\t4\t4\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.75\t7.0\t4.0\t4.0\t2.0\t2.0\t4\t4\t4\t4\t4\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t1.75\t7.0\t4.0\t4.0\t2.0\t2.0\t4\t4\t4\t4\t4\t4.0\t0.0\n",
                     "select ts, i, j, " +
                             "avg(j) over (partition by i), " +
                             "sum(j) over (partition by i), " +
                             "first_value(j) over (partition by i), " +
                             "first_not_null_value(j) over (partition by i), " +
+                            "last_value(j) over (partition by i), " +
+                            "last_not_null_value(j) over (partition by i), " +
                             "count(*) over (partition by i), " +
                             "count(j) over (partition by i), " +
                             "count(s) over (partition by i), " +
@@ -788,19 +827,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t1.5\t3.0\t1.0\t1.0\t2\t2\t2\t2\t2\t2.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\t2.5\t5.0\t2.0\t2.0\t2\t2\t2\t2\t2\t3.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t4.0\t4.0\t4.0\t2\t2\t2\t2\t2\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\t0.5\t1.0\t0.0\t0.0\t2\t2\t2\t2\t2\t1.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t1.5\t3.0\t1.0\t1.0\t2\t2\t2\t2\t2\t2.0\t1.0\n",
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t1.5\t3.0\t1.0\t1.0\t2.0\t2.0\t2\t2\t2\t2\t2\t2.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t2.5\t5.0\t2.0\t2.0\t3.0\t3.0\t2\t2\t2\t2\t2\t3.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t4.0\t4.0\t4.0\t0.0\t0.0\t2\t2\t2\t2\t2\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t0.5\t1.0\t0.0\t0.0\t1.0\t1.0\t2\t2\t2\t2\t2\t1.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t1.5\t3.0\t1.0\t1.0\t2.0\t2.0\t2\t2\t2\t2\t2\t2.0\t1.0\n",
                     "select ts, i, j, " +
                             "avg(j) over (partition by i order by ts range between 1 microsecond preceding and current row), " +
                             "sum(j) over (partition by i order by ts range between 1 microsecond preceding and current row), " +
                             "first_value(j) over (partition by i order by ts range between 1 microsecond preceding and current row), " +
                             "first_not_null_value(j) over (partition by i order by ts range between 1 microsecond preceding and current row), " +
+                            "last_value(j) over (partition by i order by ts range between 1 microsecond preceding and current row), " +
+                            "last_not_null_value(j) over (partition by i order by ts range between 1 microsecond preceding and current row), " +
                             "count(*) over (partition by i order by ts range between 1 microsecond preceding and current row), " +
                             "count(j) over (partition by i order by ts range between 1 microsecond preceding and current row), " +
                             "count(s) over (partition by i order by ts range between 1 microsecond preceding and current row), " +
@@ -815,19 +856,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t4.0\t4.0\t4.0\t2\t2\t2\t2\t2\t4.0\t0.0\n",
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t4.0\t4.0\t4.0\t0.0\t0.0\t2\t2\t2\t2\t2\t4.0\t0.0\n",
                     "select ts, i, j, " +
                             "avg(j) over (partition by i order by ts rows between 4 preceding and 2 preceding), " +
                             "sum(j) over (partition by i order by ts rows between 4 preceding and 2 preceding), " +
                             "first_value(j) over (partition by i order by ts rows between 4 preceding and 2 preceding), " +
                             "first_not_null_value(j) over (partition by i order by ts rows between 4 preceding and 2 preceding), " +
+                            "last_value(j) over (partition by i order by ts rows between 4 preceding and 2 preceding), " +
+                            "last_not_null_value(j) over (partition by i order by ts rows between 4 preceding and 2 preceding), " +
                             "count(*) over (partition by i order by ts rows between 4 preceding and 2 preceding), " +
                             "count(j) over (partition by i order by ts rows between 4 preceding and 2 preceding), " +
                             "count(s) over (partition by i order by ts rows between 4 preceding and 2 preceding), " +
@@ -842,19 +885,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n",
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n",
                     "select ts, i, j, " +
                             "avg(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
                             "sum(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
                             "first_value(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
                             "first_not_null_value(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
+                            "last_value(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
+                            "last_not_null_value(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
                             "count(*) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
                             "count(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
                             "count(s) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
@@ -869,19 +914,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t1.5\t3.0\t2.0\t2.0\t2\t2\t2\t2\t2\t2.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t3.0\t3.0\t3.0\t3.0\t1\t1\t1\t1\t1\t3.0\t3.0\n",
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t1.5\t3.0\t2.0\t2.0\t1.0\t1.0\t2\t2\t2\t2\t2\t2.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t1\t1\t1\t1\t1\t3.0\t3.0\n",
                     "select ts, i, j, " +
                             "avg(j) over (partition by i order by ts desc range between 4 microseconds preceding and 2 preceding), " +
                             "sum(j) over (partition by i order by ts desc range between 4 microseconds preceding and 2 preceding), " +
                             "first_value(j) over (partition by i order by ts desc range between 4 microseconds preceding and 2 preceding), " +
                             "first_not_null_value(j) over (partition by i order by ts desc range between 4 microseconds preceding and 2 preceding), " +
+                            "last_value(j) over (partition by i order by ts desc range between 4 microseconds preceding and 2 preceding), " +
+                            "last_not_null_value(j) over (partition by i order by ts desc range between 4 microseconds preceding and 2 preceding), " +
                             "count(*) over (partition by i order by ts desc range between 4 microseconds preceding and 2 preceding), " +
                             "count(j) over (partition by i order by ts desc range between 4 microseconds preceding and 2 preceding), " +
                             "count(s) over (partition by i order by ts desc range between 4 microseconds preceding and 2 preceding), " +
@@ -896,19 +943,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t1.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.5\t3.0\t2.0\t2.0\t2\t2\t2\t2\t2\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t1.0\t3.0\t2.0\t2.0\t3\t3\t3\t3\t3\t1.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t1.75\t7.0\t2.0\t2.0\t4\t4\t4\t4\t4\t1.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\t3.0\t3.0\t3.0\t3.0\t1\t1\t1\t1\t1\t0.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.5\t5.0\t3.0\t3.0\t2\t2\t2\t2\t2\t0.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t2.0\t6.0\t3.0\t3.0\t3\t3\t3\t3\t3\t0.0\t1.0\n",
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t1.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.5\t3.0\t2.0\t2.0\t1.0\t1.0\t2\t2\t2\t2\t2\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t1.0\t3.0\t2.0\t2.0\t0.0\t0.0\t3\t3\t3\t3\t3\t1.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t1.75\t7.0\t2.0\t2.0\t4.0\t4.0\t4\t4\t4\t4\t4\t1.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t1\t1\t1\t1\t1\t0.0\t3.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.5\t5.0\t3.0\t3.0\t2.0\t2.0\t2\t2\t2\t2\t2\t0.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t2.0\t6.0\t3.0\t3.0\t1.0\t1.0\t3\t3\t3\t3\t3\t0.0\t1.0\n",
                     "select ts, i, j, " +
                             "avg(j) over (partition by i order by ts desc range between 4 preceding and current row), " +
                             "sum(j) over (partition by i order by ts desc range between 4 preceding and current row), " +
                             "first_value(j) over (partition by i order by ts desc range between 4 preceding and current row), " +
                             "first_not_null_value(j) over (partition by i order by ts desc range between 4 preceding and current row), " +
+                            "last_value(j) over (partition by i order by ts desc range between 4 preceding and current row), " +
+                            "last_not_null_value(j) over (partition by i order by ts desc range between 4 preceding and current row), " +
                             "count(*) over (partition by i order by ts desc range between 4 preceding and current row), " +
                             "count(j) over (partition by i order by ts desc range between 4 preceding and current row), " +
                             "count(s) over (partition by i order by ts desc range between 4 preceding and current row), " +
@@ -923,19 +972,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0.0\t0.0\t0.0\t1\t1\t1\t1\t1\t0.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\t3.0\t3.0\t3.0\t3.0\t1\t1\t1\t1\t1\t3.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n",
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t1\t1\t1\t1\t1\t0.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t1\t1\t1\t1\t1\t3.0\t3.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n",
                     "select ts, i, j, " +
                             "avg(j) over (partition by i order by ts desc range between 0 preceding and current row), " +
                             "sum(j) over (partition by i order by ts desc range between 0 preceding and current row), " +
                             "first_value(j) over (partition by i order by ts desc range between 0 preceding and current row), " +
                             "first_not_null_value(j) over (partition by i order by ts desc range between 0 preceding and current row), " +
+                            "last_value(j) over (partition by i order by ts desc range between 0 preceding and current row), " +
+                            "last_not_null_value(j) over (partition by i order by ts desc range between 0 preceding and current row), " +
                             "count(*) over (partition by i order by ts desc range between 0 preceding and current row), " +
                             "count(j) over (partition by i order by ts desc range between 0 preceding and current row), " +
                             "count(s) over (partition by i order by ts desc range between 0 preceding and current row), " +
@@ -951,19 +1002,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\t3.0\t3.0\t3.0\t3.0\t1\t1\t1\t1\t1\t3.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0.0\t0.0\t0.0\t1\t1\t1\t1\t1\t0.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\n",
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t1\t1\t1\t1\t1\t3.0\t3.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t1\t1\t1\t1\t1\t0.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\n",
                     "select ts, i, j, " +
                             "avg(j) over (partition by i order by ts asc range between 0 preceding and current row), " +
                             "sum(j) over (partition by i order by ts asc range between 0 preceding and current row), " +
                             "first_value(j) over (partition by i order by ts asc range between 0 preceding and current row), " +
                             "first_not_null_value(j) over (partition by i order by ts asc range between 0 preceding and current row), " +
+                            "last_value(j) over (partition by i order by ts asc range between 0 preceding and current row), " +
+                            "last_not_null_value(j) over (partition by i order by ts asc range between 0 preceding and current row), " +
                             "count(*) over (partition by i order by ts asc range between 0 preceding and current row), " +
                             "count(j) over (partition by i order by ts asc range between 0 preceding and current row), " +
                             "count(s) over (partition by i order by ts asc range between 0 preceding and current row), " +
@@ -978,19 +1031,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t1.5\t3.0\t1.0\t1.0\t2\t2\t2\t2\t2\t2.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\t2.0\t6.0\t1.0\t1.0\t3\t3\t3\t3\t3\t3.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t4.0\t4.0\t4.0\t2\t2\t2\t2\t2\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.6666666666666667\t5.0\t4.0\t4.0\t3\t3\t3\t3\t3\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t1.75\t7.0\t4.0\t4.0\t4\t4\t4\t4\t4\t4.0\t0.0\n",
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t1.5\t3.0\t1.0\t1.0\t2.0\t2.0\t2\t2\t2\t2\t2\t2.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t2.0\t6.0\t1.0\t1.0\t3.0\t3.0\t3\t3\t3\t3\t3\t3.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t4.0\t4.0\t4.0\t0.0\t0.0\t2\t2\t2\t2\t2\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.6666666666666667\t5.0\t4.0\t4.0\t1.0\t1.0\t3\t3\t3\t3\t3\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t1.75\t7.0\t4.0\t4.0\t2.0\t2.0\t4\t4\t4\t4\t4\t4.0\t0.0\n",
                     "select ts, i, j, " +
                             "avg(j) over (partition by i order by ts asc range between unbounded preceding and current row), " +
                             "sum(j) over (partition by i order by ts asc range between unbounded preceding and current row), " +
                             "first_value(j) over (partition by i order by ts asc range between unbounded preceding and current row), " +
                             "first_not_null_value(j) over (partition by i order by ts asc range between unbounded preceding and current row), " +
+                            "last_value(j) over (partition by i order by ts asc range between unbounded preceding and current row), " +
+                            "last_not_null_value(j) over (partition by i order by ts asc range between unbounded preceding and current row), " +
                             "count(*) over (partition by i order by ts asc range between unbounded preceding and current row), " +
                             "count(j) over (partition by i order by ts asc range between unbounded preceding and current row), " +
                             "count(s) over (partition by i order by ts asc range between unbounded preceding and current row), " +
@@ -1005,19 +1060,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.5\t3.0\t2.0\t2.0\t2\t2\t2\t2\t2\t2.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t1.0\t3.0\t2.0\t2.0\t3\t3\t3\t3\t3\t2.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t1.75\t7.0\t2.0\t2.0\t4\t4\t4\t4\t4\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\t3.0\t3.0\t3.0\t3.0\t1\t1\t1\t1\t1\t3.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.5\t5.0\t3.0\t3.0\t2\t2\t2\t2\t2\t3.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t2.0\t6.0\t3.0\t3.0\t3\t3\t3\t3\t3\t3.0\t1.0\n",
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.5\t3.0\t2.0\t2.0\t1.0\t1.0\t2\t2\t2\t2\t2\t2.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t1.0\t3.0\t2.0\t2.0\t0.0\t0.0\t3\t3\t3\t3\t3\t2.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t1.75\t7.0\t2.0\t2.0\t4.0\t4.0\t4\t4\t4\t4\t4\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t1\t1\t1\t1\t1\t3.0\t3.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.5\t5.0\t3.0\t3.0\t2.0\t2.0\t2\t2\t2\t2\t2\t3.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t2.0\t6.0\t3.0\t3.0\t1.0\t1.0\t3\t3\t3\t3\t3\t3.0\t1.0\n",
                     "select ts, i, j, " +
                             "avg(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
                             "sum(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
                             "first_value(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
                             "first_not_null_value(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
+                            "last_value(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
+                            "last_not_null_value(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
                             "count(*) over (partition by i order by ts desc range between unbounded preceding and current row), " +
                             "count(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
                             "count(s) over (partition by i order by ts desc range between unbounded preceding and current row), " +
@@ -1032,19 +1089,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\t1.5\t3.0\t1.0\t1.0\t2\t2\t2\t2\t2\t2.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\t2.0\t4.0\t4.0\t4.0\t2\t2\t2\t2\t2\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t1.6666666666666667\t5.0\t4.0\t4.0\t3\t3\t3\t3\t3\t4.0\t0.0\n",
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t1.5\t3.0\t1.0\t1.0\t2.0\t2.0\t2\t2\t2\t2\t2\t2.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t2.0\t4.0\t4.0\t4.0\t0.0\t0.0\t2\t2\t2\t2\t2\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t1.6666666666666667\t5.0\t4.0\t4.0\t1.0\t1.0\t3\t3\t3\t3\t3\t4.0\t0.0\n",
                     "select ts, i, j, " +
                             "avg(j) over (partition by i order by ts asc range between unbounded preceding and 1 preceding), " +
                             "sum(j) over (partition by i order by ts asc range between unbounded preceding and 1 preceding), " +
                             "first_value(j) over (partition by i order by ts asc range between unbounded preceding and 1 preceding), " +
                             "first_not_null_value(j) over (partition by i order by ts asc range between unbounded preceding and 1 preceding), " +
+                            "last_value(j) over (partition by i order by ts asc range between unbounded preceding and 1 preceding), " +
+                            "last_not_null_value(j) over (partition by i order by ts asc range between unbounded preceding and 1 preceding), " +
                             "count(*) over (partition by i order by ts asc range between unbounded preceding and 1 preceding), " +
                             "count(j) over (partition by i order by ts asc range between unbounded preceding and 1 preceding), " +
                             "count(s) over (partition by i order by ts asc range between unbounded preceding and 1 preceding), " +
@@ -1059,19 +1118,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t1.5\t3.0\t2.0\t2.0\t2\t2\t2\t2\t2\t2.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t1.0\t3.0\t2.0\t2.0\t3\t3\t3\t3\t3\t2.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t3.0\t3.0\t3.0\t3.0\t1\t1\t1\t1\t1\t3.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t2.5\t5.0\t3.0\t3.0\t2\t2\t2\t2\t2\t3.0\t2.0\n",
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t1.5\t3.0\t2.0\t2.0\t1.0\t1.0\t2\t2\t2\t2\t2\t2.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t1.0\t3.0\t2.0\t2.0\t0.0\t0.0\t3\t3\t3\t3\t3\t2.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t1\t1\t1\t1\t1\t3.0\t3.0\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t2.5\t5.0\t3.0\t3.0\t2.0\t2.0\t2\t2\t2\t2\t2\t3.0\t2.0\n",
                     "select ts, i, j, " +
                             "avg(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
                             "sum(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
                             "first_value(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
                             "first_not_null_value(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
+                            "last_value(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
+                            "last_not_null_value(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
                             "count(*) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
                             "count(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
                             "count(s) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
@@ -1088,19 +1149,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // all nulls because values never enter the frame
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n",
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n",
                     "select ts, i, j, " +
                             "avg(j) over (partition by i order by ts asc range between unbounded preceding and 10 preceding), " +
                             "sum(j) over (partition by i order by ts asc range between unbounded preceding and 10 preceding), " +
                             "first_value(j) over (partition by i order by ts asc range between unbounded preceding and 10 preceding), " +
                             "first_not_null_value(j) over (partition by i order by ts asc range between unbounded preceding and 10 preceding), " +
+                            "last_value(j) over (partition by i order by ts asc range between unbounded preceding and 10 preceding), " +
+                            "last_not_null_value(j) over (partition by i order by ts asc range between unbounded preceding and 10 preceding), " +
                             "count(*) over (partition by i order by ts asc range between unbounded preceding and 10 preceding), " +
                             "count(j) over (partition by i order by ts asc range between unbounded preceding and 10 preceding), " +
                             "count(s) over (partition by i order by ts asc range between unbounded preceding and 10 preceding), " +
@@ -1115,19 +1178,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n",
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n",
                     "select ts, i, j, " +
                             "avg(j) over (partition by i order by ts desc range between unbounded preceding and 10 preceding), " +
                             "sum(j) over (partition by i order by ts desc range between unbounded preceding and 10 preceding), " +
                             "first_value(j) over (partition by i order by ts desc range between unbounded preceding and 10 preceding), " +
                             "first_not_null_value(j) over (partition by i order by ts desc range between unbounded preceding and 10 preceding), " +
+                            "last_value(j) over (partition by i order by ts desc range between unbounded preceding and 10 preceding), " +
+                            "last_not_null_value(j) over (partition by i order by ts desc range between unbounded preceding and 10 preceding), " +
                             "count(*) over (partition by i order by ts desc range between unbounded preceding and 10 preceding), " +
                             "count(j) over (partition by i order by ts desc range between unbounded preceding and 10 preceding), " +
                             "count(s) over (partition by i order by ts desc range between unbounded preceding and 10 preceding), " +
@@ -1166,17 +1231,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     true
             );
 
-            String dupResult = "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                    "1970-01-01T00:00:00.000000Z\t1\t1\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
-                    "1970-01-01T00:00:00.000001Z\t0\t2\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\n" +
-                    "1970-01-01T00:00:00.000001Z\t1\t3\t2.0\t4.0\t1.0\t1.0\t2\t2\t2\t2\t2\t3.0\t1.0\n" +
-                    "1970-01-01T00:00:00.000002Z\t0\t4\t3.0\t6.0\t2.0\t2.0\t2\t2\t2\t2\t2\t4.0\t2.0\n" +
-                    "1970-01-01T00:00:00.000002Z\t1\t0\t1.3333333333333333\t4.0\t1.0\t1.0\t3\t3\t3\t3\t3\t3.0\t0.0\n" +
-                    "1970-01-01T00:00:00.000003Z\t0\t1\t2.3333333333333335\t7.0\t2.0\t2.0\t3\t3\t3\t3\t3\t4.0\t1.0\n" +
-                    "1970-01-01T00:00:00.000003Z\t1\t2\t1.5\t6.0\t1.0\t1.0\t4\t4\t4\t4\t4\t3.0\t0.0\n" +
-                    "1970-01-01T00:00:00.000004Z\t0\t3\t2.5\t10.0\t2.0\t2.0\t4\t4\t4\t4\t4\t4.0\t1.0\n" +
-                    "1970-01-01T00:00:00.000004Z\t1\t4\t2.0\t10.0\t1.0\t1.0\t5\t5\t5\t5\t5\t4.0\t0.0\n" +
-                    "1970-01-01T00:00:00.000005Z\t0\t0\t2.0\t10.0\t2.0\t2.0\t5\t5\t5\t5\t5\t4.0\t0.0\n";
+            String dupResult = "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                    "1970-01-01T00:00:00.000000Z\t1\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
+                    "1970-01-01T00:00:00.000001Z\t0\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\n" +
+                    "1970-01-01T00:00:00.000001Z\t1\t3\t2.0\t4.0\t1.0\t1.0\t3.0\t3.0\t2\t2\t2\t2\t2\t3.0\t1.0\n" +
+                    "1970-01-01T00:00:00.000002Z\t0\t4\t3.0\t6.0\t2.0\t2.0\t4.0\t4.0\t2\t2\t2\t2\t2\t4.0\t2.0\n" +
+                    "1970-01-01T00:00:00.000002Z\t1\t0\t1.3333333333333333\t4.0\t1.0\t1.0\t0.0\t0.0\t3\t3\t3\t3\t3\t3.0\t0.0\n" +
+                    "1970-01-01T00:00:00.000003Z\t0\t1\t2.3333333333333335\t7.0\t2.0\t2.0\t1.0\t1.0\t3\t3\t3\t3\t3\t4.0\t1.0\n" +
+                    "1970-01-01T00:00:00.000003Z\t1\t2\t1.5\t6.0\t1.0\t1.0\t2.0\t2.0\t4\t4\t4\t4\t4\t3.0\t0.0\n" +
+                    "1970-01-01T00:00:00.000004Z\t0\t3\t2.5\t10.0\t2.0\t2.0\t3.0\t3.0\t4\t4\t4\t4\t4\t4.0\t1.0\n" +
+                    "1970-01-01T00:00:00.000004Z\t1\t4\t2.0\t10.0\t1.0\t1.0\t4.0\t4.0\t5\t5\t5\t5\t5\t4.0\t0.0\n" +
+                    "1970-01-01T00:00:00.000005Z\t0\t0\t2.0\t10.0\t2.0\t2.0\t0.0\t0.0\t5\t5\t5\t5\t5\t4.0\t0.0\n";
 
             assertQueryNoLeakCheck(
                     dupResult,
@@ -1185,6 +1250,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "sum(j) over (partition by i order by ts range between 4 preceding and current row), " +
                             "first_value(j) over (partition by i order by ts range between 4 preceding and current row), " +
                             "first_not_null_value(j) over (partition by i order by ts range between 4 preceding and current row), " +
+                            "last_value(j) over (partition by i order by ts range between 4 preceding and current row), " +
+                            "last_not_null_value(j) over (partition by i order by ts range between 4 preceding and current row), " +
                             "count(j) over (partition by i order by ts range between 4 preceding and current row), " +
                             "count(*) over (partition by i order by ts range between 4 preceding and current row), " +
                             "count(s) over (partition by i order by ts range between 4 preceding and current row), " +
@@ -1205,6 +1272,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "sum(j) over (partition by i order by ts range between 4 preceding and current row), " +
                             "first_value(j) over (partition by i order by ts range between 4 preceding and current row), " +
                             "first_not_null_value(j) over (partition by i order by ts range between 4 preceding and current row), " +
+                            "last_value(j) over (partition by i order by ts range between 4 preceding and current row), " +
+                            "last_not_null_value(j) over (partition by i order by ts range between 4 preceding and current row), " +
                             "count(*) over (partition by i order by ts range between 4 preceding and current row), " +
                             "count(j) over (partition by i order by ts range between 4 preceding and current row), " +
                             "count(s) over (partition by i order by ts range between 4 preceding and current row), " +
@@ -1226,6 +1295,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "sum(j) over (partition by i order by ts range between unbounded preceding and current row), " +
                             "first_value(j) over (partition by i order by ts range between unbounded preceding and current row), " +
                             "first_not_null_value(j) over (partition by i order by ts range between unbounded preceding and current row), " +
+                            "last_value(j) over (partition by i order by ts range between unbounded preceding and current row), " +
+                            "last_not_null_value(j) over (partition by i order by ts range between unbounded preceding and current row), " +
                             "count(*) over (partition by i order by ts range between unbounded preceding and current row), " +
                             "count(j) over (partition by i order by ts range between unbounded preceding and current row), " +
                             "count(s) over (partition by i order by ts range between unbounded preceding and current row), " +
@@ -1240,17 +1311,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     true
             );
 
-            String dupResult2 = "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                    "1970-01-01T00:00:00.000005Z\t0\t0\t0.0\t0.0\t0.0\t0.0\t1\t1\t1\t1\t1\t0.0\t0.0\n" +
-                    "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
-                    "1970-01-01T00:00:00.000004Z\t0\t3\t1.5\t3.0\t0.0\t0.0\t2\t2\t2\t2\t2\t3.0\t0.0\n" +
-                    "1970-01-01T00:00:00.000003Z\t1\t2\t3.0\t6.0\t4.0\t4.0\t2\t2\t2\t2\t2\t4.0\t2.0\n" +
-                    "1970-01-01T00:00:00.000003Z\t0\t1\t1.3333333333333333\t4.0\t0.0\t0.0\t3\t3\t3\t3\t3\t3.0\t0.0\n" +
-                    "1970-01-01T00:00:00.000002Z\t1\t0\t2.0\t6.0\t4.0\t4.0\t3\t3\t3\t3\t3\t4.0\t0.0\n" +
-                    "1970-01-01T00:00:00.000002Z\t0\t4\t2.0\t8.0\t0.0\t0.0\t4\t4\t4\t4\t4\t4.0\t0.0\n" +
-                    "1970-01-01T00:00:00.000001Z\t1\t3\t2.25\t9.0\t4.0\t4.0\t4\t4\t4\t4\t4\t4.0\t0.0\n" +
-                    "1970-01-01T00:00:00.000001Z\t0\t2\t2.0\t10.0\t0.0\t0.0\t5\t5\t5\t5\t5\t4.0\t0.0\n" +
-                    "1970-01-01T00:00:00.000000Z\t1\t1\t2.0\t10.0\t4.0\t4.0\t5\t5\t5\t5\t5\t4.0\t0.0\n";
+            String dupResult2 = "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                    "1970-01-01T00:00:00.000005Z\t0\t0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t1\t1\t1\t1\t1\t0.0\t0.0\n" +
+                    "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
+                    "1970-01-01T00:00:00.000004Z\t0\t3\t1.5\t3.0\t0.0\t0.0\t3.0\t3.0\t2\t2\t2\t2\t2\t3.0\t0.0\n" +
+                    "1970-01-01T00:00:00.000003Z\t1\t2\t3.0\t6.0\t4.0\t4.0\t2.0\t2.0\t2\t2\t2\t2\t2\t4.0\t2.0\n" +
+                    "1970-01-01T00:00:00.000003Z\t0\t1\t1.3333333333333333\t4.0\t0.0\t0.0\t1.0\t1.0\t3\t3\t3\t3\t3\t3.0\t0.0\n" +
+                    "1970-01-01T00:00:00.000002Z\t1\t0\t2.0\t6.0\t4.0\t4.0\t0.0\t0.0\t3\t3\t3\t3\t3\t4.0\t0.0\n" +
+                    "1970-01-01T00:00:00.000002Z\t0\t4\t2.0\t8.0\t0.0\t0.0\t4.0\t4.0\t4\t4\t4\t4\t4\t4.0\t0.0\n" +
+                    "1970-01-01T00:00:00.000001Z\t1\t3\t2.25\t9.0\t4.0\t4.0\t3.0\t3.0\t4\t4\t4\t4\t4\t4.0\t0.0\n" +
+                    "1970-01-01T00:00:00.000001Z\t0\t2\t2.0\t10.0\t0.0\t0.0\t2.0\t2.0\t5\t5\t5\t5\t5\t4.0\t0.0\n" +
+                    "1970-01-01T00:00:00.000000Z\t1\t1\t2.0\t10.0\t4.0\t4.0\t1.0\t1.0\t5\t5\t5\t5\t5\t4.0\t0.0\n";
 
             assertQueryNoLeakCheck(
                     dupResult2,
@@ -1259,6 +1330,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "sum(j) over (partition by i order by ts desc range between 4 preceding and current row), " +
                             "first_value(j) over (partition by i order by ts desc range between 4 preceding and current row), " +
                             "first_not_null_value(j) over (partition by i order by ts desc range between 4 preceding and current row), " +
+                            "last_value(j) over (partition by i order by ts desc range between 4 preceding and current row), " +
+                            "last_not_null_value(j) over (partition by i order by ts desc range between 4 preceding and current row), " +
                             "count(*) over (partition by i order by ts desc range between 4 preceding and current row), " +
                             "count(j) over (partition by i order by ts desc range between 4 preceding and current row), " +
                             "count(s) over (partition by i order by ts desc range between 4 preceding and current row), " +
@@ -1280,6 +1353,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "sum(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
                             "first_value(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
                             "first_not_null_value(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
+                            "last_value(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
+                            "last_not_null_value(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
                             "count(*) over (partition by i order by ts desc range between unbounded preceding and current row), " +
                             "count(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
                             "count(s) over (partition by i order by ts desc range between unbounded preceding and current row), " +
@@ -1315,24 +1390,26 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000000Z\t0\t2\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t4\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t2.5\t5.0\t4.0\t4.0\t2\t2\t2\t2\t2\t4.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t3\t3.0\t3.0\t3.0\t3.0\t1\t1\t1\t1\t1\t3.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t0\t1.5\t3.0\t3.0\t3.0\t2\t2\t2\t2\t2\t3.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t1\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t3\t2.0\t4.0\t1.0\t1.0\t2\t2\t2\t2\t2\t3.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000001Z\t1\t0\t0.0\t0.0\t0.0\t0.0\t1\t1\t1\t1\t1\t0.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000001Z\t1\t2\t1.0\t2.0\t0.0\t0.0\t2\t2\t2\t2\t2\t2.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n",
-                    "select ts, i, j, avg, sum, first_value, first_not_null_value, count, count1, count2, count3, count4, max, min " +
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.000000Z\t0\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t4\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t2.5\t5.0\t4.0\t4.0\t1.0\t1.0\t2\t2\t2\t2\t2\t4.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t3\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t1\t1\t1\t1\t1\t3.0\t3.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t0\t1.5\t3.0\t3.0\t3.0\t0.0\t0.0\t2\t2\t2\t2\t2\t3.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t3\t2.0\t4.0\t1.0\t1.0\t3.0\t3.0\t2\t2\t2\t2\t2\t3.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000001Z\t1\t0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t1\t1\t1\t1\t1\t0.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000001Z\t1\t2\t1.0\t2.0\t0.0\t0.0\t2.0\t2.0\t2\t2\t2\t2\t2\t2.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n",
+                    "select ts, i, j, avg, sum, first_value, first_not_null_value, last_value, last_not_null_value, count, count1, count2, count3, count4, max, min " +
                             "from ( " +
                             "select ts, i, j, n, " +
                             "avg(j) over (partition by i order by ts range between 0 preceding and current row) as avg, " +
                             "sum(j) over (partition by i order by ts range between 0 preceding and current row) as sum, " +
                             "first_value(j) over (partition by i order by ts range between 0 preceding and current row) as first_value, " +
                             "first_not_null_value(j) over (partition by i order by ts range between 0 preceding and current row) as first_not_null_value, " +
+                            "last_value(j) over (partition by i order by ts range between 0 preceding and current row) as last_value, " +
+                            "last_not_null_value(j) over (partition by i order by ts range between 0 preceding and current row) as last_not_null_value, " +
                             "count(*) over (partition by i order by ts range between 0 preceding and current row) as count, " +
                             "count(j) over (partition by i order by ts range between 0 preceding and current row) as count1, " +
                             "count(s) over (partition by i order by ts range between 0 preceding and current row) as count2, " +
@@ -1349,23 +1426,25 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000002Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000001Z\t1\t2\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000001Z\t1\t0\t1.0\t2.0\t2.0\t2.0\t2\t2\t2\t2\t2\t2.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t3\t3.0\t3.0\t3.0\t3.0\t1\t1\t1\t1\t1\t3.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t1\t2.0\t4.0\t3.0\t3.0\t2\t2\t2\t2\t2\t3.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t0\t0.0\t0.0\t0.0\t0.0\t1\t1\t1\t1\t1\t0.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t3\t1.5\t3.0\t0.0\t0.0\t2\t2\t2\t2\t2\t3.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t4\t2.5\t5.0\t1.0\t1.0\t2\t2\t2\t2\t2\t4.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000000Z\t0\t2\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\n",
-                    "select ts, i, j, avg, sum, first_value, first_not_null_value, count, count1, count2, count3, count4, max, min from ( " +
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.000002Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000001Z\t1\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000001Z\t1\t0\t1.0\t2.0\t2.0\t2.0\t0.0\t0.0\t2\t2\t2\t2\t2\t2.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t3\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t1\t1\t1\t1\t1\t3.0\t3.0\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\t2.0\t4.0\t3.0\t3.0\t1.0\t1.0\t2\t2\t2\t2\t2\t3.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t1\t1\t1\t1\t1\t0.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t3\t1.5\t3.0\t0.0\t0.0\t3.0\t3.0\t2\t2\t2\t2\t2\t3.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t4\t2.5\t5.0\t1.0\t1.0\t4.0\t4.0\t2\t2\t2\t2\t2\t4.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000000Z\t0\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\n",
+                    "select ts, i, j, avg, sum, first_value, first_not_null_value, last_value, last_not_null_value, count, count1, count2, count3, count4, max, min from ( " +
                             "select ts, i, j, n, " +
                             "avg(j) over (partition by i order by ts desc range between 0 preceding and current row) as avg, " +
                             "sum(j) over (partition by i order by ts desc range between 0 preceding and current row) as sum, " +
                             "first_value(j) over (partition by i order by ts desc range between 0 preceding and current row) as first_value, " +
                             "first_not_null_value(j) over (partition by i order by ts desc range between 0 preceding and current row) as first_not_null_value, " +
+                            "last_value(j) over (partition by i order by ts desc range between 0 preceding and current row) as last_value, " +
+                            "last_not_null_value(j) over (partition by i order by ts desc range between 0 preceding and current row) as last_not_null_value, " +
                             "count(*) over (partition by i order by ts desc range between 0 preceding and current row) as count, " +
                             "count(j) over (partition by i order by ts desc range between 0 preceding and current row) as count1, " +
                             "count(s) over (partition by i order by ts desc range between 0 preceding and current row) as count2, " +
@@ -1383,24 +1462,26 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000000Z\t0\t2\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t4\t3.0\t6.0\t2.0\t2.0\t2\t2\t2\t2\t2\t4.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t2.3333333333333335\t7.0\t2.0\t2.0\t3\t3\t3\t3\t3\t4.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t3\t2.6666666666666665\t8.0\t4.0\t4.0\t3\t3\t3\t3\t3\t4.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t0\t2.0\t8.0\t4.0\t4.0\t4\t4\t4\t4\t4\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t1\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t3\t2.0\t4.0\t1.0\t1.0\t2\t2\t2\t2\t2\t3.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000001Z\t1\t0\t1.3333333333333333\t4.0\t1.0\t1.0\t3\t3\t3\t3\t3\t3.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000001Z\t1\t2\t1.5\t6.0\t1.0\t1.0\t4\t4\t4\t4\t4\t3.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t1\t4\t2.0\t6.0\t0.0\t0.0\t3\t3\t3\t3\t3\t4.0\t0.0\n",
-                    "select ts, i, j, avg, sum, first_value, first_not_null_value, count, count1, count2, count3, count4, max, min " +
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.000000Z\t0\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t4\t3.0\t6.0\t2.0\t2.0\t4.0\t4.0\t2\t2\t2\t2\t2\t4.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t2.3333333333333335\t7.0\t2.0\t2.0\t1.0\t1.0\t3\t3\t3\t3\t3\t4.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t3\t2.6666666666666665\t8.0\t4.0\t4.0\t3.0\t3.0\t3\t3\t3\t3\t3\t4.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t0\t2.0\t8.0\t4.0\t4.0\t0.0\t0.0\t4\t4\t4\t4\t4\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t3\t2.0\t4.0\t1.0\t1.0\t3.0\t3.0\t2\t2\t2\t2\t2\t3.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000001Z\t1\t0\t1.3333333333333333\t4.0\t1.0\t1.0\t0.0\t0.0\t3\t3\t3\t3\t3\t3.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000001Z\t1\t2\t1.5\t6.0\t1.0\t1.0\t2.0\t2.0\t4\t4\t4\t4\t4\t3.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t1\t4\t2.0\t6.0\t0.0\t0.0\t4.0\t4.0\t3\t3\t3\t3\t3\t4.0\t0.0\n",
+                    "select ts, i, j, avg, sum, first_value, first_not_null_value, last_value, last_not_null_value, count, count1, count2, count3, count4, max, min " +
                             "from ( " +
                             "select ts, i, j,n, " +
                             "avg(j) over (partition by i order by ts range between 1 preceding and current row) as avg, " +
                             "sum(j) over (partition by i order by ts range between 1 preceding and current row) as sum, " +
                             "first_value(j) over (partition by i order by ts range between 1 preceding and current row) as first_value, " +
                             "first_not_null_value(j) over (partition by i order by ts range between 1 preceding and current row) as first_not_null_value, " +
+                            "last_value(j) over (partition by i order by ts range between 1 preceding and current row) as last_value, " +
+                            "last_not_null_value(j) over (partition by i order by ts range between 1 preceding and current row) as last_not_null_value, " +
                             "count(*) over (partition by i order by ts range between 1 preceding and current row) as count, " +
                             "count(j) over (partition by i order by ts range between 1 preceding and current row) as count1, " +
                             "count(s) over (partition by i order by ts range between 1 preceding and current row) as count2, " +
@@ -1417,24 +1498,26 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000002Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000001Z\t1\t2\t3.0\t6.0\t4.0\t4.0\t2\t2\t2\t2\t2\t4.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000001Z\t1\t0\t2.0\t6.0\t4.0\t4.0\t3\t3\t3\t3\t3\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t3\t1.6666666666666667\t5.0\t2.0\t2.0\t3\t3\t3\t3\t3\t3.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t1\t1.5\t6.0\t2.0\t2.0\t4\t4\t4\t4\t4\t3.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t0\t0.0\t0.0\t0.0\t0.0\t1\t1\t1\t1\t1\t0.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t3\t1.5\t3.0\t0.0\t0.0\t2\t2\t2\t2\t2\t3.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.3333333333333333\t4.0\t0.0\t0.0\t3\t3\t3\t3\t3\t3.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t4\t2.0\t8.0\t0.0\t0.0\t4\t4\t4\t4\t4\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000000Z\t0\t2\t2.3333333333333335\t7.0\t1.0\t1.0\t3\t3\t3\t3\t3\t4.0\t1.0\n",
-                    "select ts, i, j, avg, sum, first_value, first_not_null_value, count, count1, count2, count3, count4, max, min " +
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.000002Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000001Z\t1\t2\t3.0\t6.0\t4.0\t4.0\t2.0\t2.0\t2\t2\t2\t2\t2\t4.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000001Z\t1\t0\t2.0\t6.0\t4.0\t4.0\t0.0\t0.0\t3\t3\t3\t3\t3\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t3\t1.6666666666666667\t5.0\t2.0\t2.0\t3.0\t3.0\t3\t3\t3\t3\t3\t3.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\t1.5\t6.0\t2.0\t2.0\t1.0\t1.0\t4\t4\t4\t4\t4\t3.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t1\t1\t1\t1\t1\t0.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t3\t1.5\t3.0\t0.0\t0.0\t3.0\t3.0\t2\t2\t2\t2\t2\t3.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.3333333333333333\t4.0\t0.0\t0.0\t1.0\t1.0\t3\t3\t3\t3\t3\t3.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t4\t2.0\t8.0\t0.0\t0.0\t4.0\t4.0\t4\t4\t4\t4\t4\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000000Z\t0\t2\t2.3333333333333335\t7.0\t1.0\t1.0\t2.0\t2.0\t3\t3\t3\t3\t3\t4.0\t1.0\n",
+                    "select ts, i, j, avg, sum, first_value, first_not_null_value, last_value, last_not_null_value, count, count1, count2, count3, count4, max, min " +
                             "from ( " +
                             "select ts, i, j,n, " +
                             "avg(j) over (partition by i order by ts desc range between 1 preceding and current row) as avg, " +
                             "sum(j) over (partition by i order by ts desc range between 1 preceding and current row) as sum, " +
                             "first_value(j) over (partition by i order by ts desc range between 1 preceding and current row) as first_value, " +
                             "first_not_null_value(j) over (partition by i order by ts desc range between 1 preceding and current row) as first_not_null_value, " +
+                            "last_value(j) over (partition by i order by ts desc range between 1 preceding and current row) as last_value, " +
+                            "last_not_null_value(j) over (partition by i order by ts desc range between 1 preceding and current row) as last_not_null_value, " +
                             "count(*) over (partition by i order by ts desc range between 1 preceding and current row) as count, " +
                             "count(j) over (partition by i order by ts desc range between 1 preceding and current row) as count1, " +
                             "count(s) over (partition by i order by ts desc range between 1 preceding and current row) as count2, " +
@@ -1451,27 +1534,29 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     true
             );
 
-            String dupResult3 = "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                    "1970-01-01T00:00:00.000000Z\t0\t2\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\n" +
-                    "1970-01-01T00:00:00.000001Z\t0\t4\t3.0\t6.0\t2.0\t2.0\t2\t2\t2\t2\t2\t4.0\t2.0\n" +
-                    "1970-01-01T00:00:00.000001Z\t0\t1\t2.3333333333333335\t7.0\t2.0\t2.0\t3\t3\t3\t3\t3\t4.0\t1.0\n" +
-                    "1970-01-01T00:00:00.000002Z\t0\t3\t2.5\t10.0\t2.0\t2.0\t4\t4\t4\t4\t4\t4.0\t1.0\n" +
-                    "1970-01-01T00:00:00.000002Z\t0\t0\t2.0\t10.0\t2.0\t2.0\t5\t5\t5\t5\t5\t4.0\t0.0\n" +
-                    "1970-01-01T00:00:00.000000Z\t1\t1\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
-                    "1970-01-01T00:00:00.000000Z\t1\t3\t2.0\t4.0\t1.0\t1.0\t2\t2\t2\t2\t2\t3.0\t1.0\n" +
-                    "1970-01-01T00:00:00.000001Z\t1\t0\t1.3333333333333333\t4.0\t1.0\t1.0\t3\t3\t3\t3\t3\t3.0\t0.0\n" +
-                    "1970-01-01T00:00:00.000001Z\t1\t2\t1.5\t6.0\t1.0\t1.0\t4\t4\t4\t4\t4\t3.0\t0.0\n" +
-                    "1970-01-01T00:00:00.000002Z\t1\t4\t2.0\t10.0\t1.0\t1.0\t5\t5\t5\t5\t5\t4.0\t0.0\n";
+            String dupResult3 = "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                    "1970-01-01T00:00:00.000000Z\t0\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\n" +
+                    "1970-01-01T00:00:00.000001Z\t0\t4\t3.0\t6.0\t2.0\t2.0\t4.0\t4.0\t2\t2\t2\t2\t2\t4.0\t2.0\n" +
+                    "1970-01-01T00:00:00.000001Z\t0\t1\t2.3333333333333335\t7.0\t2.0\t2.0\t1.0\t1.0\t3\t3\t3\t3\t3\t4.0\t1.0\n" +
+                    "1970-01-01T00:00:00.000002Z\t0\t3\t2.5\t10.0\t2.0\t2.0\t3.0\t3.0\t4\t4\t4\t4\t4\t4.0\t1.0\n" +
+                    "1970-01-01T00:00:00.000002Z\t0\t0\t2.0\t10.0\t2.0\t2.0\t0.0\t0.0\t5\t5\t5\t5\t5\t4.0\t0.0\n" +
+                    "1970-01-01T00:00:00.000000Z\t1\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
+                    "1970-01-01T00:00:00.000000Z\t1\t3\t2.0\t4.0\t1.0\t1.0\t3.0\t3.0\t2\t2\t2\t2\t2\t3.0\t1.0\n" +
+                    "1970-01-01T00:00:00.000001Z\t1\t0\t1.3333333333333333\t4.0\t1.0\t1.0\t0.0\t0.0\t3\t3\t3\t3\t3\t3.0\t0.0\n" +
+                    "1970-01-01T00:00:00.000001Z\t1\t2\t1.5\t6.0\t1.0\t1.0\t2.0\t2.0\t4\t4\t4\t4\t4\t3.0\t0.0\n" +
+                    "1970-01-01T00:00:00.000002Z\t1\t4\t2.0\t10.0\t1.0\t1.0\t4.0\t4.0\t5\t5\t5\t5\t5\t4.0\t0.0\n";
 
             assertQueryNoLeakCheck(
                     dupResult3,
-                    "select ts, i, j, avg, sum, first_value, first_not_null_value, count, count1, count2, count3, count4, max, min " +
+                    "select ts, i, j, avg, sum, first_value, first_not_null_value, last_value, last_not_null_value, count, count1, count2, count3, count4, max, min " +
                             "from ( " +
                             "select ts, i, j, n, " +
                             "avg(j) over (partition by i order by ts range between 4 preceding and current row) avg, " +
                             "sum(j) over (partition by i order by ts range between 4 preceding and current row) sum, " +
                             "first_value(j) over (partition by i order by ts range between 4 preceding and current row) first_value, " +
                             "first_not_null_value(j) over (partition by i order by ts range between 4 preceding and current row) first_not_null_value, " +
+                            "last_value(j) over (partition by i order by ts range between 4 preceding and current row) last_value, " +
+                            "last_not_null_value(j) over (partition by i order by ts range between 4 preceding and current row) last_not_null_value, " +
                             "count(*) over (partition by i order by ts range between 4 preceding and current row) count, " +
                             "count(j) over (partition by i order by ts range between 4 preceding and current row) count1, " +
                             "count(s) over (partition by i order by ts range between 4 preceding and current row) count2, " +
@@ -1490,13 +1575,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     dupResult3,
-                    "select ts, i, j,avg, sum, first_value, first_not_null_value, count, count1, count2, count3, count4, max, min " +
+                    "select ts, i, j,avg, sum, first_value, first_not_null_value, last_value, last_not_null_value, count, count1, count2, count3, count4, max, min " +
                             "from ( " +
                             "select ts, i, j, n, " +
                             "avg(j) over (partition by i order by ts range between unbounded preceding and current row) avg, " +
                             "sum(j) over (partition by i order by ts range between unbounded preceding and current row) sum, " +
                             "first_value(j) over (partition by i order by ts range between unbounded preceding and current row) first_value, " +
                             "first_not_null_value(j) over (partition by i order by ts range between unbounded preceding and current row) first_not_null_value, " +
+                            "last_value(j) over (partition by i order by ts range between unbounded preceding and current row) last_value, " +
+                            "last_not_null_value(j) over (partition by i order by ts range between unbounded preceding and current row) last_not_null_value, " +
                             "count(*) over (partition by i order by ts range between unbounded preceding and current row) count, " +
                             "count(j) over (partition by i order by ts range between unbounded preceding and current row) count1, " +
                             "count(s) over (partition by i order by ts range between unbounded preceding and current row) count2, " +
@@ -1514,23 +1601,25 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000000Z\t0\t2\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t4\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t3\t2.3333333333333335\t7.0\t2.0\t2.0\t3\t3\t3\t3\t3\t4.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t0\t2.3333333333333335\t7.0\t2.0\t2.0\t3\t3\t3\t3\t3\t4.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t1\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t3\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000001Z\t1\t0\t2.0\t4.0\t1.0\t1.0\t2\t2\t2\t2\t2\t3.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000001Z\t1\t2\t2.0\t4.0\t1.0\t1.0\t2\t2\t2\t2\t2\t3.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t1\t4\t1.5\t6.0\t1.0\t1.0\t4\t4\t4\t4\t4\t3.0\t0.0\n",
-                    "select ts, i, j, avg, sum, first_value, first_not_null_value, count, count1, count2, count3, count4, max, min from ( " +
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.000000Z\t0\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t4\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t3\t2.3333333333333335\t7.0\t2.0\t2.0\t1.0\t1.0\t3\t3\t3\t3\t3\t4.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t0\t2.3333333333333335\t7.0\t2.0\t2.0\t1.0\t1.0\t3\t3\t3\t3\t3\t4.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t3\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000001Z\t1\t0\t2.0\t4.0\t1.0\t1.0\t3.0\t3.0\t2\t2\t2\t2\t2\t3.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000001Z\t1\t2\t2.0\t4.0\t1.0\t1.0\t3.0\t3.0\t2\t2\t2\t2\t2\t3.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t1\t4\t1.5\t6.0\t1.0\t1.0\t2.0\t2.0\t4\t4\t4\t4\t4\t3.0\t0.0\n",
+                    "select ts, i, j, avg, sum, first_value, first_not_null_value, last_value, last_not_null_value, count, count1, count2, count3, count4, max, min from ( " +
                             "select ts, i, j, n, " +
                             "avg(j) over (partition by i order by ts range between unbounded preceding and 1 preceding) avg, " +
                             "sum(j) over (partition by i order by ts range between unbounded preceding and 1 preceding) sum, " +
                             "first_value(j) over (partition by i order by ts range between unbounded preceding and 1 preceding) first_value, " +
                             "first_not_null_value(j) over (partition by i order by ts range between unbounded preceding and 1 preceding) first_not_null_value, " +
+                            "last_value(j) over (partition by i order by ts range between unbounded preceding and 1 preceding) last_value, " +
+                            "last_not_null_value(j) over (partition by i order by ts range between unbounded preceding and 1 preceding) last_not_null_value, " +
                             "count(*) over (partition by i order by ts range between unbounded preceding and 1 preceding) count, " +
                             "count(j) over (partition by i order by ts range between unbounded preceding and 1 preceding) count1, " +
                             "count(s) over (partition by i order by ts range between unbounded preceding and 1 preceding) count2, " +
@@ -1547,27 +1636,29 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     true
             );
 
-            String dupResult4 = "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                    "1970-01-01T00:00:00.000002Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
-                    "1970-01-01T00:00:00.000001Z\t1\t2\t3.0\t6.0\t4.0\t4.0\t2\t2\t2\t2\t2\t4.0\t2.0\n" +
-                    "1970-01-01T00:00:00.000001Z\t1\t0\t2.0\t6.0\t4.0\t4.0\t3\t3\t3\t3\t3\t4.0\t0.0\n" +
-                    "1970-01-01T00:00:00.000000Z\t1\t3\t2.25\t9.0\t4.0\t4.0\t4\t4\t4\t4\t4\t4.0\t0.0\n" +
-                    "1970-01-01T00:00:00.000000Z\t1\t1\t2.0\t10.0\t4.0\t4.0\t5\t5\t5\t5\t5\t4.0\t0.0\n" +
-                    "1970-01-01T00:00:00.000002Z\t0\t0\t0.0\t0.0\t0.0\t0.0\t1\t1\t1\t1\t1\t0.0\t0.0\n" +
-                    "1970-01-01T00:00:00.000002Z\t0\t3\t1.5\t3.0\t0.0\t0.0\t2\t2\t2\t2\t2\t3.0\t0.0\n" +
-                    "1970-01-01T00:00:00.000001Z\t0\t1\t1.3333333333333333\t4.0\t0.0\t0.0\t3\t3\t3\t3\t3\t3.0\t0.0\n" +
-                    "1970-01-01T00:00:00.000001Z\t0\t4\t2.0\t8.0\t0.0\t0.0\t4\t4\t4\t4\t4\t4.0\t0.0\n" +
-                    "1970-01-01T00:00:00.000000Z\t0\t2\t2.0\t10.0\t0.0\t0.0\t5\t5\t5\t5\t5\t4.0\t0.0\n";
+            String dupResult4 = "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                    "1970-01-01T00:00:00.000002Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
+                    "1970-01-01T00:00:00.000001Z\t1\t2\t3.0\t6.0\t4.0\t4.0\t2.0\t2.0\t2\t2\t2\t2\t2\t4.0\t2.0\n" +
+                    "1970-01-01T00:00:00.000001Z\t1\t0\t2.0\t6.0\t4.0\t4.0\t0.0\t0.0\t3\t3\t3\t3\t3\t4.0\t0.0\n" +
+                    "1970-01-01T00:00:00.000000Z\t1\t3\t2.25\t9.0\t4.0\t4.0\t3.0\t3.0\t4\t4\t4\t4\t4\t4.0\t0.0\n" +
+                    "1970-01-01T00:00:00.000000Z\t1\t1\t2.0\t10.0\t4.0\t4.0\t1.0\t1.0\t5\t5\t5\t5\t5\t4.0\t0.0\n" +
+                    "1970-01-01T00:00:00.000002Z\t0\t0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t1\t1\t1\t1\t1\t0.0\t0.0\n" +
+                    "1970-01-01T00:00:00.000002Z\t0\t3\t1.5\t3.0\t0.0\t0.0\t3.0\t3.0\t2\t2\t2\t2\t2\t3.0\t0.0\n" +
+                    "1970-01-01T00:00:00.000001Z\t0\t1\t1.3333333333333333\t4.0\t0.0\t0.0\t1.0\t1.0\t3\t3\t3\t3\t3\t3.0\t0.0\n" +
+                    "1970-01-01T00:00:00.000001Z\t0\t4\t2.0\t8.0\t0.0\t0.0\t4.0\t4.0\t4\t4\t4\t4\t4\t4.0\t0.0\n" +
+                    "1970-01-01T00:00:00.000000Z\t0\t2\t2.0\t10.0\t0.0\t0.0\t2.0\t2.0\t5\t5\t5\t5\t5\t4.0\t0.0\n";
 
             assertQueryNoLeakCheck(
                     dupResult4,
-                    "select ts,i,j,avg, sum, first_value, first_not_null_value, count, count1, count2, count3, count4, max, min " +
+                    "select ts,i,j,avg, sum, first_value, first_not_null_value, last_value, last_not_null_value, count, count1, count2, count3, count4, max, min " +
                             "from ( " +
                             "select ts, i, j, n, " +
                             "avg(j) over (partition by i order by ts desc range between 4 preceding and current row) avg, " +
                             "sum(j) over (partition by i order by ts desc range between 4 preceding and current row) sum, " +
                             "first_value(j) over (partition by i order by ts desc range between 4 preceding and current row) first_value, " +
                             "first_not_null_value(j) over (partition by i order by ts desc range between 4 preceding and current row) first_not_null_value, " +
+                            "last_value(j) over (partition by i order by ts desc range between 4 preceding and current row) last_value, " +
+                            "last_not_null_value(j) over (partition by i order by ts desc range between 4 preceding and current row) last_not_null_value, " +
                             "count(*) over (partition by i order by ts desc range between 4 preceding and current row) count, " +
                             "count(j) over (partition by i order by ts desc range between 4 preceding and current row) count1, " +
                             "count(s) over (partition by i order by ts desc range between 4 preceding and current row) count2, " +
@@ -1586,13 +1677,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     dupResult4,
-                    "select ts,i,j,avg, sum, first_value, first_not_null_value, count, count1, count2, count3, count4, max, min " +
+                    "select ts,i,j,avg, sum, first_value, first_not_null_value, last_value, last_not_null_value, count, count1, count2, count3, count4, max, min " +
                             "from ( " +
                             "select ts, i, j, n, " +
                             "avg(j) over (partition by i order by ts desc range between unbounded preceding and current row) avg, " +
                             "sum(j) over (partition by i order by ts desc range between unbounded preceding and current row) sum, " +
                             "first_value(j) over (partition by i order by ts desc range between unbounded preceding and current row) first_value, " +
                             "first_not_null_value(j) over (partition by i order by ts desc range between unbounded preceding and current row) first_not_null_value, " +
+                            "last_value(j) over (partition by i order by ts desc range between unbounded preceding and current row) last_value, " +
+                            "last_not_null_value(j) over (partition by i order by ts desc range between unbounded preceding and current row) last_not_null_value, " +
                             "count(*) over (partition by i order by ts desc range between unbounded preceding and current row) count, " +
                             "count(j) over (partition by i order by ts desc range between unbounded preceding and current row) count1, " +
                             "count(s) over (partition by i order by ts desc range between unbounded preceding and current row) count2, " +
@@ -1610,24 +1703,26 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000002Z\t1\t4\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000001Z\t1\t2\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000001Z\t1\t0\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t3\t2.0\t6.0\t4.0\t4.0\t3\t3\t3\t3\t3\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t1\t2.0\t6.0\t4.0\t4.0\t3\t3\t3\t3\t3\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t0\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t3\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.5\t3.0\t0.0\t0.0\t2\t2\t2\t2\t2\t3.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t4\t1.5\t3.0\t0.0\t0.0\t2\t2\t2\t2\t2\t3.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000000Z\t0\t2\t2.0\t8.0\t0.0\t0.0\t4\t4\t4\t4\t4\t4.0\t0.0\n",
-                    "select ts,i,j,avg, sum, first_value, first_not_null_value, count, count1, count2, count3, count4, max, min " +
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.000002Z\t1\t4\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000001Z\t1\t2\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000001Z\t1\t0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t3\t2.0\t6.0\t4.0\t4.0\t0.0\t0.0\t3\t3\t3\t3\t3\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\t2.0\t6.0\t4.0\t4.0\t0.0\t0.0\t3\t3\t3\t3\t3\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t0\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t3\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.5\t3.0\t0.0\t0.0\t3.0\t3.0\t2\t2\t2\t2\t2\t3.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t4\t1.5\t3.0\t0.0\t0.0\t3.0\t3.0\t2\t2\t2\t2\t2\t3.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000000Z\t0\t2\t2.0\t8.0\t0.0\t0.0\t4.0\t4.0\t4\t4\t4\t4\t4\t4.0\t0.0\n",
+                    "select ts,i,j,avg, sum, first_value, first_not_null_value, last_value, last_not_null_value, count, count1, count2, count3, count4, max, min " +
                             "from ( " +
                             "select ts, i, j, n, " +
                             "avg(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding) avg, " +
                             "sum(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding) sum, " +
                             "first_value(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding) first_value, " +
                             "first_not_null_value(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding) first_not_null_value, " +
+                            "last_value(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding) last_value, " +
+                            "last_not_null_value(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding) last_not_null_value, " +
                             "count(*) over (partition by i order by ts desc range between unbounded preceding and 1 preceding) count, " +
                             "count(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding) count1, " +
                             "count(s) over (partition by i order by ts desc range between unbounded preceding and 1 preceding) count2, " +
@@ -1656,6 +1751,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "sum(j) over (partition by i order by ts range between 4 preceding and current row), " +
                             "first_value(j) over (partition by i order by ts range between 4 preceding and current row), " +
                             "first_not_null_value(j) over (partition by i order by ts range between 4 preceding and current row), " +
+                            "last_value(j) over (partition by i order by ts range between 4 preceding and current row), " +
+                            "last_not_null_value(j) over (partition by i order by ts range between 4 preceding and current row), " +
                             "count(*) over (partition by i order by ts range between 4 preceding and current row), " +
                             "count(j) over (partition by i order by ts range between 4 preceding and current row), " +
                             "count(s) over (partition by i order by ts range between 4 preceding and current row), " +
@@ -1676,6 +1773,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "sum(j) over (partition by i order by ts range between unbounded preceding and current row), " +
                             "first_value(j) over (partition by i order by ts range between unbounded preceding and current row), " +
                             "first_not_null_value(j) over (partition by i order by ts range between unbounded preceding and current row), " +
+                            "last_value(j) over (partition by i order by ts range between unbounded preceding and current row), " +
+                            "last_not_null_value(j) over (partition by i order by ts range between unbounded preceding and current row), " +
                             "count(*) over (partition by i order by ts range between unbounded preceding and current row), " +
                             "count(j) over (partition by i order by ts range between unbounded preceding and current row), " +
                             "count(s) over (partition by i order by ts range between unbounded preceding and current row), " +
@@ -1690,19 +1789,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t4.0\t4.0\t4.0\t2\t2\t2\t2\t2\t4.0\t0.0\n",
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t4.0\t4.0\t4.0\t0.0\t0.0\t2\t2\t2\t2\t2\t4.0\t0.0\n",
                     "select ts, i, j, " +
                             "avg(j) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
                             "sum(j) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
                             "first_value(j) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
                             "first_not_null_value(j) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
+                            "last_value(j) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
+                            "last_not_null_value(j) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
                             "count(*) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
                             "count(j) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
                             "count(s) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
@@ -1916,22 +2017,24 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into cpu select rnd_symbol('A', 'B', 'C'), x from long_sequence(1000)");
 
             assertQueryNoLeakCheck(
-                    "hostname\tusage_system\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tmax\tmin\n" +
-                            "A\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1.0\t1.0\n" +
-                            "A\t2.0\t1.5\t3.0\t1.0\t1.0\t2\t2\t2.0\t1.0\n" +
-                            "B\t3.0\t3.0\t3.0\t3.0\t3.0\t1\t1\t3.0\t3.0\n" +
-                            "C\t4.0\t4.0\t4.0\t4.0\t4.0\t1\t1\t4.0\t4.0\n" +
-                            "C\t5.0\t4.5\t9.0\t4.0\t4.0\t2\t2\t5.0\t4.0\n" +
-                            "C\t6.0\t5.0\t15.0\t4.0\t4.0\t3\t3\t6.0\t4.0\n" +
-                            "C\t7.0\t5.5\t22.0\t4.0\t4.0\t4\t4\t7.0\t4.0\n" +
-                            "B\t8.0\t5.5\t11.0\t3.0\t3.0\t2\t2\t8.0\t3.0\n" +
-                            "A\t9.0\t4.0\t12.0\t1.0\t1.0\t3\t3\t9.0\t1.0\n" +
-                            "B\t10.0\t7.0\t21.0\t3.0\t3.0\t3\t3\t10.0\t3.0\n",
+                    "hostname\tusage_system\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tmax\tmin\n" +
+                            "A\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1.0\t1.0\n" +
+                            "A\t2.0\t1.5\t3.0\t1.0\t1.0\t2.0\t2.0\t2\t2\t2.0\t1.0\n" +
+                            "B\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t1\t1\t3.0\t3.0\n" +
+                            "C\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t1\t1\t4.0\t4.0\n" +
+                            "C\t5.0\t4.5\t9.0\t4.0\t4.0\t5.0\t5.0\t2\t2\t5.0\t4.0\n" +
+                            "C\t6.0\t5.0\t15.0\t4.0\t4.0\t6.0\t6.0\t3\t3\t6.0\t4.0\n" +
+                            "C\t7.0\t5.5\t22.0\t4.0\t4.0\t7.0\t7.0\t4\t4\t7.0\t4.0\n" +
+                            "B\t8.0\t5.5\t11.0\t3.0\t3.0\t8.0\t8.0\t2\t2\t8.0\t3.0\n" +
+                            "A\t9.0\t4.0\t12.0\t1.0\t1.0\t9.0\t9.0\t3\t3\t9.0\t1.0\n" +
+                            "B\t10.0\t7.0\t21.0\t3.0\t3.0\t10.0\t10.0\t3\t3\t10.0\t3.0\n",
                     "select hostname, usage_system, " +
                             "avg(usage_system) over(partition by hostname rows between 50 preceding and current row), " +
                             "sum(usage_system) over(partition by hostname rows between 50 preceding and current row), " +
                             "first_value(usage_system) over(partition by hostname rows between 50 preceding and current row), " +
                             "first_not_null_value(usage_system) over(partition by hostname rows between 50 preceding and current row), " +
+                            "last_value(usage_system) over(partition by hostname rows between 50 preceding and current row), " +
+                            "last_not_null_value(usage_system) over(partition by hostname rows between 50 preceding and current row), " +
                             "count(*) over(partition by hostname rows between 50 preceding and current row), " +
                             "count(usage_system) over(partition by hostname rows between 50 preceding and current row), " +
                             "max(usage_system) over(partition by hostname rows between 50 preceding and current row), " +
@@ -1953,14 +2056,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into x values ('aaa', 2);");
 
             assertQueryNoLeakCheck(
-                    "sym\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tmax\tmin\n" +
-                            "aaa\t1.5\t3.0\t1.0\t1.0\t2\t2\t2.0\t1.0\n" +
-                            "aaa\t1.5\t3.0\t1.0\t1.0\t2\t2\t2.0\t1.0\n",
+                    "sym\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tmax\tmin\n" +
+                            "aaa\t1.5\t3.0\t1.0\t1.0\t2.0\t2.0\t2\t2\t2.0\t1.0\n" +
+                            "aaa\t1.5\t3.0\t1.0\t1.0\t2.0\t2.0\t2\t2\t2.0\t1.0\n",
                     "SELECT sym, " +
                             "avg(i) OVER(PARTITION BY sym LIKE '%aaa%'), " +
                             "sum(i) OVER(PARTITION BY sym LIKE '%aaa%'), " +
                             "first_value(i) OVER(PARTITION BY sym LIKE '%aaa%'), " +
                             "first_not_null_value(i) OVER(PARTITION BY sym LIKE '%aaa%'), " +
+                            "last_value(i) OVER(PARTITION BY sym LIKE '%aaa%'), " +
+                            "last_not_null_value(i) OVER(PARTITION BY sym LIKE '%aaa%'), " +
                             "count(i) OVER(PARTITION BY sym LIKE '%aaa%'), " +
                             "count(sym) OVER(PARTITION BY sym LIKE '%aaa%'), " +
                             "max(i) OVER(PARTITION BY sym LIKE '%aaa%'), " +
@@ -1981,14 +2086,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into x values ('aaa', 2, '2023-11-09T01:00:00.000000');");
 
             assertQueryNoLeakCheck(
-                    "ts\tsym\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tmax\tmin\n" +
-                            "2023-11-09T00:00:00.000000Z\taaa\t1.0\t1.0\t1.0\t1.0\t1\t1\t1.0\t1.0\n" +
-                            "2023-11-09T01:00:00.000000Z\taaa\t1.5\t3.0\t1.0\t1.0\t2\t2\t2.0\t1.0\n",
+                    "ts\tsym\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tmax\tmin\n" +
+                            "2023-11-09T00:00:00.000000Z\taaa\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1.0\t1.0\n" +
+                            "2023-11-09T01:00:00.000000Z\taaa\t1.5\t3.0\t1.0\t1.0\t2.0\t2.0\t2\t2\t2.0\t1.0\n",
                     "SELECT ts, sym, " +
                             "avg(i) OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts), " +
                             "sum(i) OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts), " +
                             "first_value(i) OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts), " +
                             "first_not_null_value(i) OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts), " +
+                            "last_value(i) OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts), " +
+                            "last_not_null_value(i) OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts), " +
                             "count(i) OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts), " +
                             "count(sym) OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts), " +
                             "max(i) OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts), " +
@@ -2039,19 +2146,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t1.5\t3.0\t1.0\t1.0\t2\t2\t2\t2\t2.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\t2.0\t6.0\t1.0\t1.0\t3\t3\t3\t3\t3.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t2.5\t10.0\t1.0\t1.0\t4\t4\t4\t4\t4.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t10.0\t1.0\t1.0\t5\t5\t5\t5\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.8333333333333333\t11.0\t1.0\t1.0\t6\t6\t6\t6\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t1.8571428571428572\t13.0\t1.0\t1.0\t7\t7\t7\t7\t4.0\t0.0\n",
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t1.5\t3.0\t1.0\t1.0\t2.0\t2.0\t2\t2\t2\t2\t2.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t2.0\t6.0\t1.0\t1.0\t3.0\t3.0\t3\t3\t3\t3\t3.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t2.5\t10.0\t1.0\t1.0\t4.0\t4.0\t4\t4\t4\t4\t4.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t10.0\t1.0\t1.0\t0.0\t0.0\t5\t5\t5\t5\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.8333333333333333\t11.0\t1.0\t1.0\t1.0\t1.0\t6\t6\t6\t6\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t1.8571428571428572\t13.0\t1.0\t1.0\t2.0\t2.0\t7\t7\t7\t7\t4.0\t0.0\n",
                     "select ts, i, j, " +
                             "avg(d) over (order by ts rows unbounded preceding)," +
                             "sum(d) over (order by ts rows unbounded preceding), " +
                             "first_value(d) over (order by ts rows unbounded preceding), " +
                             "first_not_null_value(d) over (order by ts rows unbounded preceding), " +
+                            "last_value(d) over (order by ts rows unbounded preceding), " +
+                            "last_not_null_value(d) over (order by ts rows unbounded preceding), " +
                             "count(*) over (order by ts rows unbounded preceding), " +
                             "count(d) over (order by ts rows unbounded preceding), " +
                             "count(s) over (order by ts rows unbounded preceding), " +
@@ -2065,19 +2174,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t1.5\t3.0\t1.0\t1.0\t2\t2\t2\t2\t2.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\t2.0\t6.0\t1.0\t1.0\t3\t3\t3\t3\t3.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t1.8571428571428572\t13.0\t1.0\t1.0\t7\t7\t7\t7\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t1.5\t6.0\t1.0\t1.0\t4\t4\t4\t4\t3.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.4\t7.0\t1.0\t1.0\t5\t5\t5\t5\t3.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t1.5\t9.0\t1.0\t1.0\t6\t6\t6\t6\t3.0\t0.0\n",
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t1.5\t3.0\t1.0\t1.0\t2.0\t2.0\t2\t2\t2\t2\t2.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t2.0\t6.0\t1.0\t1.0\t3.0\t3.0\t3\t3\t3\t3\t3.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t1.8571428571428572\t13.0\t1.0\t1.0\t4.0\t4.0\t7\t7\t7\t7\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t1.5\t6.0\t1.0\t1.0\t0.0\t0.0\t4\t4\t4\t4\t3.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.4\t7.0\t1.0\t1.0\t1.0\t1.0\t5\t5\t5\t5\t3.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t1.5\t9.0\t1.0\t1.0\t2.0\t2.0\t6\t6\t6\t6\t3.0\t0.0\n",
                     "select ts, i, j, " +
                             "avg(j) over (order by i, j rows unbounded preceding), " +
                             "sum(j) over (order by i, j rows unbounded preceding), " +
                             "first_value(j) over (order by i, j rows unbounded preceding), " +
                             "first_not_null_value(j) over (order by i, j rows unbounded preceding), " +
+                            "last_value(j) over (order by i, j rows unbounded preceding), " +
+                            "last_not_null_value(j) over (order by i, j rows unbounded preceding), " +
                             "count(*) over (order by i, j rows unbounded preceding), " +
                             "count(s) over (order by i, j rows unbounded preceding), " +
                             "count(d) over (order by i, j rows unbounded preceding), " +
@@ -2091,19 +2202,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t2.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\t3.0\t3.0\t3.0\t3.0\t1\t1\t1\t1\t3.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t4.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0.0\t0.0\t0.0\t1\t1\t1\t1\t0.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t2.0\t2.0\n",
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t2.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t1\t1\t1\t1\t3.0\t3.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t4.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t1\t1\t1\t1\t0.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t2.0\t2.0\n",
                     "select ts, i, j, " +
                             "avg(d) over (order by ts rows current row), " +
                             "sum(d) over (order by ts rows current row), " +
                             "first_value(d) over (order by ts rows current row), " +
                             "first_not_null_value(d) over (order by ts rows current row), " +
+                            "last_value(d) over (order by ts rows current row), " +
+                            "last_not_null_value(d) over (order by ts rows current row), " +
                             "count(*) over (order by ts rows current row), " +
                             "count(s) over (order by ts rows current row), " +
                             "count(d) over (order by ts rows current row), " +
@@ -2117,19 +2230,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t0\t0\t0\t0\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\t2.0\t2.0\t0\t0\t0\t0\t2.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\t3.0\t3.0\t3.0\t3.0\t0\t0\t0\t0\t3.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t0\t0\t0\t0\t4.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0.0\t0.0\t0.0\t0\t0\t0\t0\t0.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.0\t1.0\t1.0\t1.0\t0\t0\t0\t0\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2.0\t2.0\t0\t0\t0\t0\t2.0\t2.0\n",
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t0\t0\t0\t0\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t0\t0\t0\t0\t2.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t0\t0\t0\t0\t3.0\t3.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t0\t0\t0\t0\t4.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0\t0\t0\t0\t0.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t0\t0\t0\t0\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t0\t0\t0\t0\t2.0\t2.0\n",
                     "select ts, i, j, " +
                             "avg(d) over (order by ts desc rows current row), " +
                             "sum(d) over (order by ts desc rows current row), " +
                             "first_value(d) over (order by ts desc rows current row), " +
                             "first_not_null_value(d) over (order by ts desc rows current row), " +
+                            "last_value(d) over (order by ts desc rows current row), " +
+                            "last_not_null_value(d) over (order by ts desc rows current row), " +
                             "count(*) over (order by ts desc rows current row), " +
                             "count(s) over (order by ts desc rows current row), " +
                             "count(d) over (order by ts desc rows current row), " +
@@ -2143,19 +2258,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\t1\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t1.0\t1.0\t1.0\t1.0\t2\t1\t1\t1\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\t1.5\t3.0\t1.0\t1.0\t3\t2\t2\t2\t2.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t2.0\t6.0\t1.0\t1.0\t4\t3\t3\t3\t3.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t2.5\t10.0\t1.0\t1.0\t5\t4\t4\t4\t4.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\t2.0\t10.0\t1.0\t1.0\t6\t5\t5\t5\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t1.8333333333333333\t11.0\t1.0\t1.0\t7\t6\t6\t6\t4.0\t0.0\n",
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\tnull\t1.0\t1\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t2\t1\t1\t1\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t1.5\t3.0\t1.0\t1.0\t2.0\t2.0\t3\t2\t2\t2\t2.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t2.0\t6.0\t1.0\t1.0\t3.0\t3.0\t4\t3\t3\t3\t3.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t2.5\t10.0\t1.0\t1.0\t4.0\t4.0\t5\t4\t4\t4\t4.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t2.0\t10.0\t1.0\t1.0\t0.0\t0.0\t6\t5\t5\t5\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t1.8333333333333333\t11.0\t1.0\t1.0\t1.0\t1.0\t7\t6\t6\t6\t4.0\t0.0\n",
                     "select ts, i, j, " +
                             "avg(d) over (order by ts rows between unbounded preceding and 1 preceding), " +
                             "sum(d) over (order by ts rows between unbounded preceding and 1 preceding), " +
                             "first_value(d) over (order by ts rows between unbounded preceding and 1 preceding), " +
                             "first_not_null_value(d) over (order by ts rows between unbounded preceding and 1 preceding), " +
+                            "last_value(d) over (order by ts rows between unbounded preceding and 1 preceding), " +
+                            "last_not_null_value(d) over (order by ts rows between unbounded preceding and 1 preceding), " +
                             "count(*) over (order by ts rows between unbounded preceding and 1 preceding), " +
                             "count(s) over (order by ts rows between unbounded preceding and 1 preceding), " +
                             "count(d) over (order by ts rows between unbounded preceding and 1 preceding), " +
@@ -2169,19 +2286,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\t1\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\tnull\t2\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\t1.0\t1.0\t1.0\t1.0\t3\t1\t1\t1\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t1.5\t3.0\t1.0\t1.0\t3\t2\t2\t2\t2.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t6.0\t1.0\t1.0\t3\t3\t3\t3\t3.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\t3.0\t9.0\t2.0\t2.0\t3\t3\t3\t3\t4.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.3333333333333335\t7.0\t3.0\t3.0\t3\t3\t3\t3\t4.0\t0.0\n",
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\tnull\t0.0\t1\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\tnull\tnull\t0.0\t2\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t3\t1\t1\t1\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t1.5\t3.0\t1.0\t1.0\t2.0\t2.0\t3\t2\t2\t2\t2.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t6.0\t1.0\t1.0\t3.0\t3.0\t3\t3\t3\t3\t3.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t3.0\t9.0\t2.0\t2.0\t4.0\t4.0\t3\t3\t3\t3\t4.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.3333333333333335\t7.0\t3.0\t3.0\t0.0\t0.0\t3\t3\t3\t3\t4.0\t0.0\n",
                     "select ts, i, j, " +
                             "avg(d) over (order by ts rows between 4 preceding and 2 preceding), " +
                             "sum(d) over (order by ts rows between 4 preceding and 2 preceding), " +
                             "first_value(d) over (order by ts rows between 4 preceding and 2 preceding), " +
                             "first_not_null_value(d) over (order by ts rows between 4 preceding and 2 preceding), " +
+                            "last_value(d) over (order by ts rows between 4 preceding and 2 preceding), " +
+                            "last_not_null_value(d) over (order by ts rows between 4 preceding and 2 preceding), " +
                             "count(*) over (order by ts rows between 4 preceding and 2 preceding), " +
                             "count(s) over (order by ts rows between 4 preceding and 2 preceding), " +
                             "count(d) over (order by ts rows between 4 preceding and 2 preceding), " +
@@ -2195,19 +2314,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t2.3333333333333335\t7.0\t0.0\t0.0\t3\t3\t3\t3\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t1.6666666666666667\t5.0\t1.0\t1.0\t3\t3\t3\t3\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\t1.0\t3.0\t2.0\t2.0\t3\t3\t3\t3\t2.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t1.5\t3.0\t2.0\t2.0\t3\t2\t2\t2\t2.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t2.0\t2.0\t2.0\t3\t1\t1\t1\t2.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\tnull\tnull\tnull\tnull\t2\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\tnull\tnull\tnull\tnull\t1\t0\t0\t0\tnull\tnull\n",
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t2.3333333333333335\t7.0\t0.0\t0.0\t3.0\t3.0\t3\t3\t3\t3\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t1.6666666666666667\t5.0\t1.0\t1.0\t4.0\t4.0\t3\t3\t3\t3\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t1.0\t3.0\t2.0\t2.0\t0.0\t0.0\t3\t3\t3\t3\t2.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t1.5\t3.0\t2.0\t2.0\t1.0\t1.0\t3\t2\t2\t2\t2.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t3\t1\t1\t1\t2.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\tnull\tnull\tnull\tnull\tnull\t3.0\t2\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\tnull\tnull\tnull\tnull\tnull\t3.0\t1\t0\t0\t0\tnull\tnull\n",
                     "select ts, i, j, " +
                             "avg(d) over (order by ts desc rows between 4 preceding and 2 preceding), " +
                             "sum(d) over (order by ts desc rows between 4 preceding and 2 preceding), " +
                             "first_value(d) over (order by ts desc rows between 4 preceding and 2 preceding), " +
                             "first_not_null_value(d) over (order by ts desc rows between 4 preceding and 2 preceding), " +
+                            "last_value(d) over (order by ts desc rows between 4 preceding and 2 preceding), " +
+                            "last_not_null_value(d) over (order by ts desc rows between 4 preceding and 2 preceding), " +
                             "count(*) over (order by ts desc rows between 4 preceding and 2 preceding), " +
                             "count(s) over (order by ts desc rows between 4 preceding and 2 preceding), " +
                             "count(d) over (order by ts desc rows between 4 preceding and 2 preceding), " +
@@ -2221,19 +2342,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.8571428571428572\t13.0\t1.0\t1.0\t7\t7\t7\t7\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t1.8571428571428572\t13.0\t1.0\t1.0\t7\t7\t7\t7\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\t1.8571428571428572\t13.0\t1.0\t1.0\t7\t7\t7\t7\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t1.8571428571428572\t13.0\t1.0\t1.0\t7\t7\t7\t7\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t1.8571428571428572\t13.0\t1.0\t1.0\t7\t7\t7\t7\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.8571428571428572\t13.0\t1.0\t1.0\t7\t7\t7\t7\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t1.8571428571428572\t13.0\t1.0\t1.0\t7\t7\t7\t7\t4.0\t0.0\n",
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.8571428571428572\t13.0\t1.0\t1.0\t4.0\t4.0\t7\t7\t7\t7\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t1.8571428571428572\t13.0\t1.0\t1.0\t4.0\t4.0\t7\t7\t7\t7\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t1.8571428571428572\t13.0\t1.0\t1.0\t4.0\t4.0\t7\t7\t7\t7\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t1.8571428571428572\t13.0\t1.0\t1.0\t4.0\t4.0\t7\t7\t7\t7\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t1.8571428571428572\t13.0\t1.0\t1.0\t4.0\t4.0\t7\t7\t7\t7\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.8571428571428572\t13.0\t1.0\t1.0\t4.0\t4.0\t7\t7\t7\t7\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t1.8571428571428572\t13.0\t1.0\t1.0\t4.0\t4.0\t7\t7\t7\t7\t4.0\t0.0\n",
                     "select ts, i, j, " +
                             "avg(d) over (order by i rows between unbounded preceding and unbounded following), " +
                             "sum(d) over (order by i rows between unbounded preceding and unbounded following), " +
                             "first_value(d) over (order by i rows between unbounded preceding and unbounded following), " +
                             "first_not_null_value(d) over (order by i rows between unbounded preceding and unbounded following), " +
+                            "last_value(d) over (order by i rows between unbounded preceding and unbounded following), " +
+                            "last_not_null_value(d) over (order by i rows between unbounded preceding and unbounded following), " +
                             "count(*) over (order by i rows between unbounded preceding and unbounded following), " +
                             "count(s) over (order by i rows between unbounded preceding and unbounded following), " +
                             "count(d) over (order by i rows between unbounded preceding and unbounded following), " +
@@ -2247,19 +2370,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t2.0\t6.0\t1.0\t1.0\t3\t3\t3\t3\t3.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t6.0\t1.0\t1.0\t3\t3\t3\t3\t3.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\t2.0\t6.0\t1.0\t1.0\t3\t3\t3\t3\t3.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t1.75\t7.0\t4.0\t4.0\t4\t4\t4\t4\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t1.75\t7.0\t4.0\t4.0\t4\t4\t4\t4\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.75\t7.0\t4.0\t4.0\t4\t4\t4\t4\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t1.75\t7.0\t4.0\t4.0\t4\t4\t4\t4\t4.0\t0.0\n",
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t2.0\t6.0\t1.0\t1.0\t3.0\t3.0\t3\t3\t3\t3\t3.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t6.0\t1.0\t1.0\t3.0\t3.0\t3\t3\t3\t3\t3.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t2.0\t6.0\t1.0\t1.0\t3.0\t3.0\t3\t3\t3\t3\t3.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t1.75\t7.0\t4.0\t4.0\t2.0\t2.0\t4\t4\t4\t4\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t1.75\t7.0\t4.0\t4.0\t2.0\t2.0\t4\t4\t4\t4\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.75\t7.0\t4.0\t4.0\t2.0\t2.0\t4\t4\t4\t4\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t1.75\t7.0\t4.0\t4.0\t2.0\t2.0\t4\t4\t4\t4\t4.0\t0.0\n",
                     "select ts, i, j, " +
                             "avg(d) over (partition by i rows between unbounded preceding and unbounded following), " +
                             "sum(d) over (partition by i rows between unbounded preceding and unbounded following), " +
                             "first_value(d) over (partition by i rows between unbounded preceding and unbounded following), " +
                             "first_not_null_value(d) over (partition by i rows between unbounded preceding and unbounded following), " +
+                            "last_value(d) over (partition by i rows between unbounded preceding and unbounded following), " +
+                            "last_not_null_value(d) over (partition by i rows between unbounded preceding and unbounded following), " +
                             "count(*) over (partition by i rows between unbounded preceding and unbounded following), " +
                             "count(s) over (partition by i rows between unbounded preceding and unbounded following), " +
                             "count(d) over (partition by i rows between unbounded preceding and unbounded following), " +
@@ -2272,14 +2397,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     false
             );
 
-            String rowsResult1 = "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tmax\tmin\n" +
-                    "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1.0\t1.0\n" +
-                    "1970-01-01T00:00:00.000002Z\t0\t2\t1.5\t3.0\t1.0\t1.0\t2\t2\t2\t2\t2.0\t1.0\n" +
-                    "1970-01-01T00:00:00.000003Z\t0\t3\t2.0\t6.0\t1.0\t1.0\t3\t3\t3\t3\t3.0\t1.0\n" +
-                    "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t4.0\t4.0\n" +
-                    "1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t4.0\t4.0\t4.0\t2\t2\t2\t2\t4.0\t0.0\n" +
-                    "1970-01-01T00:00:00.000006Z\t1\t1\t1.6666666666666667\t5.0\t4.0\t4.0\t3\t3\t3\t3\t4.0\t0.0\n" +
-                    "1970-01-01T00:00:00.000007Z\t1\t2\t1.75\t7.0\t4.0\t4.0\t4\t4\t4\t4\t4.0\t0.0\n";
+            String rowsResult1 = "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tmax\tmin\n" +
+                    "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1.0\t1.0\n" +
+                    "1970-01-01T00:00:00.000002Z\t0\t2\t1.5\t3.0\t1.0\t1.0\t2.0\t2.0\t2\t2\t2\t2\t2.0\t1.0\n" +
+                    "1970-01-01T00:00:00.000003Z\t0\t3\t2.0\t6.0\t1.0\t1.0\t3.0\t3.0\t3\t3\t3\t3\t3.0\t1.0\n" +
+                    "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t4.0\t4.0\n" +
+                    "1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t4.0\t4.0\t4.0\t0.0\t0.0\t2\t2\t2\t2\t4.0\t0.0\n" +
+                    "1970-01-01T00:00:00.000006Z\t1\t1\t1.6666666666666667\t5.0\t4.0\t4.0\t1.0\t1.0\t3\t3\t3\t3\t4.0\t0.0\n" +
+                    "1970-01-01T00:00:00.000007Z\t1\t2\t1.75\t7.0\t4.0\t4.0\t2.0\t2.0\t4\t4\t4\t4\t4.0\t0.0\n";
 
             assertQueryNoLeakCheck(
                     rowsResult1,
@@ -2288,6 +2413,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "sum(d) over (partition by i order by ts rows unbounded preceding), " +
                             "first_value(d) over (partition by i order by ts rows unbounded preceding), " +
                             "first_not_null_value(d) over (partition by i order by ts rows unbounded preceding), " +
+                            "last_value(d) over (partition by i order by ts rows unbounded preceding), " +
+                            "last_not_null_value(d) over (partition by i order by ts rows unbounded preceding), " +
                             "count(*) over (partition by i order by ts rows unbounded preceding), " +
                             "count(s) over (partition by i order by ts rows unbounded preceding), " +
                             "count(d) over (partition by i order by ts rows unbounded preceding), " +
@@ -2306,6 +2433,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "sum(j) over (partition by i order by ts rows unbounded preceding), " +
                             "first_value(j) over (partition by i order by ts rows unbounded preceding), " +
                             "first_not_null_value(j) over (partition by i order by ts rows unbounded preceding), " +
+                            "last_value(j) over (partition by i order by ts rows unbounded preceding), " +
+                            "last_not_null_value(j) over (partition by i order by ts rows unbounded preceding), " +
                             "count(*) over (partition by i order by ts rows unbounded preceding), " +
                             "count(s) over (partition by i order by ts rows unbounded preceding), " +
                             "count(d) over (partition by i order by ts rows unbounded preceding), " +
@@ -2324,6 +2453,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "sum(j) over (partition by i rows unbounded preceding), " +
                             "first_value(j) over (partition by i rows unbounded preceding), " +
                             "first_not_null_value(j) over (partition by i rows unbounded preceding), " +
+                            "last_value(j) over (partition by i rows unbounded preceding), " +
+                            "last_not_null_value(j) over (partition by i rows unbounded preceding), " +
                             "count(*) over (partition by i rows unbounded preceding), " +
                             "count(s) over (partition by i rows unbounded preceding), " +
                             "count(d) over (partition by i rows unbounded preceding), " +
@@ -2342,6 +2473,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "sum(j) over (partition by i rows between unbounded preceding and current row), " +
                             "first_value(j) over (partition by i rows between unbounded preceding and current row), " +
                             "first_not_null_value(j) over (partition by i rows between unbounded preceding and current row), " +
+                            "last_value(j) over (partition by i rows between unbounded preceding and current row), " +
+                            "last_not_null_value(j) over (partition by i rows between unbounded preceding and current row), " +
                             "count(*) over (partition by i rows between unbounded preceding and current row), " +
                             "count(s) over (partition by i rows between unbounded preceding and current row), " +
                             "count(d) over (partition by i rows between unbounded preceding and current row), " +
@@ -2360,6 +2493,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "sum(j) over (partition by i order by ts rows between 10 preceding and current row), " +
                             "first_value(j) over (partition by i order by ts rows between 10 preceding and current row), " +
                             "first_not_null_value(j) over (partition by i order by ts rows between 10 preceding and current row), " +
+                            "last_value(j) over (partition by i order by ts rows between 10 preceding and current row), " +
+                            "last_not_null_value(j) over (partition by i order by ts rows between 10 preceding and current row), " +
                             "count(*) over (partition by i order by ts rows between 10 preceding and current row), " +
                             "count(s) over (partition by i order by ts rows between 10 preceding and current row), " +
                             "count(d) over (partition by i order by ts rows between 10 preceding and current row), " +
@@ -2378,6 +2513,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "sum(j) over (partition by i order by ts rows between 3 preceding and current row), " +
                             "first_value(j) over (partition by i order by ts rows between 3 preceding and current row), " +
                             "first_not_null_value(j) over (partition by i order by ts rows between 3 preceding and current row), " +
+                            "last_value(j) over (partition by i order by ts rows between 3 preceding and current row), " +
+                            "last_not_null_value(j) over (partition by i order by ts rows between 3 preceding and current row), " +
                             "count(*) over (partition by i order by ts rows between 3 preceding and current row), " +
                             "count(s) over (partition by i order by ts rows between 3 preceding and current row), " +
                             "count(d) over (partition by i order by ts rows between 3 preceding and current row), " +
@@ -2391,19 +2528,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t1.5\t3.0\t1.0\t1.0\t2\t2\t2\t2\t2\t2.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\t2.5\t5.0\t2.0\t2.0\t2\t2\t2\t2\t2\t3.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t4.0\t4.0\t4.0\t2\t2\t2\t2\t2\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\t0.5\t1.0\t0.0\t0.0\t2\t2\t2\t2\t2\t1.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t1.5\t3.0\t1.0\t1.0\t2\t2\t2\t2\t2\t2.0\t1.0\n",
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t1.5\t3.0\t1.0\t1.0\t2.0\t2.0\t2\t2\t2\t2\t2\t2.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t2.5\t5.0\t2.0\t2.0\t3.0\t3.0\t2\t2\t2\t2\t2\t3.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t4.0\t4.0\t4.0\t0.0\t0.0\t2\t2\t2\t2\t2\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t0.5\t1.0\t0.0\t0.0\t1.0\t1.0\t2\t2\t2\t2\t2\t1.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t1.5\t3.0\t1.0\t1.0\t2.0\t2.0\t2\t2\t2\t2\t2\t2.0\t1.0\n",
                     "select ts, i, j, " +
                             "avg(j) over (partition by i order by ts rows between 1 preceding and current row), " +
                             "sum(j) over (partition by i order by ts rows between 1 preceding and current row), " +
                             "first_value(j) over (partition by i order by ts rows between 1 preceding and current row), " +
                             "first_not_null_value(j) over (partition by i order by ts rows between 1 preceding and current row), " +
+                            "last_value(j) over (partition by i order by ts rows between 1 preceding and current row), " +
+                            "last_not_null_value(j) over (partition by i order by ts rows between 1 preceding and current row), " +
                             "count(*) over (partition by i order by ts rows between 1 preceding and current row), " +
                             "count(j) over (partition by i order by ts rows between 1 preceding and current row), " +
                             "count(s) over (partition by i order by ts rows between 1 preceding and current row), " +
@@ -2418,19 +2557,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t1.5\t3.0\t1.0\t1.0\t2\t2\t2\t2\t2\t2.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\t2.0\t6.0\t1.0\t1.0\t3\t3\t3\t3\t3\t3.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t4.0\t4.0\t4.0\t2\t2\t2\t2\t2\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.6666666666666667\t5.0\t4.0\t4.0\t3\t3\t3\t3\t3\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t1.0\t3.0\t0.0\t0.0\t3\t3\t3\t3\t3\t2.0\t0.0\n",
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t1.5\t3.0\t1.0\t1.0\t2.0\t2.0\t2\t2\t2\t2\t2\t2.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t2.0\t6.0\t1.0\t1.0\t3.0\t3.0\t3\t3\t3\t3\t3\t3.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t4.0\t4.0\t4.0\t0.0\t0.0\t2\t2\t2\t2\t2\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.6666666666666667\t5.0\t4.0\t4.0\t1.0\t1.0\t3\t3\t3\t3\t3\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t1.0\t3.0\t0.0\t0.0\t2.0\t2.0\t3\t3\t3\t3\t3\t2.0\t0.0\n",
                     "select ts, i, j, " +
                             "avg(j) over (partition by i order by ts rows between 2 preceding and current row), " +
                             "sum(j) over (partition by i order by ts rows between 2 preceding and current row), " +
                             "first_value(j) over (partition by i order by ts rows between 2 preceding and current row), " +
                             "first_not_null_value(j) over (partition by i order by ts rows between 2 preceding and current row), " +
+                            "last_value(j) over (partition by i order by ts rows between 2 preceding and current row), " +
+                            "last_not_null_value(j) over (partition by i order by ts rows between 2 preceding and current row), " +
                             "count(*) over (partition by i order by ts rows between 2 preceding and current row), " +
                             "count(j) over (partition by i order by ts rows between 2 preceding and current row), " +
                             "count(s) over (partition by i order by ts rows between 2 preceding and current row), " +
@@ -2444,14 +2585,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     true
             );
 
-            String result2 = "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                    "1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                    "1970-01-01T00:00:00.000002Z\t0\t2\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
-                    "1970-01-01T00:00:00.000003Z\t0\t3\t1.5\t3.0\t1.0\t1.0\t2\t2\t2\t2\t2\t2.0\t1.0\n" +
-                    "1970-01-01T00:00:00.000004Z\t1\t4\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                    "1970-01-01T00:00:00.000005Z\t1\t0\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
-                    "1970-01-01T00:00:00.000006Z\t1\t1\t2.0\t4.0\t4.0\t4.0\t2\t2\t2\t2\t2\t4.0\t0.0\n" +
-                    "1970-01-01T00:00:00.000007Z\t1\t2\t0.5\t1.0\t0.0\t0.0\t2\t2\t2\t2\t2\t1.0\t0.0\n";
+            String result2 = "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                    "1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                    "1970-01-01T00:00:00.000002Z\t0\t2\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
+                    "1970-01-01T00:00:00.000003Z\t0\t3\t1.5\t3.0\t1.0\t1.0\t2.0\t2.0\t2\t2\t2\t2\t2\t2.0\t1.0\n" +
+                    "1970-01-01T00:00:00.000004Z\t1\t4\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                    "1970-01-01T00:00:00.000005Z\t1\t0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
+                    "1970-01-01T00:00:00.000006Z\t1\t1\t2.0\t4.0\t4.0\t4.0\t0.0\t0.0\t2\t2\t2\t2\t2\t4.0\t0.0\n" +
+                    "1970-01-01T00:00:00.000007Z\t1\t2\t0.5\t1.0\t0.0\t0.0\t1.0\t1.0\t2\t2\t2\t2\t2\t1.0\t0.0\n";
 
             assertQueryNoLeakCheck(
                     result2,
@@ -2460,6 +2601,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "sum(j) over (partition by i order by ts rows between 2 preceding and 1 preceding), " +
                             "first_value(j) over (partition by i order by ts rows between 2 preceding and 1 preceding), " +
                             "first_not_null_value(j) over (partition by i order by ts rows between 2 preceding and 1 preceding), " +
+                            "last_value(j) over (partition by i order by ts rows between 2 preceding and 1 preceding), " +
+                            "last_not_null_value(j) over (partition by i order by ts rows between 2 preceding and 1 preceding), " +
                             "count(*) over (partition by i order by ts rows between 2 preceding and 1 preceding), " +
                             "count(j) over (partition by i order by ts rows between 2 preceding and 1 preceding), " +
                             "count(s) over (partition by i order by ts rows between 2 preceding and 1 preceding), " +
@@ -2479,6 +2622,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "sum(j) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row), " +
                             "first_value(j) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row), " +
                             "first_not_null_value(j) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row), " +
+                            "last_value(j) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row), " +
+                            "last_not_null_value(j) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row), " +
                             "count(*) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row), " +
                             "count(j) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row), " +
                             "count(s) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row), " +
@@ -2498,6 +2643,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "sum(j) over (partition by i order by ts rows between 2 preceding and current row exclude current row), " +
                             "first_value(j) over (partition by i order by ts rows between 2 preceding and current row exclude current row), " +
                             "first_not_null_value(j) over (partition by i order by ts rows between 2 preceding and current row exclude current row), " +
+                            "last_value(j) over (partition by i order by ts rows between 2 preceding and current row exclude current row), " +
+                            "last_not_null_value(j) over (partition by i order by ts rows between 2 preceding and current row exclude current row), " +
                             "count(*) over (partition by i order by ts rows between 2 preceding and current row exclude current row), " +
                             "count(j) over (partition by i order by ts rows between 2 preceding and current row exclude current row), " +
                             "count(s) over (partition by i order by ts rows between 2 preceding and current row exclude current row), " +
@@ -2513,19 +2660,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // partitions are smaller than 10 elements so avg is all nulls
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n",
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n",
                     "select ts, i, j, " +
                             "avg(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
                             "sum(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
                             "first_value(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
                             "first_not_null_value(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
+                            "last_value(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
+                            "last_not_null_value(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
                             "count(*) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
                             "count(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
                             "count(s) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
@@ -2539,14 +2688,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     true
             );
 
-            String result3 = "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                    "1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                    "1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                    "1970-01-01T00:00:00.000003Z\t0\t3\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
-                    "1970-01-01T00:00:00.000004Z\t1\t4\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                    "1970-01-01T00:00:00.000005Z\t1\t0\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
-                    "1970-01-01T00:00:00.000006Z\t1\t1\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
-                    "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t4.0\t4.0\t4.0\t2\t2\t2\t2\t2\t4.0\t0.0\n";
+            String result3 = "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                    "1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                    "1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                    "1970-01-01T00:00:00.000003Z\t0\t3\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
+                    "1970-01-01T00:00:00.000004Z\t1\t4\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                    "1970-01-01T00:00:00.000005Z\t1\t0\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                    "1970-01-01T00:00:00.000006Z\t1\t1\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
+                    "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t4.0\t4.0\t4.0\t0.0\t0.0\t2\t2\t2\t2\t2\t4.0\t0.0\n";
 
             assertQueryNoLeakCheck(
                     result3,
@@ -2555,6 +2704,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "sum(j) over (partition by i order by ts rows between unbounded preceding and 2 preceding), " +
                             "first_value(j) over (partition by i order by ts rows between unbounded preceding and 2 preceding), " +
                             "first_not_null_value(j) over (partition by i order by ts rows between unbounded preceding and 2 preceding), " +
+                            "last_value(j) over (partition by i order by ts rows between unbounded preceding and 2 preceding), " +
+                            "last_not_null_value(j) over (partition by i order by ts rows between unbounded preceding and 2 preceding), " +
                             "count(*) over (partition by i order by ts rows between unbounded preceding and 2 preceding), " +
                             "count(j) over (partition by i order by ts rows between unbounded preceding and 2 preceding), " +
                             "count(s) over (partition by i order by ts rows between unbounded preceding and 2 preceding), " +
@@ -2575,6 +2726,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "sum(j) over (partition by i order by ts rows between 10000 preceding and 2 preceding), " +
                             "first_value(j) over (partition by i order by ts rows between 10000 preceding and 2 preceding), " +
                             "first_not_null_value(j) over (partition by i order by ts rows between 10000 preceding and 2 preceding), " +
+                            "last_value(j) over (partition by i order by ts rows between 10000 preceding and 2 preceding), " +
+                            "last_not_null_value(j) over (partition by i order by ts rows between 10000 preceding and 2 preceding), " +
                             "count(*) over (partition by i order by ts rows between 10000 preceding and 2 preceding), " +
                             "count(j) over (partition by i order by ts rows between 10000 preceding and 2 preceding), " +
                             "count(s) over (partition by i order by ts rows between 10000 preceding and 2 preceding), " +
@@ -2590,19 +2743,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // here avg returns j as double because it processes current row only
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\t3.0\t3.0\t3.0\t3.0\t1\t1\t1\t1\t1\t3.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0.0\t0.0\t0.0\t1\t1\t1\t1\t1\t0.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\n",
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t1\t1\t1\t1\t1\t3.0\t3.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t1\t1\t1\t1\t1\t0.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\n",
                     "select ts, i, j, " +
                             "avg(j) over (partition by i order by ts rows current row), " +
                             "sum(j) over (partition by i order by ts rows current row), " +
                             "first_value(j) over (partition by i order by ts rows current row), " +
                             "first_not_null_value(j) over (partition by i order by ts rows current row), " +
+                            "last_value(j) over (partition by i order by ts rows current row), " +
+                            "last_not_null_value(j) over (partition by i order by ts rows current row), " +
                             "count(*) over (partition by i order by ts rows current row), " +
                             "count(j) over (partition by i order by ts rows current row), " +
                             "count(s) over (partition by i order by ts rows current row), " +
@@ -2618,18 +2773,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // test with dependencies not included on column list + column reorder + sort
             assertQueryNoLeakCheck(
-                    "avg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\tts\ti\tj\n" +
-                            "1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\t1970-01-01T00:00:00.000001Z\t0\t1\n" +
-                            "1.5\t3.0\t1.0\t1.0\t2\t2\t2\t2\t2\t2.0\t1.0\t1970-01-01T00:00:00.000002Z\t0\t2\n" +
-                            "2.5\t5.0\t2.0\t2.0\t2\t2\t2\t2\t2\t3.0\t2.0\t1970-01-01T00:00:00.000003Z\t0\t3\n" +
-                            "4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\t1970-01-01T00:00:00.000004Z\t1\t4\n" +
-                            "2.0\t4.0\t4.0\t4.0\t2\t2\t2\t2\t2\t4.0\t0.0\t1970-01-01T00:00:00.000005Z\t1\t0\n" +
-                            "0.5\t1.0\t0.0\t0.0\t2\t2\t2\t2\t2\t1.0\t0.0\t1970-01-01T00:00:00.000006Z\t1\t1\n" +
-                            "1.5\t3.0\t1.0\t1.0\t2\t2\t2\t2\t2\t2.0\t1.0\t1970-01-01T00:00:00.000007Z\t1\t2\n",
+                    "avg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\tts\ti\tj\n" +
+                            "1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\t1970-01-01T00:00:00.000001Z\t0\t1\n" +
+                            "1.5\t3.0\t1.0\t1.0\t2.0\t2.0\t2\t2\t2\t2\t2\t2.0\t1.0\t1970-01-01T00:00:00.000002Z\t0\t2\n" +
+                            "2.5\t5.0\t2.0\t2.0\t3.0\t3.0\t2\t2\t2\t2\t2\t3.0\t2.0\t1970-01-01T00:00:00.000003Z\t0\t3\n" +
+                            "4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\t1970-01-01T00:00:00.000004Z\t1\t4\n" +
+                            "2.0\t4.0\t4.0\t4.0\t0.0\t0.0\t2\t2\t2\t2\t2\t4.0\t0.0\t1970-01-01T00:00:00.000005Z\t1\t0\n" +
+                            "0.5\t1.0\t0.0\t0.0\t1.0\t1.0\t2\t2\t2\t2\t2\t1.0\t0.0\t1970-01-01T00:00:00.000006Z\t1\t1\n" +
+                            "1.5\t3.0\t1.0\t1.0\t2.0\t2.0\t2\t2\t2\t2\t2\t2.0\t1.0\t1970-01-01T00:00:00.000007Z\t1\t2\n",
                     "select avg(j) over (partition by i order by ts rows between 1 preceding and current row), " +
                             "sum(j) over (partition by i order by ts rows between 1 preceding and current row), " +
                             "first_value(j) over (partition by i order by ts rows between 1 preceding and current row), " +
                             "first_not_null_value(j) over (partition by i order by ts rows between 1 preceding and current row), " +
+                            "last_value(j) over (partition by i order by ts rows between 1 preceding and current row), " +
+                            "last_not_null_value(j) over (partition by i order by ts rows between 1 preceding and current row), " +
                             "count(*) over (partition by i order by ts rows between 1 preceding and current row), " +
                             "count(j) over (partition by i order by ts rows between 1 preceding and current row), " +
                             "count(s) over (partition by i order by ts rows between 1 preceding and current row), " +
@@ -2645,18 +2802,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "avg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\ti\tj\n" +
-                            "1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\t0\t1\n" +
-                            "1.5\t3.0\t1.0\t1.0\t2\t2\t2\t2\t2\t2.0\t1.0\t0\t2\n" +
-                            "2.5\t5.0\t2.0\t2.0\t2\t2\t2\t2\t2\t3.0\t2.0\t0\t3\n" +
-                            "4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\t1\t4\n" +
-                            "2.0\t4.0\t4.0\t4.0\t2\t2\t2\t2\t2\t4.0\t0.0\t1\t0\n" +
-                            "0.5\t1.0\t0.0\t0.0\t2\t2\t2\t2\t2\t1.0\t0.0\t1\t1\n" +
-                            "1.5\t3.0\t1.0\t1.0\t2\t2\t2\t2\t2\t2.0\t1.0\t1\t2\n",
+                    "avg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\ti\tj\n" +
+                            "1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\t0\t1\n" +
+                            "1.5\t3.0\t1.0\t1.0\t2.0\t2.0\t2\t2\t2\t2\t2\t2.0\t1.0\t0\t2\n" +
+                            "2.5\t5.0\t2.0\t2.0\t3.0\t3.0\t2\t2\t2\t2\t2\t3.0\t2.0\t0\t3\n" +
+                            "4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\t1\t4\n" +
+                            "2.0\t4.0\t4.0\t4.0\t0.0\t0.0\t2\t2\t2\t2\t2\t4.0\t0.0\t1\t0\n" +
+                            "0.5\t1.0\t0.0\t0.0\t1.0\t1.0\t2\t2\t2\t2\t2\t1.0\t0.0\t1\t1\n" +
+                            "1.5\t3.0\t1.0\t1.0\t2.0\t2.0\t2\t2\t2\t2\t2\t2.0\t1.0\t1\t2\n",
                     "select avg(j) over (partition by i order by ts rows between 1 preceding and current row), " +
                             "sum(j) over (partition by i order by ts rows between 1 preceding and current row), " +
                             "first_value(j) over (partition by i order by ts rows between 1 preceding and current row), " +
                             "first_not_null_value(j) over (partition by i order by ts rows between 1 preceding and current row), " +
+                            "last_value(j) over (partition by i order by ts rows between 1 preceding and current row), " +
+                            "last_not_null_value(j) over (partition by i order by ts rows between 1 preceding and current row), " +
                             "count(*) over (partition by i order by ts rows between 1 preceding and current row), " +
                             "count(j) over (partition by i order by ts rows between 1 preceding and current row), " +
                             "count(s) over (partition by i order by ts rows between 1 preceding and current row), " +
@@ -2671,20 +2830,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     true
             );
 
-            String result4 = "avg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                    "1.5\t3.0\t2.0\t2.0\t2\t2\t2\t2\t2\t2.0\t1.0\n" +
-                    "2.5\t5.0\t3.0\t3.0\t2\t2\t2\t2\t2\t3.0\t2.0\n" +
-                    "3.0\t3.0\t3.0\t3.0\t1\t1\t1\t1\t1\t3.0\t3.0\n" +
-                    "2.0\t4.0\t0.0\t0.0\t2\t2\t2\t2\t2\t4.0\t0.0\n" +
-                    "0.5\t1.0\t1.0\t1.0\t2\t2\t2\t2\t2\t1.0\t0.0\n" +
-                    "1.5\t3.0\t2.0\t2.0\t2\t2\t2\t2\t2\t2.0\t1.0\n" +
-                    "2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\n";
+            String result4 = "avg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                    "1.5\t3.0\t2.0\t2.0\t1.0\t1.0\t2\t2\t2\t2\t2\t2.0\t1.0\n" +
+                    "2.5\t5.0\t3.0\t3.0\t2.0\t2.0\t2\t2\t2\t2\t2\t3.0\t2.0\n" +
+                    "3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t1\t1\t1\t1\t1\t3.0\t3.0\n" +
+                    "2.0\t4.0\t0.0\t0.0\t4.0\t4.0\t2\t2\t2\t2\t2\t4.0\t0.0\n" +
+                    "0.5\t1.0\t1.0\t1.0\t0.0\t0.0\t2\t2\t2\t2\t2\t1.0\t0.0\n" +
+                    "1.5\t3.0\t2.0\t2.0\t1.0\t1.0\t2\t2\t2\t2\t2\t2.0\t1.0\n" +
+                    "2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\n";
             assertQueryNoLeakCheck(
                     result4,
                     "select avg(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
                             "sum(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
                             "first_value(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
                             "first_not_null_value(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
+                            "last_value(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
+                            "last_not_null_value(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
                             "count(*) over (partition by i order by ts desc rows between 1 preceding and current row), " +
                             "count(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
                             "count(s) over (partition by i order by ts desc rows between 1 preceding and current row), " +
@@ -2704,6 +2865,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "sum(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
                             "first_value(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
                             "first_not_null_value(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
+                            "last_value(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
+                            "last_not_null_value(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
                             "count(*) over (partition by i order by ts desc rows between 1 preceding and current row), " +
                             "count(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
                             "count(s) over (partition by i order by ts desc rows between 1 preceding and current row), " +
@@ -2719,18 +2882,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "avg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\ti\tj\n" +
-                            "1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\t0\t1\n" +
-                            "1.5\t3.0\t1.0\t1.0\t2\t2\t2\t2\t2\t2.0\t1.0\t0\t2\n" +
-                            "2.5\t5.0\t2.0\t2.0\t2\t2\t2\t2\t2\t3.0\t2.0\t0\t3\n" +
-                            "0.0\t0.0\t0.0\t0.0\t1\t1\t1\t1\t1\t0.0\t0.0\t1\t0\n" +
-                            "0.5\t1.0\t0.0\t0.0\t2\t2\t2\t2\t2\t1.0\t0.0\t1\t1\n" +
-                            "1.5\t3.0\t1.0\t1.0\t2\t2\t2\t2\t2\t2.0\t1.0\t1\t2\n" +
-                            "3.0\t6.0\t2.0\t2.0\t2\t2\t2\t2\t2\t4.0\t2.0\t1\t4\n",
+                    "avg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\ti\tj\n" +
+                            "1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\t0\t1\n" +
+                            "1.5\t3.0\t1.0\t1.0\t2.0\t2.0\t2\t2\t2\t2\t2\t2.0\t1.0\t0\t2\n" +
+                            "2.5\t5.0\t2.0\t2.0\t3.0\t3.0\t2\t2\t2\t2\t2\t3.0\t2.0\t0\t3\n" +
+                            "0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t1\t1\t1\t1\t1\t0.0\t0.0\t1\t0\n" +
+                            "0.5\t1.0\t0.0\t0.0\t1.0\t1.0\t2\t2\t2\t2\t2\t1.0\t0.0\t1\t1\n" +
+                            "1.5\t3.0\t1.0\t1.0\t2.0\t2.0\t2\t2\t2\t2\t2\t2.0\t1.0\t1\t2\n" +
+                            "3.0\t6.0\t2.0\t2.0\t4.0\t4.0\t2\t2\t2\t2\t2\t4.0\t2.0\t1\t4\n",
                     "select avg(j) over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
                             "sum(j) over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
                             "first_value(j) over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
                             "first_not_null_value(j) over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
+                            "last_value(j) over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
+                            "last_not_null_value(j) over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
                             "count(*) over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
                             "count(j) over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
                             "count(s) over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
@@ -2868,6 +3033,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "   sum(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   first_value(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   first_not_null_value(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                            "   last_value(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                            "   last_not_null_value(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   count(*) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   count(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   count(s) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
@@ -2880,7 +3047,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "order by ts asc",
                     "SelectedRecord\n" +
                             "    CachedWindow\n" +
-                            "      orderedFunctions: [[j] => [rank() over (partition by [i])],[ts desc] => [avg(j) over (partition by [i] rows between unbounded preceding and current row ),sum(j) over (partition by [i] rows between unbounded preceding and current row ),first_value(j) over (partition by [i] rows between unbounded preceding and current row ),first_not_null_value(j) over (partition by [i] rows between unbounded preceding and current row ),count(*) over (partition by [i] rows between unbounded preceding and current row ),count(j) over (partition by [i] rows between unbounded preceding and current row ),count(s) over (partition by [i] rows between unbounded preceding and current row ),count(d) over (partition by [i] rows between unbounded preceding and current row ),count(c) over (partition by [i] rows between unbounded preceding and current row ),max(j) over (partition by [i] rows between unbounded preceding and current row ),min(j) over (partition by [i] rows between unbounded preceding and current row )]]\n" +
+                            "      orderedFunctions: [[ts desc] => [avg(j) over (partition by [i] rows between unbounded preceding and current row),sum(j) over (partition by [i] rows between unbounded preceding and current row),first_value(j) over (partition by [i] rows between unbounded preceding and current row),first_not_null_value(j) over (partition by [i] rows between unbounded preceding and current row),last_value(j) over (partition by [i] rows between unbounded preceding and current row),last_not_null_value(j) over (partition by [i] rows between unbounded preceding and current row),count(*) over (partition by [i] rows between unbounded preceding and current row),count(j) over (partition by [i] rows between unbounded preceding and current row),count(s) over (partition by [i] rows between unbounded preceding and current row),count(d) over (partition by [i] rows between unbounded preceding and current row),count(c) over (partition by [i] rows between unbounded preceding and current row),max(j) over (partition by [i] rows between unbounded preceding and current row),min(j) over (partition by [i] rows between unbounded preceding and current row)],[j] => [rank() over (partition by [i])]]\n" +
                             "      unorderedFunctions: [row_number() over (partition by [i])]\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
@@ -2888,19 +3055,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "row_number\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\trank\n" +
-                            "1\t2.0\t6.0\t3.0\t3.0\t3\t3\t3\t3\t3\t3.0\t1.0\t1\n" +
-                            "2\t2.5\t5.0\t3.0\t3.0\t2\t2\t2\t2\t2\t3.0\t2.0\t2\n" +
-                            "3\t3.0\t3.0\t3.0\t3.0\t1\t1\t1\t1\t1\t3.0\t3.0\t3\n" +
-                            "1\t1.75\t7.0\t2.0\t2.0\t4\t4\t4\t4\t4\t4.0\t0.0\t4\n" +
-                            "2\t1.0\t3.0\t2.0\t2.0\t3\t3\t3\t3\t3\t2.0\t0.0\t1\n" +
-                            "3\t1.5\t3.0\t2.0\t2.0\t2\t2\t2\t2\t2\t2.0\t1.0\t2\n" +
-                            "4\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\t3\n",
+                    "row_number\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\trank\n" +
+                            "1\t2.0\t6.0\t3.0\t3.0\t1.0\t1.0\t3\t3\t3\t3\t3\t3.0\t1.0\t1\n" +
+                            "2\t2.5\t5.0\t3.0\t3.0\t2.0\t2.0\t2\t2\t2\t2\t2\t3.0\t2.0\t2\n" +
+                            "3\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t1\t1\t1\t1\t1\t3.0\t3.0\t3\n" +
+                            "1\t1.75\t7.0\t2.0\t2.0\t4.0\t4.0\t4\t4\t4\t4\t4\t4.0\t0.0\t4\n" +
+                            "2\t1.0\t3.0\t2.0\t2.0\t0.0\t0.0\t3\t3\t3\t3\t3\t2.0\t0.0\t1\n" +
+                            "3\t1.5\t3.0\t2.0\t2.0\t1.0\t1.0\t2\t2\t2\t2\t2\t2.0\t1.0\t2\n" +
+                            "4\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\t3\n",
                     "select row_number() over (partition by i order by ts asc), " +
                             "   avg(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   sum(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   first_value(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   first_not_null_value(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                            "   last_value(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                            "   last_not_null_value(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   count(*) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   count(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   count(s) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
@@ -2917,19 +3086,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "row_number\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\trank\n" +
-                            "4\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\t3\n" +
-                            "3\t1.5\t3.0\t2.0\t2.0\t2\t2\t2\t2\t2\t2.0\t1.0\t2\n" +
-                            "2\t1.0\t3.0\t2.0\t2.0\t3\t3\t3\t3\t3\t2.0\t0.0\t1\n" +
-                            "1\t1.75\t7.0\t2.0\t2.0\t4\t4\t4\t4\t4\t4.0\t0.0\t4\n" +
-                            "3\t3.0\t3.0\t3.0\t3.0\t1\t1\t1\t1\t1\t3.0\t3.0\t3\n" +
-                            "2\t2.5\t5.0\t3.0\t3.0\t2\t2\t2\t2\t2\t3.0\t2.0\t2\n" +
-                            "1\t2.0\t6.0\t3.0\t3.0\t3\t3\t3\t3\t3\t3.0\t1.0\t1\n",
+                    "row_number\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\trank\n" +
+                            "4\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\t3\n" +
+                            "3\t1.5\t3.0\t2.0\t2.0\t1.0\t1.0\t2\t2\t2\t2\t2\t2.0\t1.0\t2\n" +
+                            "2\t1.0\t3.0\t2.0\t2.0\t0.0\t0.0\t3\t3\t3\t3\t3\t2.0\t0.0\t1\n" +
+                            "1\t1.75\t7.0\t2.0\t2.0\t4.0\t4.0\t4\t4\t4\t4\t4\t4.0\t0.0\t4\n" +
+                            "3\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t1\t1\t1\t1\t1\t3.0\t3.0\t3\n" +
+                            "2\t2.5\t5.0\t3.0\t3.0\t2.0\t2.0\t2\t2\t2\t2\t2\t3.0\t2.0\t2\n" +
+                            "1\t2.0\t6.0\t3.0\t3.0\t1.0\t1.0\t3\t3\t3\t3\t3\t3.0\t1.0\t1\n",
                     "select row_number() over (partition by i order by ts asc), " +
                             "   avg(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   sum(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   first_value(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   first_not_null_value(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                            "   last_value(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                            "   last_not_null_value(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   count(*) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   count(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   count(s) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
@@ -3632,6 +3803,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 );
 
                 assertExceptionNoLeakCheck(
+                        "select last_not_null_value(j) over (partition by i rows between 100001 preceding and current row) from tab",
+                        0,
+                        "Maximum number of pages (10) breached in VirtualMemory"
+                );
+
+                assertExceptionNoLeakCheck(
                         "select count(j) over (partition by i rows between 100001 preceding and current row) from tab",
                         0,
                         "Maximum number of pages (10) breached in VirtualMemory"
@@ -3679,6 +3856,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "select ts, i, j, " +
                             "first_value(j) over(), " +
                             "first_not_null_value(j) over(), " +
+                            "last_value(j) over(), " +
+                            "last_not_null_value(j) over(), " +
                             "avg(j) over (), " +
                             "sum(j) over (), " +
                             "count(j) over (), " +
@@ -3691,25 +3870,25 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "rank() over () " +
                             "from tab",
                     "CachedWindow\n" +
-                            "  unorderedFunctions: [first_value(j) over (),first_not_null_value(j) over (),avg(j) over (),sum(j) over (),count(j) over (),count(*) over (),count(c) over (),count(sym) over (),max(j) over (),min(j) over (),row_number(),rank()]\n" +
+                            "  unorderedFunctions: [first_value(j) over (),first_not_null_value(j) over (),last_value(j) over (),last_not_null_value(j) over (),avg(j) over (),sum(j) over (),count(j) over (),count(*) over (),count(c) over (),count(sym) over (),max(j) over (),min(j) over (),row_number(),rank()]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n",
-                    "ts\ti\tj\tfirst_value\tfirst_not_null_value\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\trow_number\trank\n",
+                    "ts\ti\tj\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\trow_number\trank\n",
                     "ts",
                     true,
                     false
             );
 
             assertQueryAndPlan(
-                    "select ts, i, j, first_value(j) over(), first_not_null_value(j) over(), avg(j) over (), sum(j) over (), count(*) over (), count(j) over (), count(sym) over (), count(c) over (), " +
+                    "select ts, i, j, first_value(j) over(), first_not_null_value(j) over(), last_value(j) over(), last_not_null_value(j) over(), avg(j) over (), sum(j) over (), count(*) over (), count(j) over (), count(sym) over (), count(c) over (), " +
                             "max(j) over (), min(j) over () from tab order by ts desc",
                     "CachedWindow\n" +
-                            "  unorderedFunctions: [first_value(j) over (),first_not_null_value(j) over (),avg(j) over (),sum(j) over (),count(*) over (),count(j) over (),count(sym) over (),count(c) over (),max(j) over (),min(j) over ()]\n" +
+                            "  unorderedFunctions: [first_value(j) over (),first_not_null_value(j) over (),last_value(j) over (),last_not_null_value(j) over (),avg(j) over (),sum(j) over (),count(*) over (),count(j) over (),count(sym) over (),count(c) over (),max(j) over (),min(j) over ()]\n" +
                             "    PageFrame\n" +
                             "        Row backward scan\n" +
                             "        Frame backward scan on: tab\n",
-                    "ts\ti\tj\tfirst_value\tfirst_not_null_value\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n",
+                    "ts\ti\tj\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n",
                     "ts",
                     true,
                     false
@@ -3719,6 +3898,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "select ts, i, j, " +
                             "first_value(j) over(order by ts), " +
                             "first_not_null_value(j) over(order by ts), " +
+                            "last_value(j) over(order by ts), " +
+                            "last_not_null_value(j) over(order by ts), " +
                             "avg(j) over (order by ts), " +
                             "sum(j) over (order by ts), " +
                             "count(*) over (order by ts), " +
@@ -3729,11 +3910,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "min(j) over (order by ts) " +
                             "from tab",
                     "Window\n" +
-                            "  functions: [first_value(j) over (),first_not_null_value(j) over (),avg(j) over (rows between unbounded preceding and current row),sum(j) over (rows between unbounded preceding and current row),count(*) over (rows between unbounded preceding and current row),count(j) over (rows between unbounded preceding and current row),count(sym) over (rows between unbounded preceding and current row),count(c) over (rows between unbounded preceding and current row),max(j) over (rows between unbounded preceding and current row),min(j) over (rows between unbounded preceding and current row)]\n" +
+                            "  functions: [first_value(j) over (),first_not_null_value(j) over (),last_value(j) over (range between unbounded preceding and current row),last_not_null_value(j) over (rows between unbounded preceding and current row),avg(j) over (rows between unbounded preceding and current row),sum(j) over (rows between unbounded preceding and current row),count(*) over (rows between unbounded preceding and current row),count(j) over (rows between unbounded preceding and current row),count(sym) over (rows between unbounded preceding and current row),count(c) over (rows between unbounded preceding and current row),max(j) over (rows between unbounded preceding and current row),min(j) over (rows between unbounded preceding and current row)]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n",
-                    "ts\ti\tj\tfirst_value\tfirst_not_null_value\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n",
+                    "ts\ti\tj\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n",
                     "ts",
                     false,
                     true
@@ -3743,6 +3924,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "select ts, i, j, " +
                             "first_value(j) over (order by ts desc), " +
                             "first_not_null_value(j) over (order by ts desc), " +
+                            "last_value(j) over (order by ts desc), " +
+                            "last_not_null_value(j) over (order by ts desc), " +
                             "avg(j) over (order by ts desc), " +
                             "sum(j) over (order by ts desc), " +
                             "count(*) over (order by ts desc), " +
@@ -3753,11 +3936,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "min(j) over (order by ts desc) " +
                             "from tab order by ts desc",
                     "Window\n" +
-                            "  functions: [first_value(j) over (),first_not_null_value(j) over (),avg(j) over (rows between unbounded preceding and current row),sum(j) over (rows between unbounded preceding and current row),count(*) over (rows between unbounded preceding and current row),count(j) over (rows between unbounded preceding and current row),count(sym) over (rows between unbounded preceding and current row),count(c) over (rows between unbounded preceding and current row),max(j) over (rows between unbounded preceding and current row),min(j) over (rows between unbounded preceding and current row)]\n" +
+                            "  functions: [first_value(j) over (),first_not_null_value(j) over (),last_value(j) over (range between unbounded preceding and current row),last_not_null_value(j) over (rows between unbounded preceding and current row),avg(j) over (rows between unbounded preceding and current row),sum(j) over (rows between unbounded preceding and current row),count(*) over (rows between unbounded preceding and current row),count(j) over (rows between unbounded preceding and current row),count(sym) over (rows between unbounded preceding and current row),count(c) over (rows between unbounded preceding and current row),max(j) over (rows between unbounded preceding and current row),min(j) over (rows between unbounded preceding and current row)]\n" +
                             "    PageFrame\n" +
                             "        Row backward scan\n" +
                             "        Frame backward scan on: tab\n",
-                    "ts\ti\tj\tfirst_value\tfirst_not_null_value\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n",
+                    "ts\ti\tj\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n",
                     "ts",
                     false,
                     true
@@ -3767,6 +3950,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "select ts, i, j, " +
                             "first_value(j) over (partition by i), " +
                             "first_not_null_value(j) over (partition by i), " +
+                            "last_value(j) over (partition by i), " +
+                            "last_not_null_value(j) over (partition by i), " +
                             "avg(j) over (partition by i), " +
                             "sum(j) over (partition by i), " +
                             "count(*) over (partition by i), " +
@@ -3777,11 +3962,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "min(j) over (partition by i) " +
                             "from tab",
                     "CachedWindow\n" +
-                            "  unorderedFunctions: [first_value(j) over (partition by [i]),first_not_null_value(j) over (partition by [i]),avg(j) over (partition by [i]),sum(j) over (partition by [i]),count(*) over (partition by [i]),count(j) over (partition by [i]),count(sym) over (partition by [i]),count(c) over (partition by [i]),max(j) over (partition by [i]),min(j) over (partition by [i])]\n" +
+                            "  unorderedFunctions: [first_value(j) over (partition by [i]),first_not_null_value(j) over (partition by [i]),last_value(j) over (partition by [i]),last_not_null_value(j) over (partition by [i]),avg(j) over (partition by [i]),sum(j) over (partition by [i]),count(*) over (partition by [i]),count(j) over (partition by [i]),count(sym) over (partition by [i]),count(c) over (partition by [i]),max(j) over (partition by [i]),min(j) over (partition by [i])]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n",
-                    "ts\ti\tj\tfirst_value\tfirst_not_null_value\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n",
+                    "ts\ti\tj\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n",
                     "ts",
                     true,
                     false
@@ -3791,6 +3976,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "select ts, i, j, " +
                             "first_value(j) over (partition by i), " +
                             "first_not_null_value(j) over (partition by i), " +
+                            "last_value(j) over (partition by i), " +
+                            "last_not_null_value(j) over (partition by i), " +
                             "avg(j) over (partition by i), " +
                             "sum(j) over (partition by i), " +
                             "count(*) over (partition by i), " +
@@ -3801,11 +3988,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "min(j) over (partition by i) " +
                             "from tab order by ts desc",
                     "CachedWindow\n" +
-                            "  unorderedFunctions: [first_value(j) over (partition by [i]),first_not_null_value(j) over (partition by [i]),avg(j) over (partition by [i]),sum(j) over (partition by [i]),count(*) over (partition by [i]),count(j) over (partition by [i]),count(sym) over (partition by [i]),count(c) over (partition by [i]),max(j) over (partition by [i]),min(j) over (partition by [i])]\n" +
+                            "  unorderedFunctions: [first_value(j) over (partition by [i]),first_not_null_value(j) over (partition by [i]),last_value(j) over (partition by [i]),last_not_null_value(j) over (partition by [i]),avg(j) over (partition by [i]),sum(j) over (partition by [i]),count(*) over (partition by [i]),count(j) over (partition by [i]),count(sym) over (partition by [i]),count(c) over (partition by [i]),max(j) over (partition by [i]),min(j) over (partition by [i])]\n" +
                             "    PageFrame\n" +
                             "        Row backward scan\n" +
                             "        Frame backward scan on: tab\n",
-                    "ts\ti\tj\tfirst_value\tfirst_not_null_value\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n",
+                    "ts\ti\tj\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n",
                     "ts",
                     true,
                     false
@@ -3815,6 +4002,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "select ts, i, j, " +
                             "first_value(j) over (partition by i order by ts), " +
                             "first_not_null_value(j) over (partition by i order by ts), " +
+                            "last_value(j) over (partition by i order by ts), " +
+                            "last_not_null_value(j) over (partition by i order by ts), " +
                             "avg(j) over (partition by i order by ts), " +
                             "sum(j) over (partition by i order by ts), " +
                             "count(*) over (partition by i order by ts), " +
@@ -3825,11 +4014,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "min(j) over (partition by i order by ts) " +
                             "from tab",
                     "Window\n" +
-                            "  functions: [first_value(j) over (partition by [i] rows between unbounded preceding and current row ),first_not_null_value(j) over (partition by [i] rows between unbounded preceding and current row ),avg(j) over (partition by [i] rows between unbounded preceding and current row ),sum(j) over (partition by [i] rows between unbounded preceding and current row ),count(*) over (partition by [i] rows between unbounded preceding and current row ),count(j) over (partition by [i] rows between unbounded preceding and current row ),count(sym) over (partition by [i] rows between unbounded preceding and current row ),count(c) over (partition by [i] rows between unbounded preceding and current row ),max(j) over (partition by [i] rows between unbounded preceding and current row ),min(j) over (partition by [i] rows between unbounded preceding and current row )]\n" +
+                            "  functions: [first_value(j) over (partition by [i] rows between unbounded preceding and current row),first_not_null_value(j) over (partition by [i] rows between unbounded preceding and current row),last_value(j) over (partition by [i] range between unbounded preceding and current row),last_not_null_value(j) over (partition by [i] rows between unbounded preceding and current row),avg(j) over (partition by [i] rows between unbounded preceding and current row),sum(j) over (partition by [i] rows between unbounded preceding and current row),count(*) over (partition by [i] rows between unbounded preceding and current row),count(j) over (partition by [i] rows between unbounded preceding and current row),count(sym) over (partition by [i] rows between unbounded preceding and current row),count(c) over (partition by [i] rows between unbounded preceding and current row),max(j) over (partition by [i] rows between unbounded preceding and current row),min(j) over (partition by [i] rows between unbounded preceding and current row)]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n",
-                    "ts\ti\tj\tfirst_value\tfirst_not_null_value\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n",
+                    "ts\ti\tj\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n",
                     "ts",
                     false,
                     true
@@ -3839,6 +4028,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "select ts, i, j, " +
                             "first_value(j) over (partition by i order by ts desc), " +
                             "first_not_null_value(j) over (partition by i order by ts desc), " +
+                            "last_value(j) over (partition by i order by ts desc), " +
+                            "last_not_null_value(j) over (partition by i order by ts desc), " +
                             "avg(j) over (partition by i order by ts desc), " +
                             "sum(j) over (partition by i order by ts desc), " +
                             "count(*) over (partition by i order by ts desc), " +
@@ -3850,11 +4041,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab " +
                             "order by ts desc",
                     "Window\n" +
-                            "  functions: [first_value(j) over (partition by [i] rows between unbounded preceding and current row ),first_not_null_value(j) over (partition by [i] rows between unbounded preceding and current row ),avg(j) over (partition by [i] rows between unbounded preceding and current row ),sum(j) over (partition by [i] rows between unbounded preceding and current row ),count(*) over (partition by [i] rows between unbounded preceding and current row ),count(j) over (partition by [i] rows between unbounded preceding and current row ),count(sym) over (partition by [i] rows between unbounded preceding and current row ),count(c) over (partition by [i] rows between unbounded preceding and current row ),max(j) over (partition by [i] rows between unbounded preceding and current row ),min(j) over (partition by [i] rows between unbounded preceding and current row )]\n" +
+                            "  functions: [first_value(j) over (partition by [i] rows between unbounded preceding and current row),first_not_null_value(j) over (partition by [i] rows between unbounded preceding and current row),last_value(j) over (partition by [i] range between unbounded preceding and current row),last_not_null_value(j) over (partition by [i] rows between unbounded preceding and current row),avg(j) over (partition by [i] rows between unbounded preceding and current row),sum(j) over (partition by [i] rows between unbounded preceding and current row),count(*) over (partition by [i] rows between unbounded preceding and current row),count(j) over (partition by [i] rows between unbounded preceding and current row),count(sym) over (partition by [i] rows between unbounded preceding and current row),count(c) over (partition by [i] rows between unbounded preceding and current row),max(j) over (partition by [i] rows between unbounded preceding and current row),min(j) over (partition by [i] rows between unbounded preceding and current row)]\n" +
                             "    PageFrame\n" +
                             "        Row backward scan\n" +
                             "        Frame backward scan on: tab\n",
-                    "ts\ti\tj\tfirst_value\tfirst_not_null_value\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n",
+                    "ts\ti\tj\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n",
                     "ts",
                     false,
                     true
@@ -3864,6 +4055,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "select i, j, " +
                             "first_value(j) over (partition by i order by ts), " +
                             "first_not_null_value(j) over (partition by i order by ts), " +
+                            "last_value(j) over (partition by i order by ts), " +
+                            "last_not_null_value(j) over (partition by i order by ts), " +
                             "avg(j) over (partition by i order by ts), " +
                             "sum(j) over (partition by i order by ts), " +
                             "count(*) over (partition by i order by ts), " +
@@ -3876,11 +4069,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "order by ts",
                     "SelectedRecord\n" +
                             "    Window\n" +
-                            "      functions: [first_value(j) over (partition by [i] rows between unbounded preceding and current row ),first_not_null_value(j) over (partition by [i] rows between unbounded preceding and current row ),avg(j) over (partition by [i] rows between unbounded preceding and current row ),sum(j) over (partition by [i] rows between unbounded preceding and current row ),count(*) over (partition by [i] rows between unbounded preceding and current row ),count(j) over (partition by [i] rows between unbounded preceding and current row ),count(sym) over (partition by [i] rows between unbounded preceding and current row ),count(c) over (partition by [i] rows between unbounded preceding and current row ),max(j) over (partition by [i] rows between unbounded preceding and current row ),min(j) over (partition by [i] rows between unbounded preceding and current row )]\n" +
+                            "      functions: [first_value(j) over (partition by [i] rows between unbounded preceding and current row),first_not_null_value(j) over (partition by [i] rows between unbounded preceding and current row),last_value(j) over (partition by [i] range between unbounded preceding and current row),last_not_null_value(j) over (partition by [i] rows between unbounded preceding and current row),avg(j) over (partition by [i] rows between unbounded preceding and current row),sum(j) over (partition by [i] rows between unbounded preceding and current row),count(*) over (partition by [i] rows between unbounded preceding and current row),count(j) over (partition by [i] rows between unbounded preceding and current row),count(sym) over (partition by [i] rows between unbounded preceding and current row),count(c) over (partition by [i] rows between unbounded preceding and current row),max(j) over (partition by [i] rows between unbounded preceding and current row),min(j) over (partition by [i] rows between unbounded preceding and current row)]\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tab\n",
-                    "i\tj\tfirst_value\tfirst_not_null_value\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n",
+                    "i\tj\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n",
                     null,
                     false,
                     true
@@ -3890,6 +4083,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "select i, j, " +
                             "first_value(j) over (partition by i order by ts desc), " +
                             "first_not_null_value(j) over (partition by i order by ts desc), " +
+                            "last_value(j) over (partition by i order by ts desc), " +
+                            "last_not_null_value(j) over (partition by i order by ts desc), " +
                             "avg(j) over (partition by i order by ts desc), " +
                             "sum(j) over (partition by i order by ts desc), " +
                             "count(*) over (partition by i order by ts desc), " +
@@ -3902,11 +4097,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "order by ts desc",
                     "SelectedRecord\n" +
                             "    Window\n" +
-                            "      functions: [first_value(j) over (partition by [i] rows between unbounded preceding and current row ),first_not_null_value(j) over (partition by [i] rows between unbounded preceding and current row ),avg(j) over (partition by [i] rows between unbounded preceding and current row ),sum(j) over (partition by [i] rows between unbounded preceding and current row ),count(*) over (partition by [i] rows between unbounded preceding and current row ),count(j) over (partition by [i] rows between unbounded preceding and current row ),count(sym) over (partition by [i] rows between unbounded preceding and current row ),count(c) over (partition by [i] rows between unbounded preceding and current row ),max(j) over (partition by [i] rows between unbounded preceding and current row ),min(j) over (partition by [i] rows between unbounded preceding and current row )]\n" +
+                            "      functions: [first_value(j) over (partition by [i] rows between unbounded preceding and current row),first_not_null_value(j) over (partition by [i] rows between unbounded preceding and current row),last_value(j) over (partition by [i] range between unbounded preceding and current row),last_not_null_value(j) over (partition by [i] rows between unbounded preceding and current row),avg(j) over (partition by [i] rows between unbounded preceding and current row),sum(j) over (partition by [i] rows between unbounded preceding and current row),count(*) over (partition by [i] rows between unbounded preceding and current row),count(j) over (partition by [i] rows between unbounded preceding and current row),count(sym) over (partition by [i] rows between unbounded preceding and current row),count(c) over (partition by [i] rows between unbounded preceding and current row),max(j) over (partition by [i] rows between unbounded preceding and current row),min(j) over (partition by [i] rows between unbounded preceding and current row)]\n" +
                             "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: tab\n",
-                    "i\tj\tfirst_value\tfirst_not_null_value\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n",
+                    "i\tj\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n",
                     null,
                     false,
                     true
@@ -3916,6 +4111,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "select i, j, " +
                             "first_value(j) over (partition by i order by ts range between 10 seconds preceding and current row), " +
                             "first_not_null_value(j) over (partition by i order by ts range between 10 seconds preceding and current row), " +
+                            "last_value(j) over (partition by i order by ts range between 10 seconds preceding and current row), " +
+                            "last_not_null_value(j) over (partition by i order by ts range between 10 seconds preceding and current row), " +
                             "avg(j) over (partition by i order by ts range between 10 seconds preceding and current row), " +
                             "sum(j) over (partition by i order by ts range between 10 seconds preceding and current row), " +
                             "count(*) over (partition by i order by ts range between 10 seconds preceding and current row), " +
@@ -3926,11 +4123,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "min(j) over (partition by i order by ts range between 10 seconds preceding and current row), " +
                             "ts from tab",
                     "Window\n" +
-                            "  functions: [first_value(j) over (partition by [i] range between 10000000 preceding and current row),first_not_null_value(j) over (partition by [i] range between 10000000 preceding and current row),avg(j) over (partition by [i] range between 10000000 preceding and current row),sum(j) over (partition by [i] range between 10000000 preceding and current row),count(*) over (partition by [i] range between 10000000 preceding and current row),count(j) over (partition by [i] range between 10000000 preceding and current row),count(sym) over (partition by [i] range between 10000000 preceding and current row),count(c) over (partition by [i] range between 10000000 preceding and current row),max(j) over (partition by [i] range between 10000000 preceding and current row),min(j) over (partition by [i] range between 10000000 preceding and current row)]\n" +
+                            "  functions: [first_value(j) over (partition by [i] range between 10000000 preceding and current row),first_not_null_value(j) over (partition by [i] range between 10000000 preceding and current row),last_value(j) over (partition by [i] range between 10000000 preceding and current row),last_not_null_value(j) over (partition by [i] range between 10000000 preceding and 0 preceding),avg(j) over (partition by [i] range between 10000000 preceding and current row),sum(j) over (partition by [i] range between 10000000 preceding and current row),count(*) over (partition by [i] range between 10000000 preceding and current row),count(j) over (partition by [i] range between 10000000 preceding and current row),count(sym) over (partition by [i] range between 10000000 preceding and current row),count(c) over (partition by [i] range between 10000000 preceding and current row),max(j) over (partition by [i] range between 10000000 preceding and current row),min(j) over (partition by [i] range between 10000000 preceding and current row)]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n",
-                    "i\tj\tfirst_value\tfirst_not_null_value\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\tts\n",
+                    "i\tj\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\tts\n",
                     "ts",
                     false,
                     true
@@ -4056,7 +4253,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 //TODO: inspect
                 assertPlanNoLeakCheck(
                         "select ts, i, j, #FUNCT_NAME(1) over (partition by i order by ts asc rows between 1 preceding and current row) from tab where sym in ( 'A', 'B') ".replace("#FUNCT_NAME", func),
-                        "first_value".equals(func.trim()) || "first_not_null_value".equals(func.trim()) ?
+                        "first_value".equals(func.trim()) || "first_not_null_value".equals(func.trim()) || "last_value".equals(func.trim()) || "last_not_null_value".equals(func.trim()) ?
                                 "Window\n" +
                                         "  functions: [#FUNCT_NAME(1) over (partition by [i] rows between 1 preceding and current row)]\n".replace("#FUNCT_NAME(1)", replace) +
                                         "    FilterOnValues\n" +
@@ -4343,9 +4540,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     static {
-        FRAME_FUNCTIONS = Arrays.asList("avg", "sum", "first_value", "first_not_null_value", "count", "max", "min");
+        FRAME_FUNCTIONS = Arrays.asList("avg", "sum", "first_value", "first_not_null_value", "count", "max", "min", "last_value", "last_not_null_value");
 
-        WINDOW_ONLY_FUNCTIONS = Arrays.asList("rank()", "row_number()", "first_value(1.0)", "first_not_null_value(1.0)");
+        WINDOW_ONLY_FUNCTIONS = Arrays.asList("rank()", "row_number()", "first_value(1.0)", "first_not_null_value(1.0)", "last_value(1.0)", "last_not_null_value(1.0)");
 
         normalizeSuffix(FRAME_FUNCTIONS);
         normalizeSuffix(WINDOW_ONLY_FUNCTIONS);
