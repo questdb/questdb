@@ -2959,7 +2959,6 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
-
     public void testQueryCorrectlyFillsSides() throws Exception {
         assertMemoryLeak(() -> {
             execute(sysTelemetryWalDdl);
