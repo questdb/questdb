@@ -24,13 +24,26 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.*;
-import io.questdb.std.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableUtils;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.Before;
+import org.junit.Test;
 
 import java.io.File;
 
@@ -69,7 +82,8 @@ public class TableUtilsTest extends AbstractTest {
                     tableName,
                     null,
                     0,
-                    0);
+                    0
+            );
             Assert.fail();
         } catch (CairoException e) {
             path.of(dbRoot.getAbsolutePath()).concat(tableName).$();
@@ -98,7 +112,8 @@ public class TableUtilsTest extends AbstractTest {
                     tableName,
                     null,
                     0,
-                    0);
+                    0
+            );
             Assert.fail();
         } catch (CairoException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "table directory already exists in volume [path=" + path.toString() + ']');
@@ -126,7 +141,8 @@ public class TableUtilsTest extends AbstractTest {
                     tableName,
                     null,
                     0,
-                    0);
+                    0
+            );
             Assert.fail();
         } catch (CairoException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "could not create soft link [src=" + path.toString() + ", tableDir=" + tableName + ']');
@@ -139,7 +155,7 @@ public class TableUtilsTest extends AbstractTest {
 
     @Test
     public void testEstimateRecordSize() {
-        GenericTableRecordMetadata metadata = new GenericTableRecordMetadata();
+        GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.INT, metadata))
                 .add(new TableColumnMetadata("b", ColumnType.STRING, metadata))
                 .add(new TableColumnMetadata("c", -ColumnType.DOUBLE, metadata));

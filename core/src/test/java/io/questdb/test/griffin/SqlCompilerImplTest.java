@@ -25,7 +25,17 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlCompiler;
@@ -34,13 +44,23 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
-import io.questdb.griffin.model.CreateTableModel;
-import io.questdb.griffin.model.ExecutionModel;
+import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.GenericLexer;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -49,7 +69,12 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.Overrides;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 import java.io.File;
 import java.util.Arrays;
@@ -2496,7 +2521,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m" +
                         " from long_sequence(20)" +
-                        ")  timestamp(k) partition by DAY");
+                        ")  timestamp(k) partition by DAY"
+        );
     }
 
     @Test
@@ -3508,7 +3534,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             try (
                     TableWriter writer = getWriter("x");
-                    TableMetadata tableMetadata = engine.getLegacyMetadata(writer.getTableToken())
+                    TableMetadata tableMetadata = engine.getTableMetadata(writer.getTableToken())
             ) {
                 sink.clear();
                 tableMetadata.toJson(sink);
@@ -4559,7 +4585,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testInsertAsSelectInconvertibleList4() throws Exception {
-        assertMemoryLeak(() -> testInsertAsSelectError("create table x (a DATE, b INT, n TIMESTAMP)",
+        assertMemoryLeak(() -> testInsertAsSelectError(
+                "create table x (a DATE, b INT, n TIMESTAMP)",
                 "insert into x (b,a)" +
                         "select" +
                         " rnd_int()," +
@@ -6780,9 +6807,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         }
 
         @Override
-        public ExecutionModel createTableSuffix(GenericLexer lexer, SecurityContext securityContext, CreateTableModel model, CharSequence tok) throws SqlException {
+        public void createTableExt(GenericLexer lexer, SecurityContext securityContext, CreateTableOperationBuilder opBuilder, CharSequence tok) throws SqlException {
             createTableSuffixCalled = true;
-            return super.createTableSuffix(lexer, securityContext, model, tok);
+            super.createTableExt(lexer, securityContext, opBuilder, tok);
         }
 
         @Override

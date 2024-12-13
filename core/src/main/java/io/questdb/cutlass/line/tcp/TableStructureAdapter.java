@@ -103,6 +103,12 @@ public class TableStructureAdapter implements TableStructure {
     }
 
     @Override
+    public long getMetadataVersion() {
+        // new table only
+        return 0;
+    }
+
+    @Override
     public long getO3MaxLag() {
         return cairoConfiguration.getO3MaxLag();
     }
@@ -139,11 +145,6 @@ public class TableStructureAdapter implements TableStructure {
 
     @Override
     public boolean isIndexed(int columnIndex) {
-        return false;
-    }
-
-    @Override
-    public boolean isSequential(int columnIndex) {
         return false;
     }
 

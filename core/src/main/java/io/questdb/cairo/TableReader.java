@@ -35,7 +35,14 @@ import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf16Sink;
@@ -1032,8 +1039,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             // We must discard and try again
             count++;
             if (clock.getTicks() > deadline) {
-                LOG.error().$("tx read timeout [timeout=").$(configuration.getSpinLockTimeout()).$("ms]").$();
-                throw CairoException.critical(0).put("Transaction read timeout");
+                throw CairoException.critical(0).put("Transaction read timeout [src=reader, timeout=").put(configuration.getSpinLockTimeout()).put("ms]");
             }
             Os.pause();
         }
@@ -1211,8 +1217,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     if (clock.getTicks() < deadline) {
                         return false;
                     }
-                    LOG.error().$("metadata read timeout [timeout=").$(configuration.getSpinLockTimeout()).utf8("ms, table=").$(tableToken.getTableName()).I$();
-                    throw CairoException.critical(0).put("Metadata read timeout [table=").put(tableToken.getTableName()).put(']');
+                    throw CairoException.critical(0).put("Metadata read timeout [src=reader, timeout=").put(configuration.getSpinLockTimeout()).put("ms]");
                 }
             } catch (CairoException ex) {
                 // This is temporary solution until we can get multiple version of metadata not overwriting each other

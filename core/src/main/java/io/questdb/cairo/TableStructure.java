@@ -26,7 +26,13 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.mv.MaterializedViewDefinition;
 
-public interface TableStructure extends TableDescriptor {
+public interface TableStructure {
+
+    int getColumnCount();
+
+    CharSequence getColumnName(int columnIndex);
+
+    int getColumnType(int columnIndex);
 
     int getIndexBlockCapacity(int columnIndex);
 
@@ -35,6 +41,8 @@ public interface TableStructure extends TableDescriptor {
     }
 
     int getMaxUncommittedRows();
+
+    long getMetadataVersion();
 
     long getO3MaxLag();
 
@@ -46,6 +54,8 @@ public interface TableStructure extends TableDescriptor {
 
     CharSequence getTableName();
 
+    int getTimestampIndex();
+
     default void init(TableToken tableToken) {
     }
 
@@ -56,8 +66,6 @@ public interface TableStructure extends TableDescriptor {
     default boolean isMatView() {
         return false;
     }
-
-    boolean isSequential(int columnIndex);
 
     boolean isWalEnabled();
 }

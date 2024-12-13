@@ -22,37 +22,40 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.model;
+package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableToken;
-import io.questdb.cairo.mv.MaterializedViewDefinition;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.model.CreateTableColumnModel;
+import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 
-public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable {
-    public static final ObjectFactory<CreateMatViewModel> FACTORY = CreateMatViewModel::new;
-    private final CreateTableModel tableModel;
+public class CreateMatViewOperationBuilder implements Mutable, ExecutionModel, Sinkable {
+    public static final ObjectFactory<CreateMatViewOperationBuilder> FACTORY = CreateMatViewOperationBuilder::new;
+    private final CreateTableOperationBuilder createTableOperationBuilder = new CreateTableOperationBuilder();
     private String baseTableName;
-    private long fromMicros = -1;
-    private long samplingInterval = -1;
+    private long fromMicros;
+    private long samplingInterval;
     private char samplingIntervalUnit;
     private String timeZone;
     private String timeZoneOffset;
-    private long toMicros = -1;
+    private long toMicros;
     private String viewSql;
 
-    private CreateMatViewModel() {
-        tableModel = CreateTableModel.FACTORY.newInstance();
+    public CreateMatViewOperation build(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence sqlText) throws SqlException {
+        final CreateTableOperation createTableOperation = createTableOperationBuilder.build(compiler, sqlExecutionContext, sqlText);
+        return new CreateMatViewOperation(createTableOperation, baseTableName, fromMicros, samplingInterval, samplingIntervalUnit, timeZone, timeZoneOffset, toMicros, viewSql);
     }
 
     @Override
     public void clear() {
-        tableModel.clear();
-        viewSql = null;
+        createTableOperationBuilder.clear();
         baseTableName = null;
         samplingInterval = -1;
         samplingIntervalUnit = '\0';
@@ -60,35 +63,16 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable {
         toMicros = -1;
         timeZone = null;
         timeZoneOffset = null;
+        viewSql = null;
     }
 
-    public MaterializedViewDefinition generateDefinition(@NotNull TableToken matViewToken) {
-        return new MaterializedViewDefinition(matViewToken, viewSql, baseTableName, samplingInterval, samplingIntervalUnit,
-                fromMicros, toMicros, timeZone, timeZoneOffset
-        );
+    public CreateTableOperationBuilder getCreateTableOperationBuilder() {
+        return createTableOperationBuilder;
     }
 
     @Override
     public int getModelType() {
         return CREATE_MAT_VIEW;
-    }
-
-    public QueryModel getQueryModel() {
-        return tableModel.getQueryModel();
-    }
-
-    public CreateTableModel getTableModel() {
-        return tableModel;
-    }
-
-    @Override
-    public CharSequence getTableName() {
-        return tableModel.getTableName();
-    }
-
-    @Override
-    public ExpressionNode getTableNameExpr() {
-        return tableModel.getTableNameExpr();
     }
 
     public void setBaseTableName(String baseTableName) {
@@ -126,29 +110,31 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable {
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         sink.putAscii("create materialized view ");
-        sink.put(tableModel.getName().token);
+        sink.put(createTableOperationBuilder.getTableName());
         sink.putAscii(" with base ");
         sink.put(baseTableName);
         sink.putAscii(" as (");
         sink.put(viewSql);
         sink.putAscii(')');
-        for (int i = 0, n = tableModel.getColumnCount(); i < n; i++) {
-            if (tableModel.isIndexed(i)) {
+        for (int i = 0, n = createTableOperationBuilder.getColumnCount(); i < n; i++) {
+            final CharSequence columnName = createTableOperationBuilder.getColumnName(i);
+            final CreateTableColumnModel columnModel = createTableOperationBuilder.getColumnModel(columnName);
+            if (columnModel != null && columnModel.isIndexed()) {
                 sink.putAscii(", index(");
-                sink.put(tableModel.getColumnName(i));
+                sink.put(columnName);
                 sink.putAscii(" capacity ");
-                sink.put(tableModel.getIndexBlockCapacity(i));
+                sink.put(columnModel.getIndexValueBlockSize());
                 sink.putAscii(')');
             }
         }
 
         sink.putAscii(" timestamp(");
-        sink.put(tableModel.getColumnName(tableModel.getTimestampIndex()));
+        sink.put(createTableOperationBuilder.getColumnName(createTableOperationBuilder.getTimestampIndex()));
         sink.putAscii(')');
 
-        sink.putAscii(" partition by ").put(PartitionBy.toString(tableModel.getPartitionBy()));
+        sink.putAscii(" partition by ").put(PartitionBy.toString(createTableOperationBuilder.getPartitionByFromExpr()));
 
-        final CharSequence volumeAlias = tableModel.getVolumeAlias();
+        final CharSequence volumeAlias = createTableOperationBuilder.getVolumeAlias();
         if (volumeAlias != null) {
             sink.putAscii(" in volume '").put(volumeAlias).putAscii('\'');
         }

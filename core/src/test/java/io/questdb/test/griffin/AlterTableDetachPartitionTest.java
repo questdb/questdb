@@ -25,13 +25,29 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.AlterTableUtils;
+import io.questdb.cairo.AttachDetachStatus;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.O3PartitionPurgeJob;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
@@ -51,7 +67,11 @@ import org.junit.Test;
 
 import java.util.Iterator;
 import java.util.Set;
-import java.util.concurrent.*;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ConcurrentSkipListSet;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
@@ -897,6 +917,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                                 .col("i", ColumnType.INT)
                                 .col("l", ColumnType.INT)
                                 .col("s2", ColumnType.SYMBOL),
+                        ColumnType.VERSION,
                         1,
                         registerTableName(brokenMeta.getTableName()).getDirName()
                 );
@@ -1325,6 +1346,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                                 .col("s", ColumnType.SYMBOL)
                                 .col("vch", ColumnType.VARCHAR)
                                 .timestamp("ts"),
+                        ColumnType.VERSION,
                         1,
                         registerTableName(brokenMeta.getTableName()).getDirName()
                 );
@@ -1402,6 +1424,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                                 .col("s", ColumnType.SYMBOL).indexed(true, 32)
                                 .col("vch", ColumnType.VARCHAR)
                                 .timestamp("ts"),
+                        ColumnType.VERSION,
                         1,
                         registerTableName(brokenMeta.getTableName()).getDirName()
                 );
@@ -1479,6 +1502,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                                 .col("i", ColumnType.INT)
                                 .col("s", ColumnType.SYMBOL).indexed(true, 32)
                                 .timestamp("ts"),
+                        ColumnType.VERSION,
                         tableToken2.getTableId(),
                         tableToken2.getDirName()
                 );
@@ -2278,7 +2302,8 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                         3
                 );
                 // create populate broken metadata table
-                TableUtils.createTable(configuration, mem, path, brokenMetaTransform.apply(brokenMeta), brokenMetaId,
+                TableUtils.createTable(configuration, mem, path, brokenMetaTransform.apply(brokenMeta),
+                        ColumnType.VERSION, brokenMetaId,
                         registerTableName(brokenMeta.getTableName()).getDirName()
                 );
                 if (insertStmt != null) {

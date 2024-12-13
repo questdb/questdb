@@ -170,15 +170,9 @@ public class InsertOperationImpl implements InsertOperation {
     }
 
     private class InsertOperationFuture extends DoneOperationFuture {
-
         @Override
         public long getAffectedRowsCount() {
             return insertRows.size();
-        }
-
-        @Override
-        public long getInstanceId() {
-            return -3L;
         }
     }
 }

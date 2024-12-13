@@ -32,7 +32,11 @@ import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.*;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
@@ -151,8 +155,7 @@ public class TelemetryConfigLogger implements Closeable {
                 .$("CREATE TABLE IF NOT EXISTS ")
                 .$(TELEMETRY_CONFIG_TABLE_NAME)
                 .$(" (id long256, enabled boolean, version symbol, os symbol, package symbol)")
-                .compile(sqlExecutionContext)
-                .getTableToken();
+                .createTable(sqlExecutionContext);
 
         tryAddColumn(compiler, sqlExecutionContext, "version symbol");
         tryAddColumn(compiler, sqlExecutionContext, "os symbol");

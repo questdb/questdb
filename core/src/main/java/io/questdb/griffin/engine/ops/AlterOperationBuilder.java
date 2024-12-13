@@ -26,11 +26,12 @@ package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.TableToken;
 import io.questdb.std.LongList;
+import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 
 import static io.questdb.griffin.engine.ops.AlterOperation.*;
 
-public class AlterOperationBuilder {
+public class AlterOperationBuilder implements Mutable {
     private final LongList extraInfo = new LongList();
     private final ObjList<CharSequence> extraStrInfo = new ObjList<>();
     private final AlterOperation op;
@@ -75,6 +76,7 @@ public class AlterOperationBuilder {
         return op.of(command, tableToken, tableId, tableNamePosition);
     }
 
+    @Override
     public void clear() {
         op.clear();
         extraStrInfo.clear();
@@ -155,6 +157,14 @@ public class AlterOperationBuilder {
         return this;
     }
 
+    public AlterOperationBuilder ofConvertPartition(int tableNamePosition, TableToken tableToken, int tableId) {
+        this.command = CONVERT_PARTITION;
+        this.tableNamePosition = tableNamePosition;
+        this.tableToken = tableToken;
+        this.tableId = tableId;
+        return this;
+    }
+
     public AlterOperationBuilder ofDedupDisable(int tableNamePosition, TableToken tableToken) {
         this.command = SET_DEDUP_DISABLE;
         this.tableNamePosition = tableNamePosition;
@@ -212,14 +222,6 @@ public class AlterOperationBuilder {
 
     public AlterOperationBuilder ofForceDropPartition(int tableNamePosition, TableToken tableToken, int tableId) {
         this.command = FORCE_DROP_PARTITION;
-        this.tableNamePosition = tableNamePosition;
-        this.tableToken = tableToken;
-        this.tableId = tableId;
-        return this;
-    }
-
-    public AlterOperationBuilder ofConvertPartition(int tableNamePosition, TableToken tableToken, int tableId) {
-        this.command = CONVERT_PARTITION;
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;
         this.tableId = tableId;

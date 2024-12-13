@@ -26,7 +26,15 @@ package io.questdb.cairo.pool;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
-import io.questdb.griffin.*;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.BatchCallback;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.ExpressionParserListener;
+import io.questdb.griffin.QueryBuilder;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
@@ -125,13 +133,37 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
-        public CompiledQuery compile(CharSequence s, SqlExecutionContext ctx) throws SqlException {
-            return delegate.compile(s, ctx);
+        public CompiledQuery compile(CharSequence sqlText, SqlExecutionContext ctx) throws SqlException {
+            return delegate.compile(sqlText, ctx);
         }
 
         @Override
-        public void compileBatch(CharSequence queryText, SqlExecutionContext sqlExecutionContext, BatchCallback batchCallback) throws Exception {
-            delegate.compileBatch(queryText, sqlExecutionContext, batchCallback);
+        public void compileBatch(CharSequence batchText, SqlExecutionContext sqlExecutionContext, BatchCallback batchCallback) throws Exception {
+            delegate.compileBatch(batchText, sqlExecutionContext, batchCallback);
+        }
+
+        @Override
+        public void execute(Operation op, SqlExecutionContext executionContext) throws SqlException {
+            delegate.execute(op, executionContext);
+        }
+
+        @Override
+        public RecordCursorFactory generateSelectWithRetries(QueryModel queryModel, SqlExecutionContext executionContext, boolean generateProgressLogger) throws SqlException {
+            return delegate.generateSelectWithRetries(queryModel, executionContext, generateProgressLogger);
+        }
+
+        @Override
+        public BytecodeAssembler getAsm() {
+            return delegate.getAsm();
+        }
+
+        public SqlCompiler getDelegate() {
+            return delegate;
+        }
+
+        @Override
+        public CairoEngine getEngine() {
+            return delegate.getEngine();
         }
 
         @Override
@@ -176,8 +208,8 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
-        public ExecutionModel testCompileModel(CharSequence query, SqlExecutionContext executionContext) throws SqlException {
-            return delegate.testCompileModel(query, executionContext);
+        public ExecutionModel testCompileModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException {
+            return delegate.testCompileModel(sqlText, executionContext);
         }
 
         @Override
@@ -188,11 +220,6 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         @Override
         public void testParseExpression(CharSequence expression, ExpressionParserListener listener) throws SqlException {
             delegate.testParseExpression(expression, listener);
-        }
-
-        @Override
-        public BytecodeAssembler getAsm() {
-            return delegate.getAsm();
         }
 
         @Override

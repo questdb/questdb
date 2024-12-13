@@ -35,7 +35,14 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.mp.SynchronizedJob;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.LongList;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.Os;
+import io.questdb.std.Rows;
+import io.questdb.std.WeakMutableObjectPool;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.tasks.ColumnPurgeTask;
 import org.jetbrains.annotations.TestOnly;
@@ -108,8 +115,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                                 "completed timestamp" + // 11
                                 ") timestamp(ts) partition by MONTH BYPASS WAL"
                         )
-                        .compile(sqlExecutionContext)
-                        .getTableToken();
+                        .createTable(sqlExecutionContext);
             }
 
             this.writer = engine.getWriter(tableToken, "QuestDB system");

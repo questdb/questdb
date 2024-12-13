@@ -25,14 +25,16 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.CreateMatViewOperation;
+import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.engine.ops.DoneOperationFuture;
+import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.OperationDispatcher;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
@@ -48,12 +50,12 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     private long affectedRowsCount;
     private AlterOperation alterOp;
     private InsertOperation insertOp;
+    private Operation operation;
     private RecordCursorFactory recordCursorFactory;
     private SqlExecutionContext sqlExecutionContext;
     private String sqlStatement;
     // prepared statement name for DEALLOCATE operation
     private CharSequence statementName;
-    private TableToken tableToken;
     private short type;
     private UpdateOperation updateOp;
 
@@ -82,12 +84,12 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     public void clear() {
         this.type = NONE;
         this.recordCursorFactory = null;
-        this.tableToken = null;
         this.affectedRowsCount = -1;
         this.insertOp = null;
         this.alterOp = null;
         this.updateOp = null;
         this.statementName = null;
+        this.operation = null;
     }
 
     @Override
@@ -100,12 +102,19 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         switch (type) {
             case INSERT:
                 return insertOp.execute(sqlExecutionContext);
+            case CREATE_TABLE:
+            case CREATE_TABLE_AS_SELECT:
+                assert false;
+                doneFuture.of(0);
             case UPDATE:
                 updateOp.withSqlStatement(sqlStatement);
                 return updateOperationDispatcher.execute(updateOp, sqlExecutionContext, eventSubSeq, closeOnDone);
             case ALTER:
                 alterOp.withSqlStatement(sqlStatement);
                 return alterOperationDispatcher.execute(alterOp, sqlExecutionContext, eventSubSeq, closeOnDone);
+            case DROP:
+                assert false;
+                // fall thru
             default:
                 return doneFuture.of(0);
         }
@@ -127,6 +136,11 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     }
 
     @Override
+    public Operation getOperation() {
+        return operation;
+    }
+
+    @Override
     public RecordCursorFactory getRecordCursorFactory() {
         return recordCursorFactory;
     }
@@ -142,11 +156,6 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     }
 
     @Override
-    public TableToken getTableToken() {
-        return tableToken;
-    }
-
-    @Override
     public short getType() {
         return type;
     }
@@ -157,21 +166,12 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     }
 
     public CompiledQuery of(short type) {
-        return of(type, null, null);
+        return of(type, null);
     }
 
-    public CompiledQuery of(short type, RecordCursorFactory recordCursorFactory) {
-        return of(type, recordCursorFactory, null);
-    }
-
-    public CompiledQuery of(RecordCursorFactory recordCursorFactory) {
-        return of(SELECT, recordCursorFactory, null);
-    }
-
-    public CompiledQuery ofAlter(AlterOperation alterOp) {
+    public void ofAlter(AlterOperation alterOp) {
         of(ALTER);
         this.alterOp = alterOp;
-        return this;
     }
 
     public void ofAlterUser() {
@@ -206,17 +206,14 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         of(COPY_REMOTE);
     }
 
-    public void ofCreateMatView(TableToken tableToken) {
-        of(CREATE_MAT_VIEW, null, tableToken);
+    public void ofCreateMatView(CreateMatViewOperation createMatViewOp) {
+        of(CREATE_MAT_VIEW);
+        this.operation = createMatViewOp;
     }
 
-    public void ofCreateTable(TableToken tableToken) {
-        of(CREATE_TABLE, null, tableToken);
-    }
-
-    public void ofCreateTableAsSelect(TableToken tableToken, long affectedRowsCount) {
-        of(CREATE_TABLE_AS_SELECT, null, tableToken);
-        this.affectedRowsCount = affectedRowsCount;
+    public void ofCreateTable(CreateTableOperation createTableOp) {
+        of(createTableOp.getRecordCursorFactory() == null ? CREATE_TABLE : CREATE_TABLE_AS_SELECT);
+        this.operation = createTableOp;
     }
 
     public void ofCreateUser() {
@@ -228,16 +225,17 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         of(DEALLOCATE);
     }
 
-    public void ofDrop() {
+    public void ofDrop(Operation op) {
         of(DROP);
+        this.operation = op;
     }
 
     public void ofEmpty() {
-        of(EMPTY, new EmptyTableRecordCursorFactory(EmptyRecordMetadata.INSTANCE), null);
+        of(EMPTY, new EmptyTableRecordCursorFactory(EmptyRecordMetadata.INSTANCE));
     }
 
     public void ofExplain(RecordCursorFactory recordCursorFactory) {
-        of(EXPLAIN, recordCursorFactory, null);
+        of(EXPLAIN, recordCursorFactory);
     }
 
     public void ofInsert(InsertOperation insertOperation) {
@@ -273,6 +271,10 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
 
     public void ofRollback() {
         of(ROLLBACK);
+    }
+
+    public void ofSelect(RecordCursorFactory recordCursorFactory) {
+        of(SELECT, recordCursorFactory);
     }
 
     public void ofSet() {
@@ -313,10 +315,9 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.sqlStatement = sqlStatement;
     }
 
-    private CompiledQuery of(short type, RecordCursorFactory factory, TableToken tableToken) {
+    private CompiledQuery of(short type, RecordCursorFactory factory) {
         this.type = type;
         this.recordCursorFactory = factory;
-        this.tableToken = tableToken;
         this.affectedRowsCount = -1;
         return this;
     }

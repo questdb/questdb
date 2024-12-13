@@ -2000,7 +2000,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 MemoryMARW mem = Vm.getMARWInstance();
                 Path path = new Path().of(configuration.getRoot()).concat(tableToken)
         ) {
-            TableUtils.createTable(configuration, mem, path, tableModel, tableId, tableToken.getDirName());
+            TableUtils.createTable(configuration, mem, path, tableModel, ColumnType.VERSION, tableId, tableToken.getDirName());
             for (int i = 0; i < insertIterations; i++) {
                 insert(TestUtils.insertFromSelectPopulateTableStmt(tableModel, totalRowsPerIteration, startDate, partitionCount));
             }
