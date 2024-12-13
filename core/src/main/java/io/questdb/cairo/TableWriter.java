@@ -5337,53 +5337,34 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (ttl == 0) {
             return;
         }
+        PartitionBy.PartitionFloorMethod floorFn = PartitionBy.getPartitionFloorMethod(metadata.getPartitionBy());
+        PartitionBy.PartitionCeilMethod ceilFn = PartitionBy.getPartitionCeilMethod(metadata.getPartitionBy());
+        if (floorFn == null || ceilFn == null) {
+            LOG.error().$("TTL set on a non-partitioned table. Ignoring");
+            return;
+        }
         int partitionCount = getPartitionCount();
         if (partitionCount < 2) {
             return;
         }
         long maxTimestamp = getMaxTimestamp();
-        long partition1Timestamp = getPartitionTimestamp(1);
-        if (ttl > 0) {
-            // TTL unit is HOURS
-            long evictionThresholdMicros = maxTimestamp - TimeUnit.HOURS.toMicros(ttl);
-            if (partition1Timestamp > evictionThresholdMicros) {
-                // Fast path: the oldest partition isn't past its lifetime, return
-                return;
+        for (int i = 0; i < partitionCount - 1; i++) {
+            long partitionTimestamp = getPartitionTimestamp(i);
+            if (partitionTimestamp != floorFn.floor(partitionTimestamp)) {
+                // This is a high chunk of a split partition, don't mess with it
+                continue;
             }
-            TxWriter txWriter = getTxWriter();
-            boolean isOld = false;
-            for (int i = partitionCount - 1; i >= 0; i--) {
-                long partitionTimestamp = getPartitionTimestamp(i);
-                if (partitionTimestamp != txWriter.getPartitionFloor(partitionTimestamp)) {
-                    continue;
-                }
-                if (isOld) {
-                    dropPartitionByExactTimestamp(partitionTimestamp);
-                } else {
-                    isOld = partitionTimestamp <= evictionThresholdMicros;
-                }
+            long partitionCeiling = ceilFn.ceil(partitionTimestamp);
+            // TTL < 0 means it's in months
+            boolean shouldEvict = ttl > 0
+                    ? maxTimestamp - partitionCeiling >= TimeUnit.HOURS.toMicros(ttl)
+                    : Timestamps.getMonthsBetween(partitionCeiling, maxTimestamp) >= -ttl;
+            if (shouldEvict) {
+                dropPartitionByExactTimestamp(partitionTimestamp);
+            } else {
+                // Partitions are sorted by timestamp, no need to check the rest
+                break;
             }
-        } else {
-            // ttl < 0 => TTL unit is MONTHS
-            int ttlMonths = -ttl;
-            if (Timestamps.getMonthsBetween(partition1Timestamp, maxTimestamp) < ttlMonths) {
-                // Fast path: the oldest partition isn't past its lifetime, return
-                return;
-            }
-            TxWriter txWriter = getTxWriter();
-            boolean isOld = false;
-            for (int i = partitionCount - 1; i >= 0; i--) {
-                long partitionTimestamp = getPartitionTimestamp(i);
-                if (partitionTimestamp != txWriter.getPartitionFloor(partitionTimestamp)) {
-                    continue;
-                }
-                if (isOld) {
-                    dropPartitionByExactTimestamp(partitionTimestamp);
-                } else {
-                    isOld = Timestamps.getMonthsBetween(partitionTimestamp, maxTimestamp) >= ttlMonths;
-                }
-            }
-
         }
     }
 
