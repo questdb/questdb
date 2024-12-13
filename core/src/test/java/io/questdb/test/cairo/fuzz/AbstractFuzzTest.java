@@ -180,7 +180,10 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     }
 
     protected String getTestName() {
-        return testName.getMethodName().replace('[', '_').replace(']', '_');
+        return testName.getMethodName()
+                .replace('[', '_')
+                .replace(']', '_')
+                .replace('=', '_');
     }
 
     protected void runFuzz(Rnd rnd) throws Exception {

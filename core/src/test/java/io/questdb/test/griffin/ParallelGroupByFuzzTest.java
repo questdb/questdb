@@ -124,7 +124,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                             ") TIMESTAMP(created) PARTITION BY DAY;"
             );
             execute("INSERT INTO t VALUES ('2023-09-21T10:00:00.000000Z', 1, 1);");
-            execute("INSERT INTO t VALUES ('2023-09-21T11:00:00.000000Z', 1, 1);");
+            execute("INSERT INTO t VALUES ('2023-09-22T11:00:00.000000Z', 1, 1);");
 
             if (convertToParquet) {
                 execute("alter table t convert partition to parquet where created >= 0");
@@ -158,9 +158,9 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
             );
             execute("INSERT INTO t VALUES ('2023-09-21T10:00:00.000000Z', 'a', 'c');");
             execute("INSERT INTO t VALUES ('2023-09-21T10:00:01.000000Z', 'a', 'c');");
-            execute("INSERT INTO t VALUES ('2023-09-21T10:00:02.000000Z', 'a', 'd');");
-            execute("INSERT INTO t VALUES ('2023-09-21T10:00:00.000000Z', 'b', 'c');");
-            execute("INSERT INTO t VALUES ('2023-09-21T10:00:01.000000Z', 'b', 'c');");
+            execute("INSERT INTO t VALUES ('2023-09-22T10:00:02.000000Z', 'a', 'd');");
+            execute("INSERT INTO t VALUES ('2023-09-22T10:00:00.000000Z', 'b', 'c');");
+            execute("INSERT INTO t VALUES ('2023-09-23T10:00:01.000000Z', 'b', 'c');");
 
             if (convertToParquet) {
                 execute("alter table t convert partition to parquet where created >= 0");
@@ -194,7 +194,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                             ") TIMESTAMP(created) PARTITION BY DAY;"
             );
             execute("INSERT INTO t1 VALUES ('2023-09-21T10:00:00.000000Z', 1, 1);");
-            execute("INSERT INTO t1 VALUES ('2023-09-21T10:00:01.000000Z', 2, 2);");
+            execute("INSERT INTO t1 VALUES ('2023-09-22T10:00:01.000000Z', 2, 2);");
 
             execute(
                     "CREATE TABLE t2 (\n" +
@@ -204,7 +204,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                             ") TIMESTAMP(created) PARTITION BY DAY;"
             );
             execute("INSERT INTO t2 VALUES ('2023-09-21T10:00:02.000000Z', 3, 1);");
-            execute("INSERT INTO t2 VALUES ('2023-09-21T10:00:00.000000Z', 4, 2);");
+            execute("INSERT INTO t2 VALUES ('2023-09-22T10:00:00.000000Z', 4, 2);");
 
             if (convertToParquet) {
                 execute("alter table t1 convert partition to parquet where created >= 0");
@@ -2358,11 +2358,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         testParallelStringAndVarcharKeyGroupBy(
                 "SELECT key, min(ts), max(ts) FROM tab WHERE key IS NOT NULL ORDER BY key",
                 "key\tmin\tmax\n" +
-                        "k0\t1970-01-01T01:12:00.000000Z\t1970-02-10T12:00:00.000000Z\n" +
-                        "k1\t1970-01-01T00:14:24.000000Z\t1970-02-10T11:02:24.000000Z\n" +
-                        "k2\t1970-01-01T00:28:48.000000Z\t1970-02-10T11:16:48.000000Z\n" +
-                        "k3\t1970-01-01T00:43:12.000000Z\t1970-02-10T11:31:12.000000Z\n" +
-                        "k4\t1970-01-01T00:57:36.000000Z\t1970-02-10T11:45:36.000000Z\n"
+                        "k0\t1970-01-01T01:12:00.000000Z\t1971-02-10T00:00:00.000000Z\n" +
+                        "k1\t1970-01-01T00:14:24.000000Z\t1971-02-09T14:24:00.000000Z\n" +
+                        "k2\t1970-01-01T00:28:48.000000Z\t1971-02-09T16:48:00.000000Z\n" +
+                        "k3\t1970-01-01T00:43:12.000000Z\t1971-02-09T19:12:00.000000Z\n" +
+                        "k4\t1970-01-01T00:57:36.000000Z\t1971-02-09T21:36:00.000000Z\n"
         );
     }
 
@@ -3299,7 +3299,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         engine.execute("ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
                         engine.execute(
                                 "insert into tab " +
-                                        "select ((50 + x) * 864000000)::timestamp, 'k' || ((50 + x) % 5), 50 + x, 50 + x " +
+                                        "select ((50 + x) * 8640000000)::timestamp, 'k' || ((50 + x) % 5), 50 + x, 50 + x " +
                                         "from long_sequence(" + ROW_COUNT + ")",
                                 sqlExecutionContext
                         );
@@ -3324,7 +3324,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         engine.execute("ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
                         engine.execute(
                                 "insert into tab " +
-                                        "select ((50 + x) * 864000000)::timestamp, 'k' || ((50 + x) % 5), 50 + x, 50 + x " +
+                                        "select ((50 + x) * 8640000000)::timestamp, 'k' || ((50 + x) % 5), 50 + x, 50 + x " +
                                         "from long_sequence(" + ROW_COUNT + ")",
                                 sqlExecutionContext
                         );

@@ -229,7 +229,11 @@ pub fn build_plain_page(
 pub unsafe fn transmute_slice<T>(slice: &[u8]) -> &[T] {
     let sizeof_t = mem::size_of::<T>();
     assert_eq!(slice.len() % sizeof_t, 0);
-    slice::from_raw_parts(slice.as_ptr() as *const T, slice.len() / sizeof_t)
+    if slice.is_empty() {
+        &[]
+    } else {
+        slice::from_raw_parts(slice.as_ptr() as *const T, slice.len() / sizeof_t)
+    }
 }
 
 #[cfg(test)]
