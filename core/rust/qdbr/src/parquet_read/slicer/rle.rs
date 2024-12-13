@@ -122,7 +122,8 @@ impl<T: DictDecoder> DataPageSlicer for RleDictionarySlicer<'_, '_, T> {
                 self.inner.error_value
             }
         } else {
-            // TODO: recursive call, check if this is safe
+            // This recursive is safe, it cannot go deeper than 1 level down.
+            // After a successful call to `self.inner.decode()` there will be a value in `self.inner.data.next()`
             match self.decode() {
                 Ok(()) => self.next(),
                 Err(err) => {
