@@ -30,6 +30,7 @@ import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.log.Log;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
@@ -81,7 +82,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
 
     public ObjList<FuzzTransaction> generateSet(
             Rnd rnd,
-            TableMetadata sequencerMetadata,
+            TableRecordMetadata sequencerMetadata,
             TableMetadata readerMetadata,
             long start,
             long end,

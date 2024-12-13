@@ -25,9 +25,18 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.InsertMethod;
+import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -85,15 +94,15 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testAutoIncrementUniqueId_FirstColumn() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table currencies(id long, ccy symbol, ts timestamp) timestamp(ts)");
+            execute("create table currencies(id long, ccy symbol, ts timestamp) timestamp(ts)");
 
-            insert("insert into currencies values (1, 'USD', '2019-03-10T00:00:00.000000Z')");
+            execute("insert into currencies values (1, 'USD', '2019-03-10T00:00:00.000000Z')");
             assertSql("id\tccy\tts\n" + "1\tUSD\t2019-03-10T00:00:00.000000Z\n", "currencies");
 
-            ddl("insert into currencies select max(id) + 1, 'EUR', '2019-03-10T01:00:00.000000Z' from currencies");
+            execute("insert into currencies select max(id) + 1, 'EUR', '2019-03-10T01:00:00.000000Z' from currencies");
             assertSql("id\tccy\tts\n" + "1\tUSD\t2019-03-10T00:00:00.000000Z\n" + "2\tEUR\t2019-03-10T01:00:00.000000Z\n", "currencies");
 
-            ddl("insert into currencies select max(id) + 1, 'GBP', '2019-03-10T02:00:00.000000Z' from currencies");
+            execute("insert into currencies select max(id) + 1, 'GBP', '2019-03-10T02:00:00.000000Z' from currencies");
             assertSql("id\tccy\tts\n" + "1\tUSD\t2019-03-10T00:00:00.000000Z\n" + "2\tEUR\t2019-03-10T01:00:00.000000Z\n" + "3\tGBP\t2019-03-10T02:00:00.000000Z\n", "currencies");
         });
     }
@@ -101,15 +110,15 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testAutoIncrementUniqueId_NotFirstColumn() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table currencies(ccy symbol, id long, ts timestamp) timestamp(ts)");
+            execute("create table currencies(ccy symbol, id long, ts timestamp) timestamp(ts)");
 
-            insert("insert into currencies values ('USD', 1, '2019-03-10T00:00:00.000000Z')");
+            execute("insert into currencies values ('USD', 1, '2019-03-10T00:00:00.000000Z')");
             assertSql("ccy\tid\tts\n" + "USD\t1\t2019-03-10T00:00:00.000000Z\n", "currencies");
 
-            ddl("insert into currencies select 'EUR', max(id) + 1, '2019-03-10T01:00:00.000000Z' from currencies");
+            execute("insert into currencies select 'EUR', max(id) + 1, '2019-03-10T01:00:00.000000Z' from currencies");
             assertSql("ccy\tid\tts\n" + "USD\t1\t2019-03-10T00:00:00.000000Z\n" + "EUR\t2\t2019-03-10T01:00:00.000000Z\n", "currencies");
 
-            ddl("insert into currencies select 'GBP', max(id) + 1, '2019-03-10T02:00:00.000000Z' from currencies");
+            execute("insert into currencies select 'GBP', max(id) + 1, '2019-03-10T02:00:00.000000Z' from currencies");
             assertSql("ccy\tid\tts\n" + "USD\t1\t2019-03-10T00:00:00.000000Z\n" + "EUR\t2\t2019-03-10T01:00:00.000000Z\n" + "GBP\t3\t2019-03-10T02:00:00.000000Z\n", "currencies");
         });
     }
@@ -117,14 +126,14 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testCannotInsertIntoMatView() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table currencies(ccy symbol, id long, ts timestamp) timestamp(ts) partition by day wal");
-            insert("insert into currencies values ('USD', 1, '2019-03-10T00:00:00.000000Z')");
-            insert("insert into currencies select 'EUR', max(id) + 1, '2019-03-10T01:00:00.000000Z' from currencies");
-            insert("insert into currencies select 'GBP', max(id) + 1, '2019-03-10T02:00:00.000000Z' from currencies");
+            execute("create table currencies(ccy symbol, id long, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into currencies values ('USD', 1, '2019-03-10T00:00:00.000000Z')");
+            execute("insert into currencies select 'EUR', max(id) + 1, '2019-03-10T01:00:00.000000Z' from currencies");
+            execute("insert into currencies select 'GBP', max(id) + 1, '2019-03-10T02:00:00.000000Z' from currencies");
 
-            ddl("create materialized view curr_view as (select ts, max(id) as id from currencies sample by 1h) partition by day");
+            execute("create materialized view curr_view as (select ts, max(id) as id from currencies sample by 1h) partition by day");
             try {
-                insert("insert into curr_view values ('SEK', 3, '2019-03-10T03:00:00.000000Z')");
+                execute("insert into curr_view values ('SEK', 3, '2019-03-10T03:00:00.000000Z')");
                 Assert.fail("INSERT should fail");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "cannot modify materialized view [view=curr_view]");
@@ -146,7 +155,7 @@ public class InsertTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> {
             TableModel model = CreateTableTestUtils.getGeoHashTypesModelWithNewTypes(configuration, PartitionBy.YEAR);
-            TestUtils.create(model, engine);
+            TestUtils.createTable(engine, model);
             Rnd rnd = new Rnd();
 
             final String sql;
@@ -386,7 +395,7 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertContextSwitch() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table balances(cust_id int, ccy symbol, balance double)");
+            execute("create table balances(cust_id int, ccy symbol, balance double)");
             sqlExecutionContext.getBindVariableService().setDouble("bal", 150.4);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 CompiledQuery cq = compiler.compile("insert into balances values (1, 'GBP', :bal)", sqlExecutionContext);
@@ -414,7 +423,7 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertContextSwitch_varchar() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table balances(cust_id int, ccy symbol, balance double)");
+            execute("create table balances(cust_id int, ccy symbol, balance double)");
             sqlExecutionContext.getBindVariableService().setDouble("bal", 150.4);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 CompiledQuery cq = compiler.compile("insert into balances values (1, 'GBP'::varchar, :bal)", sqlExecutionContext);
@@ -442,8 +451,8 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertEmptyStringSelectEmptyStringColumnIndexed() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (id int, val symbol index)");
-            insert("insert into tab values (1, '')");
+            execute("create table tab (id int, val symbol index)");
+            execute("insert into tab values (1, '')");
             assertSql("id\n1\n", "select id from tab where val = ''");
         });
     }
@@ -451,8 +460,8 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertEmptyStringSelectNullStringColumnIndexed() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (id int, val symbol index)");
-            insert("insert into tab values (1, '')");
+            execute("create table tab (id int, val symbol index)");
+            execute("insert into tab values (1, '')");
             assertSql("id\n", "select id from tab where val = null");
         });
     }
@@ -460,8 +469,8 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertEmptyVarcharSelectEmptyVarcharColumnIndexed() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (id int, val symbol index)");
-            insert("insert into tab values (1, ''::varchar)");
+            execute("create table tab (id int, val symbol index)");
+            execute("insert into tab values (1, ''::varchar)");
             assertSql("id\n1\n", "select id from tab where val = ''");
         });
     }
@@ -469,8 +478,8 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertEmptyVarcharSelectNullVarcharColumnIndexed() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (id int, val symbol index)");
-            insert("insert into tab values (1, ''::varchar)");
+            execute("create table tab (id int, val symbol index)");
+            execute("insert into tab values (1, ''::varchar)");
             assertSql("id\n", "select id from tab where val = null");
         });
     }
@@ -478,13 +487,13 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertExecutionAfterStructureChange() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table balances(cust_id int, ccy symbol, balance double)");
+            execute("create table balances(cust_id int, ccy symbol, balance double)");
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 CompiledQuery cq = compiler.compile("insert into balances values (1, 'GBP', 356.12)", sqlExecutionContext);
                 Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
                 InsertOperation insertOperation = cq.getInsertOperation();
 
-                ddl("alter table balances drop column ccy", sqlExecutionContext);
+                execute("alter table balances drop column ccy", sqlExecutionContext);
 
                 insertOperation.createMethod(sqlExecutionContext);
                 Assert.fail();
@@ -496,8 +505,8 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertExplicitTimestampPos1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE TS (timestamp TIMESTAMP, field STRING, value DOUBLE) TIMESTAMP(timestamp)");
-            insert("INSERT INTO TS(field, value, timestamp) values('X',123.33, to_timestamp('2019-12-04T13:20:49', 'yyyy-MM-ddTHH:mm:ss'))");
+            execute("CREATE TABLE TS (timestamp TIMESTAMP, field STRING, value DOUBLE) TIMESTAMP(timestamp)");
+            execute("INSERT INTO TS(field, value, timestamp) values('X',123.33, to_timestamp('2019-12-04T13:20:49', 'yyyy-MM-ddTHH:mm:ss'))");
             String expected = "timestamp\tfield\tvalue\n" + "2019-12-04T13:20:49.000000Z\tX\t123.33\n";
 
             assertReaderCheckWal(expected, "TS");
@@ -507,8 +516,8 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertExplicitTimestampPos1_varchar() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE TS (timestamp TIMESTAMP, field STRING, value DOUBLE) TIMESTAMP(timestamp)");
-            insert("INSERT INTO TS(field, value, timestamp) values('X',123.33, to_timestamp('2019-12-04T13:20:49'::varchar, 'yyyy-MM-ddTHH:mm:ss'))");
+            execute("CREATE TABLE TS (timestamp TIMESTAMP, field STRING, value DOUBLE) TIMESTAMP(timestamp)");
+            execute("INSERT INTO TS(field, value, timestamp) values('X',123.33, to_timestamp('2019-12-04T13:20:49'::varchar, 'yyyy-MM-ddTHH:mm:ss'))");
             String expected = "timestamp\tfield\tvalue\n" + "2019-12-04T13:20:49.000000Z\tX\t123.33\n";
 
             assertReaderCheckWal(expected, "TS");
@@ -612,8 +621,8 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertImplicitTimestampPos1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE TS (timestamp TIMESTAMP, field STRING, value DOUBLE) TIMESTAMP(timestamp)");
-            insert("INSERT INTO TS values(to_timestamp('2019-12-04T13:20:49', 'yyyy-MM-ddTHH:mm:ss'),'X',123.33d)");
+            execute("CREATE TABLE TS (timestamp TIMESTAMP, field STRING, value DOUBLE) TIMESTAMP(timestamp)");
+            execute("INSERT INTO TS values(to_timestamp('2019-12-04T13:20:49', 'yyyy-MM-ddTHH:mm:ss'),'X',123.33d)");
             String expected = "timestamp\tfield\tvalue\n" + "2019-12-04T13:20:49.000000Z\tX\t123.33\n";
 
             assertReaderCheckWal(expected, "TS");
@@ -623,8 +632,8 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertImplicitTimestampPos1_varchar() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE TS (timestamp TIMESTAMP, field VARCHAR, value DOUBLE) TIMESTAMP(timestamp)");
-            insert("INSERT INTO TS values(to_timestamp('2019-12-04T13:20:49'::varchar, 'yyyy-MM-ddTHH:mm:ss'),'X',123.33d)");
+            execute("CREATE TABLE TS (timestamp TIMESTAMP, field VARCHAR, value DOUBLE) TIMESTAMP(timestamp)");
+            execute("INSERT INTO TS values(to_timestamp('2019-12-04T13:20:49'::varchar, 'yyyy-MM-ddTHH:mm:ss'),'X',123.33d)");
             String expected = "timestamp\tfield\tvalue\n" + "2019-12-04T13:20:49.000000Z\tX\t123.33\n";
 
             assertReaderCheckWal(expected, "TS");
@@ -635,7 +644,7 @@ public class InsertTest extends AbstractCairoTest {
     public void testInsertIntoNonExistingTable() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                insert("insert into tab values (1)");
+                execute("insert into tab values (1)");
                 Assert.fail();
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist [table=tab]");
@@ -647,7 +656,7 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertInvalidColumn() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table balances(cust_id int, ccy symbol, balance double)");
+            execute("create table balances(cust_id int, ccy symbol, balance double)");
             try {
                 assertExceptionNoLeakCheck("insert into balances(cust_id, ccy2, balance) values (1, 'GBP', 356.12)", sqlExecutionContext);
             } catch (SqlException e) {
@@ -670,8 +679,8 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertMultipleRows() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table trades (ts timestamp, sym symbol) timestamp(ts);");
-            insert("insert into trades VALUES (1262599200000000, 'USDJPY'), (3262599300000000, 'USDFJD');");
+            execute("create table trades (ts timestamp, sym symbol) timestamp(ts);");
+            execute("insert into trades VALUES (1262599200000000, 'USDJPY'), (3262599300000000, 'USDFJD');");
 
             String expected = "ts\tsym\n" + "2010-01-04T10:00:00.000000Z\tUSDJPY\n" + "2073-05-21T13:35:00.000000Z\tUSDFJD\n";
 
@@ -682,7 +691,7 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertMultipleRowsBindVariables() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table trades (ts timestamp, sym symbol) timestamp(ts);");
+            execute("create table trades (ts timestamp, sym symbol) timestamp(ts);");
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 final String sql = "insert into trades VALUES (1262599200000000, $1), (3262599300000000, $2);";
                 final CompiledQuery cq = compiler.compile(sql, sqlExecutionContext);
@@ -703,8 +712,8 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertMultipleRowsExtraParentheses() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table trades (i INT, sym symbol)");
-            insert("insert into trades VALUES ((1), 'USD'), ((2), (('FJD')));");
+            execute("create table trades (i INT, sym symbol)");
+            execute("insert into trades VALUES ((1), 'USD'), ((2), (('FJD')));");
 
             String expected = "i\tsym\n" + "1\tUSD\n" + "2\tFJD\n";
 
@@ -715,7 +724,7 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertMultipleRowsFailInvalidSyntax() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table trades (i int, sym symbol)");
+            execute("create table trades (i int, sym symbol)");
 
             // No comma delimiter between rows
             assertException("insert into trades VALUES (1, 'USDJPY')(2, 'USDFJD');", 39, "',' expected");
@@ -737,7 +746,7 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertMultipleRowsFailRowWrongColumnCount() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table trades (i int, sym symbol)");
+            execute("create table trades (i int, sym symbol)");
             assertException("insert into trades VALUES (1, 'USDJPY'), ('USDFJD');", 50, "row value count does not match column count [expected=2, actual=1, tuple=2]");
         });
     }
@@ -745,7 +754,7 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertMultipleRowsFailTypeConversion() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table trades (sym symbol)");
+            execute("create table trades (sym symbol)");
             assertException("insert into trades VALUES ('USDJPY'), (1), ('USDFJD');", 39, "inconvertible types: INT -> SYMBOL [from=1, to=sym]");
         });
     }
@@ -753,7 +762,7 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertMultipleRowsMissingBindVariables() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table t (ts timestamp, i int) timestamp(ts);");
+            execute("create table t (ts timestamp, i int) timestamp(ts);");
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 final String sql = "insert into t VALUES (1262599200000000, $1), (3262599300000000, $2);";
                 final CompiledQuery cq = compiler.compile(sql, sqlExecutionContext);
@@ -773,9 +782,9 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertMultipleRowsOutOfOrder() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table trades (ts timestamp) timestamp(ts);");
+            execute("create table trades (ts timestamp) timestamp(ts);");
             try {
-                insert("insert into trades VALUES (1), (3), (2);");
+                execute("insert into trades VALUES (1), (3), (2);");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "cannot insert rows out of order to non-partitioned table.");
             }
@@ -785,7 +794,7 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertNoSelfReference() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE trades_aapl (ts TIMESTAMP, px INT, qty int, side STRING) TIMESTAMP(ts)");
+            execute("CREATE TABLE trades_aapl (ts TIMESTAMP, px INT, qty int, side STRING) TIMESTAMP(ts)");
             assertException("insert into trades_aapl (ts) values (ts)", 37, "Invalid column");
         });
     }
@@ -793,8 +802,8 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertNoTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table balances(cust_id int, ccy symbol, balance double)");
-            insert("insert into balances values (1, 'USD', 356.12)");
+            execute("create table balances(cust_id int, ccy symbol, balance double)");
+            execute("insert into balances values (1, 'USD', 356.12)");
             String expected = "cust_id\tccy\tbalance\n" + "1\tUSD\t356.12\n";
 
             assertReaderCheckWal(expected, "balances");
@@ -804,7 +813,7 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertNotEnoughFields() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table balances(cust_id int, ccy symbol, balance double)");
+            execute("create table balances(cust_id int, ccy symbol, balance double)");
             assertException("insert into balances values (1, 'USD')", 37, "row value count does not match column count [expected=3, actual=2, tuple=1]");
         });
     }
@@ -812,8 +821,8 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertNullStringSelectEmptyStringColumnIndexed() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (id int, val symbol index)");
-            insert("insert into tab values (1, NULL)");
+            execute("create table tab (id int, val symbol index)");
+            execute("insert into tab values (1, NULL)");
             assertSql("id\n", "select id from tab where val = ''");
         });
     }
@@ -821,8 +830,8 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertNullStringSelectNullStringColumnIndexed() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (id int, val symbol index)");
-            insert("insert into tab values (1, null)");
+            execute("create table tab (id int, val symbol index)");
+            execute("insert into tab values (1, null)");
             assertSql("id\n1\n", "select id from tab where val = null");
         });
     }
@@ -830,8 +839,8 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertNullVarcharSelectEmptyVarcharColumnIndexed() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (id int, val symbol index)");
-            insert("insert into tab values (1, NULL::varchar)");
+            execute("create table tab (id int, val symbol index)");
+            execute("insert into tab values (1, NULL::varchar)");
             assertSql("id\n", "select id from tab where val = ''");
         });
     }
@@ -839,9 +848,22 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertNullVarcharSelectNullVarcharColumnIndexed() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (id int, val symbol index)");
-            insert("insert into tab values (1, null::varchar)");
+            execute("create table tab (id int, val symbol index)");
+            execute("insert into tab values (1, null::varchar)");
             assertSql("id\n1\n", "select id from tab where val = null");
+        });
+    }
+
+    @Test
+    public void testInsertSelectTwoWheres() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table result (r long)");
+
+            assertExceptionNoLeakCheck(
+                    "insert into result select * from long_sequence(1) where true where false;",
+                    61,
+                    "unexpected token [where]"
+            );
         });
     }
 
@@ -855,8 +877,8 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertSingleCharacterSymbol() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table ww (id int, sym symbol)");
-            insert("insert into ww VALUES ( 2, 'A')");
+            execute("create table ww (id int, sym symbol)");
+            execute("insert into ww VALUES ( 2, 'A')");
             String expected = "id\tsym\n" + "2\tA\n";
 
             assertReaderCheckWal(expected, "ww");
@@ -866,15 +888,15 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertSymbolIntoVarcharCol() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table src (ts timestamp, sym symbol) timestamp(ts) partition by day;");
-            insert("insert into src values (0, 'foo');");
-            insert("insert into src values (20000, null);");
-            insert("insert into src values (30000, 'bar');");
+            execute("create table src (ts timestamp, sym symbol) timestamp(ts) partition by day;");
+            execute("insert into src values (0, 'foo');");
+            execute("insert into src values (20000, null);");
+            execute("insert into src values (30000, 'bar');");
 
-            ddl("create table dest (ts timestamp, vch varchar) timestamp(ts) partition by day;");
+            execute("create table dest (ts timestamp, vch varchar) timestamp(ts) partition by day;");
             drainWalQueue();
 
-            ddl("insert into dest select ts, sym from src;");
+            execute("insert into dest select ts, sym from src;");
 
             String expected = "ts\tvch\n" + "1970-01-01T00:00:00.000000Z\tfoo\n" + "1970-01-01T00:00:00.020000Z\t\n" + "1970-01-01T00:00:00.030000Z\tbar\n";
             assertQueryCheckWal(expected);
@@ -887,9 +909,9 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertSymbolNonPartitioned() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table symbols (sym symbol, isNewSymbol BOOLEAN)");
-            insert("insert into symbols (sym, isNewSymbol) VALUES ('USDJPY', false);");
-            insert("insert into symbols (sym, isNewSymbol) VALUES ('USDFJD', true);");
+            execute("create table symbols (sym symbol, isNewSymbol BOOLEAN)");
+            execute("insert into symbols (sym, isNewSymbol) VALUES ('USDJPY', false);");
+            execute("insert into symbols (sym, isNewSymbol) VALUES ('USDFJD', true);");
 
             String expected = "sym\tisNewSymbol\n" + "USDJPY\tfalse\n" + "USDFJD\ttrue\n";
 
@@ -900,9 +922,9 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertSymbolNonPartitioned_varchar() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table symbols (sym symbol, isNewSymbol BOOLEAN)");
-            insert("insert into symbols (sym, isNewSymbol) VALUES ('USDJPY'::varchar, false);");
-            insert("insert into symbols (sym, isNewSymbol) VALUES ('USDFJD'::varchar, true);");
+            execute("create table symbols (sym symbol, isNewSymbol BOOLEAN)");
+            execute("insert into symbols (sym, isNewSymbol) VALUES ('USDJPY'::varchar, false);");
+            execute("insert into symbols (sym, isNewSymbol) VALUES ('USDFJD'::varchar, true);");
 
             String expected = "sym\tisNewSymbol\n" + "USDJPY\tfalse\n" + "USDFJD\ttrue\n";
 
@@ -913,9 +935,9 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertSymbolPartitioned() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table trades (ts timestamp, sym symbol, bid double, ask double) timestamp(ts) partition by DAY;");
-            insert("insert into trades VALUES ( 1262599200000000, 'USDJPY', 1, 2);");
-            insert("insert into trades VALUES ( 1262599300000000, 'USDFJD', 2, 4);");
+            execute("create table trades (ts timestamp, sym symbol, bid double, ask double) timestamp(ts) partition by DAY;");
+            execute("insert into trades VALUES ( 1262599200000000, 'USDJPY', 1, 2);");
+            execute("insert into trades VALUES ( 1262599300000000, 'USDFJD', 2, 4);");
 
             String expected = "ts\tsym\tbid\task\n" + "2010-01-04T10:00:00.000000Z\tUSDJPY\t1.0\t2.0\n" + "2010-01-04T10:01:40.000000Z\tUSDFJD\t2.0\t4.0\n";
 
@@ -926,8 +948,8 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertSymbolPartitionedAfterTruncate() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table trades (ts timestamp, sym symbol, bid double, ask double) timestamp(ts) partition by DAY;");
-            insert("insert into trades VALUES ( 1262599200000000, 'USDJPY', 1, 2);");
+            execute("create table trades (ts timestamp, sym symbol, bid double, ask double) timestamp(ts) partition by DAY;");
+            execute("insert into trades VALUES ( 1262599200000000, 'USDJPY', 1, 2);");
 
             String expected1 = "ts\tsym\tbid\task\n" + "2010-01-04T10:00:00.000000Z\tUSDJPY\t1.0\t2.0\n";
 
@@ -937,7 +959,7 @@ public class InsertTest extends AbstractCairoTest {
                 w.truncate();
             }
 
-            insert("insert into trades VALUES ( 3262599300000000, 'USDFJD', 2, 4);");
+            execute("insert into trades VALUES ( 3262599300000000, 'USDFJD', 2, 4);");
 
             String expected2 = "ts\tsym\tbid\task\n" + "2073-05-21T13:35:00.000000Z\tUSDFJD\t2.0\t4.0\n";
 
@@ -948,8 +970,8 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertSymbolPartitionedAfterTruncate_varchar() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table trades (ts timestamp, sym symbol, bid double, ask double) timestamp(ts) partition by DAY;");
-            insert("insert into trades VALUES ( 1262599200000000, 'USDJPY'::varchar, 1, 2);");
+            execute("create table trades (ts timestamp, sym symbol, bid double, ask double) timestamp(ts) partition by DAY;");
+            execute("insert into trades VALUES ( 1262599200000000, 'USDJPY'::varchar, 1, 2);");
 
             String expected1 = "ts\tsym\tbid\task\n" + "2010-01-04T10:00:00.000000Z\tUSDJPY\t1.0\t2.0\n";
 
@@ -959,7 +981,7 @@ public class InsertTest extends AbstractCairoTest {
                 w.truncate();
             }
 
-            insert("insert into trades VALUES ( 3262599300000000, 'USDFJD'::varchar, 2, 4);");
+            execute("insert into trades VALUES ( 3262599300000000, 'USDFJD'::varchar, 2, 4);");
 
             String expected2 = "ts\tsym\tbid\task\n" + "2073-05-21T13:35:00.000000Z\tUSDFJD\t2.0\t4.0\n";
 
@@ -970,9 +992,9 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertSymbolPartitionedFarApart() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table trades (ts timestamp, sym symbol, bid double, ask double) timestamp(ts) partition by DAY;");
-            insert("insert into trades VALUES ( 1262599200000000, 'USDJPY', 1, 2);");
-            insert("insert into trades VALUES ( 3262599300000000, 'USDFJD', 2, 4);");
+            execute("create table trades (ts timestamp, sym symbol, bid double, ask double) timestamp(ts) partition by DAY;");
+            execute("insert into trades VALUES ( 1262599200000000, 'USDJPY', 1, 2);");
+            execute("insert into trades VALUES ( 3262599300000000, 'USDFJD', 2, 4);");
 
             String expected = "ts\tsym\tbid\task\n" + "2010-01-04T10:00:00.000000Z\tUSDJPY\t1.0\t2.0\n" + "2073-05-21T13:35:00.000000Z\tUSDFJD\t2.0\t4.0\n";
 
@@ -983,9 +1005,9 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertSymbolPartitionedFarApart_varchar() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table trades (ts timestamp, sym symbol, bid double, ask double) timestamp(ts) partition by DAY;");
-            insert("insert into trades VALUES ( 1262599200000000, 'USDJPY'::varchar, 1, 2);");
-            insert("insert into trades VALUES ( 3262599300000000, 'USDFJD'::varchar, 2, 4);");
+            execute("create table trades (ts timestamp, sym symbol, bid double, ask double) timestamp(ts) partition by DAY;");
+            execute("insert into trades VALUES ( 1262599200000000, 'USDJPY'::varchar, 1, 2);");
+            execute("insert into trades VALUES ( 3262599300000000, 'USDFJD'::varchar, 2, 4);");
 
             String expected = "ts\tsym\tbid\task\n" + "2010-01-04T10:00:00.000000Z\tUSDJPY\t1.0\t2.0\n" + "2073-05-21T13:35:00.000000Z\tUSDFJD\t2.0\t4.0\n";
 
@@ -996,9 +1018,9 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertSymbolPartitioned_varchar() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table trades (ts timestamp, sym symbol, bid double, ask double) timestamp(ts) partition by DAY;");
-            insert("insert into trades VALUES ( 1262599200000000, 'USDJPY'::varchar, 1, 2);");
-            insert("insert into trades VALUES ( 1262599300000000, 'USDFJD'::varchar, 2, 4);");
+            execute("create table trades (ts timestamp, sym symbol, bid double, ask double) timestamp(ts) partition by DAY;");
+            execute("insert into trades VALUES ( 1262599200000000, 'USDJPY'::varchar, 1, 2);");
+            execute("insert into trades VALUES ( 1262599300000000, 'USDFJD'::varchar, 2, 4);");
 
             String expected = "ts\tsym\tbid\task\n" + "2010-01-04T10:00:00.000000Z\tUSDJPY\t1.0\t2.0\n" + "2010-01-04T10:01:40.000000Z\tUSDFJD\t2.0\t4.0\n";
 
@@ -1009,14 +1031,14 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertTimestampWithTimeZone() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table t (timestamp timestamp) timestamp(timestamp);");
-            insert("insert into t values (timestamp with time zone '2020-12-31 15:15:51.663+00:00')");
+            execute("create table t (timestamp timestamp) timestamp(timestamp);");
+            execute("insert into t values (timestamp with time zone '2020-12-31 15:15:51.663+00:00')");
 
             String expected1 = "timestamp\n" + "2020-12-31T15:15:51.663000Z\n";
 
             assertReaderCheckWal(expected1, "t");
 
-            insert("insert into t values (cast('2021-12-31 15:15:51.663+00:00' as timestamp with time zone))");
+            execute("insert into t values (cast('2021-12-31 15:15:51.663+00:00' as timestamp with time zone))");
 
             String expected2 = expected1 + "2021-12-31T15:15:51.663000Z\n";
 
@@ -1029,7 +1051,7 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertTimestampWithTimeZone_varchar() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table t (timestamp timestamp) timestamp(timestamp);");
+            execute("create table t (timestamp timestamp) timestamp(timestamp);");
 
             // We cannot cast '2020-12-31 15:15:51.663+00:00'::varchar,
             // because it will act as (timestamp with time zone '2020-12-31 15:15:51.663+00:00')::varchar
@@ -1038,13 +1060,13 @@ public class InsertTest extends AbstractCairoTest {
             // can be inserted into a timestamp column.
             // If you cast '2020-12-31 15:15:51.663+00:00'::string then it fails too.
             // thus Varchar behaves the same as String in this case.
-            insert("insert into t values (timestamp with time zone '2020-12-31 15:15:51.663+00:00')");
+            execute("insert into t values (timestamp with time zone '2020-12-31 15:15:51.663+00:00')");
 
             String expected1 = "timestamp\n" + "2020-12-31T15:15:51.663000Z\n";
 
             assertReaderCheckWal(expected1, "t");
 
-            insert("insert into t values (cast('2021-12-31 15:15:51.663+00:00'::varchar as timestamp with time zone))");
+            execute("insert into t values (cast('2021-12-31 15:15:51.663+00:00'::varchar as timestamp with time zone))");
 
             String expected2 = expected1 + "2021-12-31T15:15:51.663000Z\n";
 
@@ -1057,15 +1079,15 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertUUIDIntoVarcharCol() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table src (ts timestamp, u uuid) timestamp(ts) partition by day;");
-            insert("insert into src values (0, '11111111-1111-1111-1111-111111111111');");
-            insert("insert into src values (20000, null);");
-            insert("insert into src values (30000, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11');");
+            execute("create table src (ts timestamp, u uuid) timestamp(ts) partition by day;");
+            execute("insert into src values (0, '11111111-1111-1111-1111-111111111111');");
+            execute("insert into src values (20000, null);");
+            execute("insert into src values (30000, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11');");
 
-            ddl("create table dest (ts timestamp, vch varchar) timestamp(ts) partition by day;");
+            execute("create table dest (ts timestamp, vch varchar) timestamp(ts) partition by day;");
             drainWalQueue();
 
-            ddl("insert into dest select ts, u from src;");
+            execute("insert into dest select ts, u from src;");
 
             String expected = "ts\tvch\n" + "1970-01-01T00:00:00.000000Z\t11111111-1111-1111-1111-111111111111\n" + "1970-01-01T00:00:00.020000Z\t\n" + "1970-01-01T00:00:00.030000Z\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n";
             assertQueryCheckWal(expected);
@@ -1078,7 +1100,7 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertValueCannotReferenceTableColumn() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table balances(cust_id int, ccy symbol, balance double)");
+            execute("create table balances(cust_id int, ccy symbol, balance double)");
             assertException("insert into balances values (1, ccy, 356.12)", 32, "Invalid column: ccy");
         });
     }
@@ -1091,15 +1113,15 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertVarcharToDifferentTypeCol() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table src (ts timestamp, vch varchar, vch2 varchar, vch3 varchar) timestamp(ts) partition by day;");
-            insert("insert into src values (0, '1', '11111111-1111-1111-1111-111111111111', '2022-11-20T10:30:55.123Z');");
-            insert("insert into src values (20000, null, null, null);");
-            insert("insert into src values (30000, '2', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', '-900');");
+            execute("create table src (ts timestamp, vch varchar, vch2 varchar, vch3 varchar) timestamp(ts) partition by day;");
+            execute("insert into src values (0, '1', '11111111-1111-1111-1111-111111111111', '2022-11-20T10:30:55.123Z');");
+            execute("insert into src values (20000, null, null, null);");
+            execute("insert into src values (30000, '2', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', '-900');");
 
-            ddl("create table dest (ts timestamp, s string, l long, sh short, i int, b byte, c char, f float, d double, u uuid, dt date, ts2 timestamp, sym symbol) timestamp(ts) partition by day;");
+            execute("create table dest (ts timestamp, s string, l long, sh short, i int, b byte, c char, f float, d double, u uuid, dt date, ts2 timestamp, sym symbol) timestamp(ts) partition by day;");
             drainWalQueue();
 
-            ddl("insert into dest select ts, vch, vch, vch, vch, vch, vch, vch, vch, vch2, vch3, vch3, vch from src;");
+            execute("insert into dest select ts, vch, vch, vch, vch, vch, vch, vch, vch, vch2, vch3, vch3, vch from src;");
 
             String expected = "ts\ts\tl\tsh\ti\tb\tc\tf\td\tu\tdt\tts2\tsym\n" + "1970-01-01T00:00:00.000000Z\t1\t1\t1\t1\t1\t1\t1.0000\t1.0\t11111111-1111-1111-1111-111111111111\t2022-11-20T10:30:55.123Z\t2022-11-20T10:30:55.123000Z\t1\n" + "1970-01-01T00:00:00.020000Z\t\tnull\t0\tnull\t0\t\tnull\tnull\t\t\t\t\n" + "1970-01-01T00:00:00.030000Z\t2\t2\t2\t2\t2\t2\t2.0000\t2.0\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\t1969-12-31T23:59:59.100Z\t1969-12-31T23:59:59.999100Z\t2\n";
             assertQueryCheckWal(expected);
@@ -1112,7 +1134,7 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertWithLessColumnsThanExistingTable() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab(seq long, ts timestamp) timestamp(ts);");
+            execute("create table tab(seq long, ts timestamp) timestamp(ts);");
             assertException("insert into tab select x ac  from long_sequence(10)", 12, "select clause must provide timestamp column");
         });
     }
@@ -1120,7 +1142,7 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertWithWrongDesignatedColumn() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab(seq long, ts timestamp) timestamp(ts);");
+            execute("create table tab(seq long, ts timestamp) timestamp(ts);");
             assertException("insert into tab select * from (select  timestamp_sequence(0, x) ts, x ac from long_sequence(10)) timestamp(ts)", 12, "designated timestamp of existing table");
         });
     }
@@ -1138,7 +1160,7 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertWithoutDesignatedTimestampAndTypeDoesNotMatch() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab(seq long, ts timestamp) timestamp(ts);");
+            execute("create table tab(seq long, ts timestamp) timestamp(ts);");
             assertException("insert into tab select x ac, rnd_int() id from long_sequence(10)", 12, "expected timestamp column");
         });
     }
@@ -1146,7 +1168,7 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertWrongTypeConstant() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (a timestamp)", sqlExecutionContext);
+            execute("create table test (a timestamp)", sqlExecutionContext);
             assertException("insert into test values ('foobar')", 0, "inconvertible value: `foobar` [STRING -> TIMESTAMP]");
             assertException("insert into test values ('foobar'::varchar)", 0, "inconvertible value: `foobar` [VARCHAR -> TIMESTAMP]");
         });
@@ -1155,14 +1177,14 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testVarcharMixedAscii() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (a varchar, b varchar, ts timestamp) timestamp(ts) partition by day");
-            insert("insert into test values ('a', 'b', 0)");
-            insert("insert into test values ('2HEz*Dq', 'cVԕΖVq', 0)");
-            insert("insert into test values ('Ɨ\uDA83\uDD95\uD9ED\uDF4C눻D\uDBA8\uDFB6qٽUY⚂խ:', 'C>Wy;', 0)");
-            insert("insert into test values ('6tuU}+8mV', null, 0)");
-            insert("insert into test values ('te', '葈ﾫ!\uD8F3\uDD99Ҧ\uDB8D\uDFC8R\uD988\uDCEEOa*', 0)");
-            insert("insert into test values ('+٘ˣ聉|凜-،W.ƣ', '1);86rU)', 0)");
-            insert("insert into test values ('{[pG5d^fG>v [6', 'Ȕ\uDB75\uDF17ߚ`ŷ֪', 0)");
+            execute("create table test (a varchar, b varchar, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into test values ('a', 'b', 0)");
+            execute("insert into test values ('2HEz*Dq', 'cVԕΖVq', 0)");
+            execute("insert into test values ('Ɨ\uDA83\uDD95\uD9ED\uDF4C눻D\uDBA8\uDFB6qٽUY⚂խ:', 'C>Wy;', 0)");
+            execute("insert into test values ('6tuU}+8mV', null, 0)");
+            execute("insert into test values ('te', '葈ﾫ!\uD8F3\uDD99Ҧ\uDB8D\uDFC8R\uD988\uDCEEOa*', 0)");
+            execute("insert into test values ('+٘ˣ聉|凜-،W.ƣ', '1);86rU)', 0)");
+            execute("insert into test values ('{[pG5d^fG>v [6', 'Ȕ\uDB75\uDF17ߚ`ŷ֪', 0)");
 
             drainWalQueue();
 
@@ -1178,7 +1200,7 @@ public class InsertTest extends AbstractCairoTest {
                     "test"
             );
 
-            ddl("create table y as (select * from test) timestamp(ts) partition by day");
+            execute("create table y as (select * from test) timestamp(ts) partition by day");
 
             drainWalQueue();
 
@@ -1209,25 +1231,12 @@ public class InsertTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testInsertSelectTwoWheres() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table result (r long)");
-
-            assertExceptionNoLeakCheck(
-                    "insert into result select * from long_sequence(1) where true where false;",
-                    61,
-                    "unexpected token [where]"
-            );
-        });
-    }
-
     private void assertInsertTimestamp(String expected, String ddl2, Class<?> exceptionType, boolean commitInsert) throws Exception {
         assertMemoryLeak(() -> {
             if (commitInsert) {
-                ddl("create table tab(seq long, ts timestamp) timestamp(ts)");
+                execute("create table tab(seq long, ts timestamp) timestamp(ts)");
                 try {
-                    insert(ddl2);
+                    execute(ddl2);
                     if (exceptionType != null) {
                         Assert.fail("SqlException expected");
                     }
@@ -1240,9 +1249,9 @@ public class InsertTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getMessage(), expected);
                 }
             } else {
-                ddl("create table tab(seq long, ts timestamp) timestamp(ts)");
+                execute("create table tab(seq long, ts timestamp) timestamp(ts)");
                 try {
-                    ddl(ddl2);
+                    execute(ddl2);
                     if (exceptionType != null) {
                         Assert.fail("SqlException expected");
                     }
@@ -1254,12 +1263,12 @@ public class InsertTest extends AbstractCairoTest {
                 }
             }
 
-            drop("drop table tab");
+            execute("drop table tab");
 
             if (commitInsert) {
-                ddl("create table tab(seq long, ts timestamp)");
+                execute("create table tab(seq long, ts timestamp)");
                 try {
-                    insert(ddl2);
+                    execute(ddl2);
                     if (exceptionType != null) {
                         Assert.fail("SqlException expected");
                     }
@@ -1270,9 +1279,9 @@ public class InsertTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getMessage(), expected);
                 }
             } else {
-                ddl("create table tab(seq long, ts timestamp)");
+                execute("create table tab(seq long, ts timestamp)");
                 try {
-                    ddl(ddl2, sqlExecutionContext);
+                    execute(ddl2, sqlExecutionContext);
                     if (exceptionType != null) {
                         Assert.fail("SqlException expected");
                     }
@@ -1407,17 +1416,17 @@ public class InsertTest extends AbstractCairoTest {
 
     private void testInsertAsSelectWithOrderBy(String orderByClause) throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table src (ts timestamp, v long) timestamp(ts) partition by day;");
-            insert("insert into src values (0, 0);");
-            insert("insert into src values (10000, 1);");
-            insert("insert into src values (20000, 2);");
-            insert("insert into src values (30000, 3);");
-            insert("insert into src values (40000, 4);");
+            execute("create table src (ts timestamp, v long) timestamp(ts) partition by day;");
+            execute("insert into src values (0, 0);");
+            execute("insert into src values (10000, 1);");
+            execute("insert into src values (20000, 2);");
+            execute("insert into src values (30000, 3);");
+            execute("insert into src values (40000, 4);");
 
-            ddl("create table dest (ts timestamp, v long) timestamp(ts) partition by day;");
+            execute("create table dest (ts timestamp, v long) timestamp(ts) partition by day;");
             drainWalQueue();
 
-            ddl("insert into dest select * from src where v % 2 = 0 " + orderByClause + ";");
+            execute("insert into dest select * from src where v % 2 = 0 " + orderByClause + ";");
 
             String expected = "ts\tv\n" + "1970-01-01T00:00:00.000000Z\t0\n" + "1970-01-01T00:00:00.020000Z\t2\n" + "1970-01-01T00:00:00.040000Z\t4\n";
 

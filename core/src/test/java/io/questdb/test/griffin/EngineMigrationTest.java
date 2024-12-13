@@ -146,8 +146,8 @@ public class EngineMigrationTest extends AbstractCairoTest {
     public void testMig702HandlesMissingTxn() throws SqlException {
         node1.setProperty(PropertyKey.CAIRO_REPEAT_MIGRATION_FROM_VERSION, 426);
 
-        compile("create table abc (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
-        compile("create table def (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
+        execute("create table abc (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
+        execute("create table def (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
         TableToken tokenAbc = engine.verifyTableName("abc");
         TableToken tokenDef = engine.verifyTableName("def");
 
@@ -183,7 +183,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
         // Run migration
         EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, true);
 
-        compile("create table abc (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
+        execute("create table abc (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
         TableToken token = engine.verifyTableName("abc");
         CairoConfiguration config = engine.getConfiguration();
 
@@ -214,7 +214,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
     public void testMig702Repeatable() throws SqlException, NumericException {
         node1.setProperty(PropertyKey.CAIRO_REPEAT_MIGRATION_FROM_VERSION, 426);
 
-        compile("create table abc (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
+        execute("create table abc (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
         TableToken token = engine.verifyTableName("abc");
 
         CairoConfiguration config = engine.getConfiguration();
@@ -278,10 +278,10 @@ public class EngineMigrationTest extends AbstractCairoTest {
     }
 
     private static void createTableWithColumnTops(String createTable, String tableName) throws SqlException {
-        ddl(createTable);
-        ddl("alter table " + tableName + " add column день symbol");
-        ddl("alter table " + tableName + " add column str string");
-        ddl(
+        execute(createTable);
+        execute("alter table " + tableName + " add column день symbol");
+        execute("alter table " + tableName + " add column str string");
+        execute(
                 "insert into " + tableName + " " +
                         "select " +
                         " x" +
@@ -291,7 +291,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         ", rnd_str()" +
                         " from long_sequence(10),"
         );
-        ddl(
+        execute(
                 "insert into " + tableName + " " +
                         "select " +
                         " x" +
@@ -308,7 +308,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
         long seed0 = rnd.getSeed0();
         long seed1 = rnd.getSeed1();
 
-        ddl(
+        execute(
                 "insert into " + tableName + " " +
                         "select " +
                         " x" +
@@ -318,7 +318,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         ", rnd_str()" +
                         " from long_sequence(10),"
         );
-        ddl(
+        execute(
                 "insert into " + tableName + " " +
                         "select " +
                         " x" +
@@ -356,13 +356,13 @@ public class EngineMigrationTest extends AbstractCairoTest {
         engine.releaseAllWriters();
 
         // Insert some data
-        ddl("insert into t_year select " +
+        execute("insert into t_year select " +
                 appendCommonColumns() +
                 ", timestamp_sequence('2021-01-01', 200000000L) ts" +
                 " from long_sequence(5)");
 
         // Insert same data to have O3 append tested
-        ddl("insert into t_year select " +
+        execute("insert into t_year select " +
                 appendCommonColumns() +
                 ", timestamp_sequence('2020-01-01', 200000000L) ts" +
                 " from long_sequence(5)");
@@ -931,7 +931,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
     }
 
     private void assertMissingPartitions() throws SqlException {
-        compile("alter table t_col_top_день_missing_parts drop partition where ts < '1970-01-02'");
+        execute("alter table t_col_top_день_missing_parts drop partition where ts < '1970-01-02'");
         assertSql(
                 "x\tm\tts\tдень\n" +
                         "6\tc\t1970-01-02T04:20:00.000000Z\tnull\n" +
@@ -1372,7 +1372,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
     }
 
     private void generateMigrationTables() throws SqlException, NumericException {
-        ddl(
+        execute(
                 "create table t_none_nts as (" +
                         "select" +
                         commonColumns() +
@@ -1380,7 +1380,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         "), index(m)"
         );
 
-        ddl(
+        execute(
                 "create table t_none as (" +
                         "select" +
                         commonColumns() +
@@ -1389,7 +1389,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         "), index(m) timestamp(ts) partition by NONE"
         );
 
-        ddl(
+        execute(
                 "create table t_day as (" +
                         "select" +
                         commonColumns() +
@@ -1398,7 +1398,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         "), index(m) timestamp(ts) partition by DAY"
         );
 
-        ddl(
+        execute(
                 "create table t_month as (" +
                         "select" +
                         commonColumns() +
@@ -1407,7 +1407,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         "), index(m) timestamp(ts) partition by MONTH"
         );
 
-        ddl(
+        execute(
                 "create table t_year as (" +
                         "select" +
                         commonColumns() +
@@ -1416,7 +1416,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         "), index(m) timestamp(ts) partition by YEAR"
         );
 
-        ddl(
+        execute(
                 "create table t_day_ooo as (" +
                         "select" +
                         commonColumns() +
@@ -1425,14 +1425,14 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         "), index(m) timestamp(ts) partition by DAY"
         );
 
-        ddl("insert into t_day_ooo " +
+        execute("insert into t_day_ooo " +
                 "select " +
                 commonColumns() +
                 ", timestamp_sequence(200000000L, 2000000000000L) ts" +
                 " from long_sequence(15)"
         );
 
-        ddl(
+        execute(
                 "create table t_month_ooo as (" +
                         "select" +
                         commonColumns() +
@@ -1441,14 +1441,14 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         "), index(m) timestamp(ts) partition by MONTH"
         );
 
-        ddl("insert into t_month_ooo " +
+        execute("insert into t_month_ooo " +
                 "select " +
                 commonColumns() +
                 ", timestamp_sequence(200000000L, 200000000000L) ts" +
                 " from long_sequence(15)"
         );
 
-        ddl(
+        execute(
                 "create table t_year_ooo as (" +
                         "select" +
                         commonColumns() +
@@ -1457,14 +1457,14 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         "), index(m) timestamp(ts) partition by YEAR"
         );
 
-        ddl("insert into t_year_ooo " +
+        execute("insert into t_year_ooo " +
                 "select " +
                 commonColumns() +
                 ", timestamp_sequence(200000000L, 20000000000000L) ts" +
                 " from long_sequence(15)"
         );
 
-        ddl("create table o3_0(a string, b binary, t timestamp) timestamp(t) partition by DAY");
+        execute("create table o3_0(a string, b binary, t timestamp) timestamp(t) partition by DAY");
 
         try (TableWriter w = getWriter("o3_0")) {
             TableWriter.Row r;
@@ -1499,7 +1499,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
             w.commit();
         }
 
-        ddl(
+        execute(
                 "create table t_col_top_year as (" +
                         "select " +
                         " x" +
@@ -1509,8 +1509,8 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         "), index(m) timestamp(ts) partition by YEAR"
         );
 
-        ddl("alter table t_col_top_year add column y long");
-        ddl("insert into t_col_top_year " +
+        execute("alter table t_col_top_year add column y long");
+        execute("insert into t_col_top_year " +
                 "select " +
                 " x + 15 as x" +
                 ", rnd_symbol('d', 'e', 'f', null) as m" +
@@ -1519,19 +1519,19 @@ public class EngineMigrationTest extends AbstractCairoTest {
                 " from long_sequence(15)"
         );
 
-        ddl(
+        execute(
                 "create table t_col_top_none as (" +
                         "select x, m, ts from t_col_top_year where x <= 15" +
                         "), index(m) timestamp(ts) partition by NONE"
         );
 
-        ddl("alter table t_col_top_none add column y long", sqlExecutionContext);
-        ddl("insert into t_col_top_none " +
+        execute("alter table t_col_top_none add column y long", sqlExecutionContext);
+        execute("insert into t_col_top_none " +
                 "select x, m, ts, y from t_col_top_year where x > 15" +
                 " from long_sequence(15)"
         );
 
-        ddl(
+        execute(
                 "create table t_col_top_день as (" +
                         "select " +
                         " x" +
@@ -1541,8 +1541,8 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         "), index(m) timestamp(ts) partition by DAY"
         );
 
-        ddl("alter table t_col_top_день add column день long");
-        ddl("insert into t_col_top_день " +
+        execute("alter table t_col_top_день add column день long");
+        execute("insert into t_col_top_день " +
                 "select " +
                 " x + 15 as x" +
                 ", rnd_symbol('d', 'e', 'f', null) as m" +

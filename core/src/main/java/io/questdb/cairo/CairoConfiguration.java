@@ -114,8 +114,6 @@ public interface CairoConfiguration {
     @NotNull
     SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
 
-    int getColumnCastModelPoolCapacity();
-
     int getColumnIndexerQueueCapacity();
 
     int getColumnPurgeQueueCapacity();
@@ -148,13 +146,9 @@ public interface CairoConfiguration {
 
     int getCreateAsSelectRetryCount();
 
-    int getCreateMatViewModelPoolCapacity();
-
-    int getCreateMatViewRetryCount();
+    int getCreateTableColumnModelPoolCapacity();
 
     long getCreateTableModelBatchSize();
-
-    int getCreateTableModelPoolCapacity();
 
     long getDataAppendPageSize();
 

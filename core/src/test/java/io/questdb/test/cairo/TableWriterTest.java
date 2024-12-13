@@ -236,12 +236,11 @@ public class TableWriterTest extends AbstractCairoTest {
             // Reduce disk space by for the test run.
             setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, 1 << 20); // 1MB
 
-            TableToken tableToken;
             TableModel model = new TableModel(configuration, "testAddColumnConcurrentWithDataUpdates", PartitionBy.NONE);
             model.timestamp();
-            tableToken = registerTableName(model.getTableName());
+            TableToken token;
             try (Path path = new Path(); MemoryMARW mem = Vm.getMARWInstance()) {
-                TableUtils.createTable(configuration, mem, path, model, ColumnType.VERSION, tableId, tableToken.getDirName());
+                token = TestUtils.createTable(engine, mem, path, model, tableId, model.getTableName());
             }
 
             // Write data in a loop getting writer in and out of pool
@@ -249,7 +248,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 TestUtils.await(barrier);
                 int i = 0;
                 while (columnsAdded.get() < totalColAddCount && exceptions.isEmpty()) {
-                    try (TableWriter writer = getWriter(tableToken)) {
+                    try (TableWriter writer = getWriter(token)) {
                         TableWriter.Row row = writer.newRow((i++) * Timestamps.HOUR_MICROS);
                         row.append();
                         writer.commit();
@@ -260,7 +259,10 @@ public class TableWriterTest extends AbstractCairoTest {
                         exceptions.add(e);
                         LOG.error().$(e).$();
                         throw e;
+                    } finally {
+                        Path.clearThreadLocals();
                     }
+
                 }
             });
 
@@ -272,10 +274,10 @@ public class TableWriterTest extends AbstractCairoTest {
                         alterOperationBuilder.clear();
                         String columnName = "col" + i;
                         alterOperationBuilder
-                                .ofAddColumn(0, tableToken, tableId)
+                                .ofAddColumn(0, token, tableId)
                                 .ofAddColumn(columnName, 5, ColumnType.INT, 0, false, false, 0);
                         AlterOperation alterOp = alterOperationBuilder.build();
-                        try (TableWriter writer = engine.getWriterOrPublishCommand(tableToken, alterOp)) {
+                        try (TableWriter writer = engine.getWriterOrPublishCommand(token, alterOp)) {
                             if (writer != null) {
                                 writer.publishAsyncWriterCommand(alterOp);
                             }
@@ -286,6 +288,8 @@ public class TableWriterTest extends AbstractCairoTest {
                     exceptions.add(e);
                     LOG.error().$(e).$();
                     throw e;
+                } finally {
+                    Path.clearThreadLocals();
                 }
             });
             writeDataThread.start();
@@ -302,7 +306,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
             Assert.assertTrue(insertCount.get() > 0);
 
-            try (TableReader rdr = getReader(tableToken)) {
+            try (TableReader rdr = getReader(token)) {
                 Assert.assertEquals(totalColAddCount + 1, rdr.getColumnCount());
             }
 
@@ -2158,9 +2162,9 @@ public class TableWriterTest extends AbstractCairoTest {
                     .col("b", ColumnType.STRING)
                     .col("c", ColumnType.STRING).indexed(true, 1024)
                     .timestamp();
-            AbstractCairoTest.create(model);
 
             try {
+                AbstractCairoTest.create(model);
                 newOffPoolWriter(configuration, "x", metrics).close();
                 Assert.fail();
             } catch (CairoException e) {

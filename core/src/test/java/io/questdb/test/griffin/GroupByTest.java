@@ -35,7 +35,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void test1GroupByWithoutAggregateFunctionsReturnsUniqueKeys() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t as (" +
+            execute("create table t as (" +
                     "    select 1 as l, 'a' as s " +
                     "    union all " +
                     "    select 1, 'a' )");
@@ -72,7 +72,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void test2FailOnAggregateFunctionAliasInGroupByClause() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t (x long, y long);");
+            execute("create table t (x long, y long);");
             assertError(
                     "select x, avg(x) as agx, avg(y) from t group by agx ",
                     "[48] aggregate functions are not allowed in GROUP BY"
@@ -83,7 +83,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void test2FailOnAggregateFunctionColumnIndexInGroupByClause() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t (x long, y long);");
+            execute("create table t (x long, y long);");
             assertError(
                     "select x, avg(x) as agx, avg(y) from t group by 2 ",
                     "[48] aggregate functions are not allowed in GROUP BY"
@@ -94,7 +94,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void test2FailOnAggregateFunctionInGroupByClause() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t (x long, y long);");
+            execute("create table t (x long, y long);");
             String query = "select x, avg(y) from t group by x, avg(x) ";
             assertError(query, "[36] aggregate functions are not allowed in GROUP BY");
         });
@@ -103,7 +103,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void test2FailOnExpressionWithAggFunctionNestedInFunctionInGroupByClause1() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t (x long, y long);");
+            execute("create table t (x long, y long);");
             String query = "select x, avg(y) from t group by x, concat('a', 'b', 'c', first(x)) ";
             assertError(query, "[58] aggregate functions are not allowed in GROUP BY");
         });
@@ -112,7 +112,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void test2FailOnExpressionWithAggFunctionNestedInFunctionInGroupByClause2() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t (x long, y long);");
+            execute("create table t (x long, y long);");
             String query = "select x, avg(y) from t group by x, case when x > 0 then 1 else first(x) end ";
             assertError(query, "[64] aggregate functions are not allowed in GROUP BY");
         });
@@ -121,7 +121,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void test2FailOnExpressionWithAggFunctionNestedInFunctionInGroupByClause3() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t (x long, y long);");
+            execute("create table t (x long, y long);");
             String query = "select x, avg(y) from t group by x, strpos('123', '1' || first(x)::string)";
             assertError(query, "[57] aggregate functions are not allowed in GROUP BY");
         });
@@ -130,7 +130,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void test2FailOnExpressionWithAggregateFunctionInGroupByClause() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t (x long, y long);");
+            execute("create table t (x long, y long);");
             String query = "select x, avg(y) from t group by x, y+avg(x) ";
             assertError(query, "[38] aggregate functions are not allowed in GROUP BY");
         });
@@ -139,7 +139,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void test2FailOnExpressionWithNonAggregateNonKeyColumnReference() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t (x long, y long);");
+            execute("create table t (x long, y long);");
             String query = "select x, x+y from t group by x ";
             assertError(query, "[12] column must appear in GROUP BY clause or aggregate function");
         });
@@ -148,7 +148,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void test2FailOnNonAggregateNonKeyColumnReference() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t (x long, y long);");
+            execute("create table t (x long, y long);");
             String query = "select x, y from t group by x ";
             assertError(query, "[10] column must appear in GROUP BY clause or aggregate function");
         });
@@ -157,7 +157,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void test2FailOnSelectAliasUsedInGroupByExpression() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t (x long, y long);");
+            execute("create table t (x long, y long);");
             final String errorMessage = "[48] Invalid column: agx";
 
             assertError("select x, abs(x) as agx, avg(y) from t group by agx+1 ", errorMessage);
@@ -169,7 +169,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void test2FailOnWindowFunctionAliasInGroupByClause() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t (x long, y long);");
+            execute("create table t (x long, y long);");
             String query = "select x, row_number() as z from t group by x, z ";
             assertError(query, "[47] window functions are not allowed in GROUP BY");
         });
@@ -178,7 +178,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void test2FailOnWindowFunctionColumnIndexInGroupByClause() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t (x long, y long);");
+            execute("create table t (x long, y long);");
             String query = "select x, row_number() as z from t group by x, 2 ";
             assertError(query, "[47] window functions are not allowed in GROUP BY");
         });
@@ -187,7 +187,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void test2FailOnWindowFunctionInGroupByClause() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t (x long, y long);");
+            execute("create table t (x long, y long);");
             String query = "select x, avg(y) from t group by x, row_number() ";
             assertError(query, "[36] window functions are not allowed in GROUP BY");
         });
@@ -196,7 +196,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void test2FailOnWindowFunctionNestedInFunctionAliasInGroupByClause1() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t (x long, y long);");
+            execute("create table t (x long, y long);");
             String query = "select x, avg(y), abs(row_number() ) z from t group by x, z";
             assertError(query, "[58] window functions are not allowed in GROUP BY");
         });
@@ -205,7 +205,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void test2FailOnWindowFunctionNestedInFunctionAliasInGroupByClause2() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t (x long, y long);");
+            execute("create table t (x long, y long);");
             String query = "select x, avg(y), case when x > 0 then 1 else row_number() over (partition by x) end as z from t group by x, z";
             assertError(query, "[75] Invalid column: by");
         });
@@ -214,8 +214,8 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void test2GroupByWithNonAggregateExpressionsOnKeyColumns1() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t (x long, y long);");
-            insert("insert into t values (1, 11), (1, 12);");
+            execute("create table t (x long, y long);");
+            execute("insert into t values (1, 11), (1, 12);");
 
             String query = "select x+1, count(*) " +
                     "from t " +
@@ -248,8 +248,8 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void test2GroupByWithNonAggregateExpressionsOnKeyColumns2() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t (x long, y long);");
-            insert("insert into t values (1, 11), (1, 12);");
+            execute("create table t (x long, y long);");
+            execute("insert into t values (1, 11), (1, 12);");
 
             String query = "select case when x < 0 then -1 when x = 0 then 0 else 1 end, count(*) " +
                     "from t " +
@@ -280,8 +280,8 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void test2GroupByWithNonAggregateExpressionsOnKeyColumns3() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t (x long, y long);");
-            insert("insert into t values (1, 11), (1, 12);");
+            execute("create table t (x long, y long);");
+            execute("insert into t values (1, 11), (1, 12);");
 
             String query = "select case when x+1 < 0 then -1 when x+1 = 0 then 0 else 1 end, count(*) " +
                     "from t " +
@@ -314,8 +314,8 @@ public class GroupByTest extends AbstractCairoTest {
     @Test // expressions based on group by clause expressions should go to outer model
     public void test2GroupByWithNonAggregateExpressionsOnKeyColumns4() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t (x long, y long);");
-            insert("insert into t values (1, 11), (1, 12);");
+            execute("create table t (x long, y long);");
+            execute("insert into t values (1, 11), (1, 12);");
 
             String query = "select x, avg(y), avg(y) + min(y), x+10, avg(x), avg(x) + 10 " +
                     "from t " +
@@ -347,8 +347,8 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void test2GroupByWithNonAggregateExpressionsOnKeyColumnsAndBindVariable() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t (x long, y long);");
-            insert("insert into t values (1, 11), (1, 12);");
+            execute("create table t (x long, y long);");
+            execute("insert into t values (1, 11), (1, 12);");
 
             bindVariableService.clear();
             bindVariableService.setStr("bv", "x");
@@ -382,8 +382,8 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void test2SuccessOnSelectWithExplicitGroupBy() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t (x long, y long);");
-            insert("insert into t values (1, 11), (1, 12);");
+            execute("create table t (x long, y long);");
+            execute("insert into t values (1, 11), (1, 12);");
             String query = "select x*10, x+avg(y), min(y) from t group by x ";
             assertPlanNoLeakCheck(
                     query,
@@ -411,8 +411,8 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void test2SuccessOnSelectWithoutExplicitGroupBy() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t (x long, y long);");
-            insert("insert into t values (1, 11), (1, 12);");
+            execute("create table t (x long, y long);");
+            execute("insert into t values (1, 11), (1, 12);");
             String query = "select x*10, x+avg(y), min(y) from t";
             assertPlanNoLeakCheck(
                     query,
@@ -440,7 +440,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void test3GroupByWithNonAggregateExpressionUsingAliasDefinedOnSameLevel() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE weather ( " +
+            execute("CREATE TABLE weather ( " +
                     "timestamp TIMESTAMP, windDir INT, windSpeed INT, windGust INT, \n" +
                     "cloudCeiling INT, skyCover SYMBOL, visMiles DOUBLE, tempF INT, \n" +
                     "dewpF INT, rain1H DOUBLE, rain6H DOUBLE, rain24H DOUBLE, snowDepth INT) " +
@@ -458,7 +458,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void test4GroupByWithNonAggregateExpressionUsingAliasDefinedOnSameLevel() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table dat as ( select cast(86400000000*(x%3) as timestamp) as date_report from long_sequence(10))");
+            execute("create table dat as ( select cast(86400000000*(x%3) as timestamp) as date_report from long_sequence(10))");
             String query = "select ordr.date_report, count(*) " +
                     "from dat ordr " +
                     "group by ordr.date_report " +
@@ -492,7 +492,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void test4GroupByWithNonAggregateExpressionUsingAliasDefinedOnSameLevel2() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table dat as ( select cast(86400000000*(x%3) as timestamp) as date_report from long_sequence(10))");
+            execute("create table dat as ( select cast(86400000000*(x%3) as timestamp) as date_report from long_sequence(10))");
             String query = "select ordr.date_report, count(*) " +
                     "from dat ordr " +
                     "group by date_report " + // no alias used here
@@ -525,7 +525,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void test4GroupByWithNonAggregateExpressionUsingAliasDefinedOnSameLevel3() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table dat as ( select cast(86400000000*(x%3) as timestamp) as date_report from long_sequence(10))");
+            execute("create table dat as ( select cast(86400000000*(x%3) as timestamp) as date_report from long_sequence(10))");
             String query = "select date_report, count(*) " +//date_report used with no alias
                     "from dat ordr " +
                     "group by ordr.date_report " +
@@ -559,7 +559,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void test4GroupByWithNonAggregateExpressionUsingAliasDefinedOnSameLevel4() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table dat as ( select cast(86400000000*(x%3) as timestamp) as date_report from long_sequence(10))");
+            execute("create table dat as ( select cast(86400000000*(x%3) as timestamp) as date_report from long_sequence(10))");
             String query = "select date_report, ordr.date_report,  count(*) " +
                     "from dat ordr " +
                     "group by date_report, ordr.date_report " +
@@ -596,7 +596,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void test4GroupByWithNonAggregateExpressionUsingAliasDefinedOnSameLevel5() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table dat as ( select cast(86400000000*(x%3) as timestamp) as date_report from long_sequence(10))");
+            execute("create table dat as ( select cast(86400000000*(x%3) as timestamp) as date_report from long_sequence(10))");
             String query = "select date_report, dateadd('d', -1, ordr.date_report) as minusday, dateadd('d', 1, date_report) as plusday, " +
                     "concat('1', ordr.date_report, '3'), count(*) " +
                     "from dat ordr " +
@@ -634,7 +634,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void test5GroupByWithNonAggregateExpressionUsingKeyColumn() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table dat as ( select cast(86400000000*(x%3) as timestamp) as date_report from long_sequence(10))");
+            execute("create table dat as ( select cast(86400000000*(x%3) as timestamp) as date_report from long_sequence(10))");
             String query = "select ordr.date_report, to_str(ordr.date_report, 'dd.MM.yyyy') as dt, " +
                     "dateadd('d', 1, date_report) as plusday, dateadd('d', -1, ordr.date_report) as minusday, count(*)\n" +
                     "from dat ordr\n" +
@@ -672,8 +672,8 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void test6GroupByWithNonAggregateExpressionUsingKeyColumn1() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table ord as ( select cast(86400000000*(x%3) as timestamp) as date_report, x from long_sequence(10))");
-            compile("create table det as ( select cast(86400000000*(10+x%3) as timestamp) as date_report, x from long_sequence(10))");
+            execute("create table ord as ( select cast(86400000000*(x%3) as timestamp) as date_report, x from long_sequence(10))");
+            execute("create table det as ( select cast(86400000000*(10+x%3) as timestamp) as date_report, x from long_sequence(10))");
 
             String query = "select details.date_report, " +
                     " to_str(details.date_report, 'dd.MM.yyyy') as dt, " +
@@ -723,8 +723,8 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void test6GroupByWithNonAggregateExpressionUsingKeyColumn2() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table ord as ( select cast(86400000000*(x%3) as timestamp) as date_report, x from long_sequence(10))");
-            compile("create table det as ( select cast(86400000000*(10+x%3) as timestamp) as date_report, x from long_sequence(10))");
+            execute("create table ord as ( select cast(86400000000*(x%3) as timestamp) as date_report, x from long_sequence(10))");
+            execute("create table det as ( select cast(86400000000*(10+x%3) as timestamp) as date_report, x from long_sequence(10))");
 
             String query = "select details.date_report, to_str(date_report, 'dd.MM.yyyy') as dt, min(details.x), count(*) " +
                     "from ord ordr " +
@@ -738,8 +738,8 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void test6GroupByWithNonAggregateExpressionUsingKeyColumn3() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table ord as ( select cast(86400000000*(x%3) as timestamp) as date_report, x from long_sequence(10))");
-            compile("create table det as ( select cast(86400000000*(10+x%3) as timestamp) as date_report, x from long_sequence(10))");
+            execute("create table ord as ( select cast(86400000000*(x%3) as timestamp) as date_report, x from long_sequence(10))");
+            execute("create table det as ( select cast(86400000000*(10+x%3) as timestamp) as date_report, x from long_sequence(10))");
 
             String query = "select details.date_report, dateadd('d', 1, date_report), min(details.x), count(*) " +
                     "from ord ordr " +
@@ -942,7 +942,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testGroupByExpressionAndLiteral() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t as (" +
+            execute("create table t as (" +
                     "    select 1 as l, 'a' as s " +
                     "    union all " +
                     "    select 1, 'a' )");
@@ -974,7 +974,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testGroupByIndexOutsideSelectList() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table tab as (select x, x%2 as y from long_sequence(2))");
+            execute("create table tab as (select x, x%2 as y from long_sequence(2))");
             assertError(
                     "select * from tab group by 5",
                     "[27] GROUP BY position 5 is not in select list"
@@ -1056,8 +1056,8 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testGroupBySingleVarcharKeyFromSampleByWithFill() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table t (vch varchar, l long, ts timestamp) timestamp(ts) partition by day;");
-            insert("insert into t values \n" +
+            execute("create table t (vch varchar, l long, ts timestamp) timestamp(ts) partition by day;");
+            execute("insert into t values \n" +
                     "('USD', 1, '2021-11-17T17:00:00.000000Z'),\n" +
                     "('USD', 2, '2021-11-17T17:35:02.000000Z'),\n" +
                     "('EUR', 3, '2021-11-17T17:45:02.000000Z'),\n" +
@@ -1092,7 +1092,7 @@ public class GroupByTest extends AbstractCairoTest {
         // keys are indeed stable and some are not. to_uppercase() produces a varchar which is not stable.
 
         assertMemoryLeak(() -> {
-            ddl("create table tab1 as (select (x % 5)::varchar as vch, x, now() as ts from long_sequence(20)) \n" +
+            execute("create table tab1 as (select (x % 5)::varchar as vch, x, now() as ts from long_sequence(20)) \n" +
                     "timestamp(ts) PARTITION by day");
 
             String query = "with \n" +
@@ -1178,7 +1178,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testGroupByTimestampTrunkAsString() throws Exception {
         assertMemoryLeak(() -> {
-            compile(
+            execute(
                     "create table t as (" +
                             "    select cast(x as double) as price, " +
                             "    timestamp_sequence('2020-01-01', 15*60*1000000) as timestamp" +
@@ -1210,8 +1210,8 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testGroupByWithAliasClash2() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 as (select x, x%2 as y from long_sequence(2))");
-            compile("create table t2 as (select x, x%2 as y from long_sequence(2))");
+            execute("create table t1 as (select x, x%2 as y from long_sequence(2))");
+            execute("create table t2 as (select x, x%2 as y from long_sequence(2))");
 
             String query = "select t1.x, max(t2.y), t2.x " +
                     "from t1 " +
@@ -1234,8 +1234,8 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testGroupByWithAliasClash3() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 as (select x, x%2 as y from long_sequence(2))");
-            compile("create table t2 as (select x, x%2 as y from long_sequence(2))");
+            execute("create table t1 as (select x, x%2 as y from long_sequence(2))");
+            execute("create table t2 as (select x, x%2 as y from long_sequence(2))");
 
             String query = "select t1.x, max(t2.y), case when t1.x > 1 then 100*t1.x else 10*t2.x end " +
                     "from t1 " +
@@ -1280,8 +1280,8 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testGroupByWithAliasClash4() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 as (select x, x%2 as y from long_sequence(2))");
-            compile("create table t2 as (select x, x%2 as y from long_sequence(2))");
+            execute("create table t1 as (select x, x%2 as y from long_sequence(2))");
+            execute("create table t2 as (select x, x%2 as y from long_sequence(2))");
 
             String query = "select t1.x, max(t2.y), case when t1.x > 1 then 30*t1.x else 20*t2.x end " +
                     "from t1 " +
@@ -1322,8 +1322,8 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testGroupByWithAliasClash5() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 as (select x::int as x, x%2 as y from long_sequence(2))");
-            compile("create table t2 as (select x::int as x, x%2 as y from long_sequence(2))");
+            execute("create table t1 as (select x::int as x, x%2 as y from long_sequence(2))");
+            execute("create table t2 as (select x::int as x, x%2 as y from long_sequence(2))");
 
             String query = "select t1.x, max(t2.y), dateadd('d', t1.x, '2023-03-01T00:00:00')::long + t2.x " +
                     "from t1 " +
@@ -1367,8 +1367,8 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testGroupByWithAliasClash6() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 as (select x::int as x, x%2 as y from long_sequence(2))");
-            compile("create table t2 as (select x::int as x, x%2 as y from long_sequence(2))");
+            execute("create table t1 as (select x::int as x, x%2 as y from long_sequence(2))");
+            execute("create table t2 as (select x::int as x, x%2 as y from long_sequence(2))");
 
             String query = "select t1.x, max(t2.y), dateadd('s', max(t2.y)::int, dateadd('d', t1.x, '2023-03-01T00:00:00') ) " +
                     "from t1 " +
@@ -1428,7 +1428,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testGroupByWithLeftJoin() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table dim_apTemperature as (" +
                             "  select x::int id," +
                             "         rnd_str('a','b','c') as category," +
@@ -1436,7 +1436,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "  from long_sequence(10)" +
                             ");"
             );
-            ddl(
+            execute(
                     "create table fact_table as (" +
                             "  select x::int id_aparent_temperature," +
                             "         (x * 120000000)::timestamp date_time," +
@@ -1604,7 +1604,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testGroupByWithNonConstantSelectClauseExpression() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t as (" +
+            execute("create table t as (" +
                     "    select 1 as l, 'a' as s " +
                     "    union all " +
                     "    select 1, 'a' )");
@@ -1635,8 +1635,8 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testLatestByImplicitGroupBy1() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t (s1 symbol, s2 symbol, l long, ts timestamp) timestamp(ts) partition by day;");
-            insert(
+            execute("create table t (s1 symbol, s2 symbol, l long, ts timestamp) timestamp(ts) partition by day;");
+            execute(
                     "insert into t values " +
                             "('a', 'c', 11, '2021-11-17T17:35:01.000000Z')," +
                             "('a', 'd', 12, '2021-11-17T17:35:02.000000Z')," +
@@ -1667,8 +1667,8 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testLatestByImplicitGroupBy2() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t (s1 symbol index, s2 symbol index, l long, ts timestamp) timestamp(ts) partition by day;");
-            insert(
+            execute("create table t (s1 symbol index, s2 symbol index, l long, ts timestamp) timestamp(ts) partition by day;");
+            execute(
                     "insert into t values " +
                             "('a', 'c', 11, '2021-11-17T17:35:01.000000Z')," +
                             "('a', 'd', 12, '2021-11-17T17:35:02.000000Z')," +
@@ -1702,8 +1702,8 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testLatestByImplicitGroupBy3() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t (s1 symbol index, s2 symbol index, l long, ts timestamp) timestamp(ts) partition by day;");
-            insert(
+            execute("create table t (s1 symbol index, s2 symbol index, l long, ts timestamp) timestamp(ts) partition by day;");
+            execute(
                     "insert into t values " +
                             "('a', 'c', 11, '2021-11-17T17:35:01.000000Z')," +
                             "('a', 'd', 12, '2021-11-17T17:35:02.000000Z')," +
@@ -1734,8 +1734,8 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testLiftAliasesFromInnerSelect1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x ( a int, b int, c symbol, ts timestamp ) timestamp(ts) partition by DAY WAL;");
-            insert("insert into x values (1,2,'3', now()), (2,3, '3', now()), (5,6,'4', now())");
+            execute("create table x ( a int, b int, c symbol, ts timestamp ) timestamp(ts) partition by DAY WAL;");
+            execute("insert into x values (1,2,'3', now()), (2,3, '3', now()), (5,6,'4', now())");
             drainWalQueue();
             String query =
                     "select a, b, c as z, count(*) as views\n" +
@@ -1767,8 +1767,8 @@ public class GroupByTest extends AbstractCairoTest {
     public void testLiftAliasesFromInnerSelect10() throws Exception {
         // test that it properly handles max(ts) ts on lhs and data.ts ts on rhs
         assertMemoryLeak(() -> {
-            ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
-            insert("insert into tab " +
+            execute("create table tab (ts timestamp, i long, j long) timestamp(ts)");
+            execute("insert into tab " +
                     "select (100000+x)::timestamp, " +
                     "rnd_long(1,20,10), " +
                     "rnd_long(1,1000,5) " +
@@ -1886,8 +1886,8 @@ public class GroupByTest extends AbstractCairoTest {
     public void testLiftAliasesFromInnerSelect11() throws Exception {
         // test output naming
         assertMemoryLeak(() -> {
-            ddl("create table x ( a int, b int, c symbol, ts timestamp ) timestamp(ts) partition by DAY WAL;");
-            insert("insert into x values (1,2,'3', now()), (2,3, '3', now()), (5,6,'4', now())");
+            execute("create table x ( a int, b int, c symbol, ts timestamp ) timestamp(ts) partition by DAY WAL;");
+            execute("insert into x values (1,2,'3', now()), (2,3, '3', now()), (5,6,'4', now())");
             drainWalQueue();
             String query =
                     "select a, b as B, c as z, count(*) as views\n" +
@@ -1919,8 +1919,8 @@ public class GroupByTest extends AbstractCairoTest {
     public void testLiftAliasesFromInnerSelect12() throws Exception {
         // test output naming
         assertMemoryLeak(() -> {
-            ddl("create table x ( a int, b int, c symbol, ts timestamp ) timestamp(ts) partition by DAY WAL;");
-            insert("insert into x values (1,2,'3', now()), (2,3, '3', now()), (5,6,'4', now())");
+            execute("create table x ( a int, b int, c symbol, ts timestamp ) timestamp(ts) partition by DAY WAL;");
+            execute("insert into x values (1,2,'3', now()), (2,3, '3', now()), (5,6,'4', now())");
             drainWalQueue();
             String query =
                     "select a, b as B, c as z, count(*) as views\n" +
@@ -1951,8 +1951,8 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testLiftAliasesFromInnerSelect2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x ( a int, b int, c symbol, ts timestamp ) timestamp(ts) partition by DAY WAL;");
-            insert("insert into x values (1,2,'3', now()), (2,3, '3', now()), (5,6,'4', now())");
+            execute("create table x ( a int, b int, c symbol, ts timestamp ) timestamp(ts) partition by DAY WAL;");
+            execute("insert into x values (1,2,'3', now()), (2,3, '3', now()), (5,6,'4', now())");
             drainWalQueue();
             String query =
                     "select a, b, c as z, count(*) as views\n" +
@@ -1985,8 +1985,8 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testLiftAliasesFromInnerSelect3() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x ( a int, b int, c symbol, ts timestamp ) timestamp(ts) partition by DAY WAL;");
-            insert("insert into x values (1,2,'3', now()), (2,3, '3', now()), (5,6,'4', now())");
+            execute("create table x ( a int, b int, c symbol, ts timestamp ) timestamp(ts) partition by DAY WAL;");
+            execute("insert into x values (1,2,'3', now()), (2,3, '3', now()), (5,6,'4', now())");
             drainWalQueue();
             String query =
                     "select a, b, c, count(*) as views\n" +
@@ -2019,7 +2019,7 @@ public class GroupByTest extends AbstractCairoTest {
         // Check that if a select-choose node is elided by the factory, the WHERE condition can
         // be retrieved from the inner PartitionFrame.
         assertMemoryLeak(() -> {
-            ddl("create table trades as (" +
+            execute("create table trades as (" +
                     "select" +
                     " timestamp_sequence(0, 15*60*1000000L) delivery_start_utc," +
                     " rnd_symbol('sf', null) seller," +
@@ -2153,9 +2153,9 @@ public class GroupByTest extends AbstractCairoTest {
     public void testLiftAliasesFromInnerSelect5() throws Exception {
         // Test aliasing a function name
         assertMemoryLeak(() -> {
-            ddl("create table x ( a int, b int, c symbol, ts timestamp ) timestamp(ts) partition by DAY WAL;");
-            insert("insert into x values (1,2,'3', now()), (2,3, '3', now()), (5,6,'4', now())");
-            insert("insert into x values (1, 5, '4', now()), (1, 3, '1', now())");
+            execute("create table x ( a int, b int, c symbol, ts timestamp ) timestamp(ts) partition by DAY WAL;");
+            execute("insert into x values (1,2,'3', now()), (2,3, '3', now()), (5,6,'4', now())");
+            execute("insert into x values (1, 5, '4', now()), (1, 3, '1', now())");
             drainWalQueue();
             String query = "select a, sum(b) sum, c as z, count(*) views\n" +
                     "from x\n" +
@@ -2194,7 +2194,7 @@ public class GroupByTest extends AbstractCairoTest {
     public void testLiftAliasesFromInnerSelect6() throws Exception {
         // Test ClickBench Q39 plan
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE hits\n" +
+            execute("CREATE TABLE hits\n" +
                     "(\n" +
                     "    URL string,\n" +
                     "    Referer string,\n" +
@@ -2277,7 +2277,7 @@ public class GroupByTest extends AbstractCairoTest {
     public void testLiftAliasesFromInnerSelect7() throws Exception {
         // test duplicate key ordering
         assertMemoryLeak(() -> {
-            ddl("create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10));");
+            execute("create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10));");
             String query = "select key1 as k1, key2, key2, count(*) from t group by key2, k1 order by 1, 2";
             assertQueryNoLeakCheck(
                     "k1\tkey2\tkey21\tcount\n" +
@@ -2311,7 +2311,7 @@ public class GroupByTest extends AbstractCairoTest {
     public void testLiftAliasesFromInnerSelect8() throws Exception {
         // test ordering by number
         assertMemoryLeak(() -> {
-            ddl("create table t as ( select x%2 as key, x as value from long_sequence(100));");
+            execute("create table t as ( select x%2 as key, x as value from long_sequence(100));");
             String query = "select key+1, key, key, count(*) from t group by key order by 1,2,3 desc";
             assertQueryNoLeakCheck(
                     "column\tkey\tkey1\tcount\n" +
@@ -2343,8 +2343,8 @@ public class GroupByTest extends AbstractCairoTest {
     public void testLiftAliasesFromInnerSelect9() throws Exception {
         // test args requiring de-aliasing when moved to rhs
         assertMemoryLeak(() -> {
-            compile("create table t1 as (select x::int as x, x%2 as y from long_sequence(2))");
-            compile("create table t2 as (select x::int as x, x%2 as y from long_sequence(2))");
+            execute("create table t1 as (select x::int as x, x%2 as y from long_sequence(2))");
+            execute("create table t2 as (select x::int as x, x%2 as y from long_sequence(2))");
 
             String query = "select t1.x, max(t2.y), dateadd('s', max(t2.y)::int, dateadd('d', t1.x, '2023-03-01T00:00:00') ) " +
                     "from t1 " +
@@ -2434,11 +2434,11 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testOrderByOnAliasedColumnAfterGroupBy() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tst ( ts timestamp ) timestamp(ts);");
-            insert("insert into tst values ('2023-05-29T15:30:00.000000Z')");
+            execute("create table tst ( ts timestamp ) timestamp(ts);");
+            execute("insert into tst values ('2023-05-29T15:30:00.000000Z')");
 
-            ddl("create table data ( dts timestamp, s symbol ) timestamp(dts);");
-            insert("insert into data values ('2023-05-29T15:29:59.000000Z', 'USD')");
+            execute("create table data ( dts timestamp, s symbol ) timestamp(dts);");
+            execute("insert into data values ('2023-05-29T15:29:59.000000Z', 'USD')");
 
             // single table
             assertQueryNoLeakCheck(
@@ -2517,8 +2517,8 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testSelectDistinctOnAliasedColumnWithOrderBy() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (created timestamp, i int) timestamp(created)");
-            insert("insert into tab select x::timestamp, x from long_sequence(3)");
+            execute("create table tab (created timestamp, i int) timestamp(created)");
+            execute("insert into tab select x::timestamp, x from long_sequence(3)");
             drainWalQueue();
 
             String query = "SELECT DISTINCT tab.created AS ref0 " +
@@ -2559,8 +2559,8 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testSelectDistinctOnExpressionWithOrderBy() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (created timestamp, i int) timestamp(created)");
-            insert("insert into tab select x::timestamp, x from long_sequence(3)");
+            execute("create table tab (created timestamp, i int) timestamp(created)");
+            execute("insert into tab select x::timestamp, x from long_sequence(3)");
             drainWalQueue();
 
             String query = "SELECT DISTINCT dateadd('h', 1, tab.created) AS ref0 " +
@@ -2601,8 +2601,8 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testSelectDistinctOnUnaliasedColumnWithOrderBy() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (created timestamp, i int) timestamp(created)");
-            insert("insert into tab select x::timestamp, x from long_sequence(3)");
+            execute("create table tab (created timestamp, i int) timestamp(created)");
+            execute("insert into tab select x::timestamp, x from long_sequence(3)");
             drainWalQueue();
 
             String query = "SELECT DISTINCT tab.created " +
@@ -2641,12 +2641,12 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testSelectMatchingButInDifferentOrderThanGroupBy() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (" +
+            execute("create table x (" +
                     "    sym symbol," +
                     "    bid double, " +
                     "    ts timestamp " +
                     ") timestamp(ts) partition by DAY");
-            ddl("insert into x " +
+            execute("insert into x " +
                     " select rnd_symbol('A', 'B'), rnd_double(), dateadd('m', x::int, 0::timestamp) " +
                     " from long_sequence(20)");
 
@@ -2680,7 +2680,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testStarIsNotAllowedInGroupBy() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table tab as (select x, x%2 as y from long_sequence(2))");
+            execute("create table tab as (select x, x%2 as y from long_sequence(2))");
             assertError(
                     "select * from tab group by tab.*",
                     "[27] '*' is not allowed in GROUP BY"
@@ -2691,7 +2691,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testSumOverSumColumn() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table \"avg\" as (" +
+            execute("create table \"avg\" as (" +
                     "select rnd_symbol('A', 'B', 'C') category, " +
                     "rnd_double() sum, " +
                     "rnd_double() count, " +

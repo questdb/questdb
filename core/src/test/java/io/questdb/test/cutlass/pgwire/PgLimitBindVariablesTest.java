@@ -149,7 +149,7 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
                 SqlExecutionContext executionContext = new SqlExecutionContextImpl(engine, 1)
                         .with(AllowAllSecurityContext.INSTANCE, new BindVariableServiceImpl(engine.getConfiguration()))
         ) {
-            engine.ddl("create table tab as (select concat('Sym', x%3) col1, x%4 status, timestamp_sequence(20000000, 100000) ts " +
+            engine.execute("create table tab as (select concat('Sym', x%3) col1, x%4 status, timestamp_sequence(20000000, 100000) ts " +
                     "from long_sequence(" + numOfRows + ")) timestamp(ts) partition by day wal", executionContext);
         } catch (SqlException e) {
             throw CairoException.critical(0).put("Could not create table: '").put(e.getFlyweightMessage());

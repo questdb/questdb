@@ -264,7 +264,7 @@ public class SqlParser {
     ) {
         return SqlUtil.createColumnAlias(
                 characterStore,
-                GenericLexer.unquote(node.token),
+                unquote(node.token),
                 Chars.indexOf(node.token, '.'),
                 aliasToColumnMap,
                 node.type != ExpressionNode.LITERAL
@@ -335,7 +335,7 @@ public class SqlParser {
         int pos = lexer.lastTokenPosition();
         SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, pos);
         validateLiteral(pos, tok);
-        return nextLiteral(GenericLexer.immutableOf(GenericLexer.unquote(tok)), pos);
+        return nextLiteral(GenericLexer.immutableOf(unquote(tok)), pos);
     }
 
     private long expectLong(GenericLexer lexer) throws SqlException {
@@ -566,7 +566,7 @@ public class SqlParser {
                         tok = optTok(lexer);
                     } else if (isTimestampKeyword(tok)) {
                         tok = tok(lexer, "timestamp column name expected");
-                        CharSequence columnName = GenericLexer.immutableOf(GenericLexer.unquote(tok));
+                        CharSequence columnName = GenericLexer.immutableOf(unquote(tok));
                         if (!TableUtils.isValidColumnName(columnName, configuration.getMaxFileNameLength())) {
                             throw SqlException.$(lexer.getPosition(), "timestamp column name contains invalid characters");
                         }
@@ -574,7 +574,7 @@ public class SqlParser {
                         tok = optTok(lexer);
                     } else if (isFormatKeyword(tok)) {
                         tok = tok(lexer, "timestamp format expected");
-                        CharSequence format = GenericLexer.immutableOf(GenericLexer.unquote(tok));
+                        CharSequence format = GenericLexer.immutableOf(unquote(tok));
                         model.setTimestampFormat(format);
                         tok = optTok(lexer);
                     } else if (isOnKeyword(tok)) {
@@ -592,7 +592,7 @@ public class SqlParser {
                         tok = optTok(lexer);
                     } else if (isDelimiterKeyword(tok)) {
                         tok = tok(lexer, "timestamp character expected");
-                        CharSequence delimiter = GenericLexer.immutableOf(GenericLexer.unquote(tok));
+                        CharSequence delimiter = GenericLexer.immutableOf(unquote(tok));
                         if (delimiter == null || delimiter.length() != 1) {
                             throw SqlException.$(lexer.getPosition(), "delimiter is empty or contains more than 1 character");
                         }
@@ -633,6 +633,7 @@ public class SqlParser {
     ) throws SqlException {
         final CreateMatViewOperationBuilder builder = createMatViewOperationBuilder;
         builder.clear();
+        builder.getCreateTableOperationBuilder().setDefaultSymbolCapacity(configuration.getDefaultSymbolCapacity());
 
         expectTok(lexer, "view");
         CharSequence tok = tok(lexer, "view name or 'if'");
@@ -704,7 +705,7 @@ public class SqlParser {
             // compiler must put table together using query metadata.
             for (int i = 0, n = columns.size(); i < n; i++) {
                 CreateTableColumnModel model = newCreateTableColumnModel(columns.getQuick(i).getName(), i);
-                model.setColumnType(columns.getQuick(i).getColumnType());
+                model.setColumnType(ColumnType.UNDEFINED);
             }
 
             createTableOperationBuilder.setQueryModel(queryModel);
@@ -729,10 +730,11 @@ public class SqlParser {
                 throw SqlException.position(timestamp.position).put("TIMESTAMP column does not exist [name=").put(timestamp.token).put(']');
             }
             final int timestampType = timestampModel.getColumnType();
-            if (timestampType != ColumnType.TIMESTAMP && timestampType != -1) { // type can be -1 for create table as select because types aren't known yet
+            if (timestampType != ColumnType.TIMESTAMP && timestampType != ColumnType.UNDEFINED) { // type can be -1 for create table as select because types aren't known yet
                 throw SqlException.position(timestamp.position).put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(timestampType)).put(']');
             }
             createTableOperationBuilder.setTimestampExpr(timestamp);
+            timestampModel.setIsDedupKey(); // set dedup for timestamp column
             tok = optTok(lexer);
         }
 
@@ -740,8 +742,12 @@ public class SqlParser {
         if (partitionBy == null) {
             throw SqlException.position(lexer.getPosition()).put("'partition by' expected");
         }
-        if (PartitionBy.fromString(partitionBy.token) == -1) {
+        final int partition = PartitionBy.fromString(partitionBy.token);
+        if (partition == -1) {
             throw SqlException.$(partitionBy.position, "'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected");
+        }
+        if (!PartitionBy.isPartitioned(partition)) {
+            throw SqlException.position(0).put("Materialized view has to be partitioned");
         }
         createTableOperationBuilder.setPartitionByExpr(partitionBy);
         tok = optTok(lexer);
@@ -801,6 +807,11 @@ public class SqlParser {
                     intervalExpr = ast.paramCount == 3 ? ast.args.getQuick(2).token : ast.lhs.token;
                     if (timestamp == null) {
                         createTableOperationBuilder.setTimestampExpr(nextLiteral(queryColumn.getName(), ast.position));
+                        final CreateTableColumnModel timestampModel = getCreateTableColumnModel(queryColumn.getName());
+                        if (timestampModel == null) {
+                            throw SqlException.position(ast.position).put("TIMESTAMP column does not exist [name=").put(queryColumn.getName()).put(']');
+                        }
+                        timestampModel.setIsDedupKey(); // set dedup for timestamp column
                     }
                     break;
                 }
@@ -1977,7 +1988,7 @@ public class SqlParser {
         if (tok == null) {
             throw SqlException.position(lexer.getPosition()).put("expected a table name");
         }
-        final CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition());
+        final CharSequence tableName = assertNoDotsAndSlashes(unquote(tok), lexer.lastTokenPosition());
         ExpressionNode tableNameExpr = expressionNodePool.next().of(ExpressionNode.LITERAL, tableName, 0, lexer.lastTokenPosition());
         model.setTableNameExpr(tableNameExpr);
     }
@@ -2016,7 +2027,7 @@ public class SqlParser {
 
         tok = tok(lexer, "table name");
         SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
-        model.setTableName(nextLiteral(GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition()), lexer.lastTokenPosition()));
+        model.setTableName(nextLiteral(assertNoDotsAndSlashes(unquote(tok), lexer.lastTokenPosition()), lexer.lastTokenPosition()));
 
         tok = tok(lexer, "'(' or 'select'");
 
@@ -2028,7 +2039,7 @@ public class SqlParser {
                 }
 
                 SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
-                model.addColumn(GenericLexer.unquote(tok), lexer.lastTokenPosition());
+                model.addColumn(unquote(tok), lexer.lastTokenPosition());
 
             } while (Chars.equals((tok = tok(lexer, "','")), ','));
 
@@ -2241,7 +2252,7 @@ public class SqlParser {
         CharSequence tok = tok(lexer, "from table name");
         SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
 
-        model.setFrom(nextLiteral(GenericLexer.unquote(tok), lexer.lastTokenPosition()));
+        model.setFrom(nextLiteral(unquote(tok), lexer.lastTokenPosition()));
 
 
         tok = tok(lexer, "to");
@@ -2254,7 +2265,7 @@ public class SqlParser {
 
         tok = tok(lexer, "to table name");
         SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
-        model.setTo(nextLiteral(GenericLexer.unquote(tok), lexer.lastTokenPosition()));
+        model.setTo(nextLiteral(unquote(tok), lexer.lastTokenPosition()));
 
         tok = optTok(lexer);
 
@@ -2609,11 +2620,11 @@ public class SqlParser {
                         SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
                         CharSequence aliasTok = GenericLexer.immutableOf(tok);
                         validateIdentifier(lexer, aliasTok);
-                        alias = GenericLexer.unquote(aliasTok);
+                        alias = unquote(aliasTok);
                     } else {
                         validateIdentifier(lexer, tok);
                         SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
-                        alias = GenericLexer.immutableOf(GenericLexer.unquote(tok));
+                        alias = GenericLexer.immutableOf(unquote(tok));
                     }
 
                     if (col.getAst().isWildcard()) {
@@ -2777,7 +2788,7 @@ public class SqlParser {
     ) throws SqlException {
         CharSequence tok = tok(lexer, "table name or alias");
         SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
-        CharSequence tableName = GenericLexer.immutableOf(GenericLexer.unquote(tok));
+        CharSequence tableName = GenericLexer.immutableOf(unquote(tok));
         ExpressionNode tableNameExpr = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, tableName, 0, 0);
         updateQueryModel.setTableNameExpr(tableNameExpr);
         fromModel.setTableNameExpr(tableNameExpr);
@@ -2806,7 +2817,7 @@ public class SqlParser {
         while (true) {
             // Column
             tok = tok(lexer, "column name");
-            CharSequence col = GenericLexer.immutableOf(GenericLexer.unquote(tok));
+            CharSequence col = GenericLexer.immutableOf(unquote(tok));
             int colPosition = lexer.lastTokenPosition();
 
             expectTok(lexer, "=");

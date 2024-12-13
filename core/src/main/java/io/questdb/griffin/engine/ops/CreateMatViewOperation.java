@@ -30,6 +30,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MaterializedViewDefinition;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SCSequence;
@@ -76,7 +77,10 @@ public class CreateMatViewOperation implements TableStructure, Operation {
 
     @Override
     public OperationFuture execute(SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
-        return createTableOperation.execute(sqlExecutionContext, eventSubSeq);
+        try (SqlCompiler compiler = sqlExecutionContext.getCairoEngine().getSqlCompiler()) {
+            compiler.execute(this, sqlExecutionContext);
+        }
+        return createTableOperation.getOperationFuture();
     }
 
     @Override
@@ -215,7 +219,9 @@ public class CreateMatViewOperation implements TableStructure, Operation {
         createTableOperation.updateOperationFutureTableToken(tableToken);
     }
 
-    public void validateMatViewMetadata(RecordMetadata metadata) throws SqlException {
+    public void validateAndUpdateMetadataFromSelect(RecordMetadata metadata) throws SqlException {
+        createTableOperation.validateAndUpdateMetadataFromSelect(metadata);
+
         // validate that all indexes are specified only on columns with symbol type
 //        for (int i = 0, n = model.getColumnCount(); i < n; i++) {
 //            CharSequence columnName = model.getColumnName(i);

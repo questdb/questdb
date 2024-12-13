@@ -367,8 +367,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoin0() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
-            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from a asof join b on ts where a.i = b.ts::int",
@@ -388,8 +388,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoin0a() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
-            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select ts, ts1, i, i1 from (select * from a asof join b on ts ) where i/10 = i1",
@@ -409,8 +409,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoin1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
-            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from a asof join b on ts",
@@ -429,8 +429,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoin2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
-            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from a asof join (select * from b limit 10) on ts",
@@ -450,8 +450,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoin3() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
-            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from a asof join ((select * from b order by ts, i ) timestamp(ts))  on ts",
@@ -472,8 +472,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoin4() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
-            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * " +
@@ -499,8 +499,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // where clause predicate can't be pushed to join clause because asof is and outer join
     public void testAsOfJoin5() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
-            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * " +
@@ -523,8 +523,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinFullFat() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
-            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
                 assertPlanNoLeakCheck(
@@ -550,8 +550,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinNoKey() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a (i int, ts timestamp) timestamp(ts)");
-            ddl("create table b (i int, ts timestamp) timestamp(ts)");
+            execute("create table a (i int, ts timestamp) timestamp(ts)");
+            execute("create table b (i int, ts timestamp) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from a asof join b where a.i > 0",
@@ -572,8 +572,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinNoKeyFast1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a (i int, ts timestamp) timestamp(ts)");
-            ddl("create table b (i int, ts timestamp) timestamp(ts)");
+            execute("create table a (i int, ts timestamp) timestamp(ts)");
+            execute("create table b (i int, ts timestamp) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from a asof join b",
@@ -592,8 +592,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinNoKeyFast2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a (i int, ts timestamp) timestamp(ts)");
-            ddl("create table b (i int, ts timestamp) timestamp(ts)");
+            execute("create table a (i int, ts timestamp) timestamp(ts)");
+            execute("create table b (i int, ts timestamp) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from a asof join b on(ts)",
@@ -612,8 +612,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinNoKeyFast3() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a (ts timestamp, i int) timestamp(ts)");
-            ddl("create table b (i int, ts timestamp) timestamp(ts)");
+            execute("create table a (ts timestamp, i int) timestamp(ts)");
+            execute("create table b (i int, ts timestamp) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from a asof join b on(ts)",
@@ -632,7 +632,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testCachedWindowRecordCursorFactoryWithLimit() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as ( " +
+            execute("create table x as ( " +
                     "  select " +
                     "    cast(x as int) i, " +
                     "    rnd_symbol('a','b','c') sym, " +
@@ -776,8 +776,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testCrossJoinWithSort1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table t (x int, ts timestamp) timestamp(ts)");
-            compile("insert into t select x, x::timestamp from long_sequence(2)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t select x, x::timestamp from long_sequence(2)");
             String[] queries = {
                     "select * from t t1 cross join t t2 order by t1.ts",
                     "select * from (select * from t order by ts desc) t1 cross join t t2 order by t1.ts"
@@ -813,8 +813,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testCrossJoinWithSort2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table t (x int, ts timestamp) timestamp(ts)");
-            compile("insert into t select x, x::timestamp from long_sequence(2)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t select x, x::timestamp from long_sequence(2)");
 
             String query = "select * from " +
                     "((select * from t order by ts desc) limit 10) t1 " +
@@ -839,7 +839,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testCrossJoinWithSort3() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from " +
@@ -862,7 +862,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testCrossJoinWithSort4() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from " +
@@ -887,7 +887,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testCrossJoinWithSort5() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from " +
@@ -910,8 +910,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testDistinctOverWindowFunction() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (event double )");
-            insert("insert into test select x from long_sequence(3)");
+            execute("create table test (event double )");
+            execute("insert into test select x from long_sequence(3)");
 
             String query = "select * from ( SELECT DISTINCT avg(event) OVER (PARTITION BY 1) FROM test )";
             assertPlanNoLeakCheck(
@@ -1258,7 +1258,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testExceptAndSort1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts desc limit 10) except (select * from a) order by ts desc",
@@ -1278,7 +1278,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testExceptAndSort2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts asc limit 10) except (select * from a) order by ts asc",
@@ -1298,7 +1298,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testExceptAndSort3() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts desc limit 10) except (select * from a) order by ts asc",
@@ -1320,7 +1320,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testExceptAndSort4() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts asc limit 10) except (select * from a) order by ts desc",
@@ -1379,13 +1379,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testExplainDeferredSingleSymbolFilterPageFrame() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab \n" +
+            execute("create table tab \n" +
                     "(\n" +
                     "   id symbol index,\n" +
                     "   ts timestamp,\n" +
                     "   val double  \n" +
                     ") timestamp(ts);");
-            insert("insert into tab values ( 'XXX', 0::timestamp, 1 );");
+            execute("insert into tab values ( 'XXX', 0::timestamp, 1 );");
 
             assertPlanNoLeakCheck(
                     "  select\n" +
@@ -1412,7 +1412,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testExplainInsert() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( l long, d double)");
+            execute("create table a ( l long, d double)");
             assertSql("QUERY PLAN\n" +
                     "Insert into table: a\n", "explain insert into a values (1, 2.0)"
             );
@@ -1422,7 +1422,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testExplainInsertAsSelect() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( l long, d double)");
+            execute("create table a ( l long, d double)");
             assertSql("QUERY PLAN\n" +
                     "Insert into table: a\n" +
                     "    VirtualRecord\n" +
@@ -1467,7 +1467,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testExplainSelect() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( l long, d double)");
+            execute("create table a ( l long, d double)");
             assertSql("QUERY PLAN\n" +
                     "PageFrame\n" +
                     "    Row forward scan\n" +
@@ -1519,7 +1519,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testExplainSelectWithCte3() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( l long, d double)");
+            execute("create table a ( l long, d double)");
             assertSql("QUERY PLAN\n" +
                     "Limit lo: 10\n" +
                     "    PageFrame\n" +
@@ -1532,7 +1532,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testExplainUpdate1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( l long, d double)");
+            execute("create table a ( l long, d double)");
             assertSql("QUERY PLAN\n" +
                     "Update table: a\n" +
                     "    VirtualRecord\n" +
@@ -1547,8 +1547,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testExplainUpdate2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( l1 long, d1 double)");
-            ddl("create table b ( l2 long, d2 double)");
+            execute("create table a ( l1 long, d1 double)");
+            execute("create table b ( l2 long, d2 double)");
             assertSql("QUERY PLAN\n" +
                     "Update table: a\n" +
                     "    VirtualRecord\n" +
@@ -1588,7 +1588,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testExplainWindowFunctionWithCharConstantFrameBounds() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab ( key int, value double, ts timestamp) timestamp(ts)");
+            execute("create table tab ( key int, value double, ts timestamp) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select avg(value) over (PARTITION BY key ORDER BY ts RANGE BETWEEN '1' MINUTES PRECEDING AND CURRENT ROW) from tab",
@@ -1704,7 +1704,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     expected = expected.replace("JIT ", "");
                 }
 
-                ddl("create table a ( l long)");
+                execute("create table a ( l long)");
                 assertQueryNoLeakCheck(
                         compiler,
                         expected,
@@ -1770,8 +1770,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testExplainWithJsonFormat4() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table taba (a1 int, a2 long)");
-            ddl("create table tabb (b1 int, b2 long)");
+            execute("create table taba (a1 int, a2 long)");
+            execute("create table tabb (b1 int, b2 long)");
             assertQueryNoLeakCheck(
                     "QUERY PLAN\n" +
                             "[\n" +
@@ -1890,8 +1890,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testFilterOnExcludedIndexedSymbolManyValues() throws Exception {
         assertMemoryLeak(() -> {
-            drop("drop table if exists trips");
-            ddl("CREATE TABLE trips (l long, s symbol index capacity 5, ts TIMESTAMP) " +
+            execute("drop table if exists trips");
+            execute("CREATE TABLE trips (l long, s symbol index capacity 5, ts TIMESTAMP) " +
                     "timestamp(ts) partition by month");
 
             assertPlanNoLeakCheck(
@@ -1907,11 +1907,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "            Frame forward scan on: trips\n"
             );
 
-            insert("insert into trips " +
+            execute("insert into trips " +
                     "  select x, 'A' || ( x%3000 )," +
                     "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 1000000) " +
                     "  from long_sequence(10000);");
-            insert("insert into trips " +
+            execute("insert into trips " +
                     "  select x, null," +
                     "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 1000000) " +
                     "  from long_sequence(4000);"
@@ -2037,8 +2037,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testFilterOnExcludedNonIndexedSymbolManyValues() throws Exception {
         assertMemoryLeak(() -> {
-            drop("drop table if exists trips");
-            ddl("CREATE TABLE trips(l long, s symbol capacity 5, ts TIMESTAMP) " +
+            execute("drop table if exists trips");
+            execute("CREATE TABLE trips(l long, s symbol capacity 5, ts TIMESTAMP) " +
                     "timestamp(ts) partition by month");
 
             assertPlanNoLeakCheck(
@@ -2052,11 +2052,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        Frame forward scan on: trips\n"
             );
 
-            insert("insert into trips " +
+            execute("insert into trips " +
                     "  select x, 'A' || ( x%3000 )," +
                     "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 1000000) " +
                     "  from long_sequence(10000);");
-            insert("insert into trips " +
+            execute("insert into trips " +
                     "  select x, null," +
                     "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 1000000) " +
                     "  from long_sequence(4000);"
@@ -2171,7 +2171,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testFiltersOnIndexedSymbolColumns() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE reference_prices (\n" +
+            execute("CREATE TABLE reference_prices (\n" +
                     "  venue SYMBOL index ,\n" +
                     "  symbol SYMBOL index,\n" +
                     "  instrumentType SYMBOL index,\n" +
@@ -2181,7 +2181,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "  referencePrice DOUBLE\n" +
                     ") timestamp (ts)");
 
-            insert("insert into reference_prices \n" +
+            execute("insert into reference_prices \n" +
                     "select rnd_symbol('VENUE1', 'VENUE2', 'VENUE3'), \n" +
                     "          'symbol', \n" +
                     "          'instrumentType', \n" +
@@ -2226,7 +2226,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
-                ddl("create table a (l long)");
+                execute("create table a (l long)");
                 assertPlanNoLeakCheck(
                         compiler,
                         "select * from a join (select l from a where l > 10 limit 4) b on l where a.l+b.l > 0 ",
@@ -2255,7 +2255,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
-                ddl("create table a ( l long)");
+                execute("create table a ( l long)");
                 assertPlanNoLeakCheck(
                         compiler,
                         "select * from a join (select l from a limit 40) on l",
@@ -2281,7 +2281,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
-                ddl("create table a (l long)");
+                execute("create table a (l long)");
                 assertPlanNoLeakCheck(
                         compiler,
                         "select * from a left join a a1 on l",
@@ -2305,7 +2305,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testFunctions() throws Exception {
         assertMemoryLeak(() -> {
             // test table for show_columns
-            ddl("create table bbb (a int)");
+            execute("create table bbb (a int)");
 
             final StringSink sink = new StringSink();
 
@@ -2733,7 +2733,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testGroupByHourNonTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a (ts timestamp, d double)");
+            execute("create table a (ts timestamp, d double)");
             assertException(
                     "select hour(d), min(d) from a",
                     12,
@@ -2853,7 +2853,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testGroupByKeyedOnExcept() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, d double)");
+            execute("create table a ( i int, d double)");
 
             assertPlanNoLeakCheck(
                     "create table b ( j int, e double)",
@@ -2876,7 +2876,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testGroupByKeyedOnIntersect() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, d double)");
+            execute("create table a ( i int, d double)");
 
             assertPlanNoLeakCheck(
                     "create table b ( j int, e double)",
@@ -3518,8 +3518,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testHashInnerJoin() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, s1 string)");
-            ddl("create table b ( i int, s2 string)");
+            execute("create table a ( i int, s1 string)");
+            execute("create table b ( i int, s2 string)");
 
             assertPlanNoLeakCheck(
                     "select s1, s2 from (select a.s1, b.s2, b.i, a.i  from a join b on i) where i < i1 and s1 = s2",
@@ -3541,9 +3541,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // inner hash join maintains order metadata and can be part of asof join
     public void testHashInnerJoinWithAsOf() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table taba (a1 int, ts1 timestamp) timestamp(ts1)");
-            ddl("create table tabb (b1 int, b2 long)");
-            ddl("create table tabc (c1 int, c2 long, ts3 timestamp) timestamp(ts3)");
+            execute("create table taba (a1 int, ts1 timestamp) timestamp(ts1)");
+            execute("create table tabb (b1 int, b2 long)");
+            execute("create table tabc (c1 int, c2 long, ts3 timestamp) timestamp(ts3)");
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
@@ -3577,8 +3577,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testHashLeftJoin() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int)");
-            ddl("create table b ( i int)");
+            execute("create table a ( i int)");
+            execute("create table b ( i int)");
 
             assertPlanNoLeakCheck(
                     "select * from a left join b on i",
@@ -3599,8 +3599,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testHashLeftJoin1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int)");
-            ddl("create table b ( i int)");
+            execute("create table a ( i int)");
+            execute("create table b ( i int)");
 
             assertPlanNoLeakCheck(
                     "select * from a left join b on i where b.i is not null",
@@ -3625,8 +3625,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testImplicitJoin() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i1 int)");
-            ddl("create table b ( i2 int)");
+            execute("create table a ( i1 int)");
+            execute("create table b ( i2 int)");
 
             assertSql("", "select * from a, b where a.i1 = b.i2");
 
@@ -3714,7 +3714,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testIntersectAndSort1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts desc limit 10) intersect (select * from a) order by ts desc",
@@ -3734,7 +3734,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testIntersectAndSort2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts asc limit 10) intersect (select * from a) order by ts asc",
@@ -3754,7 +3754,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testIntersectAndSort3() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts desc limit 10) intersect (select * from a) order by ts asc",
@@ -3776,7 +3776,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testIntersectAndSort4() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts asc limit 10) intersect (select * from a) order by ts desc",
@@ -3798,7 +3798,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testKSumNSum() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE tab ( k long, x double );");
+            execute("CREATE TABLE tab ( k long, x double );");
 
             assertPlanNoLeakCheck(
                     "SELECT k, ksum(x), nsum(x) FROM tab",
@@ -3816,7 +3816,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLatestByAllSymbolsFilteredFactoryWithLimit() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table maps\n" +
+            execute("create table maps\n" +
                     "(\n" +
                     "  timestamp timestamp, \n" +
                     "  cluster symbol, \n" +
@@ -3825,7 +3825,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "  packets int\n" +
                     ") timestamp(timestamp);");
 
-            insert("insert into maps values ('2023-09-01T09:41:00.000Z', 'cluster10', 'a', 1, 1), " +
+            execute("insert into maps values ('2023-09-01T09:41:00.000Z', 'cluster10', 'a', 1, 1), " +
                     "('2023-09-01T09:42:00.000Z', 'cluster10', 'a', 2, 2)");
 
             String sql = "select timestamp, cluster, alias, timestamp - timestamp1 interval, (octets-octets1)*8 bits, packets-packets1 packets from (\n" +
@@ -3865,7 +3865,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLatestByRecordCursorFactoryWithLimit() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab as ( " +
+            execute("create table tab as ( " +
                     "  select " +
                     "    rnd_str('a','b','c') s, " +
                     "    timestamp_sequence(0, 100000000) ts " +
@@ -3939,8 +3939,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLatestOn0c() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, s symbol, ts timestamp) timestamp(ts);");
-            compile("insert into a select 10-x, 'a' || x, x::timestamp from long_sequence(10)");
+            execute("create table a ( i int, s symbol, ts timestamp) timestamp(ts);");
+            execute("insert into a select 10-x, 'a' || x, x::timestamp from long_sequence(10)");
 
             assertPlanNoLeakCheck(
                     "select ts,i from a where s in ('a1') and i > 0 latest on ts partition by s",
@@ -3957,8 +3957,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLatestOn0d() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, s symbol, ts timestamp) timestamp(ts);");
-            compile("insert into a select 10-x, 'a' || x, x::timestamp from long_sequence(10)");
+            execute("create table a ( i int, s symbol, ts timestamp) timestamp(ts);");
+            execute("insert into a select 10-x, 'a' || x, x::timestamp from long_sequence(10)");
 
             assertPlanNoLeakCheck(
                     "select ts,i from a where s in ('a1') latest on ts partition by s",
@@ -3974,8 +3974,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLatestOn0e() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
-            compile("insert into a select 10-x, 'a' || x, x::timestamp from long_sequence(10)");
+            execute("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
+            execute("insert into a select 10-x, 'a' || x, x::timestamp from long_sequence(10)");
 
             assertPlanNoLeakCheck(
                     "select ts,i, s from a where s in ('a1') and i > 0 latest on ts partition by s",
@@ -4192,8 +4192,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLatestOn5a() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
-            compile("insert into a select x, x::symbol, x::timestamp from long_sequence(10) ");
+            execute("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
+            execute("insert into a select x, x::symbol, x::timestamp from long_sequence(10) ");
 
             assertPlanNoLeakCheck(
                     "select s, i, ts from a where s  in ('def1', 'def2') latest on ts partition by s",
@@ -4207,8 +4207,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLatestOn5b() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
-            compile("insert into a select x, x::symbol, x::timestamp from long_sequence(10) ");
+            execute("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
+            execute("insert into a select x, x::symbol, x::timestamp from long_sequence(10) ");
 
             assertPlanNoLeakCheck(
                     "select s, i, ts from a where s  in ('1', 'deferred') latest on ts partition by s",
@@ -4222,8 +4222,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLatestOn5c() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
-            compile("insert into a select x, x::symbol, x::timestamp from long_sequence(10) ");
+            execute("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
+            execute("insert into a select x, x::symbol, x::timestamp from long_sequence(10) ");
 
             assertPlanNoLeakCheck(
                     "select s, i, ts from a where s  in ('1', '2') latest on ts partition by s",
@@ -4261,8 +4261,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLatestOn8() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts)");
-            compile("insert into a select x::int, 's' ||(x%10), x::timestamp from long_sequence(1000)");
+            execute("create table a ( i int, s symbol index, ts timestamp) timestamp(ts)");
+            execute("insert into a select x::int, 's' ||(x%10), x::timestamp from long_sequence(1000)");
 
             assertPlanNoLeakCheck(
                     "select s, i, ts from a where s  in ('s1') latest on ts partition by s",
@@ -4277,8 +4277,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // key outside list of symbols
     public void testLatestOn8a() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts)");
-            compile("insert into a select x::int, 's' ||(x%10), x::timestamp from long_sequence(1000)");
+            execute("create table a ( i int, s symbol index, ts timestamp) timestamp(ts)");
+            execute("insert into a select x::int, 's' ||(x%10), x::timestamp from long_sequence(1000)");
 
             assertPlanNoLeakCheck(
                     "select s, i, ts from a where s in ('bogus_key') latest on ts partition by s",
@@ -4317,8 +4317,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLatestOn9b() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
-            compile("insert into a select x::int, 'S' || x, x::timestamp from long_sequence(10)");
+            execute("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
+            execute("insert into a select x::int, 'S' || x, x::timestamp from long_sequence(10)");
 
             assertPlanNoLeakCheck(
                     "select s, i, ts from a where s  in ('S1') and length(s) = 10 latest on ts partition by s",
@@ -4333,8 +4333,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLeftJoinWithEquality1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table taba (a int)");
-            ddl("create table tabb (b int)");
+            execute("create table taba (a int)");
+            execute("create table tabb (b int)");
 
             assertPlanNoLeakCheck(
                     "select * from taba left join tabb on a=b",
@@ -4355,8 +4355,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLeftJoinWithEquality2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table taba (a1 int, a2 long)");
-            ddl("create table tabb (b1 int, b2 long)");
+            execute("create table taba (a1 int, a2 long)");
+            execute("create table tabb (b1 int, b2 long)");
 
             assertPlanNoLeakCheck(
                     "select * from taba left join tabb on a1=b1  and a2=b2",
@@ -4377,8 +4377,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // FIXME: there should be no separate filter
     public void testLeftJoinWithEquality3() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table taba (a1 int, a2 long)");
-            ddl("create table tabb (b1 int, b2 long)");
+            execute("create table taba (a1 int, a2 long)");
+            execute("create table tabb (b1 int, b2 long)");
 
             assertPlanNoLeakCheck(
                     "select * from taba left join tabb on a1=b1  or a2=b2",
@@ -4398,8 +4398,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // FIXME: join and where clause filters should be separated
     public void testLeftJoinWithEquality4() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table taba (a1 int, a2 long)");
-            ddl("create table tabb (b1 int, b2 long)");
+            execute("create table taba (a1 int, a2 long)");
+            execute("create table tabb (b1 int, b2 long)");
 
             assertPlanNoLeakCheck(
                     "select * from taba left join tabb on a1=b1  or a2=b2 where a1 > b2",
@@ -4420,8 +4420,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // FIXME: ORed predicates should be applied as filter in hash join
     public void testLeftJoinWithEquality5() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table taba (a1 int, a2 long)");
-            ddl("create table tabb (b1 int, b2 long)");
+            execute("create table taba (a1 int, a2 long)");
+            execute("create table tabb (b1 int, b2 long)");
 
             assertPlanNoLeakCheck(
                     "select * from taba " +
@@ -4446,9 +4446,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLeftJoinWithEquality6() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table taba (a1 int, a2 long)");
-            ddl("create table tabb (b1 int, b2 long)");
-            ddl("create table tabc (c1 int, c2 long)");
+            execute("create table taba (a1 int, a2 long)");
+            execute("create table tabb (b1 int, b2 long)");
+            execute("create table tabc (c1 int, c2 long)");
 
             assertPlanNoLeakCheck(
                     "select * from taba " +
@@ -4497,8 +4497,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLeftJoinWithEqualityAndExpressions1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table taba (a1 int, a2 long)");
-            ddl("create table tabb (b1 int, b2 long)");
+            execute("create table taba (a1 int, a2 long)");
+            execute("create table tabb (b1 int, b2 long)");
 
             assertPlanNoLeakCheck(
                     "select * from taba left join tabb on a1=b1  and a2=b2 and abs(a2+1) = abs(b2)",
@@ -4520,8 +4520,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLeftJoinWithEqualityAndExpressions2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table taba (a1 int, a2 long)");
-            ddl("create table tabb (b1 int, b2 long)");
+            execute("create table taba (a1 int, a2 long)");
+            execute("create table tabb (b1 int, b2 long)");
 
             assertPlanNoLeakCheck(
                     "select * from taba left join tabb on a1=b1  and a2=b2 and a2+5 = b2+10",
@@ -4543,8 +4543,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLeftJoinWithEqualityAndExpressions3() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table taba (a1 int, a2 long)");
-            ddl("create table tabb (b1 int, b2 long)");
+            execute("create table taba (a1 int, a2 long)");
+            execute("create table tabb (b1 int, b2 long)");
 
             assertPlanNoLeakCheck(
                     "select * from taba left join tabb on a1=b1  and a2=b2 and a2+5 = b2+10 and 1=0",
@@ -4565,8 +4565,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLeftJoinWithEqualityAndExpressions4() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table taba (a1 int, a2 long)");
-            ddl("create table tabb (b1 int, b2 long)");
+            execute("create table taba (a1 int, a2 long)");
+            execute("create table tabb (b1 int, b2 long)");
 
             assertPlanNoLeakCheck(
                     "select * from taba left join tabb on a1=b1  and a2!=a2",
@@ -4588,8 +4588,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // FIXME: a2=a2 run as past of left join or be optimized away !
     public void testLeftJoinWithEqualityAndExpressions5() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table taba (a1 int, a2 long)");
-            ddl("create table tabb (b1 int, b2 long)");
+            execute("create table taba (a1 int, a2 long)");
+            execute("create table tabb (b1 int, b2 long)");
 
             assertPlanNoLeakCheck(
                     "select * from taba left join tabb on a1=b1  and a2=a2",
@@ -4611,8 +4611,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // left join filter must remain intact !
     public void testLeftJoinWithEqualityAndExpressions6() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table taba (a1 int, a2 string)");
-            ddl("create table tabb (b1 int, b2 string)");
+            execute("create table taba (a1 int, a2 string)");
+            execute("create table tabb (b1 int, b2 string)");
 
             assertPlanNoLeakCheck(
                     "select * from taba " +
@@ -4635,8 +4635,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // FIXME:  abs(a2+1) = abs(b2) should be applied as left join filter  !
     public void testLeftJoinWithEqualityAndExpressionsAhdWhere1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table taba (a1 int, a2 long)");
-            ddl("create table tabb (b1 int, b2 long)");
+            execute("create table taba (a1 int, a2 long)");
+            execute("create table tabb (b1 int, b2 long)");
 
             assertPlanNoLeakCheck(
                     "select * from taba " +
@@ -4661,8 +4661,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLeftJoinWithEqualityAndExpressionsAhdWhere2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table taba (a1 int, a2 long)");
-            ddl("create table tabb (b1 int, b2 long)");
+            execute("create table taba (a1 int, a2 long)");
+            execute("create table tabb (b1 int, b2 long)");
 
             assertPlanNoLeakCheck(
                     "select * from taba left join tabb on a1=b1  and a2=b2 and abs(a2+1) = abs(b2) where a1=b1",
@@ -4685,8 +4685,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLeftJoinWithEqualityAndExpressionsAhdWhere3() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table taba (a1 int, a2 long)");
-            ddl("create table tabb (b1 int, b2 long)");
+            execute("create table taba (a1 int, a2 long)");
+            execute("create table tabb (b1 int, b2 long)");
 
             assertPlanNoLeakCheck(
                     "select * from taba left join tabb on a1=b1 and abs(a2+1) = abs(b2) where a2=b2",
@@ -4709,8 +4709,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // FIXME: this should work as hash outer join of function results
     public void testLeftJoinWithExpressions1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table taba (a1 int, a2 long)");
-            ddl("create table tabb (b1 int, b2 long)");
+            execute("create table taba (a1 int, a2 long)");
+            execute("create table tabb (b1 int, b2 long)");
 
             assertPlanNoLeakCheck(
                     "select * from taba left join tabb on abs(a2+1) = abs(b2)",
@@ -4730,8 +4730,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // FIXME: this should work as hash outer join of function results
     public void testLeftJoinWithExpressions2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table taba (a1 int, a2 long)");
-            ddl("create table tabb (b1 int, b2 long)");
+            execute("create table taba (a1 int, a2 long)");
+            execute("create table tabb (b1 int, b2 long)");
 
             assertPlanNoLeakCheck(
                     "select * from taba left join tabb on abs(a2+1) = abs(b2) or a2/2 = b2+1",
@@ -4751,7 +4751,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLeftJoinWithPostJoinFilter() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE tab ( created timestamp, value int ) timestamp(created)");
+            execute("CREATE TABLE tab ( created timestamp, value int ) timestamp(created)");
 
             String[] joinTypes = {"LEFT", "LT", "ASOF"};
             String[] joinFactoryTypes = {"Hash Outer Join Light", "Lt Join Fast Scan", "AsOf Join Fast Scan"};
@@ -4944,7 +4944,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLikeFilters() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (s1 string, s2 string, s3 string, s4 string, s5 string, s6 string);");
+            execute("create table tab (s1 string, s2 string, s3 string, s4 string, s5 string, s6 string);");
 
             assertPlanNoLeakCheck(
                     "select * from tab " +
@@ -4963,8 +4963,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLtJoin0() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
-            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select ts1, ts2, i1, i2 from (select a.i as i1, a.ts as ts1, b.i as i2, b.ts as ts2 from a lt join b on ts) where ts1::long*i1<ts2::long*i2",
@@ -4984,8 +4984,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLtJoin1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
-            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from a lt join b on ts",
@@ -5006,8 +5006,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         // lt join guarantees that a.ts > b.ts [join cond is not an equality predicate]
         // CONCLUSION: a join b on X can't always be translated to a join b on a.X = b.X
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
-            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from a lt join b on ts where a.i = b.ts",
@@ -5027,8 +5027,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLtJoin1b() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
-            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from a lt join b on ts where a.i = b.ts",
@@ -5048,8 +5048,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLtJoin1c() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
-            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from a lt join b where a.i = b.ts",
@@ -5069,8 +5069,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLtJoin2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
-            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from a lt join (select * from b limit 10) on ts",
@@ -5090,8 +5090,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLtJoinFullFat() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
-            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
@@ -5118,8 +5118,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLtJoinNoKey1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a (i int, ts timestamp) timestamp(ts)");
-            ddl("create table b (i int, ts timestamp) timestamp(ts)");
+            execute("create table a (i int, ts timestamp) timestamp(ts)");
+            execute("create table b (i int, ts timestamp) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from a lt join b where a.i > 0",
@@ -5140,8 +5140,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLtJoinNoKey2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a (i int, ts timestamp) timestamp(ts)");
-            ddl("create table b (i int, ts timestamp) timestamp(ts)");
+            execute("create table a (i int, ts timestamp) timestamp(ts)");
+            execute("create table b (i int, ts timestamp) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from a lt join b",
@@ -5160,8 +5160,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLtJoinNoKey3() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a (i int, ts timestamp) timestamp(ts)");
-            ddl("create table b (i int, ts timestamp) timestamp(ts)");
+            execute("create table a (i int, ts timestamp) timestamp(ts)");
+            execute("create table b (i int, ts timestamp) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from a lt join b on(ts)",
@@ -5180,8 +5180,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLtJoinNoKey4() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a (ts timestamp, i int) timestamp(ts)");
-            ddl("create table b (i int, ts timestamp) timestamp(ts)");
+            execute("create table a (ts timestamp, i int) timestamp(ts)");
+            execute("create table b (i int, ts timestamp) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from a lt join b on(ts)",
@@ -5200,8 +5200,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLtOfJoin3() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
-            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from a lt join ((select * from b order by ts, i ) timestamp(ts))  on ts",
@@ -5222,8 +5222,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLtOfJoin4() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
-            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * " +
@@ -5329,8 +5329,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testNestedLoopLeftJoinWithSort1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table t (x int, ts timestamp) timestamp(ts)");
-            compile("insert into t select x, x::timestamp from long_sequence(2)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t select x, x::timestamp from long_sequence(2)");
             String[] queries = {"select * from t t1 left join t t2 on t1.x*t2.x>0 order by t1.ts",
                     "select * from (select * from t order by ts desc) t1 left join t t2 on t1.x*t2.x>0 order by t1.ts"};
             for (String query : queries) {
@@ -5365,8 +5365,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testNestedLoopLeftJoinWithSort2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table t (x int, ts timestamp) timestamp(ts)");
-            compile("insert into t select x, x::timestamp from long_sequence(2)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t select x, x::timestamp from long_sequence(2)");
 
             String query = "select * from " +
                     "((select * from t order by ts desc) limit 10) t1 " +
@@ -5392,7 +5392,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testNoArgFalseConstantExpressionUsedInJoinIsOptimizedAway() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (b boolean, ts timestamp)");
+            execute("create table tab (b boolean, ts timestamp)");
             // true
             assertPlanNoLeakCheck(
                     "update tab t1 set b=true from tab t2 where 1>2 and t1.b = t2.b",
@@ -5446,7 +5446,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testNoArgRuntimeConstantExpressionUsedInJoinClauseIsUsedAsPostJoinFilter() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (b boolean, ts timestamp)");
+            execute("create table tab (b boolean, ts timestamp)");
 
             // true
             assertPlanNoLeakCheck(
@@ -5494,7 +5494,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         // if order by is via alias of designated timestamp
 
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table device_data " +
                             "( " +
                             "  timestamp timestamp, " +
@@ -5503,7 +5503,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            insert("insert into device_data select x::timestamp, x, '12345678' from long_sequence(10)");
+            execute("insert into device_data select x::timestamp, x, '12345678' from long_sequence(10)");
 
             // use column name in order by
             assertSqlAndPlanNoLeakCheck(
@@ -5707,7 +5707,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testOrderByIsMaintainedInLtAndAsofSubqueries() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table gas_prices (timestamp TIMESTAMP, galon_price DOUBLE ) timestamp (timestamp);");
+            execute("create table gas_prices (timestamp TIMESTAMP, galon_price DOUBLE ) timestamp (timestamp);");
 
             for (String joinType : Arrays.asList("AsOf", "Lt")) {
                 String query = "with gp as \n" +
@@ -5740,7 +5740,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testOrderByIsMaintainedInSpliceSubqueries() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table gas_prices (timestamp TIMESTAMP, galon_price DOUBLE ) timestamp (timestamp);");
+            execute("create table gas_prices (timestamp TIMESTAMP, galon_price DOUBLE ) timestamp (timestamp);");
 
             String query = "with gp as (\n" +
                     "selecT * from (\n" +
@@ -5772,7 +5772,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testOrderByIsMaintainedInSubquery() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table gas_prices " +
+            execute("create table gas_prices " +
                     "(timestamp TIMESTAMP, " +
                     "galon_price DOUBLE) " +
                     "timestamp (timestamp);");
@@ -5844,8 +5844,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "JOIN ( SELECT * FROM test ) as T2 ON T1.event < T2.event\n" +
                     "JOIN test as T3 ON T2.created = T3.created";
 
-            ddl("create table test (event int, created timestamp)");
-            insert("insert into test values (1, 1), (2, 2)");
+            execute("create table test (event int, created timestamp)");
+            execute("insert into test values (1, 1), (2, 2)");
 
             assertPlanNoLeakCheck(
                     query,
@@ -5900,7 +5900,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             );
             assertSql("a\tb\tc\trownum\n", query);
 
-            ddl("CREATE TABLE tab AS (SELECT x FROM long_sequence(10))");
+            execute("CREATE TABLE tab AS (SELECT x FROM long_sequence(10))");
 
             assertPlanNoLeakCheck(
                     "SELECT *, ROW_NUMBER() OVER () FROM tab WHERE x = 10",
@@ -5975,7 +5975,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateWithAdditionIsDisabledForNonIntegerType() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE tab ( x double );");
+            execute("CREATE TABLE tab ( x double );");
 
             assertPlanNoLeakCheck(
                     "SELECT sum(x), sum(x+10) FROM tab",
@@ -6002,8 +6002,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateWithAdditionOnJoin() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE taba ( x int, id int );");
-            compile("CREATE TABLE tabb ( x int, id int );");
+            execute("CREATE TABLE taba ( x int, id int );");
+            execute("CREATE TABLE tabb ( x int, id int );");
 
             assertPlanNoLeakCheck(
                     "SELECT sum(taba.x),sum(tabb.x), sum(taba.x+10), sum(tabb.x+10) " +
@@ -6050,7 +6050,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateWithIntAddition() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE tab ( x int );");
+            execute("CREATE TABLE tab ( x int );");
 
             assertPlanNoLeakCheck(
                     "SELECT sum(x), sum(x+10) FROM tab",
@@ -6079,7 +6079,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateWithIntMultiplication() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE tab ( x int );");
+            execute("CREATE TABLE tab ( x int );");
 
             assertPlanNoLeakCheck(
                     "SELECT sum(x), sum(x*10) FROM tab",
@@ -6108,7 +6108,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateWithIntSubtraction() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE tab ( x int );");
+            execute("CREATE TABLE tab ( x int );");
 
             assertPlanNoLeakCheck(
                     "SELECT sum(x), sum(x-10) FROM tab",
@@ -6137,7 +6137,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateWithLongAddition() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE tab ( x long );");
+            execute("CREATE TABLE tab ( x long );");
 
             assertPlanNoLeakCheck(
                     "SELECT sum(x), sum(x+2) FROM tab",
@@ -6166,7 +6166,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateWithLongMultiplication() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE tab ( x long );");
+            execute("CREATE TABLE tab ( x long );");
 
             assertPlanNoLeakCheck(
                     "SELECT sum(x), sum(x*10) FROM tab",
@@ -6195,7 +6195,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateWithLongSubtraction() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE tab ( x long );");
+            execute("CREATE TABLE tab ( x long );");
 
             assertPlanNoLeakCheck(
                     "SELECT sum(x), sum(x-10) FROM tab",
@@ -6224,7 +6224,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateWithMultiplicationIsDisabledForNonIntegerColumnType() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE tab ( x double );");
+            execute("CREATE TABLE tab ( x double );");
 
             assertPlanNoLeakCheck(
                     "SELECT sum(x), sum(x*10) FROM tab",
@@ -6251,7 +6251,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateWithMultiplicationIsDisabledForNonIntegerConstantType() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE tab ( x double );");
+            execute("CREATE TABLE tab ( x double );");
 
             assertPlanNoLeakCheck(
                     "SELECT sum(x), sum(x*10.0) FROM tab",
@@ -6278,8 +6278,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateWithMultiplicationOnJoin() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE taba ( x int, id int );");
-            compile("CREATE TABLE tabb ( x int, id int );");
+            execute("CREATE TABLE taba ( x int, id int );");
+            execute("CREATE TABLE tabb ( x int, id int );");
 
             assertPlanNoLeakCheck(
                     "SELECT sum(taba.x),sum(tabb.x),sum(taba.x*10), sum(tabb.x*10) " +
@@ -6326,7 +6326,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateWithShortAddition() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE tab ( x short );");
+            execute("CREATE TABLE tab ( x short );");
 
             assertPlanNoLeakCheck(
                     "SELECT sum(x), sum(x+42) FROM tab",
@@ -6355,7 +6355,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateWithShortMultiplication() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE tab ( x short );");
+            execute("CREATE TABLE tab ( x short );");
 
             assertPlanNoLeakCheck(
                     "SELECT sum(x), sum(x*10) FROM tab",
@@ -6384,7 +6384,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateWithShortSubtraction() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE tab ( x short );");
+            execute("CREATE TABLE tab ( x short );");
 
             assertPlanNoLeakCheck(
                     "SELECT sum(x), sum(x-10) FROM tab",
@@ -6413,7 +6413,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateWithSubtractionIsDisabledForNonIntegerType() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE tab ( x double );");
+            execute("CREATE TABLE tab ( x double );");
 
             assertPlanNoLeakCheck(
                     "SELECT sum(x), sum(x-10) FROM tab",
@@ -6440,8 +6440,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateWithSubtractionOnJoin() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE taba ( x int, id int );");
-            compile("CREATE TABLE tabb ( x int, id int );");
+            execute("CREATE TABLE taba ( x int, id int );");
+            execute("CREATE TABLE tabb ( x int, id int );");
 
             assertPlanNoLeakCheck(
                     "SELECT sum(taba.x),sum(tabb.x),sum(taba.x-10), sum(tabb.x-10) " +
@@ -6488,7 +6488,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregates() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE hits\n" +
+            execute("CREATE TABLE hits\n" +
                     "(\n" +
                     "    EventTime timestamp,\n" +
                     "    ResolutionWidth int,\n" +
@@ -6513,14 +6513,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregatesOnJoin() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE hits1" +
+            execute("CREATE TABLE hits1" +
                     "(" +
                     "    EventTime timestamp, " +
                     "    ResolutionWidth int, " +
                     "    ResolutionHeight int, " +
                     "    id int" +
                     ")");
-            ddl("create table hits2 as (select * from hits1)");
+            execute("create table hits2 as (select * from hits1)");
 
             assertPlanNoLeakCheck(
                     "SELECT sum(h1.resolutIONWidth), count(h1.resolutionwIDTH), SUM(h2.ResolutionWidth), sum(h2.ResolutionWidth) + count(), " +
@@ -6548,8 +6548,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteSelectCountDistinct() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test(s string, x long, ts timestamp, substring string) timestamp(ts) partition by day");
-            insert("insert into test " +
+            execute("create table test(s string, x long, ts timestamp, substring string) timestamp(ts) partition by day");
+            execute("insert into test " +
                     "select 's' || (x%10), " +
                     " x, " +
                     " (x*86400000000)::timestamp, " +
@@ -7654,7 +7654,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectDoubleInList() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table t ( d double)");
+            execute("create table t ( d double)");
 
             assertPlanNoLeakCheck(
                     "select * from t where d in (5, -1, 1, null)",
@@ -7866,8 +7866,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectIndexedSymbols01b() throws Exception {
         // if query is ordered by symbol and there's more than partition to scan, then sort is necessary even if we use cursor order scan
         assertMemoryLeak(() -> {
-            ddl("create table a ( s symbol index, ts timestamp)  timestamp(ts) partition by hour");
-            insert("insert into a values ('S2', 0), ('S1', 1), ('S3', 2+3600000000), ( 'S2' ,3+3600000000)");
+            execute("create table a ( s symbol index, ts timestamp)  timestamp(ts) partition by hour");
+            execute("insert into a values ('S2', 0), ('S1', 1), ('S3', 2+3600000000), ( 'S2' ,3+3600000000)");
 
             String queryDesc = "select * from a where s in (:s1, :s2) and ts in '1970-01-01' order by s desc limit 5";
             bindVariableService.clear();
@@ -8028,7 +8028,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectIndexedSymbols07NonPartitioned() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( s symbol index)");
+            execute("create table a ( s symbol index)");
             String expectedPlan = "FilterOnExcludedValues symbolOrder: #ORDER#\n" +
                     "  symbolFilter: s not in ['S1']\n" +
                     "  filter: length(s)=2\n" +
@@ -8048,7 +8048,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectIndexedSymbols07Partitioned() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day");
+            execute("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day");
 
             String query = "select * from a where s != 'S1' and length(s) = 2 and ts in '2023-03-15' order by s #ORDER#";
             String expectedPlan = "FilterOnExcludedValues symbolOrder: #ORDER#\n" +
@@ -8073,8 +8073,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectIndexedSymbols08() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( s symbol index)");
-            insert("insert into a values ('a'), ('w'), ('b'), ('a'), (null);");
+            execute("create table a ( s symbol index)");
+            execute("insert into a values ('a'), ('w'), ('b'), ('a'), (null);");
 
             String query = "select * from a where s != 'a' order by s";
             assertPlanNoLeakCheck(
@@ -8179,8 +8179,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectIndexedSymbols11() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( s symbol index, ts timestamp) timestamp(ts)");
-            compile("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
+            execute("create table a ( s symbol index, ts timestamp) timestamp(ts)");
+            execute("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
 
             assertPlanNoLeakCheck(
                     "select * from a where s in ('S1', 'S2') and length(s) = 2 limit 1",
@@ -8199,8 +8199,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectIndexedSymbols12() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( s1 symbol index, s2 symbol index, ts timestamp) timestamp(ts)");
-            compile("insert into a select 'S' || x, 'S' || x, x::timestamp from long_sequence(10)");
+            execute("create table a ( s1 symbol index, s2 symbol index, ts timestamp) timestamp(ts)");
+            execute("insert into a select 'S' || x, 'S' || x, x::timestamp from long_sequence(10)");
             assertPlanNoLeakCheck(
                     "select * from a where s1 in ('S1', 'S2') and s2 in ('S2') limit 1",
                     "Limit lo: 1\n" +
@@ -8215,8 +8215,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectIndexedSymbols13() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( s1 symbol index, s2 symbol index, ts timestamp) timestamp(ts)");
-            compile("insert into a select 'S' || x, 'S' || x, x::timestamp from long_sequence(10)");
+            execute("create table a ( s1 symbol index, s2 symbol index, ts timestamp) timestamp(ts)");
+            execute("insert into a select 'S' || x, 'S' || x, x::timestamp from long_sequence(10)");
             assertPlanNoLeakCheck(
                     "select * from a where s1 in ('S1')  order by ts desc",
                     "DeferredSingleSymbolFilterPageFrame\n" +
@@ -8230,8 +8230,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectIndexedSymbols14() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
-            compile("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
+            execute("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
+            execute("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
             assertPlanNoLeakCheck(
                     "select * from a where s1 = 'S1'  order by ts desc",
                     "DeferredSingleSymbolFilterPageFrame\n" +
@@ -8245,8 +8245,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // backward index scan is triggered only if query uses a single partition and orders by key column and ts desc
     public void testSelectIndexedSymbols15() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
-            compile("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
+            execute("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
+            execute("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
             assertPlanNoLeakCheck(
                     "select * from a " +
                             "where s1 = 'S1' " +
@@ -8264,8 +8264,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectIndexedSymbols16() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
-            compile("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
+            execute("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
+            execute("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
             assertPlanNoLeakCheck(
                     "select * from a " +
                             "where s1 in ('S1', 'S2') " +
@@ -8286,8 +8286,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // TODO: should use the same plan as above
     public void testSelectIndexedSymbols17() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
-            compile("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
+            execute("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
+            execute("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
             assertPlanNoLeakCheck(
                     "select * from a " +
                             "where (s1 = 'S1' or s1 = 'S2') " +
@@ -8308,8 +8308,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectIndexedSymbols18() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by hour;");
-            compile("insert into a select 'S' || (6-x), dateadd('m', 20*x::int, 0::timestamp) from long_sequence(5)");
+            execute("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by hour;");
+            execute("insert into a select 'S' || (6-x), dateadd('m', 20*x::int, 0::timestamp) from long_sequence(5)");
             String query = "select * from " +
                     "(" +
                     "  select * from a " +
@@ -8355,7 +8355,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectLongInList() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table t ( l long)");
+            execute("create table t ( l long)");
 
             assertPlanNoLeakCheck(
                     "select * from t where l in (5, -1, 1, null)",
@@ -8380,8 +8380,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectNoOrderByWithNegativeLimit() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
-            compile("insert into a select x,x::timestamp from long_sequence(10)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("insert into a select x,x::timestamp from long_sequence(10)");
 
             assertPlanNoLeakCheck(
                     "select * from a limit -5",
@@ -8398,8 +8398,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectNoOrderByWithNegativeLimitArithmetic() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp) timestamp(ts)");
-            compile("insert into a select x,x::timestamp from long_sequence(10)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("insert into a select x,x::timestamp from long_sequence(10)");
 
             assertPlanNoLeakCheck(
                     "select * from a limit -10+2",
@@ -8441,8 +8441,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectOrderByTsAscAndDesc() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
-            compile("insert into a select x,x::timestamp from long_sequence(10)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("insert into a select x,x::timestamp from long_sequence(10)");
 
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts asc limit 5) order by ts desc",
@@ -8459,8 +8459,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectOrderByTsDescAndAsc() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
-            compile("insert into a select x,x::timestamp from long_sequence(10)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("insert into a select x,x::timestamp from long_sequence(10)");
 
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts desc limit 5) order by ts asc",
@@ -8529,8 +8529,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectOrderByTsWithNegativeLimit1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
-            compile("insert into a select x,x::timestamp from long_sequence(10)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("insert into a select x,x::timestamp from long_sequence(10)");
 
             assertPlanNoLeakCheck(
                     "select ts, count(*)  from a sample by 1s ALIGN TO FIRST OBSERVATION limit -5",
@@ -9721,7 +9721,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSortAscLimitAndSortAgain1a() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts asc limit 10) order by ts asc",
@@ -9736,7 +9736,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSortAscLimitAndSortAgain1b() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts desc, l desc limit 10) order by ts desc",
@@ -9752,7 +9752,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSortAscLimitAndSortAgain2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts asc, l limit 10) lt join (select * from a) order by ts asc",
@@ -9773,7 +9773,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSortAscLimitAndSortAgain3a() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from " +
@@ -9798,7 +9798,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSortAscLimitAndSortAgain3b() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from " +
@@ -9819,7 +9819,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSortAscLimitAndSortAgain4a() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from " +
@@ -9855,7 +9855,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSortAscLimitAndSortAgain4b() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from " +
@@ -9883,7 +9883,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSortAscLimitAndSortDesc() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts asc limit 10) order by ts desc",
@@ -9900,7 +9900,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSortDescLimitAndSortAgain() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts desc limit 10) order by ts desc",
@@ -9915,7 +9915,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSortDescLimitAndSortAsc1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts desc limit 10) order by ts asc",
@@ -9932,7 +9932,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // TODO: sorting by ts, l again is not necessary
     public void testSortDescLimitAndSortAsc2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp, l long)");
+            execute("create table a ( i int, ts timestamp, l long)");
 
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts, l limit 10) order by ts, l",
@@ -9950,7 +9950,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // TODO: sorting by ts, l again is not necessary
     public void testSortDescLimitAndSortAsc3() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp, l long)");
+            execute("create table a ( i int, ts timestamp, l long)");
 
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts, l limit 10,-10) order by ts, l",
@@ -9969,8 +9969,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSpliceJoin0() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
-            ddl("create table b ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from a splice join b on ts where a.i = b.ts",
@@ -9991,8 +9991,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSpliceJoin0a() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
-            ddl("create table b ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from a splice join b on ts where a.i + b.i = 1",
@@ -10013,8 +10013,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSpliceJoin1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
-            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from a splice join b on ts",
@@ -10034,8 +10034,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSpliceJoin2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
-            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from a splice join (select * from b limit 10) on ts",
@@ -10056,8 +10056,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSpliceJoin3() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
-            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from a splice join ((select * from b order by ts, i ) timestamp(ts))  on ts",
@@ -10079,8 +10079,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSpliceJoin4() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
-            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select * from a splice join b where a.i = b.i",
@@ -10130,7 +10130,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testWhereOrderByTsLimit1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table t ( x long, ts timestamp) timestamp(ts)");
+            execute("create table t ( x long, ts timestamp) timestamp(ts)");
 
             String query = "select * from t where x < 100 order by ts desc limit -5";
             assertPlanNoLeakCheck(
@@ -10143,7 +10143,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        Frame forward scan on: t\n"
             );
 
-            compile("insert into t select x, x::timestamp from long_sequence(10000)");
+            execute("insert into t select x, x::timestamp from long_sequence(10000)");
 
             assertQueryNoLeakCheck(
                     "x\tts\n" +
@@ -10221,7 +10221,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testWindow3() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
+            execute("create table tab (ts timestamp, i long, j long) timestamp(ts)");
 
             assertPlanNoLeakCheck(
                     "select ts, i, j, " +
@@ -10292,7 +10292,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testWindowModelOrderByIsNotIgnored() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
+            execute("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
 
             assertPlanNoLeakCheck(
                     "select sum(avg), sum(sum), sum(first_value) from (\n" +
@@ -10361,7 +10361,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testWindowOrderByUnderWindowModelIsPreserved() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
+            execute("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
 
             assertPlanNoLeakCheck(
                     "select sum(avg), sum(sum), first(first_value) from ( " +
@@ -10410,7 +10410,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testWindowParentModelOrderPushdownIsBlockedWhenWindowModelSpecifiesOrderBy() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
+            execute("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
 
             assertPlanNoLeakCheck(
                     "select * from " +
@@ -10625,7 +10625,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testWindowParentModelOrderPushdownIsDoneWhenNestedModelsSpecifyNoneOrMatchingOrderBy() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
+            execute("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
 
             String expectedForwardPlan = "Window\n" +
                     "  functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
@@ -10814,7 +10814,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testWindowRecordCursorFactoryWithLimit() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as ( " +
+            execute("create table x as ( " +
                     "  select " +
                     "    cast(x as int) i, " +
                     "    rnd_symbol('a','b','c') sym, " +
@@ -10851,7 +10851,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testWithBindVariables() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table t ( x int );");
+            execute("create table t ( x int );");
 
             int jitMode = sqlExecutionContext.getJitMode();
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
@@ -10959,7 +10959,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     private void assertPlanNoLeakCheck(String ddl, String query, String expectedPlan) throws Exception {
         if (ddl != null) {
-            compile(ddl);
+            execute(ddl);
         }
         assertPlanNoLeakCheck(query, expectedPlan);
     }
@@ -11010,34 +11010,34 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     private void test2686Prepare() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table table_1 (\n" +
+            execute("create table table_1 (\n" +
                     "          ts timestamp,\n" +
                     "          name string,\n" +
                     "          age int,\n" +
                     "          member boolean\n" +
                     "        ) timestamp(ts) PARTITION by month");
 
-            insert("insert into table_1 values ( '2022-10-25T01:00:00.000000Z', 'alice',  60, True )");
-            insert("insert into table_1 values ( '2022-10-25T02:00:00.000000Z', 'peter',  58, False )");
-            insert("insert into table_1 values ( '2022-10-25T03:00:00.000000Z', 'david',  21, True )");
+            execute("insert into table_1 values ( '2022-10-25T01:00:00.000000Z', 'alice',  60, True )");
+            execute("insert into table_1 values ( '2022-10-25T02:00:00.000000Z', 'peter',  58, False )");
+            execute("insert into table_1 values ( '2022-10-25T03:00:00.000000Z', 'david',  21, True )");
 
-            ddl("create table table_2 (\n" +
+            execute("create table table_2 (\n" +
                     "          ts timestamp,\n" +
                     "          name string,\n" +
                     "          age int,\n" +
                     "          address string\n" +
                     "        ) timestamp(ts) PARTITION by month");
 
-            insert("insert into table_2 values ( '2022-10-25T01:00:00.000000Z', 'alice',  60,  '1 Glebe St' )");
-            insert("insert into table_2 values ( '2022-10-25T02:00:00.000000Z', 'peter',  58, '1 Broon St' )");
+            execute("insert into table_2 values ( '2022-10-25T01:00:00.000000Z', 'alice',  60,  '1 Glebe St' )");
+            execute("insert into table_2 values ( '2022-10-25T02:00:00.000000Z', 'peter',  58, '1 Broon St' )");
         });
     }
 
     // left join maintains order metadata and can be part of asof join
     private void testHashAndAsOfJoin(SqlCompiler compiler, boolean isLight, boolean isFastAsOfJoin) throws Exception {
-        ddl("create table taba (a1 int, ts1 timestamp) timestamp(ts1)");
-        ddl("create table tabb (b1 int, b2 long)");
-        ddl("create table tabc (c1 int, c2 long, ts3 timestamp) timestamp(ts3)");
+        execute("create table taba (a1 int, ts1 timestamp) timestamp(ts1)");
+        execute("create table tabb (b1 int, b2 long)");
+        execute("create table tabc (c1 int, c2 long, ts3 timestamp) timestamp(ts3)");
 
         String asofJoinType = isFastAsOfJoin ? " Fast Scan" : (isLight ? "Light" : "");
         assertPlanNoLeakCheck(
@@ -11066,9 +11066,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     private void testSelectIndexedSymbol(String timestampAndPartitionByClause) throws Exception {
-        compile("drop table if exists a");
-        ddl("create table a ( s symbol index, ts timestamp) " + timestampAndPartitionByClause);
-        insert("insert into a values ('S2', 0), ('S1', 1), ('S3', 2+3600000000), ( 'S2' ,3+3600000000)");
+        execute("drop table if exists a");
+        execute("create table a ( s symbol index, ts timestamp) " + timestampAndPartitionByClause);
+        execute("insert into a values ('S2', 0), ('S1', 1), ('S3', 2+3600000000), ( 'S2' ,3+3600000000)");
 
         String query = "select * from a where s in (:s1, :s2) order by s desc limit 5";
         bindVariableService.clear();
@@ -11117,9 +11117,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @SuppressWarnings("SameParameterValue")
     private void testSelectIndexedSymbolWithIntervalFilter() throws Exception {
-        compile("drop table if exists a");
-        ddl("create table a ( s symbol index, ts timestamp) " + "timestamp(ts) partition by day");
-        insert("insert into a values ('S2', 0), ('S1', 1), ('S3', 2+3600000000), ( 'S2' ,3+3600000000)");
+        execute("drop table if exists a");
+        execute("create table a ( s symbol index, ts timestamp) " + "timestamp(ts) partition by day");
+        execute("insert into a values ('S2', 0), ('S1', 1), ('S3', 2+3600000000), ( 'S2' ,3+3600000000)");
 
         String query = "select * from a where s in (:s1, :s2) and ts in '1970-01-01' order by s desc limit 5";
         bindVariableService.clear();
@@ -11169,9 +11169,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     private void testSelectIndexedSymbols10WithOrder(String partitionByClause) throws Exception {
-        compile("drop table if exists a");
-        ddl("create table a ( s symbol index, ts timestamp) timestamp(ts)" + partitionByClause);
-        insert("insert into a values ('S2', 1), ('S3', 2),('S1', 3+3600000000),('S2', 4+3600000000), ('S1', 5+3600000000);");
+        execute("drop table if exists a");
+        execute("create table a ( s symbol index, ts timestamp) timestamp(ts)" + partitionByClause);
+        execute("insert into a values ('S2', 1), ('S3', 2),('S1', 3+3600000000),('S2', 4+3600000000), ('S1', 5+3600000000);");
 
         bindVariableService.clear();
         bindVariableService.setStr("s1", "S1");

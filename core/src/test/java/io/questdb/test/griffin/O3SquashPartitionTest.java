@@ -67,7 +67,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
 
             // create table with 800 points at 2020-02-03 sharp
             // and 200 points in at 2020-02-03T01
-            ddl(
+            execute(
                     "create table x as (" +
                             "select" +
                             " cast(x as int) i," +
@@ -83,7 +83,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             rowCount = assertRowCount(1000, rowCount);
 
             // Split at 2020-02-03
-            insert(
+            execute(
                     "insert into x " +
                             "select" +
                             " cast(x as int) * 1000000 i," +
@@ -102,7 +102,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     "2020-02-03\n", "select name from table_partitions('x')");
 
             // Split at 2020-02-03T01
-            insert(
+            execute(
                     "insert into x " +
                             "select" +
                             " cast(x as int) * 1000000 i," +
@@ -131,7 +131,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
             int rowCount = (int) metrics.tableWriter().getPhysicallyWrittenRows();
 
-            ddl(
+            execute(
                     "create table x as (" +
                             "select" +
                             " cast(x as int) i," +
@@ -154,7 +154,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     " rnd_str(5,16,2) as str," +
                     " rnd_varchar(1,40,5) as varc1," +
                     " rnd_varchar(1, 1,5) as varc2,";
-            ddl(
+            execute(
                     sqlPrefix +
                             " timestamp_sequence('2020-02-04T20:01', 1000000L) ts" +
                             " from long_sequence(200)",
@@ -171,7 +171,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             // Partition "2020-02-04" squashed the new update
 
             try (TableReader ignore = getReader("x")) {
-                ddl(sqlPrefix +
+                execute(sqlPrefix +
                                 " timestamp_sequence('2020-02-04T18:01', 60*1000000L) ts" +
                                 " from long_sequence(50)",
                         sqlExecutionContext
@@ -187,7 +187,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             }
 
             // should squash partitions into 2 pieces
-            ddl(sqlPrefix +
+            execute(sqlPrefix +
                             " timestamp_sequence('2020-02-04T18:01', 1000000L) ts" +
                             " from long_sequence(50)",
                     sqlExecutionContext
@@ -200,7 +200,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             rowCount = assertRowCount((170 + 50) * 2, rowCount);
 
 
-            ddl(sqlPrefix +
+            execute(sqlPrefix +
                             " timestamp_sequence('2020-02-04T22:01:13', 60*1000000L) ts" +
                             " from long_sequence(50)",
                     sqlExecutionContext
@@ -214,7 +214,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             rowCount = assertRowCount(delta, rowCount);
 
             // commit in order rolls to the next partition, should squash partition "2020-02-04" to single part
-            ddl(sqlPrefix +
+            execute(sqlPrefix +
                             " timestamp_sequence('2020-02-05T01:01:15', 10*60*1000000L) ts" +
                             " from long_sequence(50)",
                     sqlExecutionContext
@@ -239,7 +239,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             overrides.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 1);
 
             int rowCount = (int) metrics.tableWriter().getPhysicallyWrittenRows();
-            compile(
+            execute(
                     "create table x as (" +
                             "select" +
                             " cast(x as int) i," +
@@ -253,7 +253,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             );
 
             rowCount = assertRowCount(60 * (23 * 2 - 24), rowCount);
-            compile("alter table x add column k int");
+            execute("alter table x add column k int");
 
             String sqlPrefix = "insert into x " +
                     "select" +
@@ -262,7 +262,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     " rnd_str(5,16,2) as str," +
                     " rnd_varchar(1,40,5) as varc1," +
                     " rnd_varchar(1, 1,5) as varc2,";
-            compile(
+            execute(
                     sqlPrefix +
                             " timestamp_sequence('2020-02-04T20:01', 1000000L) ts," +
                             " x + 2 as k" +
@@ -276,7 +276,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     "2020-02-04T00:00:00.000000Z\t1520\t2020-02-04\n", partitionsSql);
 
             // Append in order to check last partition opened for writing correctly.
-            compile(
+            execute(
                     sqlPrefix +
                             " timestamp_sequence('2020-02-04T22:01', 1000000L) ts," +
                             " x + 2 as k" +
@@ -300,7 +300,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             Overrides overrides = node1.getConfigurationOverrides();
             overrides.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
             long start = TimestampFormatUtils.parseTimestamp("2020-02-03");
-            ddl(
+            execute(
                     "create table x as (" +
                             "select" +
                             " cast(x as int) i," +
@@ -328,7 +328,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 TestUtils.assertEquals(expected, sink);
 
                 // Split at 17:30
-                insert(
+                execute(
                         "insert into x " +
                                 "select" +
                                 " cast(x as int) * 1000000 i," +
@@ -346,7 +346,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 TestUtils.assertEquals(expected, sink);
 
                 // add data at 17:15
-                insert(
+                execute(
                         "insert into x " +
                                 "select" +
                                 " cast(x as int) * 1000000 i," +
@@ -384,7 +384,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             Overrides overrides = node1.getConfigurationOverrides();
             overrides.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
             long start = TimestampFormatUtils.parseTimestamp("2020-02-03");
-            ddl(
+            execute(
                     "create table x as (" +
                             "select" +
                             " cast(x as int) i," +
@@ -413,7 +413,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 TestUtils.assertEquals(expected, sink);
 
                 // Split at 17:30
-                insert(
+                execute(
                         "insert into x " +
                                 "select" +
                                 " cast(x as int) * 1000000 i," +
@@ -431,7 +431,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 TestUtils.assertEquals(expected, sink);
 
                 // add data at 17:15
-                insert(
+                execute(
                         "insert into x " +
                                 "select" +
                                 " cast(x as int) * 1000000 i," +
@@ -454,7 +454,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     @Test
     public void testSplitMidPartitionCheckIndex() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as (" +
                             "select" +
                             " cast(x as int) i," +
@@ -466,7 +466,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     sqlExecutionContext
             );
 
-            ddl(
+            execute(
                     "create table z as (" +
                             "select" +
                             " cast(x as int) * 1000000 i," +
@@ -477,7 +477,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     sqlExecutionContext
             );
 
-            ddl(
+            execute(
                     "create table y (" +
                             "i int," +
                             "j long," +
@@ -485,10 +485,10 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                             "ts timestamp)",
                     sqlExecutionContext
             );
-            ddl("insert into y select * from x", sqlExecutionContext);
-            ddl("insert into y select * from z", sqlExecutionContext);
+            execute("insert into y select * from x", sqlExecutionContext);
+            execute("insert into y select * from z", sqlExecutionContext);
 
-            ddl("insert into x select * from z", sqlExecutionContext);
+            execute("insert into x select * from z", sqlExecutionContext);
             TestUtils.assertSqlCursors(
                     engine,
                     sqlExecutionContext,
@@ -523,7 +523,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 * (1 << 10));
             node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
 
-            compile(
+            execute(
                     "create table x as (" +
                             "select" +
                             " cast(x as int) i," +
@@ -536,7 +536,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                             ") timestamp (ts) partition by DAY"
             );
 
-            compile("alter table x add column k int");
+            execute("alter table x add column k int");
 
             String sqlPrefix = "insert into x " +
                     "select" +
@@ -549,7 +549,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             try {
                 // fail squashing fix len column.
                 failToCopyLen.set(1756);
-                compile(
+                execute(
                         sqlPrefix +
                                 " timestamp_sequence('2020-02-04T20:01', 1000000L) ts," +
                                 " x + 2 as k" +
@@ -569,7 +569,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             try {
                 // Append another time and fail squashing var len column.
                 failToCopyLen.set(2556);
-                compile(
+                execute(
                         sqlPrefix +
                                 " timestamp_sequence('2020-02-04T22:01', 1000000L) ts," +
                                 " x + 2 as k" +
@@ -587,7 +587,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
 
             // success
             failToCopyLen.set(0);
-            compile(
+            execute(
                     sqlPrefix +
                             " timestamp_sequence('2020-02-04T22:01', 1000000L) ts," +
                             " x + 2 as k" +
@@ -604,7 +604,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     @Test
     public void testSplitMidPartitionOpenReader() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as (" +
                             "select" +
                             " cast(x as int) i," +
@@ -616,7 +616,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     sqlExecutionContext
             );
 
-            ddl(
+            execute(
                     "create table z as (" +
                             "select" +
                             " cast(x as int) * 1000000 i," +
@@ -627,7 +627,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     sqlExecutionContext
             );
 
-            ddl(
+            execute(
                     "create table y (" +
                             "i int," +
                             "j long," +
@@ -635,11 +635,11 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                             "ts timestamp)",
                     sqlExecutionContext
             );
-            ddl("insert into y select * from x", sqlExecutionContext);
-            ddl("insert into y select * from z", sqlExecutionContext);
+            execute("insert into y select * from x", sqlExecutionContext);
+            execute("insert into y select * from z", sqlExecutionContext);
 
             try (TableReader ignore = getReader("x")) {
-                ddl("insert into x select * from z", sqlExecutionContext);
+                execute("insert into x select * from z", sqlExecutionContext);
 
                 TestUtils.assertSqlCursors(
                         engine,
@@ -660,7 +660,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
 
             // Another reader, should allow to squash partitions
             try (TableReader ignore = getReader("x")) {
-                insert("insert into x(ts) values('2020-02-06')");
+                execute("insert into x(ts) values('2020-02-06')");
                 assertSql("name\tminTimestamp\n" +
                         "2020-02-03\t2020-02-03T13:00:00.000000Z\n" +
                         "2020-02-04\t2020-02-04T00:00:00.000000Z\n" +
@@ -681,7 +681,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             Overrides overrides = node1.getConfigurationOverrides();
             overrides.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 1);
 
-            compile(
+            execute(
                     "create table x as (" +
                             "select" +
                             " cast(x as int) i," +
@@ -705,7 +705,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
 
             // Prevent squashing
             try (TableReader ignore = getReader("x")) {
-                compile(
+                execute(
                         sqlPrefix +
                                 " timestamp_sequence('2020-02-04T20:01', 1000000L) ts," +
                                 " x + 2 as k" +
@@ -717,10 +717,10 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                         "2020-02-04T20:01:00.000000Z\t319\t2020-02-04T200000-000001\n", partitionsSql);
             }
 
-            compile("alter table x add column k int");
+            execute("alter table x add column k int");
 
             // Append in order to check last partition opened for writing correctly.
-            compile(
+            execute(
                     sqlPrefix +
                             " timestamp_sequence('2020-02-04T22:01', 1000000L) ts," +
                             " x + 2 as k" +
@@ -772,7 +772,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 * (1 << 10));
             node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
 
-            ddl(
+            execute(
                     "create table x (" +
                             " i int," +
                             " j long," +
@@ -786,7 +786,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             drainWalQueue();
 
             // should squash partitions on empty table
-            compile("alter table x squash partitions");
+            execute("alter table x squash partitions");
             drainWalQueue();
 
             String sqlPrefix = "insert into x " +
@@ -796,7 +796,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     " rnd_str(5,16,2) as str," +
                     " rnd_varchar(1,40,5) as varc1," +
                     " rnd_varchar(1, 1,5) as varc2,";
-            ddl(
+            execute(
                     sqlPrefix +
                             " timestamp_sequence('2020-02-04T20:01', 1000000L) ts" +
                             " from long_sequence(200)",
@@ -804,7 +804,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             );
             drainWalQueue();
 
-            ddl(sqlPrefix +
+            execute(sqlPrefix +
                             " timestamp_sequence('2020-02-05T18:01', 60*1000000L) ts" +
                             " from long_sequence(200)",
                     sqlExecutionContext
@@ -812,9 +812,9 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             drainWalQueue();
 
             // should squash partitions this time
-            compile("alter table x squash partitions");
+            execute("alter table x squash partitions");
             // this one should be no-op
-            compile("alter table x squash partitions");
+            execute("alter table x squash partitions");
             drainWalQueue();
 
             String partitionsSql = "select minTimestamp, numRows, name from table_partitions('x')";
@@ -833,7 +833,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 * (1 << 10));
             node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
 
-            ddl(
+            execute(
                     "create table x as (" +
                             "select" +
                             " cast(x as int) i," +
@@ -856,7 +856,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                         " rnd_str(5,16,2) as str," +
                         " rnd_varchar(1,40,5) as varc1," +
                         " rnd_varchar(1, 1,5) as varc2,";
-                ddl(
+                execute(
                         sqlPrefix +
                                 " timestamp_sequence('2020-02-04T20:01', 1000000L) ts" +
                                 " from long_sequence(200)",
@@ -870,7 +870,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                         "2020-02-04T20:01:00.000000Z\t439\t2020-02-04T200000-000001\n" +
                         "2020-02-05T00:00:00.000000Z\t1320\t2020-02-05\n", partitionsSql);
 
-                ddl(sqlPrefix +
+                execute(sqlPrefix +
                                 " timestamp_sequence('2020-02-05T18:01', 60*1000000L) ts" +
                                 " from long_sequence(50)",
                         sqlExecutionContext
@@ -885,7 +885,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                         "2020-02-05T18:01:00.000000Z\t289\t2020-02-05T180000-000001\n", partitionsSql);
 
                 // should squash partitions
-                compile("alter table x squash partitions");
+                execute("alter table x squash partitions");
 
                 drainWalQueue();
                 assertSql("minTimestamp\tnumRows\tname\n" +
@@ -900,7 +900,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                         " rnd_str(5,16,2) as str," +
                         " rnd_varchar(1,40,5) as varc1," +
                         " rnd_varchar(1, 1,5) as varc2,";
-                ddl(
+                execute(
                         sqlPrefix +
                                 " timestamp_sequence('2023-02-04T20:01', 1000000L) ts" +
                                 " from long_sequence(200)",

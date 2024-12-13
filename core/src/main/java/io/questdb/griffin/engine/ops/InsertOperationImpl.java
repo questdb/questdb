@@ -39,24 +39,16 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.ReadOnlyObjList;
 
 public class InsertOperationImpl implements InsertOperation {
 
     // type inference fails on java 8 if <CharSequence> is removed
-    private static final ObjList<CharSequence> EMPTY_COLUMN_LIST = new ObjList<CharSequence>() {
-        @Override
-        public void addAll(ReadOnlyObjList<? extends CharSequence> that) {
-            throw new UnsupportedOperationException();
-        }
-    };
     private final InsertOperationFuture doneFuture = new InsertOperationFuture();
     private final CairoEngine engine;
     private final InsertMethodImpl insertMethod = new InsertMethodImpl();
     private final ObjList<InsertRowImpl> insertRows = new ObjList<>();
     private final long metadataVersion;
     private final TableToken tableToken;
-    private ObjList<CharSequence> columnNames;
 
     public InsertOperationImpl(CairoEngine engine, TableToken tableToken, long metadataVersion) {
         this.engine = engine;
@@ -106,17 +98,6 @@ public class InsertOperationImpl implements InsertOperation {
             insertMethod.execute();
             insertMethod.commit();
             return doneFuture;
-        }
-    }
-
-    public void setColumnNames(ObjList<CharSequence> columnNameList) {
-        if (columnNameList.size() == 0) {
-            columnNames = EMPTY_COLUMN_LIST;
-        } else {
-            columnNames = new ObjList<>();
-            for (int i = 0, n = columnNameList.size(); i < n; i++) {
-                columnNames.add(Chars.toString(columnNameList.getQuick(i)));
-            }
         }
     }
 

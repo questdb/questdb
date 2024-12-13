@@ -170,7 +170,7 @@ public class MaterializedViewFuzzTest extends AbstractFuzzTest {
     }
 
     private static void createMatView(String viewSql, String mvName) throws SqlException {
-        ddl("create materialized view " + mvName + " as ("
+        execute("create materialized view " + mvName + " as ("
                 + viewSql
                 + ") partition by DAY"
         );

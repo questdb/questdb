@@ -737,7 +737,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
         closeWriter();
         if (targetTableStatus == TableUtils.TABLE_DOES_NOT_EXIST && targetTableCreated) {
-            cairoEngine.drop(tmpPath, tableToken);
+            cairoEngine.dropTable(tmpPath, tableToken);
         }
         if (tableToken != null) {
             cairoEngine.unlockTableName(tableToken);
@@ -999,15 +999,17 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                             throw TextException.$("could not create partition directory [path='").put(dstPath).put("', errno=").put(ff.errno()).put(']');
                         }
 
-                        ff.iterateDir(srcPath.$(), (long name, int type) -> {
-                            if (type == Files.DT_FILE) {
-                                srcPath.trimTo(srcPlen).concat(partitionName).concat(name);
-                                dstPath.trimTo(dstPlen).concat(partitionName).put(configuration.getAttachPartitionSuffix()).concat(name);
-                                if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
-                                    throw TextException.$("could not copy partition file [to='").put(dstPath).put("', errno=").put(ff.errno()).put(']');
+                        ff.iterateDir(
+                                srcPath.$(), (long name, int type) -> {
+                                    if (type == Files.DT_FILE) {
+                                        srcPath.trimTo(srcPlen).concat(partitionName).concat(name);
+                                        dstPath.trimTo(dstPlen).concat(partitionName).put(configuration.getAttachPartitionSuffix()).concat(name);
+                                        if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
+                                            throw TextException.$("could not copy partition file [to='").put(dstPath).put("', errno=").put(ff.errno()).put(']');
+                                        }
+                                    }
                                 }
-                            }
-                        });
+                        );
                         srcPath.parent();
                     } else if (res != Files.FILES_RENAME_OK) {
                         throw CairoException.critical(ff.errno()).put("could not copy partition file [to=").put(dstPath).put(']');

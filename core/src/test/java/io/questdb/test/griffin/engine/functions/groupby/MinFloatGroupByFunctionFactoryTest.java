@@ -39,7 +39,7 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAllNull() throws SqlException {
-        ddl("create table tab (f float)");
+        execute("create table tab (f float)");
 
         try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
@@ -61,7 +61,7 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testFirstNull() throws SqlException {
-        ddl("create table tab (f float)");
+        execute("create table tab (f float)");
 
         final Rnd rnd = new Rnd();
         try (TableWriter w = getWriter("tab")) {
@@ -87,7 +87,7 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNonNull() throws SqlException {
-        ddl("create table tab (f float)");
+        execute("create table tab (f float)");
 
         final Rnd rnd = new Rnd();
         try (TableWriter w = getWriter("tab")) {

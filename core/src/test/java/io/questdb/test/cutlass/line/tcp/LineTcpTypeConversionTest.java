@@ -265,7 +265,7 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
 
     private void testConversion(String table, String createTableCmd, String input, String expected) throws Exception {
         runInContext(() -> {
-            ddl(createTableCmd);
+            execute(createTableCmd);
             recvBuffer = input;
             do {
                 handleContextIO0();

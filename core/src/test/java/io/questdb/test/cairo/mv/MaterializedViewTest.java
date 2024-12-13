@@ -51,14 +51,14 @@ public class MaterializedViewTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> {
 
-            ddl("create table base_price (" +
+            execute("create table base_price (" +
                     "sym varchar, price double, ts timestamp" +
                     ") timestamp(ts) partition by DAY WAL"
             );
 
             createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
 
-            insert("insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+            execute("insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
                     ",('gbpusd', 1.323, '2024-09-10T12:02')" +
                     ",('jpyusd', 103.21, '2024-09-10T12:02')" +
                     ",('gbpusd', 1.321, '2024-09-10T13:02')"
@@ -76,7 +76,7 @@ public class MaterializedViewTest extends AbstractCairoTest {
                     "views"
             );
 
-            compile("rename table base_price to base_price2");
+            execute("rename table base_price to base_price2");
             assertSql("refresh_mat_view\n" +
                     "true\n", "select refresh_mat_view('price_1h')");
             currentMicros = parseFloorPartialTimestamp("2024-10-24T18");
@@ -90,7 +90,7 @@ public class MaterializedViewTest extends AbstractCairoTest {
             );
 
             // Create another base table instead of the one that was renamed
-            ddl("create table base_price (" +
+            execute("create table base_price (" +
                     "sym varchar, price double, ts timestamp" +
                     ") timestamp(ts) partition by DAY BYPASS WAL"
             );
@@ -112,7 +112,7 @@ public class MaterializedViewTest extends AbstractCairoTest {
     @Test
     public void testCreateDropCreate() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table base_price (" +
+            execute("create table base_price (" +
                     "sym varchar, price double, ts timestamp" +
                     ") timestamp(ts) partition by DAY WAL"
             );
@@ -120,7 +120,7 @@ public class MaterializedViewTest extends AbstractCairoTest {
             createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
             TableToken matViewToken1 = engine.verifyTableName("price_1h");
 
-            insert("insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+            execute("insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
                     ",('gbpusd', 1.323, '2024-09-10T12:02')" +
                     ",('jpyusd', 103.21, '2024-09-10T12:02')" +
                     ",('gbpusd', 1.321, '2024-09-10T13:02')"
@@ -183,14 +183,14 @@ public class MaterializedViewTest extends AbstractCairoTest {
     @Test
     public void testSimpleRefresh() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table base_price (" +
+            execute("create table base_price (" +
                     "sym varchar, price double, ts timestamp" +
                     ") timestamp(ts) partition by DAY WAL"
             );
 
             createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
 
-            insert("insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+            execute("insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
                     ",('gbpusd', 1.323, '2024-09-10T12:02')" +
                     ",('jpyusd', 103.21, '2024-09-10T12:02')" +
                     ",('gbpusd', 1.321, '2024-09-10T13:02')"
@@ -209,7 +209,7 @@ public class MaterializedViewTest extends AbstractCairoTest {
                     "price_1h order by ts, sym"
             );
 
-            insert("insert into base_price values('gbpusd', 1.319, '2024-09-10T12:05')" +
+            execute("insert into base_price values('gbpusd', 1.319, '2024-09-10T12:05')" +
                     ",('gbpusd', 1.325, '2024-09-10T13:03')"
             );
             drainWalQueue();
@@ -240,23 +240,23 @@ public class MaterializedViewTest extends AbstractCairoTest {
     }
 
     private static void createMatView(String viewSql) throws SqlException {
-        ddl("create materialized view price_1h as (" + viewSql + ") partition by DAY");
+        execute("create materialized view price_1h as (" + viewSql + ") partition by DAY");
     }
 
     private void dropMatView(String matViewName) throws SqlException {
-        drop("drop table " + matViewName);
+        execute("drop table " + matViewName);
     }
 
     private void testIncrementalRefresh0(String viewSql) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
         assertMemoryLeak(() -> {
-            ddl("create table base_price (" +
+            execute("create table base_price (" +
                     "sym varchar, price double, ts timestamp" +
                     ") timestamp(ts) partition by DAY WAL"
             );
 
             createMatView(viewSql);
-            insert("insert into base_price " +
+            execute("insert into base_price " +
                     "select 'gbpusd', 1.320 + x / 1000.0, timestamp_sequence('2024-09-10T12:02', 1000000*60*5) " +
                     "from long_sequence(24 * 20 * 5)"
             );
@@ -271,7 +271,7 @@ public class MaterializedViewTest extends AbstractCairoTest {
                     "select sequencerTxn, minTimestamp, maxTimestamp from wal_transactions('price_1h')"
             );
 
-            insert("insert into base_price values('gbpusd', 1.319, '2024-09-10T12:05')" +
+            execute("insert into base_price values('gbpusd', 1.319, '2024-09-10T12:05')" +
                     ",('gbpusd', 1.325, '2024-09-10T13:03')"
             );
             drainWalQueue();

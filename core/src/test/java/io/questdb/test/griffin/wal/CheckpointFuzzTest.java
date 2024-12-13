@@ -159,9 +159,9 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
         LOG.info().$("creating checkpoint").$();
 
         if (legacy) {
-            ddl("snapshot prepare");
+            execute("snapshot prepare");
         } else {
-            ddl("checkpoint create");
+            execute("checkpoint create");
         }
         CairoConfiguration conf = engine.getConfiguration();
 
@@ -180,9 +180,9 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
         }
 
         if (legacy) {
-            ddl("snapshot complete");
+            execute("snapshot complete");
         } else {
-            ddl("checkpoint release");
+            execute("checkpoint release");
         }
     }
 
