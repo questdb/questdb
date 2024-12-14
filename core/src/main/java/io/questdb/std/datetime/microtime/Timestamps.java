@@ -25,7 +25,11 @@
 package io.questdb.std.datetime.microtime;
 
 import io.questdb.griffin.SqlException;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.str.Utf16Sink;
@@ -129,31 +133,6 @@ public final class Timestamps {
             _d = maxDay;
         }
         return toMicros(_y, _m, _d) + getTimeMicros(micros) + (micros < 0 ? 1 : 0);
-    }
-
-    /**
-     * Convert a timestamp in arbitrary units to microseconds.
-     *
-     * @param value timestamp value
-     * @param unit  timestamp unit
-     * @return timestamp in microseconds
-     */
-    public static long toMicros(long value, ChronoUnit unit) {
-        switch (unit) {
-            case NANOS:
-                return value / 1_000;
-            case MICROS:
-                return value;
-            case MILLIS:
-                return value * 1_000;
-            case SECONDS:
-                return value * 1_000_000;
-            default:
-                Duration duration = unit.getDuration();
-                long micros = duration.getSeconds() * 1_000_000L;
-                micros += duration.getNano() / 1_000;
-                return micros * value;
-        }
     }
 
     public static long addPeriod(long lo, char type, int period) {
@@ -366,6 +345,7 @@ public final class Timestamps {
         return yearMicros(y = getYear(micros), l = isLeapYear(y)) + monthOfYearMicros(getMonthOfYear(micros, y, l), l);
     }
 
+    @SuppressWarnings("unused")
     public static long floorMM(long micros, long offset) {
         return floorMM(micros, 1, offset);
     }
@@ -485,6 +465,7 @@ public final class Timestamps {
         return yearMicros(y, isLeapYear(y));
     }
 
+    @SuppressWarnings("unused")
     public static long floorYYYY(long micros, long offset) {
         return floorYYYY(micros, 1, offset);
     }
@@ -1102,6 +1083,31 @@ public final class Timestamps {
         }
     }
 
+    /**
+     * Convert a timestamp in arbitrary units to microseconds.
+     *
+     * @param value timestamp value
+     * @param unit  timestamp unit
+     * @return timestamp in microseconds
+     */
+    public static long toMicros(long value, ChronoUnit unit) {
+        switch (unit) {
+            case NANOS:
+                return value / 1_000;
+            case MICROS:
+                return value;
+            case MILLIS:
+                return value * 1_000;
+            case SECONDS:
+                return value * 1_000_000;
+            default:
+                Duration duration = unit.getDuration();
+                long micros = duration.getSeconds() * 1_000_000L;
+                micros += duration.getNano() / 1_000;
+                return micros * value;
+        }
+    }
+
     public static long toMicros(int y, int m, int d, int h, int mi) {
         return toMicros(y, isLeapYear(y), m, d, h, mi);
     }
@@ -1143,10 +1149,10 @@ public final class Timestamps {
         return sink.toString();
     }
 
-    public static String toOffsetString(long micros) {
+    public static String toString(long micros, @NotNull CharSequence timezone) {
         Utf16Sink sink = Misc.getThreadLocalSink();
-
-        TimestampFormatUtils.append
+        TimestampFormatUtils.appendOffsetDateTime(sink, micros, timezone);
+        return sink.toString();
     }
 
     public static long toTimezone(long utcTimestamp, DateLocale locale, CharSequence timezone) throws NumericException {

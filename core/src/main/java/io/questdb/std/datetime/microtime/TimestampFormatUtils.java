@@ -24,6 +24,7 @@
 
 package io.questdb.std.datetime.microtime;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
@@ -36,8 +37,6 @@ import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
-
-import java.text.FieldPosition;
 
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
@@ -55,7 +54,7 @@ public class TimestampFormatUtils {
     public static final DateFormat MONTH_FORMAT;
     public static final String MONTH_PATTERN = "yyyy-MM";
     public static final DateFormat NANOS_UTC_FORMAT;
-    public static final java.text.DateFormat OFFSET_FORMAT;
+    public static final DateFormat OFFSET_FORMAT;
     public static final String OFFSET_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSUUUXXX";
     public static final DateFormat PG_TIMESTAMP_FORMAT;
     public static final DateFormat PG_TIMESTAMP_MILLI_TIME_Z_FORMAT;
@@ -135,15 +134,6 @@ public class TimestampFormatUtils {
         UTC_FORMAT.format(micros, DateFormatUtils.EN_LOCALE, "Z", sink);
     }
 
-    // yyyy-MM-ddTHH:mm:ss.SSSUUUXXX
-    public static void appendOffsetDateTime(@NotNull CharSink<?> sink, long micros) {
-
-        if (micros == Long.MIN_VALUE) {
-            return;
-        }
-        OFFSET_FORMAT.format(micros, sink, FieldPosition)
-    }
-
     // YYYY-MM-DDThh:mm:ss.mmmuuuZ
     public static void appendDateTimeUSec(@NotNull CharSink<?> sink, long micros) {
         if (micros == Long.MIN_VALUE) {
@@ -186,6 +176,37 @@ public class TimestampFormatUtils {
     public static void appendHour241Padded(@NotNull CharSink<?> sink, int hour) {
         int h24 = (hour + 23) % 24 + 1;
         append0(sink, h24);
+    }
+
+    // yyyy-MM-ddTHH:mm:ss.SSSUUUXXX
+    public static void appendOffsetDateTime(@NotNull CharSink<?> sink, long micros, @NotNull CharSequence timezone) {
+        if (micros == Long.MIN_VALUE) {
+            return;
+        }
+
+        int minuteOffset;
+        CharSequence offsetString;
+
+        long l = Timestamps.parseOffset(timezone);
+
+        if (l != Long.MIN_VALUE) {
+            minuteOffset = Numbers.decodeLowInt(l);
+            offsetString = timezone;
+        } else {
+            try {
+                final long offsetMicros = EN_LOCALE.getZoneRules(
+                        Numbers.decodeLowInt(EN_LOCALE.matchZone(timezone, 0, timezone.length())),
+                        RESOLUTION_MICROS
+                ).getOffset(micros);
+                minuteOffset = (int) (offsetMicros / Timestamps.MINUTE_MICROS);
+                offsetString = getTimeZoneSuffixFromMinuteOffset(minuteOffset);
+            } catch (NumericException ex) {
+                throw new CairoException().put("could not convert timestamp [micros=")
+                        .put(micros).put(", timezone=").put(timezone).put(']');
+            }
+        }
+        long adjusted = micros + (minuteOffset * Timestamps.MINUTE_MICROS);
+        USEC_UTC_FORMAT.format(adjusted, DateFormatUtils.EN_LOCALE, offsetString, sink);
     }
 
     public static void appendYear(@NotNull CharSink<?> sink, int val) {
@@ -380,6 +401,99 @@ public class TimestampFormatUtils {
 
     public static long getReferenceYear() {
         return referenceYear;
+    }
+
+    public static String getTimeZoneSuffixFromMinuteOffset(int minuteOffset) {
+        switch (minuteOffset) {
+            case -780:
+                return "-13:00";
+            case -720:
+                return "-12:00";
+            case -660:
+                return "-11:00";
+            case -600:
+                return "-10:00";
+            case -570:
+                return "-09:30";
+            case -540:
+                return "-09:00";
+            case -480:
+                return "-08:00";
+            case -420:
+                return "-07:00";
+            case -360:
+                return "-06:00";
+            case -300:
+                return "-05:00";
+            case -240:
+                return "-04:00";
+            case -210:
+                return "-03:30";
+            case -180:
+                return "-03:00";
+            case -150:
+                return "-02:30";
+            case -120:
+                return "-02:00";
+            case -60:
+                return "-01:00";
+            case 0:
+                return "+00:00";
+            case 60:
+                return "+01:00";
+            case 120:
+                return "+02:00";
+            case 180:
+                return "+03:00";
+            case 210:
+                return "+03:30";
+            case 240:
+                return "+04:00";
+            case 270:
+                return "+04:30";
+            case 300:
+                return "+05:00";
+            case 330:
+                return "+05:30";
+            case 345:
+                return "+05:45";
+            case 360:
+                return "+06:00";
+            case 390:
+                return "+06:30";
+            case 420:
+                return "+07:00";
+            case 480:
+                return "+08:00";
+            case 525:
+                return "+08:45";
+            case 540:
+                return "+09:00";
+            case 570:
+                return "+09:30";
+            case 600:
+                return "+10:00";
+            case 630:
+                return "+10:30";
+            case 660:
+                return "+11:00";
+            case 690:
+                return "+11:30";
+            case 720:
+                return "+12:00";
+            case 765:
+                return "+12:45";
+            case 780:
+                return "+13:00";
+            case 825:
+                return "+13:45";
+            case 840:
+                return "+14:00";
+            default:
+                final int hours = minuteOffset / 60;
+                final int minutes = minuteOffset % 60;
+                return (minuteOffset > 0 ? '-' : '+') + hours + ":" + minutes;
+        }
     }
 
     // may be used to initialize calendar indexes ahead of using them

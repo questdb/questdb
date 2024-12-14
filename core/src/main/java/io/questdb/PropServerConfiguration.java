@@ -534,8 +534,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int lineUdpBindIPV4Address;
     private int lineUdpDefaultPartitionBy;
     private int lineUdpPort;
-    private @Nullable
-    String logTimezone;
+    private @Nullable String logTimezone;
     private MimeTypesCache mimeTypesCache;
     private long minIdleMsBeforeWriterRelease;
     private int netTestConnectionBufferSize;
@@ -1772,6 +1771,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
+    @SuppressWarnings("SameParameterValue")
     protected int getIntPercentage(
             Properties properties,
             @Nullable Map<String, String> env,
