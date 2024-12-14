@@ -1176,33 +1176,38 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testGroupByTimestampTrunkAsString() throws Exception {
+    public void testGroupByWithAliasClash1() throws Exception {
         assertMemoryLeak(() -> {
             execute(
                     "create table t as (" +
-                            "    select cast(x as double) as price, " +
-                            "    timestamp_sequence('2020-01-01', 15*60*1000000) as timestamp" +
-                            "    from long_sequence(100)" +
-                            "    ) timestamp(timestamp)"
+                            "    select 1 as l, 'a' as s, -1 max " +
+                            "    union all " +
+                            "    select 1, 'a', -2" +
+                            "    )"
             );
 
-            String query = "select to_str(timestamp, 'yyyy-MM-dd'), avg(price) from t";
+            String query = "select s, max, max(l) from t group by s, max order by s, max";
+            assertPlanNoLeakCheck(
+                    query,
+                    "Sort light\n" +
+                            "  keys: [s, max]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [s,max]\n" +
+                            "      values: [max(l)]\n" +
+                            "      filter: null\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: t\n"
+            );
 
             assertQueryNoLeakCheck(
-                    "to_str\tavg\n" +
-                            "2020-01-01\t48.5\n" +
-                            "2020-01-02\t98.5\n",
-                    "select to_str(timestamp, 'yyyy-MM-dd'), avg(price) from t\n",
+                    "s\tmax\tmax1\n" +
+                            "a\t-2\t1\n" +
+                            "a\t-1\t1\n",
+                    query,
                     null,
                     true,
                     true
-            );
-
-
-            assertPlanNoLeakCheck(
-                    query,
-                    ""
-                    // Expected plan
             );
         });
     }
@@ -2419,7 +2424,8 @@ public class GroupByTest extends AbstractCairoTest {
                 true,
                 true
         );
-        assertSql(expected,
+        assertSql(
+                expected,
                 "WITH x_sample AS (\n" +
                         "  SELECT id, uuid, url, sum(metric) m_sum\n" +
                         "  FROM x\n" +
@@ -2428,7 +2434,8 @@ public class GroupByTest extends AbstractCairoTest {
                         ")\n" +
                         "SELECT url, count(distinct uuid) u_count, count() cnt, avg(m_sum) avg_m_sum\n" +
                         "FROM x_sample\n" +
-                        "GROUP BY url");
+                        "GROUP BY url"
+        );
     }
 
     @Test

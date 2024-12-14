@@ -2458,25 +2458,23 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void executeCreateMatView(CreateMatViewOperation createMatViewOp, SqlExecutionContext executionContext) throws SqlException {
-        final CreateTableOperation createTableOp = createMatViewOp.getCreateTableOperation();
-
-        final long sqlId = queryRegistry.register(createTableOp.getSqlText(), executionContext);
+        final long sqlId = queryRegistry.register(createMatViewOp.getSqlText(), executionContext);
         long beginNanos = configuration.getMicrosecondClock().getTicks();
-        QueryProgress.logStart(sqlId, createTableOp.getSqlText(), executionContext, false);
+        QueryProgress.logStart(sqlId, createMatViewOp.getSqlText(), executionContext, false);
         try {
             final int status = executionContext.getTableStatus(path, createMatViewOp.getTableName());
             if (status == TableUtils.TABLE_EXISTS) {
-                final TableToken tt = executionContext.getTableTokenIfExists(createTableOp.getTableName());
+                final TableToken tt = executionContext.getTableTokenIfExists(createMatViewOp.getTableName());
                 if (tt != null && !tt.isMatView()) {
-                    throw SqlException.$(createTableOp.getTableNamePosition(), "a table already exists with the requested name");
+                    throw SqlException.$(createMatViewOp.getTableNamePosition(), "a table already exists with the requested name");
                 }
-                if (createTableOp.ignoreIfExists()) {
-                    createTableOp.updateOperationFutureTableToken(tt);
+                if (createMatViewOp.ignoreIfExists()) {
+                    createMatViewOp.updateOperationFutureTableToken(tt);
                 } else {
-                    throw SqlException.$(createTableOp.getTableNamePosition(), "materialized view already exists");
+                    throw SqlException.$(createMatViewOp.getTableNamePosition(), "materialized view already exists");
                 }
             } else {
-                CharSequence volumeAlias = createTableOp.getVolumeAlias();
+                CharSequence volumeAlias = createMatViewOp.getVolumeAlias();
                 if (volumeAlias != null) {
                     CharSequence volumePath = configuration.getVolumeDefinitions().resolveAlias(volumeAlias);
                     if (volumePath != null) {
@@ -2492,6 +2490,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                 final MaterializedViewDefinition matViewDefinition;
                 final TableToken matViewToken;
+
+                final CreateTableOperation createTableOp = createMatViewOp.getCreateTableOperation();
                 if (createTableOp.getRecordCursorFactory() != null) {
                     RecordCursorFactory factory = createTableOp.getRecordCursorFactory();
                     RecordCursor newCursor;
@@ -2520,9 +2520,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 executionContext.getSecurityContext(),
                                 mem,
                                 path,
-                                createTableOp.ignoreIfExists(),
+                                createMatViewOp.ignoreIfExists(),
                                 createMatViewOp,
-                                !createTableOp.isWalEnabled(),
+                                !createMatViewOp.isWalEnabled(),
                                 volumeAlias != null
                         );
                         matViewToken = matViewDefinition.getMatViewToken();
@@ -2533,19 +2533,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                     final TableToken baseTableToken = engine.getTableTokenIfExists(matViewDefinition.getBaseTableName());
                     engine.getMaterializedViewGraph().createView(baseTableToken, matViewDefinition);
-                    createTableOp.updateOperationFutureTableToken(matViewToken);
+                    createMatViewOp.updateOperationFutureTableToken(matViewToken);
                 } else {
                     throw SqlException.$(createTableOp.getTableNamePosition(), "materialized view requires a SELECT statement");
                 }
             }
             // todo: jit is always false, why?
-            QueryProgress.logEnd(sqlId, createTableOp.getSqlText(), executionContext, beginNanos, false);
+            QueryProgress.logEnd(sqlId, createMatViewOp.getSqlText(), executionContext, beginNanos, false);
         } catch (Throwable e) {
             if (e instanceof CairoException) {
-                ((CairoException) e).position(createTableOp.getTableNamePosition());
+                ((CairoException) e).position(createMatViewOp.getTableNamePosition());
             }
             // todo: jit is always false, why?
-            QueryProgress.logError(e, sqlId, createTableOp.getSqlText(), executionContext, beginNanos, false);
+            QueryProgress.logError(e, sqlId, createMatViewOp.getSqlText(), executionContext, beginNanos, false);
             throw e;
         }
     }

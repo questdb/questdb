@@ -170,10 +170,6 @@ public class CreateMatViewOperation implements TableStructure, Operation {
         return createTableOperation.getTimestampIndex();
     }
 
-    public String getViewSql() {
-        return viewSql;
-    }
-
     public CharSequence getVolumeAlias() {
         return createTableOperation.getVolumeAlias();
     }
@@ -207,7 +203,8 @@ public class CreateMatViewOperation implements TableStructure, Operation {
 
     @Override
     public boolean isWalEnabled() {
-        return createTableOperation.isWalEnabled();
+        assert createTableOperation.isWalEnabled();
+        return true;
     }
 
     /**
@@ -221,50 +218,5 @@ public class CreateMatViewOperation implements TableStructure, Operation {
 
     public void validateAndUpdateMetadataFromSelect(RecordMetadata metadata) throws SqlException {
         createTableOperation.validateAndUpdateMetadataFromSelect(metadata);
-
-        // validate that all indexes are specified only on columns with symbol type
-//        for (int i = 0, n = model.getColumnCount(); i < n; i++) {
-//            CharSequence columnName = model.getColumnName(i);
-//            int index = metadata.getColumnIndexQuiet(columnName);
-//            assert index > -1 : "wtf2? " + columnName;
-//            if (!ColumnType.isSymbol(metadata.getColumnType(index)) && model.isIndexed(i)) {
-//                throw SqlException.$(0, "indexes are supported only for SYMBOL columns: ").put(columnName);
-//            }
-//
-//            if (ColumnType.isNull(metadata.getColumnType(index))) {
-//                throw SqlException.$(0, "cannot create NULL-type column, please use type cast, e.g. ").put(columnName).put("::").put("type");
-//            }
-//        }
-
-        // Validate designated timestamp column
-//        ExpressionNode timestamp;
-//        if (metadata.getTimestampIndex() != -1) {
-//            if (model.getTimestampIndex() != -1) {
-//                if (model.getTimestampIndex() != metadata.getTimestampIndex()) {
-//                    // TODO: check that these timestamp column are equivalent
-//                }
-//                timestamp = model.getTimestamp();
-//            } else {
-//                timestamp = model.getQueryModel().getBottomUpColumns().get(metadata.getTimestampIndex()).getAst();
-//                model.setTimestamp(timestamp);
-//            }
-//        } else {
-//            if (model.getTimestampIndex() == -1) {
-//                // Designated timestamp does not exist at query factory and not in the query model
-//                throw SqlException.position(0).put("Designated timestamp required");
-//            } else {
-//                timestamp = model.getQueryModel().getBottomUpColumns().get(metadata.getTimestampIndex()).getAst();
-//                model.setTimestamp(timestamp);
-//            }
-//        }
-
-        // validate type of timestamp column
-//        if (metadata.getColumnType(timestamp.token) != ColumnType.TIMESTAMP) {
-//            throw SqlException.position(timestamp.position).put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(metadata.getColumnType(timestamp.token))).put(']');
-//        }
-
-//        if (!PartitionBy.isPartitioned(model.getPartitionBy())) {
-//            throw SqlException.position(0).put("Materialized view has to be partitioned");
-//        }
     }
 }

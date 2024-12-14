@@ -206,6 +206,7 @@ import io.questdb.griffin.engine.join.RecordAsAFieldRecordCursorFactory;
 import io.questdb.griffin.engine.join.SpliceJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LimitedSizeSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LongSortedLightRecordCursorFactory;
+import io.questdb.griffin.engine.orderby.LongTopKRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.orderby.SortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
@@ -267,9 +268,9 @@ import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.BitSet;
+import io.questdb.std.BufferWindowCharSequence;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Chars;
-import io.questdb.std.GenericLexer;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
@@ -3085,6 +3086,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (canSortAndLimitBeOptimized(model, executionContext, loFunc, hiFunc)) {
                         model.setLimitImplemented(true);
                         int baseCursorTimestampIndex = preSortedByTs ? timestampIndex : -1;
+                        if (
+                                !preSortedByTs
+                                        && loFunc.isConstant()
+                                        && hiFunc == null
+                                        && listColumnFilterA.size() == 1
+                                        && recordCursorFactory.recordCursorSupportsLongTopK()
+                        ) {
+                            final long lo = loFunc.getLong(null);
+                            final int index = listColumnFilterA.getQuick(0);
+                            final int columnIndex = (index > 0 ? index : -index) - 1;
+                            if (lo > 0 && lo <= Integer.MAX_VALUE && metadata.getColumnType(columnIndex) == ColumnType.LONG) {
+                                return new LongTopKRecordCursorFactory(
+                                        orderedMetadata,
+                                        recordCursorFactory,
+                                        columnIndex,
+                                        (int) lo,
+                                        index > 0
+                                );
+                            }
+                        }
                         return new LimitedSizeSortedLightRecordCursorFactory(
                                 configuration,
                                 orderedMetadata,
@@ -5035,10 +5056,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     ) throws SqlException {
         final ObjList<ExpressionNode> latestBy = model.getLatestBy();
 
-        final GenericLexer.FloatingSequence tab = (GenericLexer.FloatingSequence) model.getTableName();
+        final BufferWindowCharSequence tab = (BufferWindowCharSequence) model.getTableName();
         final boolean supportsRandomAccess;
         if (Chars.startsWith(tab, NO_ROWID_MARKER)) {
-            tab.setLo(tab.getLo() + NO_ROWID_MARKER.length());
+            tab.shiftLo(NO_ROWID_MARKER.length());
             supportsRandomAccess = false;
         } else {
             supportsRandomAccess = true;
@@ -5271,7 +5292,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final boolean intervalHitsOnlyOnePartition;
             if (intrinsicModel.hasIntervalFilters()) {
                 RuntimeIntrinsicIntervalModel intervalModel = intrinsicModel.buildIntervalModel();
-                if (orderDescendingByDesignatedTimestampOnly) {
+                if (shouldGenerateBackwardsScan) {
                     dfcFactory = new IntervalBwdPartitionFrameCursorFactory(
                             tableToken,
                             model.getMetadataVersion(),
@@ -5290,7 +5311,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
                 intervalHitsOnlyOnePartition = intervalModel.allIntervalsHitOnePartition(reader.getPartitionedBy());
             } else {
-                if (orderDescendingByDesignatedTimestampOnly) {
+                if (shouldGenerateBackwardsScan) {
                     dfcFactory = new FullBwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
                 } else {
                     dfcFactory = new FullFwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
@@ -5580,7 +5601,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             RowCursorFactory rowFactory;
-            if (orderDescendingByDesignatedTimestampOnly) {
+            if (shouldGenerateBackwardsScan) {
                 rowFactory = new BwdPageFrameRowCursorFactory();
             } else {
                 rowFactory = new FwdPageFrameRowCursorFactory();
@@ -5609,7 +5630,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             AbstractPartitionFrameCursorFactory cursorFactory;
             RowCursorFactory rowCursorFactory;
 
-            if (orderDescendingByDesignatedTimestampOnly) {
+            if (shouldGenerateBackwardsScan) {
                 cursorFactory = new FullBwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
                 rowCursorFactory = new BwdPageFrameRowCursorFactory();
             } else {
@@ -5622,7 +5643,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     myMeta,
                     cursorFactory,
                     rowCursorFactory,
-                    orderDescendingByDesignatedTimestampOnly || isOrderByDesignatedTimestampOnly(model),
+                    orderDescendingByDesignatedTimestampOnly,
                     null,
                     true,
                     columnIndexes,
@@ -5879,10 +5900,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private boolean isOrderByDesignatedTimestampOnly(QueryModel model) {
         return model.getOrderByAdvice().size() == 1
                 && model.getTimestamp() != null
-                && Chars.equalsIgnoreCase(
-                model.getOrderByAdvice().getQuick(0).token,
-                model.getTimestamp().token
-        );
+                && Chars.equalsIgnoreCase(model.getOrderByAdvice().getQuick(0).token, model.getTimestamp().token);
     }
 
     private boolean isOrderByStartingWithDescDesignatedTimestampAndLimited(QueryModel model) {
