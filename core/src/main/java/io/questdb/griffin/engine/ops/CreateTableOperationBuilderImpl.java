@@ -173,11 +173,6 @@ public class CreateTableOperationBuilderImpl implements Mutable, Sinkable, Creat
         return columnNames.get(index);
     }
 
-    @Override
-    public int getModelType() {
-        return CREATE_TABLE;
-    }
-
     public int getPartitionByFromExpr() {
         return partitionByExpr == null ? PartitionBy.NONE : PartitionBy.fromString(partitionByExpr.token);
     }
