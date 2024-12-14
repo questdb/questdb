@@ -142,7 +142,7 @@ public class CreateMatViewOperation implements TableStructure, Operation {
         return createTableOperation.getPartitionBy();
     }
 
-    public String getSqlText() {
+    public CharSequence getSqlText() {
         return createTableOperation.getSqlText();
     }
 

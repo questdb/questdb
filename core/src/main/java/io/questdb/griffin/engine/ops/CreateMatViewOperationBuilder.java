@@ -38,7 +38,7 @@ import org.jetbrains.annotations.NotNull;
 
 public class CreateMatViewOperationBuilder implements Mutable, ExecutionModel, Sinkable {
     public static final ObjectFactory<CreateMatViewOperationBuilder> FACTORY = CreateMatViewOperationBuilder::new;
-    private final CreateTableOperationBuilder createTableOperationBuilder = new CreateTableOperationBuilder();
+    private final CreateTableOperationBuilderImpl createTableOperationBuilder = new CreateTableOperationBuilderImpl();
     private String baseTableName;
     private long fromMicros;
     private long samplingInterval;
@@ -66,7 +66,7 @@ public class CreateMatViewOperationBuilder implements Mutable, ExecutionModel, S
         viewSql = null;
     }
 
-    public CreateTableOperationBuilder getCreateTableOperationBuilder() {
+    public CreateTableOperationBuilderImpl getCreateTableOperationBuilder() {
         return createTableOperationBuilder;
     }
 
