@@ -222,6 +222,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return outOfMemory;
     }
 
+    public boolean isTableDoesNotExist() {
+        return errno == TABLE_DOES_NOT_EXIST;
+    }
+
     public boolean isTableDropped() {
         return errno == TABLE_DROPPED;
     }

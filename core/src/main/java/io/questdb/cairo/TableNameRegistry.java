@@ -114,6 +114,14 @@ public interface TableNameRegistry extends Closeable {
     boolean isTableDropped(TableToken tableToken);
 
     /**
+     * Checks that WAL table dir does not belong to a dropped table.
+     *
+     * @param tableDir table dir to check
+     * @return true if table id dropped, false otherwise
+     */
+    boolean isWalTableDropped(CharSequence tableDir);
+
+    /**
      * Locks table name for creation and returns table token.
      * {@link #registerName(TableToken)} must be called to complete table creation and release the lock.
      * or {@link #unlockTableName(TableToken)} must be called to release lock without completing table creation.

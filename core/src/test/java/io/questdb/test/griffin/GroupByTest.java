@@ -1381,7 +1381,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "Sort light\n" +
                             "  keys: [x, max, dateadd]\n" +
                             "    VirtualRecord\n" +
-                            "      functions: [x,max,dateadd('s',dateadd,max::int)]\n" +
+                            "      functions: [x,max,dateadd('s',max::int,dateadd)]\n" +
                             "        GroupBy vectorized: false\n" +
                             "          keys: [x,dateadd,x1]\n" +
                             "          values: [max(y)]\n" +
@@ -2357,7 +2357,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "Sort light\n" +
                             "  keys: [x, max, dateadd]\n" +
                             "    VirtualRecord\n" +
-                            "      functions: [x,max,dateadd('s',dateadd,max::int)]\n" +
+                            "      functions: [x,max,dateadd('s',max::int,dateadd)]\n" +
                             "        GroupBy vectorized: false\n" +
                             "          keys: [x,dateadd,x1]\n" +
                             "          values: [max(y)]\n" +

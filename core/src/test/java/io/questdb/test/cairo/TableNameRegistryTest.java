@@ -579,6 +579,9 @@ public class TableNameRegistryTest extends AbstractCairoTest {
 
             execute("alter table tab1 set type bypass wal");
             execute("drop table tab1");
+
+            // We need this API to check by dir name for WAL tables
+            Assert.assertTrue(engine.isWalTableDropped(tt1.getDirName()));
             createTableWal("tab1");
 
             simulateEngineRestart();

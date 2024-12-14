@@ -33,11 +33,9 @@ import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.map.MapRecord;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
@@ -56,14 +54,17 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
-public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
+public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
-    public static final ArrayColumnTypes AVG_COLUMN_TYPES;
-    public static final ArrayColumnTypes AVG_OVER_PARTITION_RANGE_COLUMN_TYPES;
-    public static final ArrayColumnTypes AVG_OVER_PARTITION_ROWS_COLUMN_TYPES;
+    public static final ArrayColumnTypes MAX_COLUMN_TYPES;
+    public static final ArrayColumnTypes MAX_OVER_PARTITION_RANGE_COLUMN_TYPES;
+    public static final ArrayColumnTypes MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES;
+    public static final ArrayColumnTypes MAX_OVER_PARTITION_ROWS_COLUMN_TYPES;
+    public static final ArrayColumnTypes MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES;
 
-    private static final String NAME = "avg";
+    public static final String NAME = "max";
     private static final String SIGNATURE = NAME + "(D)";
+    public static final DoubleComparator GREATER_THAN = (a, b) -> Double.compare(a, b) > 0;
 
     @Override
     public String getSignature() {
@@ -86,34 +87,37 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         if (partitionByRecord != null) {
             if (framingMode == WindowColumn.FRAMING_RANGE) {
-                // moving average over whole partition (no order by, default frame) or (order by, unbounded preceding to unbounded following)
+                // moving max over whole partition (no order by, default frame) or (order by, unbounded preceding to unbounded following)
                 if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            AVG_COLUMN_TYPES
+                            MAX_COLUMN_TYPES
                     );
 
-                    return new AvgOverPartitionFunction(
+                    return new MaxMinOverPartitionFunction(
                             map,
                             partitionByRecord,
                             partitionBySink,
-                            args.get(0)
+                            args.get(0),
+                            GREATER_THAN,
+                            NAME
                     );
                 } // between unbounded preceding and current row
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            AVG_COLUMN_TYPES
+                            MAX_COLUMN_TYPES
                     );
 
-                    // same as for rows because calculation stops at current rows even if there are 'equal' following rows
-                    return new AvgOverUnboundedPartitionRowsFrameFunction(
+                    return new MaxMinOverUnboundedPartitionRowsFrameFunction(
                             map,
                             partitionByRecord,
                             partitionBySink,
-                            args.get(0)
+                            args.get(0),
+                            GREATER_THAN,
+                            NAME
                     );
                 } // range between [unbounded | x] preceding and [x preceding | current row], except unbounded preceding to current row
                 else {
@@ -125,20 +129,28 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
                     Map map = null;
                     MemoryARW mem = null;
+                    MemoryARW dequeMem = null;
                     try {
                         map = MapFactory.createUnorderedMap(
                                 configuration,
                                 partitionByKeyTypes,
-                                AVG_OVER_PARTITION_RANGE_COLUMN_TYPES
+                                rowsLo == Long.MIN_VALUE ? MAX_OVER_PARTITION_RANGE_COLUMN_TYPES : MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES
                         );
                         mem = Vm.getARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(),
                                 MemoryTag.NATIVE_CIRCULAR_BUFFER
                         );
+                        if (rowsLo != Long.MIN_VALUE) {
+                            dequeMem = Vm.getARWInstance(
+                                    configuration.getSqlWindowStorePageSize(),
+                                    configuration.getSqlWindowStoreMaxPages(),
+                                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+                            );
+                        }
 
-                        // moving average over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
-                        return new AvgOverPartitionRangeFrameFunction(
+                        // moving max over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
+                        return new MaxMinOverPartitionRangeFrameFunction(
                                 map,
                                 partitionByRecord,
                                 partitionBySink,
@@ -146,12 +158,16 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                                 rowsHi,
                                 args.get(0),
                                 mem,
+                                dequeMem,
                                 configuration.getSqlWindowInitialRangeBufferSize(),
-                                timestampIndex
+                                timestampIndex,
+                                GREATER_THAN,
+                                NAME
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
+                        Misc.free(dequeMem);
                         throw th;
                     }
                 }
@@ -161,68 +177,78 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            AVG_COLUMN_TYPES
+                            MAX_COLUMN_TYPES
                     );
 
-                    return new AvgOverUnboundedPartitionRowsFrameFunction(
+                    return new MaxMinOverUnboundedPartitionRowsFrameFunction(
                             map,
                             partitionByRecord,
                             partitionBySink,
-                            args.get(0)
+                            args.get(0),
+                            GREATER_THAN,
+                            NAME
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsLo == rowsHi) {
-                    return new AvgOverCurrentRowFunction(args.get(0));
+                    return new MaxMinOverCurrentRowFunction(args.get(0), NAME);
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            AVG_COLUMN_TYPES
+                            MAX_COLUMN_TYPES
                     );
 
-                    return new AvgOverPartitionFunction(
+                    return new MaxMinOverPartitionFunction(
                             map,
                             partitionByRecord,
                             partitionBySink,
-                            args.get(0)
+                            args.get(0),
+                            GREATER_THAN,
+                            NAME
                     );
                 }
                 //between [unbounded | x] preceding and [x preceding | current row]
                 else {
-                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-                    columnTypes.add(ColumnType.DOUBLE); // sum
-                    columnTypes.add(ColumnType.LONG); // current frame size
-                    columnTypes.add(ColumnType.LONG); // position of current oldest element
-                    columnTypes.add(ColumnType.LONG); // start offset of native array
-
                     Map map = null;
                     MemoryARW mem = null;
+                    MemoryARW dequeMem = null;
                     try {
                         map = MapFactory.createUnorderedMap(
                                 configuration,
                                 partitionByKeyTypes,
-                                AVG_OVER_PARTITION_ROWS_COLUMN_TYPES
+                                rowsLo == Long.MIN_VALUE ? MAX_OVER_PARTITION_ROWS_COLUMN_TYPES : MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES
                         );
                         mem = Vm.getARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(),
                                 MemoryTag.NATIVE_CIRCULAR_BUFFER
                         );
+                        if (rowsLo != Long.MIN_VALUE) {
+                            dequeMem = Vm.getARWInstance(
+                                    configuration.getSqlWindowStorePageSize(),
+                                    configuration.getSqlWindowStoreMaxPages(),
+                                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+                            );
+                        }
 
-                        // moving average over preceding N rows
-                        return new AvgOverPartitionRowsFrameFunction(
+                        // moving max over preceding N rows
+                        return new MaxMinOverPartitionRowsFrameFunction(
                                 map,
                                 partitionByRecord,
                                 partitionBySink,
                                 rowsLo,
                                 rowsHi,
                                 args.get(0),
-                                mem
+                                mem,
+                                dequeMem,
+                                GREATER_THAN,
+                                NAME
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
+                        Misc.free(dequeMem);
                         throw th;
                     }
                 }
@@ -231,11 +257,11 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             if (framingMode == WindowColumn.FRAMING_RANGE) {
                 // if there's no order by then all elements are equal in range mode, thus calculation is done on whole result set
                 if (!windowContext.isOrdered() && windowContext.isDefaultFrame()) {
-                    return new AvgOverWholeResultSetFunction(args.get(0));
+                    return new MaxMinOverWholeResultSetFunction(args.get(0), GREATER_THAN, NAME);
                 } // between unbounded preceding and current row
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     // same as for rows because calculation stops at current rows even if there are 'equal' following rows
-                    return new AvgOverUnboundedRowsFrameFunction(args.get(0));
+                    return new MaxMinOverUnboundedRowsFrameFunction(args.get(0), GREATER_THAN, NAME);
                 } // range between [unbounded | x] preceding and [x preceding | current row]
                 else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
@@ -243,26 +269,49 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     }
 
                     int timestampIndex = windowContext.getTimestampIndex();
-
-                    // moving average over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
-                    return new AvgOverRangeFrameFunction(
-                            rowsLo,
-                            rowsHi,
-                            args.get(0),
-                            configuration,
-                            timestampIndex
-                    );
+                    MemoryARW mem = null;
+                    MemoryARW dequeMem = null;
+                    try {
+                        mem = Vm.getARWInstance(
+                                configuration.getSqlWindowStorePageSize(),
+                                configuration.getSqlWindowStoreMaxPages(),
+                                MemoryTag.NATIVE_CIRCULAR_BUFFER
+                        );
+                        if (rowsLo != Long.MIN_VALUE) {
+                            dequeMem = Vm.getARWInstance(
+                                    configuration.getSqlWindowStorePageSize(),
+                                    configuration.getSqlWindowStoreMaxPages(),
+                                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+                            );
+                        }
+                        // moving max over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
+                        return new MaxMinOverRangeFrameFunction(
+                                rowsLo,
+                                rowsHi,
+                                args.get(0),
+                                configuration,
+                                mem,
+                                dequeMem,
+                                timestampIndex,
+                                GREATER_THAN,
+                                NAME
+                        );
+                    } catch (Throwable th) {
+                        Misc.free(mem);
+                        Misc.free(dequeMem);
+                        throw th;
+                    }
                 }
             } else if (framingMode == WindowColumn.FRAMING_ROWS) {
                 // between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    return new AvgOverUnboundedRowsFrameFunction(args.get(0));
+                    return new MaxMinOverUnboundedRowsFrameFunction(args.get(0), GREATER_THAN, NAME);
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsLo == rowsHi) {
-                    return new AvgOverCurrentRowFunction(args.get(0));
+                    return new MaxMinOverCurrentRowFunction(args.get(0), NAME);
                 } // whole result set
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
-                    return new AvgOverWholeResultSetFunction(args.get(0));
+                    return new MaxMinOverWholeResultSetFunction(args.get(0), GREATER_THAN, NAME);
                 } // between [unbounded | x] preceding and [x preceding | current row]
                 else {
                     MemoryARW mem = Vm.getARWInstance(
@@ -270,11 +319,22 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                             configuration.getSqlWindowStoreMaxPages(),
                             MemoryTag.NATIVE_CIRCULAR_BUFFER
                     );
-                    return new AvgOverRowsFrameFunction(
+                    MemoryARW dequeMem = null;
+                    if (rowsLo != Long.MIN_VALUE) {
+                        dequeMem = Vm.getARWInstance(
+                                configuration.getSqlWindowStorePageSize(),
+                                configuration.getSqlWindowStoreMaxPages(),
+                                MemoryTag.NATIVE_CIRCULAR_BUFFER
+                        );
+                    }
+                    return new MaxMinOverRowsFrameFunction(
                             args.get(0),
                             rowsLo,
                             rowsHi,
-                            mem
+                            mem,
+                            dequeMem,
+                            GREATER_THAN,
+                            NAME
                     );
                 }
             }
@@ -283,13 +343,21 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         throw SqlException.$(position, "function not implemented for given window parameters");
     }
 
+    // Avoid autoboxing by not using the Comparator functional interface with generic parameters.
+    @FunctionalInterface
+    public interface DoubleComparator {
+        boolean compare(double a, double b);
+    }
+
     // (rows between current row and current row) processes 1-element-big set, so simply it returns expression value
-    static class AvgOverCurrentRowFunction extends BaseDoubleWindowFunction {
+    static class MaxMinOverCurrentRowFunction extends BaseDoubleWindowFunction {
 
         private double value;
+        private final String name;
 
-        AvgOverCurrentRowFunction(Function arg) {
+        MaxMinOverCurrentRowFunction(Function arg, String name) {
             super(arg);
+            this.name = name;
         }
 
         @Override
@@ -304,7 +372,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public String getName() {
-            return NAME;
+            return name;
         }
 
         @Override
@@ -319,17 +387,27 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
     }
 
-    // handles avg() over (partition by x)
+    // handles max() over (partition by x)
     // order by is absent so default frame mode includes all rows in partition
-    static class AvgOverPartitionFunction extends BasePartitionedDoubleWindowFunction {
+    static class MaxMinOverPartitionFunction extends BasePartitionedDoubleWindowFunction {
 
-        public AvgOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
+        private final String name;
+        private final DoubleComparator comparator;
+
+        public MaxMinOverPartitionFunction(Map map,
+                                           VirtualRecord partitionByRecord,
+                                           RecordSink partitionBySink,
+                                           Function arg,
+                                           DoubleComparator comparator,
+                                           String name) {
             super(map, partitionByRecord, partitionBySink, arg);
+            this.name = name;
+            this.comparator = comparator;
         }
 
         @Override
         public String getName() {
-            return NAME;
+            return name;
         }
 
         @Override
@@ -346,18 +424,13 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 key.put(partitionByRecord, partitionBySink);
                 MapValue value = key.createValue();
 
-                long count;
-                double sum;
-
-                if (value.isNew()) {
-                    count = 1;
-                    sum = d;
+                if (!value.isNew()) {
+                    if (comparator.compare(d, value.getDouble(0))) {
+                        value.putDouble(0, d);
+                    }
                 } else {
-                    count = value.getLong(1) + 1;
-                    sum = value.getDouble(0) + d;
+                    value.putDouble(0, d);
                 }
-                value.putDouble(0, sum);
-                value.putLong(1, count);
             }
         }
 
@@ -372,44 +445,40 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
             Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), val);
         }
-
-        @Override
-        public void preparePass2() {
-            RecordCursor cursor = map.getCursor();
-            MapRecord record = map.getRecord();
-            while (cursor.hasNext()) {
-                MapValue value = record.getValue();
-                long count = value.getLong(1);
-                if (count > 0) {
-                    double sum = value.getDouble(0);
-                    value.putDouble(0, sum / count);
-                }
-            }
-        }
     }
 
-    // Handles avg() over (partition by x order by ts range between [undobuned | y] preceding and [z preceding | current row])
+    // Handles max() over (partition by x order by ts range between [undobuned | y] preceding and [z preceding | current row])
     // Removable cumulative aggregation with timestamp & value stored in resizable ring buffers
-    // When lower bound is unbounded we add but immediately discard any values that enter the frame so buffer should only contain values
-    // between upper bound and current row's value.
-    public static class AvgOverPartitionRangeFrameFunction extends BasePartitionedDoubleWindowFunction {
+    // When the lower bound is unbounded, we only need to keep one maximum value in history.
+    // However, when the lower bound is not unbounded, we need a monotonically deque to maintain the history of records.
+    public static class MaxMinOverPartitionRangeFrameFunction extends BasePartitionedDoubleWindowFunction {
 
         private static final int RECORD_SIZE = Long.BYTES + Double.BYTES;
+        private final String name;
+        private final DoubleComparator comparator;
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         // list of [size, startOffset] pairs marking free space within mem
         private final LongList freeList = new LongList();
         private final int initialBufferSize;
         private final long maxDiff;
+
         // holds resizable ring buffers
         private final MemoryARW memory;
         private final long minDiff;
         private final int timestampIndex;
-        protected double sum;
-        private double avg;
-        private final RingBufferDesc memoryDesc = new RingBufferDesc();
 
-        public AvgOverPartitionRangeFrameFunction(
+        // current max value
+        private double maxMin;
+
+        // holds another resizable ring buffers as monotonically decreasing deque
+        private final MemoryARW dequeMemory;
+        private final LongList dequeFreeList = new LongList();
+        private final int dequeInitialBufferSize;
+        private final RingBufferDesc memoryDesc = new RingBufferDesc();
+        private static final int DEQUE_RECORD_SIZE = Double.BYTES;
+
+        public MaxMinOverPartitionRangeFrameFunction(
                 Map map,
                 VirtualRecord partitionByRecord,
                 RecordSink partitionBySink,
@@ -417,8 +486,11 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 long rangeHi,
                 Function arg,
                 MemoryARW memory,
+                MemoryARW dequeMemory,
                 int initialBufferSize,
-                int timestampIdx
+                int timestampIdx,
+                DoubleComparator comparator,
+                String name
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -427,8 +499,12 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             this.memory = memory;
             this.initialBufferSize = initialBufferSize;
             this.timestampIndex = timestampIdx;
-
             frameIncludesCurrentValue = rangeHi == 0;
+
+            this.dequeMemory = dequeMemory;
+            this.dequeInitialBufferSize = initialBufferSize;
+            this.comparator = comparator;
+            this.name = name;
         }
 
         @Override
@@ -436,34 +512,28 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             super.close();
             memory.close();
             freeList.clear();
+            dequeFreeList.clear();
+            if (dequeMemory != null) {
+                dequeMemory.close();
+            }
         }
 
         @Override
         public void computeNext(Record record) {
-            // map stores
-            // 0 - sum, never a NaN
-            // 1 - current number of non-null rows in in-memory frame (equals to frame size because we don't store nulls)
-            // 2 - native array start offset (relative to memory address)
-            // 3 - size of ring buffer (number of elements stored in it; not all of them need to belong to frame)
-            // 4 - capacity of ring buffer
-            // 5 - index of first (the oldest) valid buffer element
-            // actual frame data - [timestamp, value] pairs - is stored in mem at [ offset + first_idx*16, offset + last_idx*16]
-            // note: we ignore nulls to reduce memory usage
-            // if frameLoBounded == false ring buffer store only suffix of the window with ts > current_ts + rangeHi (rangeHi is negative),
-            // because all values on remained prefix will always be accumulated, and we don't need to store them in the buffer
-
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
             MapValue mapValue = key.createValue();
-
-            double sum;
             long frameSize;
             long startOffset;
             long size;
             long capacity;
             long firstIdx;
 
+            long dequeStartOffset = 0;
+            long dequeCapacity = 0;
+            long dequeStartIndex = 0;
+            long dequeEndIndex = 0;
             long timestamp = record.getTimestamp(timestampIndex);
             double d = arg.getDouble(record);
 
@@ -472,41 +542,48 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
                 firstIdx = 0;
 
+                if (frameLoBounded) {
+                    dequeCapacity = dequeInitialBufferSize;
+                    dequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
+                }
+
                 if (Numbers.isFinite(d)) {
                     memory.putLong(startOffset, timestamp);
                     memory.putDouble(startOffset + Long.BYTES, d);
 
                     if (frameIncludesCurrentValue) {
-                        sum = d;
-                        avg = d;
-                        this.sum = d;
+                        this.maxMin = d;
                         frameSize = 1;
                         size = frameLoBounded ? 1 : 0;
                     } else {
-                        sum = 0.0;
-                        avg = Double.NaN;
-                        this.sum = Double.NaN;
+                        this.maxMin = Double.NaN;
                         frameSize = 0;
                         size = 1;
                     }
+
+                    if (frameLoBounded && frameIncludesCurrentValue) {
+                        dequeMemory.putDouble(dequeStartOffset, d);
+                        dequeEndIndex++;
+                    }
                 } else {
                     size = 0;
-                    sum = 0.0;
-                    avg = Double.NaN;
-                    this.sum = Double.NaN;
+                    this.maxMin = Double.NaN;
                     frameSize = 0;
                 }
             } else {
-                sum = mapValue.getDouble(0);
-                frameSize = mapValue.getLong(1);
-                startOffset = mapValue.getLong(2);
-                size = mapValue.getLong(3);
-                capacity = mapValue.getLong(4);
-                firstIdx = mapValue.getLong(5);
-
+                frameSize = mapValue.getLong(0);
+                startOffset = mapValue.getLong(1);
+                size = mapValue.getLong(2);
+                capacity = mapValue.getLong(3);
+                firstIdx = mapValue.getLong(4);
                 long newFirstIdx = firstIdx;
 
                 if (frameLoBounded) {
+                    dequeStartOffset = mapValue.getLong(5);
+                    dequeCapacity = mapValue.getLong(6);
+                    dequeStartIndex = mapValue.getLong(7);
+                    dequeEndIndex = mapValue.getLong(8);
+
                     // find new bottom border of range frame and remove unneeded elements
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
@@ -514,8 +591,11 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                         if (Math.abs(timestamp - ts) > maxDiff) {
                             // if rangeHi < 0, some elements from the window can be not in the frame
                             if (frameSize > 0) {
-                                double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                                sum -= val;
+                                if (dequeStartIndex != dequeEndIndex &&
+                                        dequeMemory.getDouble(dequeStartOffset + (dequeStartIndex % dequeCapacity) * DEQUE_RECORD_SIZE) ==
+                                                memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES)) {
+                                    dequeStartIndex++;
+                                }
                                 frameSize--;
                             }
                             newFirstIdx = (idx + 1) % capacity;
@@ -549,23 +629,46 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
                         long diff = Math.abs(ts - timestamp);
-
                         if (diff <= maxDiff && diff >= minDiff) {
                             double value = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                            sum += value;
+                            while (dequeStartIndex != dequeEndIndex &&
+                                    comparator.compare(value, dequeMemory.getDouble(dequeStartOffset + ((dequeEndIndex - 1) % dequeCapacity) * DEQUE_RECORD_SIZE))) {
+                                dequeEndIndex--;
+                            }
+
+                            if (dequeEndIndex - dequeStartIndex == dequeCapacity) { // deque full
+                                memoryDesc.reset(dequeCapacity, dequeStartOffset, dequeEndIndex - dequeStartIndex, dequeStartIndex, dequeFreeList);
+                                expandRingBuffer(dequeMemory, memoryDesc, DEQUE_RECORD_SIZE);
+                                dequeCapacity = memoryDesc.capacity;
+                                dequeStartOffset = memoryDesc.startOffset;
+                                dequeStartIndex = memoryDesc.firstIdx;
+                                dequeEndIndex = dequeStartIndex + memoryDesc.size;
+                            }
+
+                            dequeMemory.putDouble(dequeStartOffset + (dequeEndIndex % dequeCapacity) * DEQUE_RECORD_SIZE, value);
+                            dequeEndIndex++;
                             frameSize++;
                         } else {
                             break;
                         }
                     }
+                    if (dequeStartIndex == dequeEndIndex) {
+                        this.maxMin = Double.NaN;
+                    } else {
+                        this.maxMin = dequeMemory.getDouble(dequeStartOffset + (dequeStartIndex % dequeCapacity) * DEQUE_RECORD_SIZE);
+                    }
                 } else {
+                    double oldMax = mapValue.getDouble(5);
                     newFirstIdx = firstIdx;
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
                         if (Math.abs(timestamp - ts) >= minDiff) {
                             double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                            sum += val;
+                            if (Double.isNaN(oldMax) || comparator.compare(val, oldMax)) {
+                                oldMax = val;
+                            }
+
                             frameSize++;
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
@@ -575,34 +678,33 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     }
 
                     firstIdx = newFirstIdx;
+                    this.maxMin = oldMax;
                 }
-
-                if (frameSize != 0) {
-                    avg = sum / frameSize;
-                    this.sum = sum;
-                } else {
-                    avg = Double.NaN;
-                    this.sum = Double.NaN;
-                }
-
             }
 
-            mapValue.putDouble(0, sum);
-            mapValue.putLong(1, frameSize);
-            mapValue.putLong(2, startOffset);
-            mapValue.putLong(3, size);
-            mapValue.putLong(4, capacity);
-            mapValue.putLong(5, firstIdx);
+            mapValue.putLong(0, frameSize);
+            mapValue.putLong(1, startOffset);
+            mapValue.putLong(2, size);
+            mapValue.putLong(3, capacity);
+            mapValue.putLong(4, firstIdx);
+            if (frameLoBounded) {
+                mapValue.putLong(5, dequeStartOffset);
+                mapValue.putLong(6, dequeCapacity);
+                mapValue.putLong(7, dequeStartIndex);
+                mapValue.putLong(8, dequeEndIndex);
+            } else {
+                mapValue.putDouble(5, this.maxMin);
+            }
         }
 
         @Override
         public double getDouble(Record rec) {
-            return avg;
+            return maxMin;
         }
 
         @Override
         public String getName() {
-            return NAME;
+            return name;
         }
 
         @Override
@@ -619,8 +721,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         public void reopen() {
             super.reopen();
             // memory will allocate on first use
-            avg = Double.NaN;
-            sum = Double.NaN;
+            maxMin = Double.NaN;
         }
 
         @Override
@@ -628,6 +729,10 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             super.reset();
             memory.close();
             freeList.clear();
+            dequeFreeList.clear();
+            if (dequeMemory != null) {
+                dequeMemory.close();
+            }
         }
 
         @Override
@@ -657,33 +762,44 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             super.toTop();
             memory.truncate();
             freeList.clear();
+            dequeFreeList.clear();
+            if (dequeMemory != null) {
+                dequeMemory.truncate();
+            }
         }
     }
 
-    // handles avg() over (partition by x [order by o] rows between y and z)
+    // handles max() over (partition by x [order by o] rows between y and z)
     // removable cumulative aggregation
-    static class AvgOverPartitionRowsFrameFunction extends BasePartitionedDoubleWindowFunction {
+    public static class MaxMinOverPartitionRowsFrameFunction extends BasePartitionedDoubleWindowFunction {
 
+        private final String name;
+        private final DoubleComparator comparator;
         //number of values we need to keep to compute over frame
         // (can be bigger than frame because we've to buffer values between rowsHi and current row )
         private final int bufferSize;
-
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
         // holds fixed-size ring buffers of double values
         private final MemoryARW memory;
-        protected double sum;
-        private double avg;
+        private double maxMin;
 
-        public AvgOverPartitionRowsFrameFunction(
+        // holds another resizable ring buffers as monotonically decreasing deque
+        private final MemoryARW dequeMemory;
+        private final int dequeBufferSize;
+
+        public MaxMinOverPartitionRowsFrameFunction(
                 Map map,
                 VirtualRecord partitionByRecord,
                 RecordSink partitionBySink,
                 long rowsLo,
                 long rowsHi,
                 Function arg,
-                MemoryARW memory
+                MemoryARW memory,
+                MemoryARW dequeMemory,
+                DoubleComparator comparator,
+                String name
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
 
@@ -691,14 +807,19 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 frameSize = (int) (rowsHi - rowsLo + (rowsHi < 0 ? 1 : 0));
                 bufferSize = (int) Math.abs(rowsLo);
                 frameLoBounded = true;
+                dequeBufferSize = (int) (rowsHi - rowsLo + 1);
             } else {
                 frameSize = 1;
                 bufferSize = (int) Math.abs(rowsHi);
                 frameLoBounded = false;
+                dequeBufferSize = 0;
             }
             frameIncludesCurrentValue = rowsHi == 0;
 
             this.memory = memory;
+            this.dequeMemory = dequeMemory;
+            this.comparator = comparator;
+            this.name = name;
         }
 
         @Override
@@ -710,89 +831,111 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void computeNext(Record record) {
             // map stores:
-            // 0 - sum, never store NaN in it
-            // 1 - current number of non-null rows in frame
-            // 2 - (0-based) index of oldest value [0, bufferSize]
-            // 3 - native array start offset (relative to memory address)
-            // we keep nulls in window and reject them when computing avg
+            // 0 - (0-based) index of oldest value [0, bufferSize]
+            // 1 - native array start offset (relative to memory address)
+            // we keep nulls in window and reject them when computing max
+            // 2 - max value if frameLoBounded is false
+            // 2 - deque memory startOffset is frameLoBounded is true
+            // 3 - deque memory startIndex is frameLoBounded is true
+            // 4 - deque memory endIndex is frameLoBounded is true
 
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
             MapValue value = key.createValue();
 
-            long count;
-            double sum;
-            long loIdx;//current index of lo frame value ('oldest')
+            long loIdx; //current index of lo frame value ('oldest')
             long startOffset;
             double d = arg.getDouble(record);
+
+            long dequeStartOffset = 0;
+            long dequeStartIndex = 0;
+            long dequeEndIndex = 0;
 
             if (value.isNew()) {
                 loIdx = 0;
                 startOffset = memory.appendAddressFor((long) bufferSize * Double.BYTES) - memory.getPageAddress(0);
                 if (frameIncludesCurrentValue && Numbers.isFinite(d)) {
-                    sum = d;
-                    count = 1;
-                    avg = d;
-                    this.sum = d;
+                    this.maxMin = d;
                 } else {
-                    sum = 0.0;
-                    avg = Double.NaN;
-                    this.sum = Double.NaN;
-                    count = 0;
+                    this.maxMin = Double.NaN;
                 }
 
                 for (int i = 0; i < bufferSize; i++) {
                     memory.putDouble(startOffset + (long) i * Double.BYTES, Double.NaN);
                 }
+                if (frameLoBounded) {
+                    dequeStartOffset = dequeMemory.appendAddressFor((long) dequeBufferSize * Double.BYTES) - dequeMemory.getPageAddress(0);
+                    if (Numbers.isFinite(d) && frameIncludesCurrentValue) {
+                        dequeMemory.putDouble(dequeStartOffset, d);
+                        dequeEndIndex++;
+                    }
+                } else {
+                    value.putDouble(2, this.maxMin);
+                }
             } else {
-                sum = value.getDouble(0);
-                count = value.getLong(1);
-                loIdx = value.getLong(2);
-                startOffset = value.getLong(3);
-
+                loIdx = value.getLong(0);
+                startOffset = value.getLong(1);
                 //compute value using top frame element (that could be current or previous row)
                 double hiValue = frameIncludesCurrentValue ? d : memory.getDouble(startOffset + ((loIdx + frameSize - 1) % bufferSize) * Double.BYTES);
-                if (Numbers.isFinite(hiValue)) {
-                    count++;
-                    sum += hiValue;
-                }
+                if (frameLoBounded) {
+                    dequeStartOffset = value.getLong(2);
+                    dequeStartIndex = value.getLong(3);
+                    dequeEndIndex = value.getLong(4);
 
-                //here sum is correct for current row
-                if (count != 0) {
-                    avg = sum / count;
-                    this.sum = sum;
+                    if (Numbers.isFinite(hiValue)) {
+                        while (dequeStartIndex != dequeEndIndex &&
+                                comparator.compare(hiValue, dequeMemory.getDouble(dequeStartOffset + ((dequeEndIndex - 1) % dequeBufferSize) * Double.BYTES))) {
+                            dequeEndIndex--;
+                        }
+                        dequeMemory.putDouble(dequeStartOffset + (dequeEndIndex % dequeBufferSize) * Double.BYTES, hiValue);
+                        dequeEndIndex++;
+                        this.maxMin = dequeMemory.getDouble(dequeStartOffset + (dequeStartIndex % dequeBufferSize) * Double.BYTES);
+                    } else {
+                        if (dequeStartIndex != dequeEndIndex) {
+                            this.maxMin = dequeMemory.getDouble(dequeStartOffset + (dequeStartIndex % dequeBufferSize) * Double.BYTES);
+                        } else {
+                            this.maxMin = Double.NaN;
+                        }
+                    }
                 } else {
-                    avg = Double.NaN;
-                    this.sum = Double.NaN;
+                    double max = value.getDouble(2);
+                    if (Numbers.isFinite(hiValue)) {
+                        if (Double.isNaN(max) || comparator.compare(hiValue, max)) {
+                            max = hiValue;
+                            value.putDouble(2, max);
+                        }
+                    }
+                    this.maxMin = max;
                 }
-
 
                 if (frameLoBounded) {
                     //remove the oldest element
                     double loValue = memory.getDouble(startOffset + loIdx * Double.BYTES);
-                    if (Numbers.isFinite(loValue)) {
-                        sum -= loValue;
-                        count--;
+                    if (Numbers.isFinite(loValue) && dequeStartIndex != dequeEndIndex && loValue == dequeMemory.getDouble(dequeStartOffset + (dequeStartIndex % dequeBufferSize) * Double.BYTES)) {
+                        dequeStartIndex++;
                     }
                 }
             }
 
-            value.putDouble(0, sum);
-            value.putLong(1, count);
-            value.putLong(2, (loIdx + 1) % bufferSize);
-            value.putLong(3, startOffset);//not necessary because it doesn't change
+            value.putLong(0, (loIdx + 1) % bufferSize);
+            value.putLong(1, startOffset);
+            if (frameLoBounded) {
+                value.putLong(2, dequeStartOffset);
+                value.putLong(3, dequeStartIndex);
+                value.putLong(4, dequeEndIndex);
+            }
             memory.putDouble(startOffset + loIdx * Double.BYTES, d);
         }
 
         @Override
         public double getDouble(Record rec) {
-            return avg;
+            return maxMin;
         }
 
         @Override
         public String getName() {
-            return NAME;
+            return name;
         }
 
         @Override
@@ -803,19 +946,21 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), avg);
+            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
         @Override
         public void reopen() {
             super.reopen();
-            // memory will allocate on first use
         }
 
         @Override
         public void reset() {
             super.reset();
             memory.close();
+            if (dequeMemory != null) {
+                dequeMemory.close();
+            }
         }
 
         @Override
@@ -845,14 +990,22 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         public void toTop() {
             super.toTop();
             memory.truncate();
+            if (dequeMemory != null) {
+                dequeMemory.truncate();
+            }
         }
     }
 
-    // Handles avg() over ([order by ts] range between [unbounded | x] preceding and [ x preceding | current row ] ); no partition by key
+    // Handles max() over ([order by ts] range between [unbounded | x] preceding and [ x preceding | current row ] ); no partition by key
     // When lower bound is unbounded we add but immediately discard any values that enter the frame so buffer should only contain values
-    // between upper bound and current row's value .
-    static class AvgOverRangeFrameFunction extends BaseDoubleWindowFunction implements Reopenable {
+    // between upper bound and current row's value.
+    // When the lower bound is unbounded, we only need to keep one maximum value(max) in history.
+    // However, when the lower bound is not unbounded, we need a monotonically deque to maintain the history of records.
+    public static class MaxMinOverRangeFrameFunction extends BaseDoubleWindowFunction implements Reopenable {
+
         private static final int RECORD_SIZE = Long.BYTES + Double.BYTES;
+        private final String name;
+        private final DoubleComparator comparator;
         private final boolean frameLoBounded;
         private final long initialCapacity;
         private final long maxDiff;
@@ -862,42 +1015,33 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         private final MemoryARW memory;
         private final long minDiff;
         private final int timestampIndex;
-        protected double externalSum;
-        private double avg;
+        private double maxMin;
         private long capacity;
         private long firstIdx;
         private long frameSize;
         private long size;
         private long startOffset;
-        private double sum;
 
-        public AvgOverRangeFrameFunction(
+        // holds another resizable ring buffers as monotonically decreasing deque
+        private MemoryARW dequeMemory;
+        private long dequeCapacity;
+        private long dequeStartOffset;
+        private long dequeStartIndex = 0;
+        private long dequeEndIndex = 0;
+
+        public MaxMinOverRangeFrameFunction(
                 long rangeLo,
                 long rangeHi,
                 Function arg,
                 CairoConfiguration configuration,
-                int timestampIdx
-        ) {
-            this(
-                    rangeLo,
-                    rangeHi,
-                    arg,
-                    configuration.getSqlWindowStorePageSize() / RECORD_SIZE,
-                    Vm.getARWInstance(configuration.getSqlWindowStorePageSize(), configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER),
-                    timestampIdx
-            );
-        }
-
-        public AvgOverRangeFrameFunction(
-                long rangeLo,
-                long rangeHi,
-                Function arg,
-                long initialCapacity,
                 MemoryARW memory,
-                int timestampIdx
+                MemoryARW dequeMemory,
+                int timestampIdx,
+                DoubleComparator comparator,
+                String name
         ) {
             super(arg);
-            this.initialCapacity = initialCapacity;
+            this.initialCapacity = configuration.getSqlWindowStorePageSize() / RECORD_SIZE;
             this.memory = memory;
             frameLoBounded = rangeLo != Long.MIN_VALUE;
             maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE; // maxDiff must be used only if frameLoBounded
@@ -908,13 +1052,24 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
             firstIdx = 0;
             frameSize = 0;
-            sum = 0.0;
+            maxMin = Double.NaN;
+
+            if (frameLoBounded) {
+                this.dequeMemory = dequeMemory;
+                dequeCapacity = initialCapacity;
+                dequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * Double.BYTES) - dequeMemory.getPageAddress(0);
+            }
+            this.comparator = comparator;
+            this.name = name;
         }
 
         @Override
         public void close() {
             super.close();
             memory.close();
+            if (dequeMemory != null) {
+                dequeMemory.close();
+            }
         }
 
         @Override
@@ -923,7 +1078,6 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             double d = arg.getDouble(record);
 
             long newFirstIdx = firstIdx;
-
             if (frameLoBounded) {
                 // find new bottom border of range frame and remove unneeded elements
                 for (long i = 0, n = size; i < n; i++) {
@@ -933,7 +1087,10 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                         // if rangeHi < 0, some elements from the window can be not in the frame
                         if (frameSize > 0) {
                             double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                            sum -= val;
+                            if (Numbers.isFinite(val) && dequeStartIndex != dequeEndIndex && val ==
+                                    dequeMemory.getDouble(dequeStartOffset + (dequeStartIndex % dequeCapacity) * Double.BYTES)) {
+                                dequeStartIndex++;
+                            }
                             frameSize--;
                         }
                         newFirstIdx = (idx + 1) % capacity;
@@ -982,11 +1139,44 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
                     if (diff <= maxDiff && diff >= minDiff) {
                         double value = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                        sum += value;
+
+                        while (dequeStartIndex != dequeEndIndex &&
+                                comparator.compare(value, dequeMemory.getDouble(dequeStartOffset + ((dequeEndIndex - 1) % dequeCapacity) * Double.BYTES))) {
+                            dequeEndIndex--;
+                        }
+
+                        if (dequeEndIndex - dequeStartIndex == dequeCapacity) { // deque full
+                            long newAddress = dequeMemory.appendAddressFor((dequeCapacity << 1) * Double.BYTES);
+                            // call above can end up resizing and thus changing deque memory start address
+                            long oldAddress = dequeMemory.getPageAddress(0) + dequeStartOffset;
+
+                            if (dequeStartIndex == 0) {
+                                Vect.memcpy(newAddress, oldAddress, dequeCapacity * Double.BYTES);
+                            } else {
+                                dequeStartIndex %= dequeCapacity;
+                                //we can't simply copy because that'd leave a gap in the middle
+                                long firstPieceSize = (dequeCapacity - dequeStartIndex) * Double.BYTES;
+                                Vect.memcpy(newAddress, oldAddress + dequeStartIndex * Double.BYTES, firstPieceSize);
+                                Vect.memcpy(newAddress + firstPieceSize, oldAddress, dequeStartIndex * Double.BYTES);
+                                dequeStartIndex = 0;
+                            }
+
+                            dequeStartOffset = newAddress - dequeMemory.getPageAddress(0);
+                            dequeEndIndex = dequeStartIndex + dequeCapacity;
+                            dequeCapacity <<= 1;
+                        }
+
+                        dequeMemory.putDouble(dequeStartOffset + (dequeEndIndex % dequeCapacity) * Double.BYTES, value);
+                        dequeEndIndex++;
                         frameSize++;
                     } else {
                         break;
                     }
+                }
+                if (dequeStartIndex == dequeEndIndex) {
+                    this.maxMin = Double.NaN;
+                } else {
+                    this.maxMin = dequeMemory.getDouble(dequeStartOffset + (dequeStartIndex % dequeCapacity) * Double.BYTES);
                 }
             } else {
                 newFirstIdx = firstIdx;
@@ -995,7 +1185,9 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
                     if (Math.abs(timestamp - ts) >= minDiff) {
                         double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                        sum += val;
+                        if (Double.isNaN(this.maxMin) || comparator.compare(val, this.maxMin)) {
+                            this.maxMin = val;
+                        }
                         frameSize++;
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
@@ -1005,24 +1197,16 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 }
                 firstIdx = newFirstIdx;
             }
-            if (frameSize != 0) {
-                avg = sum / frameSize;
-                externalSum = sum;
-
-            } else {
-                avg = Double.NaN;
-                externalSum = Double.NaN;
-            }
         }
 
         @Override
         public double getDouble(Record rec) {
-            return avg;
+            return maxMin;
         }
 
         @Override
         public String getName() {
-            return NAME;
+            return name;
         }
 
         @Override
@@ -1037,20 +1221,27 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public void reopen() {
-            avg = Double.NaN;
-            externalSum = Double.NaN;
+            maxMin = Double.NaN;
             capacity = initialCapacity;
             startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
             firstIdx = 0;
             frameSize = 0;
             size = 0;
-            sum = 0.0;
+            if (dequeMemory != null) {
+                dequeCapacity = initialCapacity;
+                dequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * Double.BYTES) - dequeMemory.getPageAddress(0);
+                dequeStartIndex = 0;
+                dequeEndIndex = 0;
+            }
         }
 
         @Override
         public void reset() {
             super.reset();
             memory.close();
+            if (dequeMemory != null) {
+                dequeMemory.close();
+            }
         }
 
         @Override
@@ -1076,36 +1267,53 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void toTop() {
             super.toTop();
-            avg = Double.NaN;
-            externalSum = Double.NaN;
+            maxMin = Double.NaN;
             capacity = initialCapacity;
             memory.truncate();
             startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
             firstIdx = 0;
             frameSize = 0;
             size = 0;
-            sum = 0.0;
+            if (dequeMemory != null) {
+                dequeMemory.truncate();
+                dequeCapacity = initialCapacity;
+                dequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * Double.BYTES) - dequeMemory.getPageAddress(0);
+                dequeEndIndex = 0;
+                dequeStartIndex = 0;
+            }
         }
     }
 
-    // Handles avg() over ([order by o] rows between y and z); there's no partition by.
+    // Handles max() over ([order by o] rows between y and z); there's no partition by.
     // Removable cumulative aggregation.
-    static class AvgOverRowsFrameFunction extends BaseDoubleWindowFunction implements Reopenable {
+    public static class MaxMinOverRowsFrameFunction extends BaseDoubleWindowFunction implements Reopenable {
+
+        private final String name;
+        private final DoubleComparator comparator;
         private final MemoryARW buffer;
         private final int bufferSize;
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
-        protected double externalSum = 0;
-        private double avg = 0;
-        private long count = 0;
+        private double maxMin = Double.NaN;
         private int loIdx = 0;
-        private double sum = 0.0;
 
-        public AvgOverRowsFrameFunction(Function arg, long rowsLo, long rowsHi, MemoryARW memory) {
+        // holds another resizable ring buffers as monotonically decreasing deque
+        private MemoryARW dequeMemory;
+        private long dequeBufferSize;
+        private long dequeStartIndex = 0;
+        private long dequeEndIndex = 0;
+
+        public MaxMinOverRowsFrameFunction(Function arg,
+                                           long rowsLo,
+                                           long rowsHi,
+                                           MemoryARW memory,
+                                           MemoryARW dequeMemory,
+                                           DoubleComparator comparator,
+                                           String name) {
             super(arg);
 
-            assert rowsLo != Long.MIN_VALUE || rowsHi != 0; // use AvgOverUnboundedRowsFrameFunction in case of (Long.MIN_VALUE, 0) range
+            assert rowsLo != Long.MIN_VALUE || rowsHi != 0; // use MaxOverUnboundedRowsFrameFunction in case of (Long.MIN_VALUE, 0) range
             if (rowsLo > Long.MIN_VALUE) {
                 frameSize = (int) (rowsHi - rowsLo + (rowsHi < 0 ? 1 : 0));
                 bufferSize = (int) Math.abs(rowsLo);//number of values we need to keep to compute over frame
@@ -1124,12 +1332,22 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 close();
                 throw t;
             }
+
+            if (frameLoBounded) {
+                this.dequeMemory = dequeMemory;
+                dequeBufferSize = rowsHi - rowsLo + 1;
+            }
+            this.comparator = comparator;
+            this.name = name;
         }
 
         @Override
         public void close() {
             super.close();
             buffer.close();
+            if (dequeMemory != null) {
+                dequeMemory.close();
+            }
         }
 
         @Override
@@ -1144,24 +1362,27 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 hiValue = buffer.getDouble((long) (loIdx % bufferSize) * Double.BYTES);
             }
             if (Numbers.isFinite(hiValue)) {
-                sum += hiValue;
-                count++;
+                if (frameLoBounded) {
+                    while (dequeStartIndex != dequeEndIndex &&
+                            comparator.compare(hiValue, dequeMemory.getDouble(((dequeEndIndex - 1) % dequeBufferSize) * Double.BYTES))) {
+                        dequeEndIndex--;
+                    }
+                    dequeMemory.putDouble(dequeEndIndex % dequeBufferSize * Double.BYTES, hiValue);
+                    dequeEndIndex++;
+                } else {
+                    if (Double.isNaN(maxMin) || comparator.compare(hiValue, maxMin)) {
+                        maxMin = hiValue;
+                    }
+                }
             }
-            if (count != 0) {
-                avg = sum / count;
-                externalSum = sum;
-            } else {
-                avg = Double.NaN;
-                externalSum = Double.NaN;
-            }
-
 
             if (frameLoBounded) {
+                this.maxMin = dequeEndIndex == dequeStartIndex ? Double.NaN : dequeMemory.getDouble(dequeStartIndex % dequeBufferSize * Double.BYTES);
                 //remove the oldest element with newest
                 double loValue = buffer.getDouble((long) loIdx * Double.BYTES);
-                if (Numbers.isFinite(loValue)) {
-                    sum -= loValue;
-                    count--;
+                if (Numbers.isFinite(loValue) && dequeStartIndex != dequeEndIndex && loValue ==
+                        dequeMemory.getDouble(dequeStartIndex % dequeBufferSize * Double.BYTES)) {
+                    dequeStartIndex++;
                 }
             }
 
@@ -1172,12 +1393,12 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public double getDouble(Record rec) {
-            return avg;
+            return maxMin;
         }
 
         @Override
         public String getName() {
-            return NAME;
+            return name;
         }
 
         @Override
@@ -1188,26 +1409,31 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), avg);
+            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
         @Override
         public void reopen() {
-            avg = 0;
-            count = 0;
+            maxMin = Double.NaN;
             loIdx = 0;
-            sum = 0.0;
             initBuffer();
+            if (dequeMemory != null) {
+                dequeEndIndex = 0;
+                dequeStartIndex = 0;
+            }
         }
 
         @Override
         public void reset() {
             super.reset();
             buffer.close();
-            avg = 0;
-            count = 0;
+            if (dequeMemory != null) {
+                dequeMemory.close();
+                dequeEndIndex = 0;
+                dequeStartIndex = 0;
+            }
             loIdx = 0;
-            sum = 0.0;
+            maxMin = Double.NaN;
         }
 
         @Override
@@ -1233,11 +1459,13 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void toTop() {
             super.toTop();
-            avg = 0;
-            count = 0;
+            maxMin = Double.NaN;
             loIdx = 0;
-            sum = 0.0;
             initBuffer();
+            if (dequeMemory != null) {
+                dequeEndIndex = 0;
+                dequeStartIndex = 0;
+            }
         }
 
         private void initBuffer() {
@@ -1248,14 +1476,24 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     }
 
     // Handles:
-    // - avg(a) over (partition by x rows between unbounded preceding and current row)
-    // - avg(a) over (partition by x order by ts range between unbounded preceding and current row)
+    // - max(a) over (partition by x rows between unbounded preceding and current row)
+    // - max(a) over (partition by x order by ts range between unbounded preceding and current row)
     // Doesn't require value buffering.
-    static class AvgOverUnboundedPartitionRowsFrameFunction extends BasePartitionedDoubleWindowFunction {
-        private double avg;
+    static class MaxMinOverUnboundedPartitionRowsFrameFunction extends BasePartitionedDoubleWindowFunction {
 
-        public AvgOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
+        private final String name;
+        private final DoubleComparator comparator;
+        private double maxMin;
+
+        public MaxMinOverUnboundedPartitionRowsFrameFunction(Map map,
+                                                             VirtualRecord partitionByRecord,
+                                                             RecordSink partitionBySink,
+                                                             Function arg,
+                                                             DoubleComparator comparator,
+                                                             String name) {
             super(map, partitionByRecord, partitionBySink, arg);
+            this.comparator = comparator;
+            this.name = name;
         }
 
         @Override
@@ -1263,39 +1501,35 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
-            MapValue value = key.createValue();
-
-            double sum;
-            long count;
-
-            if (value.isNew()) {
-                sum = 0;
-                count = 0;
-            } else {
-                sum = value.getDouble(0);
-                count = value.getLong(1);
-            }
-
             double d = arg.getDouble(record);
+
             if (Numbers.isFinite(d)) {
-                sum += d;
-                count++;
-
-                value.putDouble(0, sum);
-                value.putLong(1, count);
+                MapValue value = key.createValue();
+                if (value.isNew()) {
+                    value.putDouble(0, d);
+                    this.maxMin = d;
+                } else {
+                    double max = value.getDouble(0);
+                    if (comparator.compare(d, max)) {
+                        value.putDouble(0, d);
+                        max = d;
+                    }
+                    this.maxMin = max;
+                }
+            } else {
+                MapValue value = key.findValue();
+                this.maxMin = value != null ? value.getDouble(0) : Double.NaN;
             }
-
-            avg = count != 0 ? sum / count : Double.NaN;
         }
 
         @Override
         public double getDouble(Record rec) {
-            return avg;
+            return maxMin;
         }
 
         @Override
         public String getName() {
-            return NAME;
+            return name;
         }
 
         @Override
@@ -1306,12 +1540,12 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), avg);
+            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(NAME);
+            sink.val(getName());
             sink.val('(').val(arg).val(')');
             sink.val(" over (");
             sink.val("partition by ");
@@ -1320,36 +1554,35 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
     }
 
-    // Handles avg() over (rows between unbounded preceding and current row); there's no partition by.
-    static class AvgOverUnboundedRowsFrameFunction extends BaseDoubleWindowFunction {
+    // Handles max() over (rows between unbounded preceding and current row); there's no partition by.
+    public static class MaxMinOverUnboundedRowsFrameFunction extends BaseDoubleWindowFunction {
 
-        private double avg;
-        private long count = 0;
-        private double sum = 0.0;
+        private final String name;
+        private final DoubleComparator comparator;
+        private double maxMin = Double.NaN;
 
-        public AvgOverUnboundedRowsFrameFunction(Function arg) {
+        public MaxMinOverUnboundedRowsFrameFunction(Function arg, DoubleComparator comparator, String name) {
             super(arg);
+            this.comparator = comparator;
+            this.name = name;
         }
 
         @Override
         public void computeNext(Record record) {
             double d = arg.getDouble(record);
-            if (Numbers.isFinite(d)) {
-                sum += d;
-                count++;
+            if (Numbers.isFinite(d) && (Double.isNaN(maxMin) || comparator.compare(d, maxMin))) {
+                maxMin = d;
             }
-
-            avg = count != 0 ? sum / count : Double.NaN;
         }
 
         @Override
         public double getDouble(Record rec) {
-            return avg;
+            return maxMin;
         }
 
         @Override
         public String getName() {
-            return NAME;
+            return name;
         }
 
         @Override
@@ -1360,21 +1593,18 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), avg);
+            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
         @Override
         public void reset() {
             super.reset();
-            avg = Double.NaN;
-            count = 0;
-            sum = 0.0;
+            maxMin = Double.NaN;
         }
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(NAME);
+            sink.val(getName());
             sink.val('(').val(arg).val(')');
             sink.val(" over (rows between unbounded preceding and current row)");
         }
@@ -1382,26 +1612,26 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void toTop() {
             super.toTop();
-
-            avg = Double.NaN;
-            count = 0;
-            sum = 0.0;
+            maxMin = Double.NaN;
         }
     }
 
-    // avg() over () - empty clause, no partition by no order by, no frame == default frame
-    static class AvgOverWholeResultSetFunction extends BaseDoubleWindowFunction {
-        private double avg;
-        private long count;
-        private double sum;
+    // max() over () - empty clause, no partition by no order by, no frame == default frame
+    static class MaxMinOverWholeResultSetFunction extends BaseDoubleWindowFunction {
 
-        public AvgOverWholeResultSetFunction(Function arg) {
+        private final String name;
+        private final DoubleComparator comparator;
+        private double maxMin = Double.NaN;
+
+        public MaxMinOverWholeResultSetFunction(Function arg, DoubleComparator comparator, String name) {
             super(arg);
+            this.comparator = comparator;
+            this.name = name;
         }
 
         @Override
         public String getName() {
-            return NAME;
+            return name;
         }
 
         @Override
@@ -1412,57 +1642,62 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             double d = arg.getDouble(record);
-            if (Numbers.isFinite(d)) {
-                sum += d;
-                count++;
+            if (Numbers.isFinite(d) && (Double.isNaN(maxMin) || comparator.compare(d, maxMin))) {
+                maxMin = d;
             }
         }
 
         @Override
         public void pass2(Record record, long recordOffset, WindowSPI spi) {
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), avg);
-        }
-
-        @Override
-        public void preparePass2() {
-            avg = count > 0 ? sum / count : Double.NaN;
+            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
         @Override
         public void reset() {
             super.reset();
-            avg = Double.NaN;
-            count = 0;
-            sum = 0.0;
+            maxMin = Double.NaN;
         }
 
         @Override
         public void toTop() {
             super.toTop();
-
-            avg = Double.NaN;
-            count = 0;
-            sum = 0.0;
+            maxMin = Double.NaN;
         }
     }
 
     static {
-        AVG_COLUMN_TYPES = new ArrayColumnTypes();
-        AVG_COLUMN_TYPES.add(ColumnType.DOUBLE);
-        AVG_COLUMN_TYPES.add(ColumnType.LONG);
+        MAX_COLUMN_TYPES = new ArrayColumnTypes();
+        MAX_COLUMN_TYPES.add(ColumnType.DOUBLE); // max value
 
-        AVG_OVER_PARTITION_RANGE_COLUMN_TYPES = new ArrayColumnTypes();
-        AVG_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.DOUBLE);// current frame sum
-        AVG_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG);  // number of (non-null) values in current frame
-        AVG_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG);  // native array start offset, requires updating on resize
-        AVG_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG);   // native buffer size
-        AVG_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG);   // native buffer capacity
-        AVG_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG);   // index of first buffered element
+        MAX_OVER_PARTITION_RANGE_COLUMN_TYPES = new ArrayColumnTypes();
+        MAX_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // frame size
+        MAX_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // memory startOffset
+        MAX_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // memory size
+        MAX_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // memory capacity
+        MAX_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // memory firstIdx
+        MAX_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.DOUBLE); // max value case when unbounded preceding
 
-        AVG_OVER_PARTITION_ROWS_COLUMN_TYPES = new ArrayColumnTypes();
-        AVG_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.DOUBLE);// sum
-        AVG_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG);// current frame size
-        AVG_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG);// position of current oldest element
-        AVG_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG);// start offset of native array
+        MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES = new ArrayColumnTypes();
+        MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES.add(ColumnType.LONG); // frame size
+        MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES.add(ColumnType.LONG); // memory startOffset
+        MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES.add(ColumnType.LONG); // memory size
+        MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES.add(ColumnType.LONG); // memory capacity
+        MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES.add(ColumnType.LONG); // memory firstIdx
+        MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES.add(ColumnType.LONG); // deque memory startOffset
+        MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES.add(ColumnType.LONG); // deque memory capacity
+        MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES.add(ColumnType.LONG); // deque memory startIndex
+        MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES.add(ColumnType.LONG); // deque memory endIndex
+
+        MAX_OVER_PARTITION_ROWS_COLUMN_TYPES = new ArrayColumnTypes();
+        MAX_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG); // memory startIndex
+        MAX_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG); // memory startOffset
+        MAX_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.DOUBLE); // max value case when unbounded preceding
+
+        MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES = new ArrayColumnTypes();
+        MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES.add(ColumnType.LONG); // memory startIndex
+        MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES.add(ColumnType.LONG); // memory startOffset
+        MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES.add(ColumnType.LONG); // deque memory startOffset
+        MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES.add(ColumnType.LONG); // deque memory startIndex
+        MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES.add(ColumnType.LONG); // deque memory endIndex
     }
 }

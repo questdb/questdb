@@ -48,7 +48,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 
-public class CountConstWindowFunctionFactory extends AbsWindowFunctionFactory {
+public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFactory {
     public static final CountFunctionFactoryHelper.IsRecordNotNull isRecordNotNull = ((arg, record) -> true);
 
     @Override

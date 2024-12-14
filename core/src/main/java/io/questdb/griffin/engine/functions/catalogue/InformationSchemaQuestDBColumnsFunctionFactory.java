@@ -22,25 +22,41 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.window;
+package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.SqlException;
+import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class CountVarcharWindowFunctionFactory extends AbstractWindowFunctionFactory {
-    private static final CountFunctionFactoryHelper.IsRecordNotNull isRecordNotNull = ((arg, record) -> arg.getVarcharA(record) != null);
+import java.util.function.IntFunction;
+
+public class InformationSchemaQuestDBColumnsFunctionFactory implements FunctionFactory {
+    public static final String SIGNATURE = "information_schema.questdb_columns()";
+    public static IntFunction<String> TYPE_TO_NAME = ColumnType::nameOf;
 
     @Override
     public String getSignature() {
-        return "count(Ø)";
+        return SIGNATURE;
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return CountFunctionFactoryHelper.newCountWindowFunction(this, position, args, argPositions, configuration, sqlExecutionContext, isRecordNotNull);
+    public boolean isRuntimeConstant() {
+        return true;
+    }
+
+    @Override
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return new CursorFunction(new InformationSchemaColumnsFunctionFactory.ColumnsCursorFactory(TYPE_TO_NAME));
     }
 }

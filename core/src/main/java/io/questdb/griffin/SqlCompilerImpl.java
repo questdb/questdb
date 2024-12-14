@@ -2652,7 +2652,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                         .put(createTableOp.getLikeTableName()).put(']');
                             }
 
-                            //
                             try (TableMetadata likeTableMetadata = executionContext.getCairoEngine().getTableMetadata(likeTableToken)) {
                                 createTableOp.updateFromLikeTableMetadata(likeTableMetadata);
                                 tableToken = engine.createTable(
@@ -2694,13 +2693,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
                 }
             }
-            // todo: jit is always false, why?
             QueryProgress.logEnd(sqlId, createTableOp.getSqlText(), executionContext, beginNanos, false);
         } catch (Throwable e) {
             if (e instanceof CairoException) {
                 ((CairoException) e).position(createTableOp.getTableNamePosition());
             }
-            // todo: jit is always false, why?
             QueryProgress.logError(e, sqlId, createTableOp.getSqlText(), executionContext, beginNanos, false);
             throw e;
         } finally {
@@ -2761,6 +2758,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final long queryId = queryRegistry.register(sqlText, sqlExecutionContext);
         try {
             engine.dropTable(path, tableToken);
+        } catch (CairoException ex) {
+            if ((ex.isTableDropped() || ex.isTableDoesNotExist()) && op.ifExists()) {
+                // all good, table dropped already
+                return;
+            } else if (!op.ifExists() && ex.isTableDropped()) {
+                // Concurrently dropped, this should report table does not exist
+                throw CairoException.tableDoesNotExist(op.getTableName());
+            }
+            throw ex;
         } finally {
             queryRegistry.unregister(queryId, sqlExecutionContext);
         }
@@ -3659,23 +3665,32 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                         sink.clear();
                         sink.put('\'').put(tableName).put('\'');
-                        try (
-                                SqlExecutionContext allowAllContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE);
-                                RecordCursorFactory factory = engine.select(sink, allowAllContext);
-                                RecordCursor cursor = factory.getCursor(allowAllContext)
-                        ) {
-                            // statement/query timeout value is most likely too small for backup operation
-                            copyTableData(
-                                    cursor,
-                                    factory.getMetadata(),
-                                    backupWriter,
-                                    writerMetadata,
-                                    recordToRowCopier,
-                                    configuration.getCreateTableModelBatchSize(),
-                                    configuration.getO3MaxLag(),
-                                    SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER
-                            );
+
+                        try (SqlExecutionContext allowAllContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
+                            while (true) {
+                                try (
+                                        RecordCursorFactory factory = engine.select(sink, allowAllContext);
+                                        RecordCursor cursor = factory.getCursor(allowAllContext)
+                                ) {
+                                    // statement/query timeout value is most likely too small for backup operation
+                                    copyTableData(
+                                            cursor,
+                                            factory.getMetadata(),
+                                            backupWriter,
+                                            writerMetadata,
+                                            recordToRowCopier,
+                                            configuration.getCreateTableModelBatchSize(),
+                                            configuration.getO3MaxLag(),
+                                            SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER
+                                    );
+                                    break;
+                                } catch (TableReferenceOutOfDateException ex) {
+                                    // Sometimes table can be out of data when a DDL is committed concurrently, we need to retry
+                                    LOG.info().$("retrying backup due to concurrent metadata update [table=").utf8(tableName).$(", ex=").$(ex.getFlyweightMessage()).I$();
+                                }
+                            }
                         }
+
                         backupWriter.commit();
                     }
                 } // release reader lock
