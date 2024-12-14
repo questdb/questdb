@@ -45,7 +45,7 @@ public class PlainRecordChain extends RecordChain {
 
     public PlainRecordChain(@NotNull ColumnTypes columnTypes, @NotNull RecordSink recordSink, long pageSize, int maxPages) {
         super(columnTypes, recordSink, pageSize, maxPages);
-        this.recordsStartOffset = Vm.getARWInstance(pageSize, maxPages, MemoryTag.NATIVE_RECORD_CHAIN);
+        this.recordsStartOffset = Vm.getARWInstance(pageSize >> 3, maxPages, MemoryTag.NATIVE_RECORD_CHAIN);
     }
 
     public long put(Record record) {
