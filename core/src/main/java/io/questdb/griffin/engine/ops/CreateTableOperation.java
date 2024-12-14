@@ -30,13 +30,14 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlException;
+import org.jetbrains.annotations.Nullable;
 
 public interface CreateTableOperation extends TableStructure, Operation {
     long getBatchO3MaxLag();
 
     long getBatchSize();
 
-    CharSequence getLikeTableName();
+    @Nullable CharSequence getLikeTableName();
 
     int getLikeTableNamePosition();
 
@@ -54,7 +55,7 @@ public interface CreateTableOperation extends TableStructure, Operation {
 
     void updateFromLikeTableMetadata(TableMetadata likeTableMetadata);
 
-    void updateOperationFutureAffectedRowsCount(long affectedRowsCount);
+    void updateOperationFutureAffectedRowsCount(long insertCount);
 
     void updateOperationFutureTableToken(TableToken tableToken);
 

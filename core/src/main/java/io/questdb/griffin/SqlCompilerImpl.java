@@ -2004,31 +2004,36 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
             }
 
-            for (int i = 0, n = tableWriters.size(); i < n; i++) {
-                final TableWriterAPI writer = tableWriters.getQuick(i);
-                try {
-                    if (writer.getMetadata().isWalEnabled()) {
-                        writer.truncateSoft();
-                    } else {
-                        TableToken tableToken = writer.getTableToken();
-                        if (engine.lockReaders(tableToken)) {
-                            try {
-                                if (keepSymbolTables) {
-                                    writer.truncateSoft();
-                                } else {
-                                    writer.truncate();
-                                }
-                            } finally {
-                                engine.unlockReaders(tableToken);
-                            }
+            final long queryId = queryRegistry.register(sqlText, executionContext);
+            try {
+                for (int i = 0, n = tableWriters.size(); i < n; i++) {
+                    final TableWriterAPI writer = tableWriters.getQuick(i);
+                    try {
+                        if (writer.getMetadata().isWalEnabled()) {
+                            writer.truncateSoft();
                         } else {
-                            throw SqlException.$(0, "there is an active query against '").put(tableToken.getTableName()).put("'. Try again.");
+                            TableToken tableToken = writer.getTableToken();
+                            if (engine.lockReaders(tableToken)) {
+                                try {
+                                    if (keepSymbolTables) {
+                                        writer.truncateSoft();
+                                    } else {
+                                        writer.truncate();
+                                    }
+                                } finally {
+                                    engine.unlockReaders(tableToken);
+                                }
+                            } else {
+                                throw SqlException.$(0, "there is an active query against '").put(tableToken.getTableName()).put("'. Try again.");
+                            }
                         }
+                    } catch (CairoException | CairoError e) {
+                        LOG.error().$("could not truncate [table=").$(writer.getTableToken()).$(", e=").$((Sinkable) e).$(']').$();
+                        throw e;
                     }
-                } catch (CairoException | CairoError e) {
-                    LOG.error().$("could not truncate [table=").$(writer.getTableToken()).$(", e=").$((Sinkable) e).$(']').$();
-                    throw e;
                 }
+            } finally {
+                queryRegistry.unregister(queryId, executionContext);
             }
         } finally {
             for (int i = 0, n = tableWriters.size(); i < n; i++) {
@@ -2631,8 +2636,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             engine.dropTable(path, tableToken);
                             engine.unlockTableName(tableToken);
                             throw e;
-                        } finally {
-                            queryRegistry.unregister(sqlId, executionContext);
                         }
                     } finally {
                         executionContext.setUseSimpleCircuitBreaker(false);
@@ -2700,6 +2703,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // todo: jit is always false, why?
             QueryProgress.logError(e, sqlId, createTableOp.getSqlText(), executionContext, beginNanos, false);
             throw e;
+        } finally {
+            queryRegistry.unregister(sqlId, executionContext);
         }
     }
 
@@ -2751,7 +2756,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.tableDoesNotExist(op.getTableNamePosition(), op.getTableName());
         }
         sqlExecutionContext.getSecurityContext().authorizeTableDrop(tableToken);
-        engine.dropTable(path, tableToken);
+
+        final String sqlText = op.getSqlText();
+        final long queryId = queryRegistry.register(sqlText, sqlExecutionContext);
+        try {
+            engine.dropTable(path, tableToken);
+        } finally {
+            queryRegistry.unregister(queryId, sqlExecutionContext);
+        }
     }
 
     private void executeWithRetries(
