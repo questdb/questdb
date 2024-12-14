@@ -40,6 +40,7 @@ import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
@@ -84,7 +85,13 @@ public class CreateTableOperationBuilderImpl implements Mutable, Sinkable, Creat
     public CreateTableOperation build(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence sqlText) throws SqlException {
         tableNameExpr.token = Chars.toString(tableNameExpr.token);
         if (queryModel != null) {
-            setFactory(compiler.generateSelectWithRetries(queryModel, sqlExecutionContext, false));
+            final RecordCursorFactory factory = compiler.generateSelectWithRetries(queryModel, sqlExecutionContext, false);
+            try {
+                setFactory(factory);
+            } catch (Throwable th) {
+                Misc.free(factory);
+                throw th;
+            }
             return new CreateTableOperationImpl(
                     Chars.toString(sqlText),
                     Chars.toString(tableNameExpr.token),

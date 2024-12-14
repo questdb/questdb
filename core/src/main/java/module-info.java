@@ -210,6 +210,8 @@ open module io.questdb {
 //                   '<' operator
             io.questdb.griffin.engine.functions.lt.LtDoubleVVFunctionFactory,
             io.questdb.griffin.engine.functions.lt.LtTimestampFunctionFactory,
+            io.questdb.griffin.engine.functions.lt.LtTimestampCursorFunctionFactory,
+            io.questdb.griffin.engine.functions.lt.GtTimestampCursorFunctionFactory,
             io.questdb.griffin.engine.functions.lt.LtDateFunctionFactory,
             io.questdb.griffin.engine.functions.lt.LtIntFunctionFactory,
             io.questdb.griffin.engine.functions.lt.LtIPv4FunctionFactory,

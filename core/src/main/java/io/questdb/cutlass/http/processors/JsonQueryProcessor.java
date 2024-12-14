@@ -59,7 +59,6 @@ import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.QueryPausedException;
-import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.Chars;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.MemoryTag;
@@ -279,7 +278,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     @Override
     public void onRequestComplete(
             HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
         JsonQueryProcessorState state = LV.get(context);
         if (state == null) {
             LV.set(context, state = new JsonQueryProcessorState(
@@ -320,14 +319,14 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     @Override
-    public boolean processCookies(HttpConnectionContext context, SecurityContext securityContext) throws PeerIsSlowToReadException, PeerDisconnectedException {
+    public boolean processCookies(HttpConnectionContext context, SecurityContext securityContext) {
         return context.getCookieHandler().processCookies(context, securityContext);
     }
 
     @Override
     public void resumeSend(
             HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
         final JsonQueryProcessorState state = LV.get(context);
         if (state != null) {
             // we are resuming request execution, we need to copy random to execution context

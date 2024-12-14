@@ -70,7 +70,7 @@ public class CairoTable implements Sinkable {
         columnOrderMap.clear();
     }
 
-    public long getColumnCount() {
+    public int getColumnCount() {
         return this.columns.size();
     }
 

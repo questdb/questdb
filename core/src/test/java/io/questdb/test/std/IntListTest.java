@@ -33,42 +33,6 @@ import org.junit.Test;
 import java.util.Arrays;
 
 public class IntListTest {
-    @Test
-    public void testSortGroups() {
-        Rnd rnd = TestUtils.generateRandom(null);
-        int elements = rnd.nextInt(10000);
-        IntList list = new IntList(elements * 3);
-        int[][] arrays = new int[elements][];
-
-        for (int i = 0; i < elements; i++) {
-            int i1 = rnd.nextInt();
-            int i2 = rnd.nextInt();
-            int i3 = rnd.nextInt();
-
-            arrays[i] = new int[]{i1, i2, i3};
-            list.add(i1);
-            list.add(i2);
-            list.add(i3);
-        }
-
-        Arrays.sort(arrays, (int[] a, int[] b) -> {
-            for (int i = 0; i < 3; i++) {
-                int comparison = Integer.compare(a[i], b[i]);
-                if (comparison != 0) {
-                    return comparison;
-                }
-            }
-            return 0;
-        });
-
-        list.sortGroups(3);
-
-        for (int i = 0; i < elements; i++) {
-            Assert.assertEquals(arrays[i][0], list.get(i * 3));
-            Assert.assertEquals(arrays[i][1], list.get(i * 3 + 1));
-            Assert.assertEquals(arrays[i][2], list.get(i * 3 + 2));
-        }
-    }
 
     @Test
     public void testAddAll() {
@@ -188,6 +152,92 @@ public class IntListTest {
             list.remove(i);
         }
         Assert.assertEquals(0, list.size());
+    }
+
+    @Test
+    public void testSortGroups() {
+        Rnd rnd = TestUtils.generateRandom(null);
+        int n = 1 + rnd.nextInt(20);
+        sortGroupsRandom(n, rnd.nextInt(10000), rnd);
+    }
+
+    @Test
+    public void testSortGroupsEqualElements() {
+        Rnd rnd = TestUtils.generateRandom(null);
+        int n = 1 + rnd.nextInt(20);
+        checkSortGroupsEqualElements(n, rnd.nextInt(10000), rnd);
+    }
+
+    @Test
+    public void testSortGroupsNotSupported() {
+        IntList l = new IntList();
+
+        l.add(1);
+        try {
+            l.sortGroups(2);
+            Assert.fail();
+        } catch (IllegalStateException e) {
+            // expected
+        }
+        l.sortGroups(1);
+
+        try {
+            l.sortGroups(-1);
+            Assert.fail();
+        } catch (IllegalStateException e) {
+            // expected
+        }
+    }
+
+    private static void checkSortGroupsEqualElements(int n, int elements, Rnd rnd) {
+        IntList list = new IntList(elements * n);
+        int[][] arrays = new int[elements][];
+
+        for (int i = 0; i < elements; i++) {
+            arrays[i] = new int[n];
+            int equalValue = rnd.nextInt(5);
+            for (int j = 0; j < n; j++) {
+                arrays[i][j] = equalValue;
+                list.add(arrays[i][j]);
+            }
+        }
+
+        sortAndCompare(n, elements, arrays, list);
+    }
+
+    private static void sortAndCompare(int n, int elements, int[][] arrays, IntList list) {
+        Arrays.sort(arrays, (int[] a, int[] b) -> {
+            for (int i = 0; i < n; i++) {
+                int comparison = Integer.compare(a[i], b[i]);
+                if (comparison != 0) {
+                    return comparison;
+                }
+            }
+            return 0;
+        });
+
+        list.sortGroups(n);
+
+        for (int i = 0; i < elements; i++) {
+            for (int j = 0; j < n; j++) {
+                Assert.assertEquals(arrays[i][j], list.get(i * n + j));
+            }
+        }
+    }
+
+    private static void sortGroupsRandom(int n, int elements, Rnd rnd) {
+        IntList list = new IntList(elements * n);
+        int[][] arrays = new int[elements][];
+
+        for (int i = 0; i < elements; i++) {
+            arrays[i] = new int[n];
+            for (int j = 0; j < n; j++) {
+                arrays[i][j] = rnd.nextInt();
+                list.add(arrays[i][j]);
+            }
+        }
+
+        sortAndCompare(n, elements, arrays, list);
     }
 
     private void testBinarySearchFuzz0(int N, int skipRate) {

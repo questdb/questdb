@@ -26,6 +26,7 @@ package io.questdb.test;
 
 import io.questdb.Bootstrap;
 import io.questdb.DefaultBootstrapConfiguration;
+import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
@@ -118,7 +119,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
     public void testServerMainStartHttpDisabled() throws Exception {
         assertMemoryLeak(() -> {
             Map<String, String> env = new HashMap<>(System.getenv());
-            env.put("QDB_HTTP_ENABLED", "false");
+            env.put(PropertyKey.HTTP_ENABLED.getEnvVarName(), "false");
             Bootstrap bootstrap = new Bootstrap(
                     new DefaultBootstrapConfiguration() {
                         @Override
@@ -293,6 +294,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.parallel.groupby.presize.max.capacity\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_CAPACITY\t100000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.presize.max.heap.size\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_HEAP_SIZE\t1073741824\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.work.stealing.threshold\tQDB_CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD\t16\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.parquet.frame.cache.capacity\tQDB_CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY\t3\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.rename.table.model.pool.capacity\tQDB_CAIRO_SQL_RENAME_TABLE_MODEL_POOL_CAPACITY\t16\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.sampleby.page.size\tQDB_CAIRO_SQL_SAMPLEBY_PAGE_SIZE\t0\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.sampleby.default.alignment.calendar\tQDB_CAIRO_SQL_SAMPLEBY_DEFAULT_ALIGNMENT_CALENDAR\ttrue\tdefault\tfalse\tfalse\n" +
@@ -444,6 +446,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.worker.sleep.timeout\tQDB_HTTP_WORKER_SLEEP_TIMEOUT\t10\tdefault\tfalse\tfalse\n" +
                                     "http.worker.nap.threshold\tQDB_HTTP_WORKER_NAP_THRESHOLD\t7000\tdefault\tfalse\tfalse\n" +
                                     "http.worker.yield.threshold\tQDB_HTTP_WORKER_YIELD_THRESHOLD\t10\tdefault\tfalse\tfalse\n" +
+                                    "line.log.message.on.error\tQDB_LINE_LOG_MESSAGE_ON_ERROR\ttrue\tdefault\tfalse\tfalse\n" +
                                     "line.auto.create.new.columns\tQDB_LINE_AUTO_CREATE_NEW_COLUMNS\ttrue\tdefault\tfalse\tfalse\n" +
                                     "line.auto.create.new.tables\tQDB_LINE_AUTO_CREATE_NEW_TABLES\ttrue\tdefault\tfalse\tfalse\n" +
                                     "line.default.partition.by\tQDB_LINE_DEFAULT_PARTITION_BY\tDAY\tdefault\tfalse\tfalse\n" +
@@ -578,8 +581,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "log.level.verbose\tQDB_LOG_LEVEL_VERBOSE\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.encoder.parquet.statistics.enabled\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_STATISTICS_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.encoder.parquet.version\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_VERSION\t1\tdefault\tfalse\tfalse\n" +
-                                    "cairo.partition.encoder.parquet.row.group.size\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE\t0\tdefault\tfalse\tfalse\n" +
-                                    "cairo.partition.encoder.parquet.data.page.size\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE\t0\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.encoder.parquet.row.group.size\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE\t100000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.encoder.parquet.data.page.size\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE\t1048576\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.encoder.parquet.compression.codec\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_CODEC\t0\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.encoder.parquet.compression.level\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL\t0\tdefault\tfalse\tfalse\n" +
                                     "http.min.receive.buffer.size\tQDB_HTTP_MIN_RECEIVE_BUFFER_SIZE\t1024\tdefault\tfalse\tfalse\n" +

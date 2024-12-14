@@ -3461,7 +3461,7 @@ public class IODispatcherTest extends AbstractTest {
             testHttpClient.assertGet(
                     "{\"query\":\"x where d = 7960464771512399314\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"},{\"name\":\"n\",\"type\":\"VARCHAR\"}],\"timestamp\":-1,\"dataset\":[[-99,-18571,-1619342575,7960464771512399314,\"221271209-10-06T04:42:32.542Z\",\"-242523-07-08T23:46:04.551753Z\",0.025056839,0.8515587750165008,\"LWDUW\",\"WJT\",false,[],\"9290f4e5-c9f9-e1db-e96e-2b9ec3beda7f\",\"hJ3hN\"]],\"count\":1,\"explain\":{\"jitCompiled\":true}}",
                     "x where d = 7960464771512399314",
-                    new CharSequenceObjHashMap<String>() {{
+                    new CharSequenceObjHashMap<>() {{
                         put("explain", "true");
                     }}
             );
@@ -7408,37 +7408,35 @@ public class IODispatcherTest extends AbstractTest {
                 .withMicrosecondClock(new TestMicroClock(0, 0))
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .run((engine, sqlExecutionContext) -> {
-                    sendAndReceive(
-                            NetworkFacadeImpl.INSTANCE,
-                            "GET /exp?query=" + urlEncodeQuery("SELECT '{\"filed1\":1, \"filed2\":1, \"filed3\":\"admin\", \"filed4\":1}' as foo") + " HTTP/1.1\r\n" +
-                                    "Host: localhost:9000\r\n" +
-                                    "Connection: keep-alive\r\n" +
-                                    "Cache-Control: max-age=0\r\n" +
-                                    "Upgrade-Insecure-Requests: 1\r\n" +
-                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                                    "Accept: */*\r\n" +
-                                    "Accept-Encoding: gzip, deflate, br\r\n" +
-                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                                    "\r\n",
-                            "HTTP/1.1 200 OK\r\n" +
-                                    "Server: questDB/1.0\r\n" +
-                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                    "Transfer-Encoding: chunked\r\n" +
-                                    "Content-Type: text/csv; charset=utf-8\r\n" +
-                                    "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
-                                    "Keep-Alive: timeout=5, max=10000\r\n" +
-                                    "\r\n" +
-                                    "4b\r\n" +
-                                    "\"foo\"\r\n" +
-                                    "\"{\"\"filed1\"\":1, \"\"filed2\"\":1, \"\"filed3\"\":\"\"admin\"\", \"\"filed4\"\":1}\"\r\n" +
-                                    "\r\n" +
-                                    "00\r\n",
-                            1,
-                            0,
-                            false
-                    );
-                });
+                .run((engine, sqlExecutionContext) -> sendAndReceive(
+                        NetworkFacadeImpl.INSTANCE,
+                        "GET /exp?query=" + urlEncodeQuery("SELECT '{\"filed1\":1, \"filed2\":1, \"filed3\":\"admin\", \"filed4\":1}' as foo") + " HTTP/1.1\r\n" +
+                                "Host: localhost:9000\r\n" +
+                                "Connection: keep-alive\r\n" +
+                                "Cache-Control: max-age=0\r\n" +
+                                "Upgrade-Insecure-Requests: 1\r\n" +
+                                "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                                "Accept: */*\r\n" +
+                                "Accept-Encoding: gzip, deflate, br\r\n" +
+                                "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                "\r\n",
+                        "HTTP/1.1 200 OK\r\n" +
+                                "Server: questDB/1.0\r\n" +
+                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                "Transfer-Encoding: chunked\r\n" +
+                                "Content-Type: text/csv; charset=utf-8\r\n" +
+                                "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                                "Keep-Alive: timeout=5, max=10000\r\n" +
+                                "\r\n" +
+                                "4b\r\n" +
+                                "\"foo\"\r\n" +
+                                "\"{\"\"filed1\"\":1, \"\"filed2\"\":1, \"\"filed3\"\":\"\"admin\"\", \"\"filed4\"\":1}\"\r\n" +
+                                "\r\n" +
+                                "00\r\n",
+                        1,
+                        0,
+                        false
+                ));
     }
 
     @Test
@@ -7449,37 +7447,35 @@ public class IODispatcherTest extends AbstractTest {
                 .withMicrosecondClock(new TestMicroClock(0, 0))
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .run((engine, sqlExecutionContext) -> {
-                    sendAndReceive(
-                            NetworkFacadeImpl.INSTANCE,
-                            "GET /exp?query=" + urlEncodeQuery("SELECT 5 as '\"foo\"'") + " HTTP/1.1\r\n" +
-                                    "Host: localhost:9000\r\n" +
-                                    "Connection: keep-alive\r\n" +
-                                    "Cache-Control: max-age=0\r\n" +
-                                    "Upgrade-Insecure-Requests: 1\r\n" +
-                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                                    "Accept: */*\r\n" +
-                                    "Accept-Encoding: gzip, deflate, br\r\n" +
-                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                                    "\r\n",
-                            "HTTP/1.1 200 OK\r\n" +
-                                    "Server: questDB/1.0\r\n" +
-                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                    "Transfer-Encoding: chunked\r\n" +
-                                    "Content-Type: text/csv; charset=utf-8\r\n" +
-                                    "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
-                                    "Keep-Alive: timeout=5, max=10000\r\n" +
-                                    "\r\n" +
-                                    "0e\r\n" +
-                                    "\"\"\"foo\"\"\"\r\n" +
-                                    "5\r\n" +
-                                    "\r\n" +
-                                    "00\r\n",
-                            1,
-                            0,
-                            false
-                    );
-                });
+                .run((engine, sqlExecutionContext) -> sendAndReceive(
+                        NetworkFacadeImpl.INSTANCE,
+                        "GET /exp?query=" + urlEncodeQuery("SELECT 5 as '\"foo\"'") + " HTTP/1.1\r\n" +
+                                "Host: localhost:9000\r\n" +
+                                "Connection: keep-alive\r\n" +
+                                "Cache-Control: max-age=0\r\n" +
+                                "Upgrade-Insecure-Requests: 1\r\n" +
+                                "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                                "Accept: */*\r\n" +
+                                "Accept-Encoding: gzip, deflate, br\r\n" +
+                                "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                "\r\n",
+                        "HTTP/1.1 200 OK\r\n" +
+                                "Server: questDB/1.0\r\n" +
+                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                "Transfer-Encoding: chunked\r\n" +
+                                "Content-Type: text/csv; charset=utf-8\r\n" +
+                                "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                                "Keep-Alive: timeout=5, max=10000\r\n" +
+                                "\r\n" +
+                                "0e\r\n" +
+                                "\"\"\"foo\"\"\"\r\n" +
+                                "5\r\n" +
+                                "\r\n" +
+                                "00\r\n",
+                        1,
+                        0,
+                        false
+                ));
     }
 
     @Test
@@ -7490,38 +7486,36 @@ public class IODispatcherTest extends AbstractTest {
                 .withMicrosecondClock(new TestMicroClock(0, 0))
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .run((engine, sqlExecutionContext) -> {
-                    sendAndReceive(
-                            NetworkFacadeImpl.INSTANCE,
-                            "GET /exp?query=" + urlEncodeQuery("select 'foo\\foo\uD83D\uDC27' as foo") + " HTTP/1.1\r\n" +
-                                    "Host: localhost:9000\r\n" +
-                                    "Connection: keep-alive\r\n" +
-                                    "Cache-Control: max-age=0\r\n" +
-                                    "Upgrade-Insecure-Requests: 1\r\n" +
-                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                                    "Accept: */*\r\n" +
-                                    "Accept-Encoding: gzip, deflate, br\r\n" +
-                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                                    "\r\n",
-                            "HTTP/1.1 200 OK\r\n" +
-                                    "Server: questDB/1.0\r\n" +
-                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                    "Transfer-Encoding: chunked\r\n" +
-                                    "Content-Type: text/csv; charset=utf-8\r\n" +
-                                    "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
-                                    "Keep-Alive: timeout=5, max=10000\r\n" +
-                                    "\r\n" +
-                                    "17\r\n" +
-                                    "\"foo\"\r\n" +
-                                    "\"foo\\\\foo\uD83D\uDC27\"\r\n" +
-                                    "\r\n" +
-                                    "00\r\n" +
-                                    "\r\n",
-                            1,
-                            0,
-                            false
-                    );
-                });
+                .run((engine, sqlExecutionContext) -> sendAndReceive(
+                        NetworkFacadeImpl.INSTANCE,
+                        "GET /exp?query=" + urlEncodeQuery("select 'foo\\foo\uD83D\uDC27' as foo") + " HTTP/1.1\r\n" +
+                                "Host: localhost:9000\r\n" +
+                                "Connection: keep-alive\r\n" +
+                                "Cache-Control: max-age=0\r\n" +
+                                "Upgrade-Insecure-Requests: 1\r\n" +
+                                "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                                "Accept: */*\r\n" +
+                                "Accept-Encoding: gzip, deflate, br\r\n" +
+                                "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                "\r\n",
+                        "HTTP/1.1 200 OK\r\n" +
+                                "Server: questDB/1.0\r\n" +
+                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                "Transfer-Encoding: chunked\r\n" +
+                                "Content-Type: text/csv; charset=utf-8\r\n" +
+                                "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                                "Keep-Alive: timeout=5, max=10000\r\n" +
+                                "\r\n" +
+                                "17\r\n" +
+                                "\"foo\"\r\n" +
+                                "\"foo\\\\foo\uD83D\uDC27\"\r\n" +
+                                "\r\n" +
+                                "00\r\n" +
+                                "\r\n",
+                        1,
+                        0,
+                        false
+                ));
     }
 
     @Test
@@ -9338,7 +9332,7 @@ public class IODispatcherTest extends AbstractTest {
                                                 ".*dataset.*",
                                                 "select query_id from query_activity() where query = '" + command.replace("'", "''") + "'",
                                                 null, null, null,
-                                                new CharSequenceObjHashMap<String>() {{
+                                                new CharSequenceObjHashMap<>() {{
                                                     put("nm", "true");
                                                 }},
                                                 "200"

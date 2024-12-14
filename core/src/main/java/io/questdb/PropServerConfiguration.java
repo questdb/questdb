@@ -281,18 +281,18 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long o3MaxLagUs;
     private final long o3MinLagUs;
     private final int o3OpenColumnQueueCapacity;
+    private final boolean o3PartitionOverwriteControlEnabled;
     private final int o3PartitionPurgeListCapacity;
     private final int o3PartitionQueueCapacity;
     private final long o3PartitionSplitMinSize;
     private final int o3PurgeDiscoveryQueueCapacity;
     private final boolean o3QuickSortEnabled;
-    private final boolean o3partitionOverwriteControlEnabled;
     private final int parallelIndexThreshold;
     private final boolean parallelIndexingEnabled;
-    private final int partitionEncoderParqeutRowGroupSize;
     private final int partitionEncoderParquetCompressionCodec;
     private final int partitionEncoderParquetCompressionLevel;
     private final int partitionEncoderParquetDataPageSize;
+    private final int partitionEncoderParquetRowGroupSize;
     private final boolean partitionEncoderParquetStatisticsEnabled;
     private final int partitionEncoderParquetVersion;
     private final boolean pgEnabled;
@@ -379,6 +379,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlParallelFilterPreTouchEnabled;
     private final boolean sqlParallelGroupByEnabled;
     private final int sqlParallelWorkStealingThreshold;
+    private final int sqlParquetFrameCacheCapacity;
     private final int sqlQueryRegistryPoolSize;
     private final int sqlRenameTableModelPoolCapacity;
     private final boolean sqlSampleByDefaultAlignment;
@@ -498,6 +499,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int jsonQueryConnectionCheckFrequency;
     private int jsonQueryDoubleScale;
     private int jsonQueryFloatScale;
+    private boolean lineLogMessageOnError;
     private long lineTcpCommitIntervalDefault;
     private double lineTcpCommitIntervalFraction;
     private int lineTcpConnectionPoolInitialCapacity;
@@ -1311,7 +1313,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.cairoMaxCrashFiles = getInt(properties, env, PropertyKey.CAIRO_MAX_CRASH_FILES, 100);
             this.o3LastPartitionMaxSplits = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 20));
             this.o3PartitionSplitMinSize = getLongSize(properties, env, PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 50 * Numbers.SIZE_1MB);
-            this.o3partitionOverwriteControlEnabled = getBoolean(properties, env, PropertyKey.CAIRO_O3_PARTITION_OVERWRITE_CONTROL_ENABLED, false);
+            this.o3PartitionOverwriteControlEnabled = getBoolean(properties, env, PropertyKey.CAIRO_O3_PARTITION_OVERWRITE_CONTROL_ENABLED, false);
 
             parseBindTo(properties, env, PropertyKey.LINE_UDP_BIND_TO, "0.0.0.0:9009", (a, p) -> {
                 this.lineUdpBindIPV4Address = a;
@@ -1391,6 +1393,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     this.lineTcpCommitIntervalDefault = COMMIT_INTERVAL_DEFAULT;
                 }
                 this.lineTcpAuthDB = getString(properties, env, PropertyKey.LINE_TCP_AUTH_DB_PATH, null);
+                this.lineLogMessageOnError = getBoolean(properties, env, PropertyKey.LINE_LOG_MESSAGE_ON_ERROR, true);
                 // deprecated
                 String defaultTcpPartitionByProperty = getString(properties, env, PropertyKey.LINE_TCP_DEFAULT_PARTITION_BY, "DAY");
                 defaultTcpPartitionByProperty = getString(properties, env, PropertyKey.LINE_DEFAULT_PARTITION_BY, defaultTcpPartitionByProperty);
@@ -1473,6 +1476,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlParallelFilterEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelGroupByEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelWorkStealingThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 16);
+            // TODO(puzpuzpuz): consider increasing default Parquet cache capacity
+            this.sqlParquetFrameCacheCapacity = Math.max(getInt(properties, env, PropertyKey.CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY, 3), 3);
             this.sqlOrderBySortEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, true);
             this.sqlOrderByRadixSortThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_ORDER_BY_RADIX_SORT_THRESHOLD, 600);
             this.metricsEnabled = getBoolean(properties, env, PropertyKey.METRICS_ENABLED, false);
@@ -1496,8 +1501,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.partitionEncoderParquetStatisticsEnabled = getBoolean(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_STATISTICS_ENABLED, true);
         this.partitionEncoderParquetCompressionCodec = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_CODEC, ParquetCompression.COMPRESSION_UNCOMPRESSED);
         this.partitionEncoderParquetCompressionLevel = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL, 0);
-        this.partitionEncoderParqeutRowGroupSize = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 0);
-        this.partitionEncoderParquetDataPageSize = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE, 0);
+        this.partitionEncoderParquetRowGroupSize = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100_000);
+        this.partitionEncoderParquetDataPageSize = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE, Numbers.SIZE_1MB);
     }
 
     public static String rootSubdir(CharSequence dbRoot, CharSequence subdir) {
@@ -1853,6 +1858,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
         }
 
+        // Sometimes there can be spaces coming from environment variables, cut them off
+        result = (result != null) ? result.trim() : null;
         if (!key.isDebug()) {
             allPairs.put(key, new ConfigPropertyValueImpl(result, valueSource, false));
         }
@@ -2683,17 +2690,12 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public int getPartitionEncoderParquetRowGroupSize() {
-            return partitionEncoderParqeutRowGroupSize;
+            return partitionEncoderParquetRowGroupSize;
         }
 
         @Override
         public int getPartitionEncoderParquetVersion() {
             return partitionEncoderParquetVersion;
-        }
-
-        @Override
-        public boolean getPartitionO3OverwriteControlEnabled() {
-            return o3partitionOverwriteControlEnabled;
         }
 
         @Override
@@ -2959,6 +2961,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlParallelWorkStealingThreshold() {
             return sqlParallelWorkStealingThreshold;
+        }
+
+        @Override
+        public int getSqlParquetFrameCacheCapacity() {
+            return sqlParquetFrameCacheCapacity;
         }
 
         @Override
@@ -3283,6 +3290,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isPartitionEncoderParquetStatisticsEnabled() {
             return partitionEncoderParquetStatisticsEnabled;
+        }
+
+        @Override
+        public boolean isPartitionO3OverwriteControlEnabled() {
+            return o3PartitionOverwriteControlEnabled;
         }
 
         @Override
@@ -3776,6 +3788,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropLineHttpProcessorConfiguration implements LineHttpProcessorConfiguration {
+
         @Override
         public boolean autoCreateNewColumns() {
             return ilpAutoCreateNewColumns;
@@ -3835,9 +3848,15 @@ public class PropServerConfiguration implements ServerConfiguration {
         public boolean isUseLegacyStringDefault() {
             return useLegacyStringDefault;
         }
+
+        @Override
+        public boolean logMessageOnError() {
+            return lineLogMessageOnError;
+        }
     }
 
     private class PropLineTcpIOWorkerPoolConfiguration implements WorkerPoolConfiguration {
+
         @Override
         public long getNapThreshold() {
             return lineTcpIOWorkerNapThreshold;
@@ -3875,6 +3894,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropLineTcpReceiverConfiguration implements LineTcpReceiverConfiguration {
+
         @Override
         public String getAuthDB() {
             return lineTcpAuthDB;
@@ -4026,6 +4046,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isUseLegacyStringDefault() {
             return useLegacyStringDefault;
+        }
+
+        @Override
+        public boolean logMessageOnError() {
+            return lineLogMessageOnError;
         }
     }
 

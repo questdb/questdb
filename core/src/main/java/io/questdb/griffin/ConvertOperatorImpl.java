@@ -25,12 +25,24 @@
 package io.questdb.griffin;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnTaskJob;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeConverter;
+import io.questdb.cairo.ColumnVersionWriter;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SymbolMapReaderImpl;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.mp.*;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SOUnboundedCountDownLatch;
+import io.questdb.mp.Sequence;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
@@ -40,11 +52,11 @@ import io.questdb.tasks.ColumnTask;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
-import java.io.IOException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.ColumnType.isVarSize;
-import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.cairo.TableUtils.dFile;
+import static io.questdb.cairo.TableUtils.iFile;
 
 public class ConvertOperatorImpl implements Closeable {
     private static final Log LOG = LogFactory.getLog(ConvertOperatorImpl.class);
@@ -94,7 +106,7 @@ public class ConvertOperatorImpl implements Closeable {
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
     }
 
     public void convertColumn(@NotNull CharSequence columnName, int existingColIndex, int existingType, int columnIndex, int newType) {
@@ -182,7 +194,7 @@ public class ConvertOperatorImpl implements Closeable {
 
                             if (rowCount > 0) {
                                 path.trimTo(rootLen);
-                                TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), partitionTimestamp, partitionNameTxn);
+                                TableUtils.setPathForNativePartition(path, tableWriter.getPartitionBy(), partitionTimestamp, partitionNameTxn);
                                 int pathTrimToLen = path.size();
 
                                 long srcFixFd = -1, srcVarFd = -1, dstFixFd = -1, dstVarFd = -1;

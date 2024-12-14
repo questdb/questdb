@@ -333,8 +333,6 @@ public interface CairoConfiguration {
 
     int getPartitionEncoderParquetVersion();
 
-    boolean getPartitionO3OverwriteControlEnabled();
-
     long getPartitionO3SplitMinSize();
 
     int getPartitionPurgeListCapacity();
@@ -473,6 +471,8 @@ public interface CairoConfiguration {
     int getSqlPageFrameMinRows();
 
     int getSqlParallelWorkStealingThreshold();
+
+    int getSqlParquetFrameCacheCapacity();
 
     int getSqlSmallMapKeyCapacity();
 
@@ -626,6 +626,8 @@ public interface CairoConfiguration {
     boolean isParallelIndexingEnabled();
 
     boolean isPartitionEncoderParquetStatisticsEnabled();
+
+    boolean isPartitionO3OverwriteControlEnabled();
 
     boolean isReadOnlyInstance();
 

@@ -970,8 +970,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     case PartitionAction.DETACH:
                         alterOperationBuilder = this.alterOperationBuilder.ofDetachPartition(pos, tableToken, tableMetadata.getTableId());
                         break;
-                    case PartitionAction.CONVERT:
-                        alterOperationBuilder = this.alterOperationBuilder.ofConvertPartition(pos, tableToken, tableMetadata.getTableId());
+                    case PartitionAction.CONVERT_TO_PARQUET:
+                    case PartitionAction.CONVERT_TO_NATIVE:
+                        final boolean toParquet = action == PartitionAction.CONVERT_TO_PARQUET;
+                        alterOperationBuilder = this.alterOperationBuilder.ofConvertPartition(pos, tableToken, tableMetadata.getTableId(), toParquet);
                         break;
                     default:
                         throw SqlException.$(pos, "WHERE clause can only be used with command DROP PARTITION, DETACH PARTITION or CONVERT PARTITION");
@@ -1025,8 +1027,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     ) throws SqlException {
         final AlterOperationBuilder alterOperationBuilder;
         switch (action) {
-            case PartitionAction.CONVERT:
-                alterOperationBuilder = this.alterOperationBuilder.ofConvertPartition(pos, tableToken, tableMetadata.getTableId());
+            case PartitionAction.CONVERT_TO_PARQUET:
+            case PartitionAction.CONVERT_TO_NATIVE:
+                final boolean toParquet = action == PartitionAction.CONVERT_TO_PARQUET;
+                alterOperationBuilder = this.alterOperationBuilder.ofConvertPartition(pos, tableToken, tableMetadata.getTableId(), toParquet);
                 break;
             case PartitionAction.DROP:
                 alterOperationBuilder = this.alterOperationBuilder.ofDropPartition(pos, tableToken, tableMetadata.getTableId());
@@ -1279,11 +1283,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (!SqlKeywords.isToKeyword(tok)) {
                     throw SqlException.$(lexer.lastTokenPosition(), "'to' expected");
                 }
-                tok = expectToken(lexer, "'parquet'");
-                if (!SqlKeywords.isParquetKeyword(tok)) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'parquet' expected");
+                tok = expectToken(lexer, "'parquet' or 'native'");
+                final int action;
+                if (SqlKeywords.isParquetKeyword(tok)) {
+                    action = PartitionAction.CONVERT_TO_PARQUET;
+                } else if (SqlKeywords.isNativeKeyword(tok)) {
+                    action = PartitionAction.CONVERT_TO_NATIVE;
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'parquet' or 'native' expected");
                 }
-                alterTableDropConvertDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.CONVERT, executionContext);
+                alterTableDropConvertDetachOrAttachPartition(tableMetadata, tableToken, action, executionContext);
             } else if (SqlKeywords.isDropKeyword(tok)) {
                 tok = expectToken(lexer, "'column' or 'partition'");
                 if (SqlKeywords.isColumnKeyword(tok)) {
@@ -2132,7 +2141,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             ) {
                 queryRegistry.unregister(sqlId, executionContext);
             }
-        } catch (Throwable e) {
+        } catch (Throwable th) {
             if (executionModel != null) {
                 freeTableNameFunctions(executionModel.getQueryModel());
             }
@@ -2140,14 +2149,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             queryRegistry.unregister(sqlId, executionContext);
 
             QueryProgress.logError(
-                    e,
+                    th,
                     sqlId,
                     sqlText,
                     executionContext,
                     beginNanos,
                     false
             );
-            throw e;
+            throw th;
         }
     }
 
@@ -3467,10 +3476,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     public final static class PartitionAction {
         public static final int ATTACH = 2;
-        public static final int CONVERT = 4;
+        public static final int CONVERT_TO_NATIVE = 5;
+        public static final int CONVERT_TO_PARQUET = 4;
         public static final int DETACH = 3;
         public static final int DROP = 1;
-        public static final int FORCE_DROP = 5;
+        public static final int FORCE_DROP = 6;
     }
 
     private static class TimestampValueRecord implements Record {

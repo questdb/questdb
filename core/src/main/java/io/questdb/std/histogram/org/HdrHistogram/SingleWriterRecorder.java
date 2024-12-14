@@ -64,7 +64,7 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 
 public class SingleWriterRecorder implements ValueRecorder {
-    private static AtomicLong instanceIdSequencer = new AtomicLong(1);
+    private static final AtomicLong instanceIdSequencer = new AtomicLong(1);
     private final long instanceId = instanceIdSequencer.getAndIncrement();
 
     private final WriterReaderPhaser recordingPhaser = new WriterReaderPhaser();
