@@ -5189,7 +5189,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         model.setWhereClause(withinExtracted);
 
+        // Either this: `ORDER BY timestamp DESC`
+        // Or this: `ORDER BY timestamp DESC, side DESC LIMIT 3`
+        // In the latter case, we would like to generate a partially sorted cursor in `generateOrderBy`
+        // So we need to return a bwd scan here first.
         boolean orderDescendingByDesignatedTimestampOnly = isOrderDescendingByDesignatedTimestampOnly(model);
+
+        boolean shouldGenerateBackwardsScan = orderDescendingByDesignatedTimestampOnly
+                || isOrderByStartingWithDescDesignatedTimestampAndLimited(model);
+
         if (withinExtracted != null) {
             CharSequence preferredKeyColumn = null;
             if (latestByColumnCount == 1) {
@@ -5869,8 +5877,22 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private boolean isOrderByDesignatedTimestampOnly(QueryModel model) {
-        return model.getOrderByAdvice().size() == 1 && model.getTimestamp() != null &&
-                Chars.equalsIgnoreCase(model.getOrderByAdvice().getQuick(0).token, model.getTimestamp().token);
+        return model.getOrderByAdvice().size() == 1
+                && model.getTimestamp() != null
+                && Chars.equalsIgnoreCase(
+                model.getOrderByAdvice().getQuick(0).token,
+                model.getTimestamp().token
+        );
+    }
+
+    private boolean isOrderByStartingWithDescDesignatedTimestampAndLimited(QueryModel model) {
+        return model.getOrderByAdvice().size() > 1
+                && model.getTimestamp() != null
+                && Chars.equalsIgnoreCase(
+                model.getOrderByAdvice().getQuick(0).token,
+                model.getTimestamp().token
+        )
+                && model.getLimitLo() != null && !Chars.equals(model.getLimitLo().token, '-');
     }
 
     private boolean isOrderDescendingByDesignatedTimestampOnly(QueryModel model) {
