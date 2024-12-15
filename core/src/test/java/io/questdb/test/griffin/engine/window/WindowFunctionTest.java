@@ -4183,6 +4183,50 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowFunctionIgnoreNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)");
+
+            for (int i = 0, size = FRAME_FUNCTIONS.size(); i < size; i++) {
+                String func = FRAME_FUNCTIONS.get(i);
+                for (String column : FRAME_FUNCTIONS_PARAMETER_COLUMN_NAME[i]) {
+                    String query = "select #FUNCT_NAME(#COLUMN) IGNORE NULLS over () from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column);
+                    if (func.trim().equals("first_value")) {
+                        assertQueryAndPlan(query,
+                                "Window\n" +
+                                        "  functions: [first_not_null_value(#COLUMN) over ()]\n".replace("#COLUMN", column) +
+                                        "    PageFrame\n" +
+                                        "        Row forward scan\n" +
+                                        "        Frame forward scan on: tab\n",
+                                "first_not_null_value\n",
+                                null,
+                                false,
+                                false);
+                    } else if (func.trim().equals("last_value")) {
+                        assertQueryAndPlan(query,
+                                "CachedWindow\n" +
+                                        "  unorderedFunctions: [last_not_null_value(#COLUMN) over ()]\n".replace("#COLUMN", column) +
+                                        "    PageFrame\n" +
+                                        "        Row forward scan\n" +
+                                        "        Frame forward scan on: tab\n",
+                                "last_not_null_value\n",
+                                null,
+                                true,
+                                false);
+                    } else {
+                        assertExceptionNoLeakCheck(
+                                query,
+                                31,
+                                "only first_value and last_value window functions support IGNORE NULLS"
+                        );
+                    }
+
+                }
+            }
+        });
+    }
+
+    @Test
     public void testWindowFunctionContextCleanup() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table trades as " +
