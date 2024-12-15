@@ -2222,7 +2222,27 @@ public class SqlParser {
                 QueryColumn col;
                 final int colPosition = lexer.lastTokenPosition();
 
-                if (tok != null && isOverKeyword(tok)) {
+                // support [first_value | last_value] (expr) [ignore nulls] over(...) window function
+                boolean isIgnoreNullsWindowFunc = false;
+                if (tok != null && isIgnoreWord(tok)) {
+                    CharSequence next = optTok(lexer);
+                    if (next != null && isNullsWord(next)) {
+                        expectTok(lexer, "over");
+                        if (Chars.equalsIgnoreCase(expr.token, "first_value")) {
+                            isIgnoreNullsWindowFunc = true;
+                            expr.token = "first_not_null_value";
+                        } else if (Chars.equalsIgnoreCase(expr.token, "last_value")) {
+                            isIgnoreNullsWindowFunc = true;
+                            expr.token = "last_not_null_value";
+                        } else {
+                            throw SqlException.$(colPosition, "only first_value and last_value window functions support IGNORE NULLS");
+                        }
+                    } else {
+                        lexer.backTo(colPosition, tok);
+                    }
+                }
+
+                if ((tok != null && isOverKeyword(tok)) || isIgnoreNullsWindowFunc) {
                     // window function
                     expectTok(lexer, '(');
                     overClauseMode = true;//prevent lexer returning ')' ending over clause as null in a sub-query
