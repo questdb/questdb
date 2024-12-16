@@ -935,7 +935,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         int existingColIndex = metadata.getColumnIndexQuiet(name);
         if (existingColIndex < 0) {
-            throw CairoException.nonCritical().put("cannot change column type, column does not exists [table=")
+            throw CairoException.nonCritical().put("cannot change column type, column does not exist [table=")
                     .put(tableToken.getTableName()).put(", column=").put(name).put(']');
         }
         String columnName = metadata.getColumnName(existingColIndex);
