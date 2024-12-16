@@ -1441,8 +1441,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } else if (SqlKeywords.isTtlKeyword(tok)) {
                     // TODO: validate that the table is partitioned
                     int ttlHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
-                    compiledQuery.ofAlter(alterOperationBuilder.ofSetTtlHoursOrMonths(
-                            tableNamePosition, tableToken, tableMetadata.getTableId(), ttlHoursOrMonths).build());
+                    compiledQuery.ofAlter(
+                            alterOperationBuilder.ofSetTtlHoursOrMonths(tableNamePosition, tableToken, tableMetadata.getTableId(), ttlHoursOrMonths)
+                                    .build()
+                    );
                 } else if (SqlKeywords.isTypeKeyword(tok)) {
                     tok = expectToken(lexer, "'bypass' or 'wal'");
                     if (SqlKeywords.isBypassKeyword(tok)) {
