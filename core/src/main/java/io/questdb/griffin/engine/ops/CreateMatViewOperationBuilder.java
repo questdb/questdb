@@ -30,6 +30,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.ExecutionModel;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.str.CharSink;
@@ -73,6 +74,16 @@ public class CreateMatViewOperationBuilder implements Mutable, ExecutionModel, S
     @Override
     public int getModelType() {
         return CREATE_MAT_VIEW;
+    }
+
+    @Override
+    public QueryModel getQueryModel() {
+        return createTableOperationBuilder.getQueryModel();
+    }
+
+    @Override
+    public CharSequence getTableName() {
+        return createTableOperationBuilder.getTableName();
     }
 
     public void setBaseTableName(String baseTableName) {

@@ -146,7 +146,11 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.StationaryMicrosClock;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Ignore;
+import org.junit.Test;
 
 import java.util.Arrays;
 
@@ -1344,7 +1348,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab (ts timestamp, k symbol, v long) timestamp(ts) partition by day wal",
                 "create materialized view test as (select ts, k, avg(v) from tab sample by 30s) partition by day",
-                "Create materialized table: test\n" +
+                "Create materialized view: test\n" +
                         "    Radix sort light\n" +
                         "      keys: [ts]\n" +
                         "        Async Group By workers: 1\n" +

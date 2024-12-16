@@ -182,6 +182,7 @@ public class CreateTableOperationBuilderImpl implements Mutable, Sinkable, Creat
         return partitionByExpr == null ? PartitionBy.NONE : PartitionBy.fromString(partitionByExpr.token);
     }
 
+    @Override
     public QueryModel getQueryModel() {
         return queryModel;
     }
