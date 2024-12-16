@@ -584,6 +584,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         int ttlHoursOrMonths = (int) extraInfo.get(0);
         try {
             svc.setMetaTtlHoursOrMonths(ttlHoursOrMonths);
+            // TODO: enforce the TTL right away
         } catch (CairoException e) {
             e.position(tableNamePosition);
             throw e;
