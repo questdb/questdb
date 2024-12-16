@@ -121,9 +121,9 @@ public class ViewsFunctionFactory implements FunctionFactory {
             public boolean hasNext() throws DataUnavailableException {
                 int n = viewTokens.size();
                 while (viewIndex < n) {
-                    TableToken viewToken = viewTokens.get(viewIndex);
-                    MatViewRefreshState viewState = matViewGraph.getViewRefreshState(viewToken);
-                    if (!viewState.isDropped() && viewState != null) {
+                    final TableToken viewToken = viewTokens.get(viewIndex);
+                    final MatViewRefreshState viewState = matViewGraph.getViewRefreshState(viewToken);
+                    if (viewState != null && !viewState.isDropped()) {
                         record.of(
                                 viewState.getViewDefinition(),
                                 viewState.getLastRefreshTimestamp(),
