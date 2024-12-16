@@ -527,7 +527,7 @@ public class TxReader implements Closeable, Mutable {
         version = unsafeReadVersion();
         Unsafe.getUnsafe().loadFence();
 
-        boolean isA = (version & 1L) == 0L;
+        boolean isA = (version & 1) == 0;
         baseOffset = isA ? roTxMemBase.getInt(TX_BASE_OFFSET_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_B_32);
         symbolsSize = isA ? roTxMemBase.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_B_32);
         partitionSegmentSize = isA ? roTxMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32);
