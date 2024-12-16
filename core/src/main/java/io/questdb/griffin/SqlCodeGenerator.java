@@ -4884,7 +4884,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (osz > 0 && !dismissOrder) {
                         IntList directions = ac.getOrderByDirection();
                         if (windowFunction.getPass1ScanDirection() == WindowFunction.Pass1ScanDirection.BACKWARD) {
-                            for (int j = 0, size = directions.size(); j < size; j ++) {
+                            for (int j = 0, size = directions.size(); j < size; j++) {
                                 directions.set(j, 1 - directions.getQuick(j));
                             }
                         }
