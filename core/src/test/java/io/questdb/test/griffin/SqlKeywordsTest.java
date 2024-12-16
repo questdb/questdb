@@ -228,5 +228,7 @@ public class SqlKeywordsTest {
         specialCases.put("isUTC", "'UTC'");
         specialCases.put("isZeroOffset", "'00:00'");
         specialCases.put("isJsonExtract", "json_extract");
+        specialCases.put("isIgnoreWord", "ignore");
+        specialCases.put("isNullsWord", "nulls");
     }
 }
