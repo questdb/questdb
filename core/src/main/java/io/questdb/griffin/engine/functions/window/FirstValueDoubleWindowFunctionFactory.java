@@ -493,15 +493,12 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
                         }
                     }
                 } else {
-                    for (long i = 0, n = size; i < n; i++) {
-                        long idx = (firstIdx + i) % capacity;
+                    if (size > 0) {
+                        long idx = firstIdx % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
                         if (Math.abs(timestamp - ts) >= minDiff) {
                             frameSize++;
                             newFirstIdx = idx;
-                            break;
-                        } else {
-                            break;
                         }
                     }
 
@@ -845,15 +842,12 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
                     }
                 }
             } else {
-                for (long i = 0, n = size; i < n; i++) {
-                    long idx = (firstIdx + i) % capacity;
+                if (size > 0) {
+                    long idx = firstIdx % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
                     if (Math.abs(timestamp - ts) >= minDiff) {
                         frameSize++;
                         newFirstIdx = idx;
-                        break;
-                    } else {
-                        break;
                     }
                 }
                 firstIdx = newFirstIdx;

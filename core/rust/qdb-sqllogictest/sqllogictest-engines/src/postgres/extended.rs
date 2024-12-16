@@ -1,14 +1,13 @@
-use std::fmt::Write;
 use std::process::Command;
 use std::time::Duration;
-
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime};
 use futures::{pin_mut, StreamExt};
 use pg_interval::Interval;
 use postgres_types::{ToSql, Type};
 use rust_decimal::Decimal;
-use sqllogictest::{DateFormat, DBOutput, DefaultColumnType, TimestampFormat};
+use sqllogictest::{DBOutput, DateFormat, DefaultColumnType, TimestampFormat};
+use std::fmt::Write;
 
 use super::{Extended, Postgres, Result};
 
@@ -261,7 +260,7 @@ impl sqllogictest::AsyncDB for Postgres<Extended> {
                         match data_format.timestamp_format {
                             Some(TimestampFormat::Iso) => {
                                 single_process!(row, row_vec, idx, NaiveDateTime, timestamp_to_str);
-                            },
+                            }
                             _ => {
                                 single_process!(row, row_vec, idx, NaiveDateTime);
                             }

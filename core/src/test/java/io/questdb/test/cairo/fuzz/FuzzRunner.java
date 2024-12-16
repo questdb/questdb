@@ -35,6 +35,7 @@ import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.ex.EntryLockedException;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.api.MemoryR;
@@ -429,6 +430,19 @@ public class FuzzRunner {
         return transactionCount;
     }
 
+    public int randomiseStringLengths(Rnd rnd, int maxLen) {
+        // Make extremely long strings rare
+        // but still possible
+        double randomDriver = rnd.nextDouble();
+
+        // Linear up to 20 chars, then exponential
+        if (20 < maxLen) {
+            return (int) (20 * randomDriver + Math.round(Math.pow(maxLen - 20, randomDriver)));
+        } else {
+            return (int) (20 * randomDriver);
+        }
+    }
+
     public void setFuzzCounts(boolean isO3, int fuzzRowCount, int transactionCount, int strLen, int symbolStrLenMax, int symbolCountMax, int initialRowCount, int partitionCount) {
         setFuzzCounts(isO3, fuzzRowCount, transactionCount, strLen, symbolStrLenMax, symbolCountMax, initialRowCount, partitionCount, -1);
     }
@@ -790,16 +804,18 @@ public class FuzzRunner {
                 if (ColumnType.isVarSize(columnType)) {
                     for (int partitionIndex = 0; partitionIndex < reader.getPartitionCount(); partitionIndex++) {
                         reader.openPartition(partitionIndex);
-                        int columnBase = reader.getColumnBase(partitionIndex);
-                        MemoryR dCol = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, i));
-                        MemoryR iCol = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, i) + 1);
+                        if (PartitionFormat.NATIVE == reader.getPartitionFormat(partitionIndex)) {
+                            int columnBase = reader.getColumnBase(partitionIndex);
+                            MemoryR dCol = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, i));
+                            MemoryR iCol = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, i) + 1);
 
-                        long colTop = reader.getColumnTop(columnBase, i);
-                        long rowCount = reader.getPartitionRowCount(partitionIndex) - colTop;
-                        long dColAddress = dCol == null ? 0 : dCol.getPageAddress(0);
-                        if (DebugUtils.isSparseVarCol(rowCount, iCol.getPageAddress(0), dColAddress, columnType)) {
-                            Assert.fail("var column " + reader.getMetadata().getColumnName(i)
-                                    + " is not dense, .i file record size is different from .d file record size");
+                            long colTop = reader.getColumnTop(columnBase, i);
+                            long rowCount = reader.getPartitionRowCount(partitionIndex) - colTop;
+                            long dColAddress = dCol == null ? 0 : dCol.getPageAddress(0);
+                            if (DebugUtils.isSparseVarCol(rowCount, iCol.getPageAddress(0), dColAddress, columnType)) {
+                                Assert.fail("var column " + reader.getMetadata().getColumnName(i)
+                                        + " is not dense, .i file record size is different from .d file record size");
+                            }
                         }
                     }
                 }
@@ -902,7 +918,7 @@ public class FuzzRunner {
                         rnd.nextBoolean(),
                         rnd.nextInt(2_000_000),
                         rnd.nextInt(1000),
-                        rnd.nextInt(1000),
+                        randomiseStringLengths(rnd, 1000),
                         rnd.nextInt(1000),
                         rnd.nextInt(1000),
                         rnd.nextInt(1_000_000),

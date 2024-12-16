@@ -26,13 +26,12 @@ package io.questdb.std.str;
 
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Unsafe;
-import io.questdb.std.bytes.Bytes;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.security.DigestException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.security.DigestException;
 
 
 public class Digest implements Utf8Sink {

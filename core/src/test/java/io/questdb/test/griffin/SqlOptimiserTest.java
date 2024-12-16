@@ -2923,16 +2923,18 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     public void testSampleByFromToBasicWhereOptimisationBetween() throws Exception {
         assertMemoryLeak(() -> {
             execute(SampleByTest.DDL_FROMTO);
+
             final String query = "select ts, avg(x) from fromto\n" +
                     "sample by 5d from '2017-12-20' to '2018-01-31' align to calendar with offset '10:00'";
+            final String model = "select-group-by ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-20' and ts < '2018-01-31') sample by 5d from '2017-12-20' to '2018-01-31' align to calendar with offset '10:00'";
+            assertModel(model, query, ExecutionModel.QUERY);
+
             final String target = "select ts, avg(x) from fromto\n" +
                     "where ts >= '2017-12-20' and ts < '2018-01-31'\n" +
                     "sample by 5d from '2017-12-20' to '2018-01-31' align to calendar with offset '10:00'";
 
-            final String model = "select-group-by ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-20' and ts < '2018-01-31') sample by 5d from '2017-12-20' to '2018-01-31' align to calendar with offset '10:00'";
-
-            assertModel(model, query, ExecutionModel.QUERY);
-            assertModel(model, target, ExecutionModel.QUERY);
+            final String tmodel = "select-group-by ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-20' and ts < '2018-01-31' and ts >= '2017-12-20' and ts < '2018-01-31') sample by 5d from '2017-12-20' to '2018-01-31' align to calendar with offset '10:00'";
+            assertModel(tmodel, target, ExecutionModel.QUERY);
         });
     }
 
@@ -2942,14 +2944,14 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute(SampleByTest.DDL_FROMTO);
             final String query = "select ts, avg(x) from fromto\n" +
                     "sample by 5d from '2017-12-20' align to calendar with offset '10:00'";
+
+            assertModel("select-group-by ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-20') sample by 5d from '2017-12-20' align to calendar with offset '10:00'", query, ExecutionModel.QUERY);
+
             final String target = "select ts, avg(x) from fromto\n" +
                     "where ts >= '2017-12-20'\n" +
                     "sample by 5d from '2017-12-20' align to calendar with offset '10:00'";
 
-            final String model = "select-group-by ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-20') sample by 5d from '2017-12-20' align to calendar with offset '10:00'";
-
-            assertModel(model, query, ExecutionModel.QUERY);
-            assertModel(model, target, ExecutionModel.QUERY);
+            assertModel("select-group-by ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-20' and ts >= '2017-12-20') sample by 5d from '2017-12-20' align to calendar with offset '10:00'", target, ExecutionModel.QUERY);
         });
     }
 
@@ -2959,14 +2961,35 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute(SampleByTest.DDL_FROMTO);
             final String query = "select ts, avg(x) from fromto\n" +
                     "sample by 5d to '2018-01-31' align to calendar with offset '10:00'";
+
+            final String model = "select-group-by ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts < '2018-01-31') sample by 5d to '2018-01-31' align to calendar with offset '10:00'";
+            assertModel(model, query, ExecutionModel.QUERY);
+
             final String target = "select ts, avg(x) from fromto\n" +
                     "where ts < '2018-01-31'\n" +
                     "sample by 5d to '2018-01-31' align to calendar with offset '10:00'";
 
-            final String model = "select-group-by ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts < '2018-01-31') sample by 5d to '2018-01-31' align to calendar with offset '10:00'";
 
-            assertModel(model, query, ExecutionModel.QUERY);
-            assertModel(model, target, ExecutionModel.QUERY);
+            final String targetModel = "select-group-by ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts < '2018-01-31' and ts < '2018-01-31') sample by 5d to '2018-01-31' align to calendar with offset '10:00'";
+            assertModel(targetModel, target, ExecutionModel.QUERY);
+        });
+    }
+
+    @Test
+    public void testSampleByFromToBasicWhereOptimisationNarrowing() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(SampleByTest.DDL_FROMTO);
+            final String fromNarrow = "select ts, avg(x) from fromto\n" +
+                    "where ts >= '2017-12-20'\n" +
+                    "sample by 5d from '2017-12-22' align to calendar with offset '10:00'";
+
+            assertModel("select-group-by ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-22' and ts >= '2017-12-20') sample by 5d from '2017-12-22' align to calendar with offset '10:00'", fromNarrow, ExecutionModel.QUERY);
+
+            final String toNarrow = "select ts, avg(x) from fromto\n" +
+                    "where ts >= '2017-12-20'\n" +
+                    "sample by 5d TO '2017-12-22' align to calendar with offset '10:00'";
+
+            assertModel("select-group-by ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts < '2017-12-22' and ts >= '2017-12-20') sample by 5d to '2017-12-22' align to calendar with offset '10:00'", toNarrow, ExecutionModel.QUERY);
         });
     }
 
