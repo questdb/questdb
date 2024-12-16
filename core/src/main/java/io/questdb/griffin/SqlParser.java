@@ -179,14 +179,15 @@ public class SqlParser {
         }
         int unit = -1;
         int unitPos = -1;
-        if (tok.length() > 1 && Character.isLetter(tok.charAt(tok.length() - 1))) {
-            CharSequence unitChar = tok.subSequence(tok.length() - 1, tok.length());
+        int tokLength = tok.length();
+        if (tokLength > 1 && Character.isLetter(tok.charAt(tokLength - 1))) {
+            CharSequence unitChar = tok.subSequence(tokLength - 1, tokLength);
             unit = PartitionBy.ttlUnitFromString(unitChar);
             if (unit != -1) {
-                tok = tok.subSequence(0, tok.length() - 1);
+                tok = tok.subSequence(0, tokLength - 1);
                 unitPos = valuePos;
             } else {
-                throw SqlException.$(valuePos + tok.length() - 1,
+                throw SqlException.$(valuePos + tokLength - 1,
                         "invalid time unit, expecting 'H', 'D', 'W', 'M' or 'Y', but was '").put(unitChar).put('\'');
             }
         }
