@@ -202,6 +202,10 @@ public class MetadataCache implements QuietCloseable {
 
             // Check that metadata minor version is up-to-date
             int metadataMinorVersion = metaMem.getInt(TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION);
+            // metadataMinorVersion is 2 shorts
+            // Low short is metadataVersion + column count and it is effectively a signature that changes with every update to _meta.
+            // If Low short mismatches it means we cannot rely on High short value.
+            // High short is TableUtils.META_MINOR_VERSION_LATEST.
             boolean symbolCapacitiesUpToDate =
                     Numbers.decodeLowShort(metadataMinorVersion) == Numbers.decodeLowShort(Numbers.decodeLowInt(table.getMetadataVersion()) + columnCount)
                             && Numbers.decodeHighShort(metadataMinorVersion) >= TableUtils.META_MINOR_VERSION_LATEST;
@@ -296,9 +300,9 @@ public class MetadataCache implements QuietCloseable {
             LOG.debug().$("hydrating symbol metadata [table=").$(token.getTableName()).$(", column=").$(columnName).I$();
 
             // get column version
-            Path tablePath = path.trimTo(configuration.getRoot().length()).concat(token);
-            int rootLen = tablePath.size();
-            tablePath.concat(TableUtils.COLUMN_VERSION_FILE_NAME);
+            path.trimTo(configuration.getRoot().length()).concat(token);
+            int rootLen = path.size();
+            path.concat(TableUtils.COLUMN_VERSION_FILE_NAME);
 
             final long columnNameTxn;
             FilesFacade ff = configuration.getFilesFacade();
@@ -310,7 +314,7 @@ public class MetadataCache implements QuietCloseable {
             }
 
             // use txn to find correct symbol entry
-            final var offsetFileName = TableUtils.offsetFileName(tablePath.trimTo(rootLen), columnName, columnNameTxn);
+            final var offsetFileName = TableUtils.offsetFileName(path.trimTo(rootLen), columnName, columnNameTxn);
             var fd = TableUtils.openRO(ff, offsetFileName, LOG);
 
             // initialise symbol map memory

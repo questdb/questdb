@@ -224,6 +224,12 @@ public final class TableUtils {
     }
 
     public static int calculateMetadataMinorFormatVersion(int metadataVersion) {
+        // Metadata Minor Version is 2 shorts
+        // Low short is metadataVersion + column count and it is effectively a signature that changes with every update to _meta.
+        // If Low short mismatches it means we cannot rely on High short value.
+        // High short is TableUtils.META_MINOR_VERSION_LATEST.
+        // Metadata minor version mismatch still allows to read the table, the table storage is forward and backward compatible.
+        // However it indicates some minor flags may be stored incorrectly and have to be re-calculated.
         return Numbers.encodeLowHighShorts(Numbers.decodeLowShort(metadataVersion), META_MINOR_VERSION_LATEST);
     }
 
