@@ -61,8 +61,8 @@ public class UuidTest {
             m2.of(UUID.randomUUID().toString());
             assertNotEquals(m1, m2);
         }
-        assertNotEquals(m1, null);
-        assertNotEquals(m1, "foo");
+        assertNotEquals(null, m1);
+        assertNotEquals("foo", m1);
 
         m1.of(0, 1);
         m1.of(0, 2);

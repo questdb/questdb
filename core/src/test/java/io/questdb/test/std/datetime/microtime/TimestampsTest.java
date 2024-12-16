@@ -55,6 +55,28 @@ public class TimestampsTest {
     }
 
     @Test
+    public void testToMicros() throws Exception {
+        Assert.assertEquals(1, Timestamps.toMicros(1000, ChronoUnit.NANOS));
+        Assert.assertEquals(1, Timestamps.toMicros(1, ChronoUnit.MICROS));
+        Assert.assertEquals(1000, Timestamps.toMicros(1, ChronoUnit.MILLIS));
+        Assert.assertEquals(1_000_000, Timestamps.toMicros(1, ChronoUnit.SECONDS));
+
+        Assert.assertEquals(60 * 1000 * 1000, Timestamps.toMicros(1, ChronoUnit.MINUTES));
+        Assert.assertEquals(Long.MAX_VALUE, Timestamps.toMicros(Long.MAX_VALUE, ChronoUnit.MICROS));
+
+        Assert.assertEquals(Timestamps.toMicros(1, ChronoUnit.HOURS), Timestamps.toMicros(60, ChronoUnit.MINUTES));
+        Assert.assertEquals(0, Timestamps.toMicros(0, ChronoUnit.NANOS));
+        Assert.assertEquals(0, Timestamps.toMicros(0, ChronoUnit.MICROS));
+        Assert.assertEquals(0, Timestamps.toMicros(0, ChronoUnit.MILLIS));
+        Assert.assertEquals(0, Timestamps.toMicros(0, ChronoUnit.SECONDS));
+        Assert.assertEquals(0, Timestamps.toMicros(0, ChronoUnit.MINUTES));
+
+        // micros values remain unchanged
+        Assert.assertEquals(123456789L, Timestamps.toMicros(123456789L, ChronoUnit.MICROS));
+        Assert.assertEquals(123456789L, Timestamps.toMicros(123456789000L, ChronoUnit.NANOS));
+    }
+
+    @Test
     public void testAddDaysPrevEpoch() throws Exception {
         long micros = TimestampFormatUtils.parseTimestamp("1888-05-12T23:45:51.045Z");
         TimestampFormatUtils.appendDateTime(sink, Timestamps.addDays(micros, 24));

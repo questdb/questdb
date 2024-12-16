@@ -85,14 +85,6 @@ jobs:
           excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**"
           javadoc_step: ""
           javadoc_profile: ""
-        linux-jdk8:
-          imageName: "ubuntu-latest"
-          poolName: "Azure Pipelines"
-          os: Linux
-          jdk: "1.8"
-          testset: "none"
-          javadoc_step: ""
-          javadoc_profile: ""
         linux-jdk11:
           imageName: "ubuntu-latest"
           poolName: "Azure Pipelines"

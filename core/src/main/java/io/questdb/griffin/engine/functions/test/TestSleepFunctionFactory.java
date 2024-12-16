@@ -53,7 +53,7 @@ public class TestSleepFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
+    ) {
         Function arg = args.getQuick(0);
         long sleepMillis = arg.getLong(null);
         return new Func(configuration, sleepMillis);
