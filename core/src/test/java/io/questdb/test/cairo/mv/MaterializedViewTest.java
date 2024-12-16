@@ -140,7 +140,7 @@ public class MaterializedViewTest extends AbstractCairoTest {
                     "price_1h order by ts, sym"
             );
 
-            dropMatView("price_1h");
+            dropMatView();
             refreshJob.run(0);
 
             createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
@@ -243,8 +243,8 @@ public class MaterializedViewTest extends AbstractCairoTest {
         execute("create materialized view price_1h as (" + viewSql + ") partition by DAY");
     }
 
-    private void dropMatView(String matViewName) throws SqlException {
-        execute("drop table " + matViewName);
+    private void dropMatView() throws SqlException {
+        execute("drop table price_1h");
     }
 
     private void testIncrementalRefresh0(String viewSql) throws Exception {
