@@ -296,7 +296,7 @@ public class MetadataCache implements QuietCloseable {
         var columnName = column.getName();
         var writerIndex = column.getWriterIndex();
 
-        try {
+        try (columnVersionReader) {
             LOG.debug().$("hydrating symbol metadata [table=").$(token.getTableName()).$(", column=").$(columnName).I$();
 
             // get column version
