@@ -51,6 +51,8 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMOR;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.DefaultWalListener;
@@ -58,8 +60,8 @@ import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalListener;
 import io.questdb.cairo.wal.WalReader;
 import io.questdb.cairo.wal.WalWriter;
-import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cutlass.text.CopyContext;
 import io.questdb.griffin.CompiledQuery;
@@ -161,7 +163,6 @@ public class CairoEngine implements Closeable, WriterSource {
                     configuration,
                     ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
             );
-            this.matViewGraph = new MatViewGraph();
             this.tableFlagResolver = newTableFlagResolver(configuration);
             this.configuration = configuration;
             this.copyContext = new CopyContext(configuration);
@@ -198,6 +199,8 @@ public class CairoEngine implements Closeable, WriterSource {
                 enablePartitionOverwriteControl();
             }
             this.metadataCache = new MetadataCache(this);
+            this.matViewGraph = new MatViewGraph();
+            buildMatViewGraph();
         } catch (Throwable th) {
             close();
             throw th;
@@ -872,12 +875,12 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableNameRegistry.isTableDropped(tableToken);
     }
 
-    public boolean isWalTableDropped(CharSequence tableDir) {
-        return tableNameRegistry.isWalTableDropped(tableDir);
-    }
-
     public boolean isWalTable(TableToken tableToken) {
         return tableToken.isWal();
+    }
+
+    public boolean isWalTableDropped(CharSequence tableDir) {
+        return tableNameRegistry.isWalTableDropped(tableDir);
     }
 
     public void load() {
@@ -1336,6 +1339,30 @@ public class CairoEngine implements Closeable, WriterSource {
         }
         if (!tt.equals(tableToken)) {
             throw TableReferenceOutOfDateException.of(tableToken, tableToken.getTableId(), tt.getTableId(), tt.getTableId(), -1);
+        }
+    }
+
+    private void buildMatViewGraph() {
+        final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
+        getTableTokens(tableTokenBucket, false);
+
+        Path path = Path.getThreadLocal(configuration.getRoot());
+        final int pathLen = path.size();
+        try (MemoryCMOR memory = Vm.getMemoryCMOR()) {
+            for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
+                final TableToken tableToken = tableTokenBucket.get(i);
+                final FilesFacade ff = configuration.getFilesFacade();
+                if (tableToken.isMatView() && TableUtils.doesMvFileExist(configuration, path, tableToken.getDirName(), ff)) {
+                    MaterializedViewDefinition matViewDefinition = TableUtils.loadMatViewDefinition(
+                            ff,
+                            memory,
+                            path,
+                            pathLen,
+                            tableToken
+                    );
+                    this.matViewGraph.createView(tableToken, matViewDefinition);
+                }
+            }
         }
     }
 
