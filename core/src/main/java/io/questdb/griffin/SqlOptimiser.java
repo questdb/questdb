@@ -145,7 +145,6 @@ public class SqlOptimiser implements Mutable {
     private final ObjList<IntHashSet> postFilterTableRefs = new ObjList<>();
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
-    private final RewriteSampleByFromToVisitor rewriteSampleByFromToVisitor = new RewriteSampleByFromToVisitor();
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final ObjList<RecordCursorFactory> tableFactoriesInFlight = new ObjList<>();
     private final FlyweightCharSequence tableLookupSequence = new FlyweightCharSequence();
@@ -235,7 +234,6 @@ public class SqlOptimiser implements Mutable {
         groupByUsed.clear();
         tempColumnAlias = null;
         tempQueryModel = null;
-        rewriteSampleByFromToVisitor.clear();
     }
 
     public void clearForUnionModelInJoin() {
@@ -2888,7 +2886,7 @@ public class SqlOptimiser implements Mutable {
             try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken, model.getMetadataVersion())) {
                 enumerateColumns(model, metadata);
             } catch (CairoException e) {
-                if (e.isOutOfMemory()) {
+                if (e.isOutOfMemory() || e.isTableDoesNotExist()) {
                     throw e;
                 }
                 throw SqlException.position(tableNamePosition).put(e);
@@ -2899,7 +2897,7 @@ public class SqlOptimiser implements Mutable {
             } catch (EntryLockedException e) {
                 throw SqlException.position(tableNamePosition).put("table is locked: ").put(tableToken.getTableName());
             } catch (CairoException e) {
-                if (e.isOutOfMemory()) {
+                if (e.isOutOfMemory() || e.isTableDoesNotExist()) {
                     throw e;
                 }
                 throw SqlException.position(tableNamePosition).put(e);
@@ -3247,6 +3245,9 @@ public class SqlOptimiser implements Mutable {
                     break;
                 case QueryModel.SHOW_SERVER_VERSION_NUM:
                     tableFactory = new ShowServerVersionNumCursorFactory();
+                    break;
+                case QueryModel.SHOW_CREATE_TABLE:
+                    tableFactory = sqlParserCallback.generateShowCreateTableFactory(model, executionContext, path);
                     break;
                 default:
                     tableFactory = sqlParserCallback.generateShowSqlFactory(model);
@@ -4789,6 +4790,10 @@ public class SqlOptimiser implements Mutable {
                     boolean isKeyed = false;
 
                     final CharSequence tableName = nested.getTableName();
+                    // down-sampling of sub-queries will yield a null table name
+                    if (tableName == null) {
+                        return model;
+                    }
                     for (int i = 0, n = maybeKeyed.size(); i < n; i++) {
                         final ExpressionNode expr = maybeKeyed.getQuick(i);
                         switch (expr.type) {
@@ -4995,7 +5000,7 @@ public class SqlOptimiser implements Mutable {
      * This is to allow for the generation of an interval scan and minimise reading of un-needed data.
      */
     @SuppressWarnings("ConstantValue")
-    private void rewriteSampleByFromTo(QueryModel model) throws SqlException {
+    private void rewriteSampleByFromTo(QueryModel model) {
         QueryModel curr;
         QueryModel fromToModel;
         QueryModel whereModel = null;
@@ -5031,16 +5036,9 @@ public class SqlOptimiser implements Mutable {
                 curr = curr.getNestedModel();
             }
 
-            if (whereModel != null) {
-                // check if designated timestamp appears
-                traversalAlgo.traverse(whereClause, rewriteSampleByFromToVisitor.of(whereModel.getTimestamp()));
-                // if it already considers the timestamp, then we do nothing
-                if (rewriteSampleByFromToVisitor.timestampAppears) {
-                    return;
-                }
-
-                // else we need to compose the existing clause with AND
-            }
+            // Add TO-FROM interval to WHERE clause.
+            // If WHERE present and already contains a timestamp clause,
+            // add it anyway, as it will be ANDed with the existing clause narrowing down existing filtering.
 
             ExpressionNode intervalClause = null;
 
@@ -6449,29 +6447,6 @@ public class SqlOptimiser implements Mutable {
 
     private static class NonLiteralException extends RuntimeException {
         private static final NonLiteralException INSTANCE = new NonLiteralException();
-    }
-
-    private static class RewriteSampleByFromToVisitor implements PostOrderTreeTraversalAlgo.Visitor {
-        public boolean timestampAppears;
-        private ExpressionNode timestamp;
-
-        public void clear() {
-            timestampAppears = false;
-            timestamp = null;
-        }
-
-        @Override
-        public void visit(ExpressionNode node) {
-            if (node.type == LITERAL && Chars.equalsIgnoreCase(node.token, timestamp.token)) {
-                timestampAppears = true;
-            }
-        }
-
-        PostOrderTreeTraversalAlgo.Visitor of(ExpressionNode timestamp) {
-            this.timestamp = timestamp;
-            this.timestampAppears = false;
-            return this;
-        }
     }
 
     private class ColumnPrefixEraser implements PostOrderTreeTraversalAlgo.Visitor {

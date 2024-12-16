@@ -2450,7 +2450,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "alter table x convert partition to list '1970-01-01' to '1970-01-02'",
                 ddl,
                 35,
-                "'parquet' expected"
+                "'parquet' or 'native' expected"
         );
     }
 
@@ -6856,9 +6856,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         }
 
         @Override
-        public void createTableExt(GenericLexer lexer, SecurityContext securityContext, CreateTableOperationBuilder opBuilder, CharSequence tok) throws SqlException {
+        public CreateTableOperationBuilder parseCreateTableExt(
+                GenericLexer lexer,
+                SecurityContext securityContext,
+                CreateTableOperationBuilder builder,
+                CharSequence tok
+        ) throws SqlException {
             createTableSuffixCalled = true;
-            super.createTableExt(lexer, securityContext, opBuilder, tok);
+            return super.parseCreateTableExt(lexer, securityContext, builder, tok);
         }
 
         @Override

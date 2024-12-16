@@ -52,7 +52,6 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.jit.CompiledFilterIRSerializer.*;
 
 public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
-
     private static final String KNOWN_SYMBOL_1 = "ABC";
     private static final String KNOWN_SYMBOL_2 = "DEF";
     private static final String UNKNOWN_SYMBOL = "XYZ";

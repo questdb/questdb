@@ -46,6 +46,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
+import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
+import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
@@ -202,7 +204,6 @@ public class PGJobContextTest extends BasePGTest {
     @BeforeClass
     public static void setUpStatic() throws Exception {
         AbstractCairoTest.setUpStatic();
-        inputRoot = TestUtils.getCsvRoot();
         final SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss'.0'");
         formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
         final Stream<Object[]> dates = LongStream.rangeClosed(0, count - 1)
@@ -239,6 +240,7 @@ public class PGJobContextTest extends BasePGTest {
                 .I$();
         node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, walEnabled);
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
+        inputRoot = TestUtils.getCsvRoot();
     }
 
     @Test
@@ -4952,6 +4954,7 @@ if __name__ == "__main__":
 
     @Test
     public void testInsert2() throws Exception {
+        Assume.assumeFalse(legacyMode);
         String expectedAll = "a[INTEGER],d[TIMESTAMP],t[TIMESTAMP],d1[TIMESTAMP],t1[TIMESTAMP],t2[TIMESTAMP]\n" +
                 "0,2011-04-11 00:00:00.0,2011-04-11 14:40:54.998821,2011-04-11 14:40:54.998,2011-04-11 00:00:00.0,2011-04-11 14:40:54.998821\n" +
                 "1,2011-04-11 00:00:00.0,2011-04-11 14:40:54.999821,2011-04-11 14:40:54.999,2011-04-11 00:00:00.0,2011-04-11 14:40:54.999821\n" +
@@ -5298,6 +5301,48 @@ if __name__ == "__main__":
                     }
                 }
             }
+        });
+    }
+
+    @Test
+    public void testInsertAsSelect() throws Exception {
+        Assume.assumeFalse(legacyMode);
+        assertWithPgServer(CONN_AWARE_ALL, (conn, binary, mode, port) -> {
+            conn.createStatement().execute("create table x(ts timestamp, col1 long) timestamp(ts) partition by day wal");
+            conn.createStatement().execute("create table y(ts timestamp, col1 long) timestamp(ts) partition by day wal");
+
+            assertEquals(10, conn.createStatement().executeUpdate("insert into x select timestamp_sequence(1677628800000000, 10000000), x from long_sequence(10)"));
+            drainWalQueue();
+            assertSql(
+                    conn,
+                    "x",
+                    "ts[TIMESTAMP],col1[BIGINT]\n" +
+                            "2023-03-01 00:00:00.0,1\n" +
+                            "2023-03-01 00:00:10.0,2\n" +
+                            "2023-03-01 00:00:20.0,3\n" +
+                            "2023-03-01 00:00:30.0,4\n" +
+                            "2023-03-01 00:00:40.0,5\n" +
+                            "2023-03-01 00:00:50.0,6\n" +
+                            "2023-03-01 00:01:00.0,7\n" +
+                            "2023-03-01 00:01:10.0,8\n" +
+                            "2023-03-01 00:01:20.0,9\n" +
+                            "2023-03-01 00:01:30.0,10\n"
+            );
+            assertSql(
+                    conn,
+                    "y",
+                    "ts[TIMESTAMP],col1[BIGINT]\n"
+            );
+
+            assertEquals(2, conn.createStatement().executeUpdate("insert into y select * from x where col1 > 8"));
+            drainWalQueue();
+            assertSql(
+                    conn,
+                    "y",
+                    "ts[TIMESTAMP],col1[BIGINT]\n" +
+                            "2023-03-01 00:01:20.0,9\n" +
+                            "2023-03-01 00:01:30.0,10\n"
+            );
         });
     }
 
@@ -6993,7 +7038,7 @@ nodejs code:
                     // since PG JDBC does use phantom references to track statement instances
                     // and close them when they are GCed
                     statements.add(stmt);
-                    try (ResultSet ignore = stmt.executeQuery("select * from x");) {
+                    try (ResultSet ignore = stmt.executeQuery("select * from x")) {
                         // consume result set
                     }
                 }
@@ -8611,6 +8656,19 @@ nodejs code:
             String expectedVersion = configuration.getBuildInformation().getSwVersion();
             Assert.assertEquals(expectedVersion, actualVersion);
         });
+    }
+
+    // TODO(puzpuzpuz): fix schema changes handling in PGWire for extended protocol
+    //                  https://github.com/questdb/questdb/issues/4971
+    @Ignore
+    @Test
+    public void testReadParquetSchemaChangeExtended() throws Exception {
+        testReadParquetSchemaChange(false);
+    }
+
+    @Test
+    public void testReadParquetSchemaChangeSimple() throws Exception {
+        testReadParquetSchemaChange(true);
     }
 
     @Test
@@ -10571,6 +10629,19 @@ create table tab as (
         });
     }
 
+    // TODO(puzpuzpuz): fix schema changes handling in PGWire for extended protocol
+    //                  https://github.com/questdb/questdb/issues/4971
+    @Ignore
+    @Test
+    public void testTableSchemaChangeExtended() throws Exception {
+        testTableSchemaChange(false);
+    }
+
+    @Test
+    public void testTableSchemaChangeSimple() throws Exception {
+        testTableSchemaChange(true);
+    }
+
     /*
     We want to ensure that tableoid is set to zero, otherwise squirrelSql will not display the result set.
      */
@@ -11782,6 +11853,16 @@ create table tab as (
         }
     }
 
+    private void assertSql(Connection conn, String sql, String expectedResult) throws SQLException, IOException {
+        final StringSink sink = Misc.getThreadLocalSink();
+        sink.clear();
+
+        try (Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+            BasePGTest.assertResultSet(expectedResult, sink, rs);
+        }
+    }
+
     private IPGWireServer createPGServer(SOCountDownLatch queryScheduledCount) {
         int workerCount = 2;
 
@@ -12482,6 +12563,104 @@ create table tab as (
                         "BPTU,205,0.430214712409255,1970-01-01 00:00:00.49,0.905,31266,8271557,2015-01-07 05:53:03.838005,14,true,VTJW,2015-10-30 05:33:15.819,00000000 24 0b c5 1a 5a 8d 85 50 39 42 9e 8a 86 17 89 6b,S,0x4e272e9dfde7bb12618178f7feba5021382a8c47a28fefa475d743cf0c2c4bcd\n";
 
                 assertResultSet(expected, sink, rs);
+            }
+        });
+    }
+
+    private void testReadParquetSchemaChange(boolean simple) throws Exception {
+        inputRoot = root; // the parquet files are exported into the root dir
+        skipOnWalRun(); // non-partitioned table
+        assertMemoryLeak(() -> {
+            try (
+                    IPGWireServer server = createPGServer(1);
+                    WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (Connection connection = getConnection(server.getPort(), simple, true)) {
+                    connection.prepareStatement("create table x as (select 1 id_x, timestamp_sequence(0,10000) as ts from long_sequence(1))").execute();
+                    connection.prepareStatement("create table y as (select 2 id_y, 'foobar' str, timestamp_sequence(1,10000) as ts from long_sequence(1))").execute();
+
+                    try (
+                            Path path = new Path();
+                            PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                            TableReader readerX = engine.getReader("x");
+                            TableReader readerY = engine.getReader("y")
+                    ) {
+                        path.of(root).concat("table.parquet").$();
+                        PartitionEncoder.populateFromTableReader(readerX, partitionDescriptor, 0);
+                        PartitionEncoder.encode(partitionDescriptor, path);
+
+                        try (PreparedStatement ps = connection.prepareStatement("select * from read_parquet('table.parquet')")) {
+                            try (ResultSet resultSet = ps.executeQuery()) {
+                                sink.clear();
+                                assertResultSet(
+                                        "id_x[INTEGER],ts[TIMESTAMP]\n" +
+                                                "1,1970-01-01 00:00:00.0\n",
+                                        sink,
+                                        resultSet
+                                );
+                            }
+
+                            // delete the file and populate from y table
+                            engine.getConfiguration().getFilesFacade().remove(path.$());
+                            PartitionEncoder.populateFromTableReader(readerY, partitionDescriptor, 0);
+                            PartitionEncoder.encode(partitionDescriptor, path);
+
+                            // Query the data once again - this time the Parquet schema is different,
+                            // so the query should get recompiled.
+                            try (ResultSet resultSet = ps.executeQuery()) {
+                                sink.clear();
+                                assertResultSet(
+                                        "id_y[INTEGER],str[VARCHAR],ts[TIMESTAMP]\n" +
+                                                "2,foobar,1970-01-01 00:00:00.000001\n",
+                                        sink,
+                                        resultSet
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    private void testTableSchemaChange(boolean simple) throws Exception {
+        skipOnWalRun(); // non-partitioned table
+        assertMemoryLeak(() -> {
+            try (
+                    IPGWireServer server = createPGServer(1);
+                    WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (Connection connection = getConnection(server.getPort(), simple, true)) {
+                    connection.prepareStatement("create table x as (select 2 id, 'foobar' str, timestamp_sequence(1,10000) as ts from long_sequence(1))").execute();
+
+                    try (PreparedStatement ps = connection.prepareStatement("x")) {
+                        try (ResultSet resultSet = ps.executeQuery()) {
+                            sink.clear();
+                            assertResultSet(
+                                    "id[INTEGER],str[VARCHAR],ts[TIMESTAMP]\n" +
+                                            "2,foobar,1970-01-01 00:00:00.000001\n",
+                                    sink,
+                                    resultSet
+                            );
+                        }
+
+                        connection.prepareStatement("alter table x drop column str;").execute();
+
+                        // Query the data once again - this time the schema is different,
+                        // so the query should get recompiled.
+                        try (ResultSet resultSet = ps.executeQuery()) {
+                            sink.clear();
+                            assertResultSet(
+                                    "id[INTEGER],ts[TIMESTAMP]\n" +
+                                            "2,1970-01-01 00:00:00.000001\n",
+                                    sink,
+                                    resultSet
+                            );
+                        }
+                    }
+                }
             }
         });
     }

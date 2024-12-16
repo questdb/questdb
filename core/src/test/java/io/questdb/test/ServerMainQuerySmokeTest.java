@@ -30,21 +30,40 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.test.cutlass.pgwire.BasePGTest.assertResultSet;
 import static io.questdb.test.tools.TestUtils.unchecked;
 
+@RunWith(Parameterized.class)
 public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
     private static final StringSink sink = new StringSink();
+    private final boolean convertToParquet;
+
+    public ServerMainQuerySmokeTest(boolean convertToParquet) {
+        this.convertToParquet = convertToParquet;
+    }
+
+    @Parameterized.Parameters(name = "parquet={0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {true},
+                {false},
+        });
+    }
 
     @Before
     public void setUp() {
@@ -58,6 +77,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 PropertyKey.PG_SELECT_CACHE_ENABLED + "=true",
                 PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD + "=1",
                 PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD + "=100",
+                PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE + "=100",
                 PropertyKey.QUERY_TIMEOUT_SEC + "=150",
                 // JIT doesn't support ARM, and we want exec plans to be the same.
                 PropertyKey.CAIRO_SQL_JIT_MODE + "=off",
@@ -68,6 +88,8 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
 
     @Test
     public void testServerMainGlobalQueryCacheSmokeTest() {
+        Assume.assumeFalse(convertToParquet);
+
         // Verify that global cache is correctly synchronized, so that
         // no record cursor factory is used by multiple threads concurrently.
         class TestCase {
@@ -136,6 +158,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 "CREATE TABLE tab as (" +
                         "  select (x * 864000000)::timestamp ts, ('k' || (x % 5))::symbol key, x:: double price, x::long quantity from long_sequence(10000)" +
                         ") timestamp (ts) PARTITION BY DAY",
+                convertToParquet ? "ALTER TABLE tab CONVERT PARTITION TO PARQUET WHERE ts >= 0" : null,
                 "SELECT * FROM tab WHERE key = 'k3' LIMIT 10",
                 "QUERY PLAN[VARCHAR]\n" +
                         "Async Filter workers: 4\n" +
@@ -160,6 +183,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
 
     @Test
     public void testServerMainParallelFilterSmokeTest() throws Exception {
+        Assume.assumeFalse(convertToParquet);
         // Verify that circuit breaker checks don't have weird bugs unseen in fast tests.
         try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
             serverMain.start();
@@ -181,6 +205,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
 
     @Test
     public void testServerMainParallelGroupBySmokeTest1() throws Exception {
+        Assume.assumeFalse(convertToParquet);
         // Verify that circuit breaker checks don't have weird bugs unseen in fast tests.
         try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
             serverMain.start();
@@ -202,6 +227,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
 
     @Test
     public void testServerMainParallelGroupBySmokeTest2() throws Exception {
+        Assume.assumeFalse(convertToParquet);
         // Verify that circuit breaker checks don't have weird bugs unseen in fast tests.
         try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
             serverMain.start();
@@ -229,6 +255,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 "CREATE TABLE tab as (" +
                         "  select (x * 864000000)::timestamp ts, ('k' || (x % 5))::symbol key, x:: double price, x::long quantity from long_sequence(10000)" +
                         ") timestamp (ts) PARTITION BY DAY",
+                convertToParquet ? "ALTER TABLE tab CONVERT PARTITION TO PARQUET WHERE ts >= 0" : null,
                 "SELECT key, min(quantity), max(quantity) FROM tab ORDER BY key DESC",
                 "QUERY PLAN[VARCHAR]\n" +
                         "Sort light\n" +
@@ -254,6 +281,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 "CREATE TABLE tab as (" +
                         "  select (x * 864000000)::timestamp ts, ('k' || (x % 5))::symbol key, x:: double price, x::long quantity from long_sequence(10000)" +
                         ") timestamp (ts) PARTITION BY DAY",
+                convertToParquet ? "ALTER TABLE tab CONVERT PARTITION TO PARQUET WHERE ts >= 0" : null,
                 "SELECT min(quantity), max(quantity) FROM tab",
                 "QUERY PLAN[VARCHAR]\n" +
                         "GroupBy vectorized: true workers: 4\n" +
@@ -272,6 +300,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 "CREATE TABLE tab as (" +
                         "  select (x * 864000000)::timestamp ts, ('k' || (x % 101))::symbol key, x:: double price, x::long quantity from long_sequence(10000)" +
                         ") timestamp (ts) PARTITION BY DAY",
+                convertToParquet ? "ALTER TABLE tab CONVERT PARTITION TO PARQUET WHERE ts >= 0" : null,
                 "SELECT day_of_week(ts) day, key, vwap(price, quantity) FROM tab GROUP BY day, key ORDER BY day, key LIMIT 10",
                 "QUERY PLAN[VARCHAR]\n" +
                         "Sort light lo: 10\n" +
@@ -305,6 +334,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 "CREATE TABLE tab as (" +
                         "  select (x * 864000000)::timestamp ts, ('k' || (x % 101))::symbol key, x::long x from long_sequence(10000)" +
                         ") timestamp (ts) PARTITION BY DAY",
+                convertToParquet ? "ALTER TABLE tab CONVERT PARTITION TO PARQUET WHERE ts >= 0" : null,
                 "SELECT key, count_distinct(x) FROM tab ORDER BY key LIMIT 10",
                 "QUERY PLAN[VARCHAR]\n" +
                         "Sort light lo: 10\n" +
@@ -330,7 +360,13 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
         );
     }
 
-    private void testServerMainParallelQueryLoadTest(String ddl, String query, String expectedPlan, String expectedResult) throws Exception {
+    private void testServerMainParallelQueryLoadTest(
+            String ddl,
+            String ddl2,
+            String query,
+            String expectedPlan,
+            String expectedResult
+    ) throws Exception {
         // Here we're verifying that adaptive work stealing doesn't lead to deadlocks.
         try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
             serverMain.start();
@@ -338,6 +374,12 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
             try (Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES)) {
                 try (Statement statement = conn.createStatement()) {
                     statement.execute(ddl);
+                }
+
+                if (ddl2 != null) {
+                    try (Statement statement = conn.createStatement()) {
+                        statement.execute(ddl2);
+                    }
                 }
 
                 try (ResultSet rs = conn.prepareStatement("EXPLAIN " + query).executeQuery()) {

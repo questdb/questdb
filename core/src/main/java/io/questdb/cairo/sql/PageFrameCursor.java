@@ -25,12 +25,20 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.TableReader;
+import io.questdb.std.IntList;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
 
 public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
 
     void calculateSize(RecordCursor.Counter counter);
+
+    /**
+     * Returns local (query) to table reader index mapping.
+     * Used to map local column indexes to indexes from the Parquet file.
+     * Such mapping requires knowing the corresponding table reader indexes.
+     */
+    IntList getColumnIndexes();
 
     @Override
     StaticSymbolTable getSymbolTable(int columnIndex);
@@ -39,7 +47,7 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
     TableReader getTableReader();
 
     /**
-     * Return the REAL row id of given row on current page.
+     * Returns the REAL row id of given row on current page.
      * This is used for e.g. updating rows.
      *
      * @param rowIndex - page index of row
@@ -64,7 +72,7 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
     boolean supportsSizeCalculation();
 
     /**
-     * Return the cursor to the beginning of the page frame.
+     * Returns the cursor to the beginning of the page frame.
      */
     void toTop();
 }

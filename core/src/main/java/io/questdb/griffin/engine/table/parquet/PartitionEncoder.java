@@ -60,7 +60,7 @@ public class PartitionEncoder {
         final long partitionSize = descriptor.getPartitionRowCount();
         final int timestampIndex = descriptor.getTimestampIndex();
         try {
-            encodePartition(
+            encodePartition(  // throws CairoException on error
                     tableName.ptr(),
                     tableName.size(),
                     columnCount,
@@ -78,11 +78,6 @@ public class PartitionEncoder {
                     dataPageSize,
                     version
             );
-        } catch (Throwable th) {
-            throw CairoException.critical(0).put("Could not encode partition: [table=").put(tableName)
-                    .put(", exception=").put(th.getClass().getSimpleName())
-                    .put(", msg=").put(th.getMessage())
-                    .put(']');
         } finally {
             descriptor.clear();
         }
@@ -172,7 +167,7 @@ public class PartitionEncoder {
             long rowGroupSize,
             long dataPageSize,
             int version
-    );
+    ) throws CairoException;
 
     static {
         Os.init();

@@ -31,6 +31,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
+import io.questdb.griffin.engine.ops.CreateTableOperationBuilderImpl;
 import io.questdb.griffin.model.CopyModel;
 import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.ExecutionModel;
@@ -80,7 +81,7 @@ public class SqlParser {
     private final CairoConfiguration configuration;
     private final ObjectPool<CopyModel> copyModelPool;
     private final ObjectPool<CreateTableColumnModel> createTableColumnModelPool;
-    private final CreateTableOperationBuilder createTableOperationBuilder = new CreateTableOperationBuilder();
+    private final CreateTableOperationBuilderImpl createTableOperationBuilder = new CreateTableOperationBuilderImpl();
     private final ObjectPool<ExplainModel> explainModelPool;
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final ExpressionParser expressionParser;
@@ -194,6 +195,17 @@ public class SqlParser {
             default:
                 return false;
         }
+    }
+
+    private static CreateTableOperationBuilder parseCreateTableExt(
+            GenericLexer lexer,
+            SqlExecutionContext executionContext,
+            SqlParserCallback sqlParserCallback,
+            CharSequence tok,
+            CreateTableOperationBuilder builder
+    ) throws SqlException {
+        CharSequence nextToken = (tok == null || Chars.equals(tok, ';')) ? null : tok;
+        return sqlParserCallback.parseCreateTableExt(lexer, executionContext.getSecurityContext(), builder, nextToken);
     }
 
     private static void validateShowTransactions(GenericLexer lexer) throws SqlException {
@@ -597,7 +609,7 @@ public class SqlParser {
             SqlExecutionContext executionContext,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        CreateTableOperationBuilder builder = createTableOperationBuilder;
+        CreateTableOperationBuilderImpl builder = createTableOperationBuilder;
         builder.clear();
         builder.setDefaultSymbolCapacity(configuration.getDefaultSymbolCapacity());
         final CharSequence tableName;
@@ -662,7 +674,8 @@ public class SqlParser {
             if (isLikeKeyword(tok)) {
                 builder.setBatchSize(-1);
                 parseCreateTableLikeTable(lexer);
-                return builder;
+                tok = optTok(lexer);
+                return parseCreateTableExt(lexer, executionContext, sqlParserCallback, tok, builder);
             } else {
                 lexer.unparseLast();
                 parseCreateTableColumns(lexer);
@@ -681,8 +694,10 @@ public class SqlParser {
 
             // if we use atomic or batch keywords, then throw an error
             if (atomicSpecified || batchSpecified) {
-                throw SqlException.$(lexer.lastTokenPosition(),
-                        "'atomic' or 'batch' keywords can only be used in CREATE ... AS SELECT statements.");
+                throw SqlException.$(
+                        lexer.lastTokenPosition(),
+                        "'atomic' or 'batch' keywords can only be used in CREATE ... AS SELECT statements."
+                );
             }
         }
 
@@ -865,10 +880,7 @@ public class SqlParser {
                 throw SqlException.position(lexer.getPosition()).put("column list expected");
             }
         }
-
-        boolean expectedTok = tok == null || Chars.equals(tok, ';');
-        sqlParserCallback.createTableExt(lexer, executionContext.getSecurityContext(), builder, expectedTok ? null : tok);
-        return builder;
+        return parseCreateTableExt(lexer, executionContext, sqlParserCallback, tok, builder);
     }
 
     private void parseCreateTableAsSelect(
@@ -1089,10 +1101,6 @@ public class SqlParser {
         if (!Chars.equals(tok, ')')) {
             throw errUnexpected(lexer, tok);
         }
-        tok = optTok(lexer);
-        if (tok != null && !Chars.equals(tok, ';')) {
-            throw errUnexpected(lexer, tok);
-        }
     }
 
     private ExpressionNode parseCreateTablePartition(GenericLexer lexer, CharSequence tok) throws SqlException {
@@ -1242,6 +1250,7 @@ public class SqlParser {
                 // show search_path
                 // show datestyle
                 // show time zone
+                // show create table tab
                 if (isTablesKeyword(tok)) {
                     showKind = QueryModel.SHOW_TABLES;
                 } else if (isColumnsKeyword(tok)) {
@@ -1274,6 +1283,9 @@ public class SqlParser {
                     showKind = QueryModel.SHOW_SERVER_VERSION;
                 } else if (SqlKeywords.isServerVersionNumKeyword(tok)) {
                     showKind = QueryModel.SHOW_SERVER_VERSION_NUM;
+                } else if (isCreateKeyword(tok)) {
+                    parseShowCreateTable(lexer, model);
+                    showKind = QueryModel.SHOW_CREATE_TABLE;
                 } else {
                     showKind = sqlParserCallback.parseShowSql(lexer, model, tok, expressionNodePool);
                 }
@@ -1717,13 +1729,7 @@ public class SqlParser {
         if (tok == null || !isFromKeyword(tok)) {
             throw SqlException.position(lexer.lastTokenPosition()).put("expected 'from'");
         }
-        tok = SqlUtil.fetchNext(lexer);
-        if (tok == null) {
-            throw SqlException.position(lexer.getPosition()).put("expected a table name");
-        }
-        final CharSequence tableName = assertNoDotsAndSlashes(unquote(tok), lexer.lastTokenPosition());
-        ExpressionNode tableNameExpr = expressionNodePool.next().of(ExpressionNode.LITERAL, tableName, 0, lexer.lastTokenPosition());
-        model.setTableNameExpr(tableNameExpr);
+        parseTableName(lexer, model);
     }
 
     private ExecutionModel parseInsert(GenericLexer lexer, SqlParserCallback sqlParserCallback) throws SqlException {
@@ -2472,11 +2478,30 @@ public class SqlParser {
         }
     }
 
+    /*
+        For use with `SHOW CREATE TABLE my_table`
+        Expect that we already checked the `CREATE`.
+     */
+    private void parseShowCreateTable(GenericLexer lexer, QueryModel model) throws SqlException {
+        expectTok(lexer, "table");
+        parseTableName(lexer, model);
+    }
+
     private int parseSymbolCapacity(GenericLexer lexer) throws SqlException {
         final int errorPosition = lexer.getPosition();
         final int symbolCapacity = expectInt(lexer);
         TableUtils.validateSymbolCapacity(errorPosition, symbolCapacity);
         return Numbers.ceilPow2(symbolCapacity);
+    }
+
+    private void parseTableName(GenericLexer lexer, QueryModel model) throws SqlException {
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok == null) {
+            throw SqlException.position(lexer.getPosition()).put("expected a table name");
+        }
+        final CharSequence tableName = assertNoDotsAndSlashes(unquote(tok), lexer.lastTokenPosition());
+        ExpressionNode tableNameExpr = expressionNodePool.next().of(ExpressionNode.LITERAL, tableName, 0, lexer.lastTokenPosition());
+        model.setTableNameExpr(tableNameExpr);
     }
 
     private long parseTimeUnit(GenericLexer lexer) throws SqlException {

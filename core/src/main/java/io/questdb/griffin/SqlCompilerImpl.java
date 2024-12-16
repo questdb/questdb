@@ -959,8 +959,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     case PartitionAction.DETACH:
                         alterOperationBuilder = this.alterOperationBuilder.ofDetachPartition(pos, tableToken, tableMetadata.getTableId());
                         break;
-                    case PartitionAction.CONVERT:
-                        alterOperationBuilder = this.alterOperationBuilder.ofConvertPartition(pos, tableToken, tableMetadata.getTableId());
+                    case PartitionAction.CONVERT_TO_PARQUET:
+                    case PartitionAction.CONVERT_TO_NATIVE:
+                        final boolean toParquet = action == PartitionAction.CONVERT_TO_PARQUET;
+                        alterOperationBuilder = this.alterOperationBuilder.ofConvertPartition(pos, tableToken, tableMetadata.getTableId(), toParquet);
                         break;
                     default:
                         throw SqlException.$(pos, "WHERE clause can only be used with command DROP PARTITION, DETACH PARTITION or CONVERT PARTITION");
@@ -1014,8 +1016,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     ) throws SqlException {
         final AlterOperationBuilder alterOperationBuilder;
         switch (action) {
-            case PartitionAction.CONVERT:
-                alterOperationBuilder = this.alterOperationBuilder.ofConvertPartition(pos, tableToken, tableMetadata.getTableId());
+            case PartitionAction.CONVERT_TO_PARQUET:
+            case PartitionAction.CONVERT_TO_NATIVE:
+                final boolean toParquet = action == PartitionAction.CONVERT_TO_PARQUET;
+                alterOperationBuilder = this.alterOperationBuilder.ofConvertPartition(pos, tableToken, tableMetadata.getTableId(), toParquet);
                 break;
             case PartitionAction.DROP:
                 alterOperationBuilder = this.alterOperationBuilder.ofDropPartition(pos, tableToken, tableMetadata.getTableId());
@@ -1260,11 +1264,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (!SqlKeywords.isToKeyword(tok)) {
                     throw SqlException.$(lexer.lastTokenPosition(), "'to' expected");
                 }
-                tok = expectToken(lexer, "'parquet'");
-                if (!SqlKeywords.isParquetKeyword(tok)) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'parquet' expected");
+                tok = expectToken(lexer, "'parquet' or 'native'");
+                final int action;
+                if (SqlKeywords.isParquetKeyword(tok)) {
+                    action = PartitionAction.CONVERT_TO_PARQUET;
+                } else if (SqlKeywords.isNativeKeyword(tok)) {
+                    action = PartitionAction.CONVERT_TO_NATIVE;
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'parquet' or 'native' expected");
                 }
-                alterTableDropConvertDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.CONVERT, executionContext);
+                alterTableDropConvertDetachOrAttachPartition(tableMetadata, tableToken, action, executionContext);
             } else if (SqlKeywords.isDropKeyword(tok)) {
                 tok = expectToken(lexer, "'column' or 'partition'");
                 if (SqlKeywords.isColumnKeyword(tok)) {
@@ -1985,31 +1994,36 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
             }
 
-            for (int i = 0, n = tableWriters.size(); i < n; i++) {
-                final TableWriterAPI writer = tableWriters.getQuick(i);
-                try {
-                    if (writer.getMetadata().isWalEnabled()) {
-                        writer.truncateSoft();
-                    } else {
-                        TableToken tableToken = writer.getTableToken();
-                        if (engine.lockReaders(tableToken)) {
-                            try {
-                                if (keepSymbolTables) {
-                                    writer.truncateSoft();
-                                } else {
-                                    writer.truncate();
-                                }
-                            } finally {
-                                engine.unlockReaders(tableToken);
-                            }
+            final long queryId = queryRegistry.register(sqlText, executionContext);
+            try {
+                for (int i = 0, n = tableWriters.size(); i < n; i++) {
+                    final TableWriterAPI writer = tableWriters.getQuick(i);
+                    try {
+                        if (writer.getMetadata().isWalEnabled()) {
+                            writer.truncateSoft();
                         } else {
-                            throw SqlException.$(0, "there is an active query against '").put(tableToken.getTableName()).put("'. Try again.");
+                            TableToken tableToken = writer.getTableToken();
+                            if (engine.lockReaders(tableToken)) {
+                                try {
+                                    if (keepSymbolTables) {
+                                        writer.truncateSoft();
+                                    } else {
+                                        writer.truncate();
+                                    }
+                                } finally {
+                                    engine.unlockReaders(tableToken);
+                                }
+                            } else {
+                                throw SqlException.$(0, "there is an active query against '").put(tableToken.getTableName()).put("'. Try again.");
+                            }
                         }
+                    } catch (CairoException | CairoError e) {
+                        LOG.error().$("could not truncate [table=").$(writer.getTableToken()).$(", e=").$((Sinkable) e).$(']').$();
+                        throw e;
                     }
-                } catch (CairoException | CairoError e) {
-                    LOG.error().$("could not truncate [table=").$(writer.getTableToken()).$(", e=").$((Sinkable) e).$(']').$();
-                    throw e;
                 }
+            } finally {
+                queryRegistry.unregister(queryId, executionContext);
             }
         } finally {
             for (int i = 0, n = tableWriters.size(); i < n; i++) {
@@ -2098,11 +2112,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     type == CompiledQuery.INSERT_AS_SELECT // insert as select is immediate, simple insert is not!
                             || type == CompiledQuery.EXPLAIN
                             || type == CompiledQuery.RENAME_TABLE  // non-wal rename table is complete at this point
-                            || type == CompiledQuery.CREATE_TABLE || type == CompiledQuery.CREATE_TABLE_AS_SELECT // create table is complete at this point
             ) {
                 queryRegistry.unregister(sqlId, executionContext);
             }
-        } catch (Throwable e) {
+        } catch (Throwable th) {
             if (executionModel != null) {
                 freeTableNameFunctions(executionModel.getQueryModel());
             }
@@ -2110,14 +2123,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             queryRegistry.unregister(sqlId, executionContext);
 
             QueryProgress.logError(
-                    e,
+                    th,
                     sqlId,
                     sqlText,
                     executionContext,
                     beginNanos,
                     false
             );
-            throw e;
+            throw th;
         }
     }
 
@@ -2508,8 +2521,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             engine.dropTable(path, tableToken);
                             engine.unlockTableName(tableToken);
                             throw e;
-                        } finally {
-                            queryRegistry.unregister(sqlId, executionContext);
                         }
                     } finally {
                         executionContext.setUseSimpleCircuitBreaker(false);
@@ -2526,7 +2537,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                         .put(createTableOp.getLikeTableName()).put(']');
                             }
 
-                            //
                             try (TableMetadata likeTableMetadata = executionContext.getCairoEngine().getTableMetadata(likeTableToken)) {
                                 createTableOp.updateFromLikeTableMetadata(likeTableMetadata);
                                 tableToken = engine.createTable(
@@ -2568,15 +2578,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
                 }
             }
-            // todo: jit is always false, why?
             QueryProgress.logEnd(sqlId, createTableOp.getSqlText(), executionContext, beginNanos, false);
         } catch (Throwable e) {
             if (e instanceof CairoException) {
                 ((CairoException) e).position(createTableOp.getTableNamePosition());
             }
-            // todo: jit is always false, why?
             QueryProgress.logError(e, sqlId, createTableOp.getSqlText(), executionContext, beginNanos, false);
             throw e;
+        } finally {
+            queryRegistry.unregister(sqlId, executionContext);
         }
     }
 
@@ -2628,7 +2638,23 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.tableDoesNotExist(op.getTableNamePosition(), op.getTableName());
         }
         sqlExecutionContext.getSecurityContext().authorizeTableDrop(tableToken);
-        engine.dropTable(path, tableToken);
+
+        final String sqlText = op.getSqlText();
+        final long queryId = queryRegistry.register(sqlText, sqlExecutionContext);
+        try {
+            engine.dropTable(path, tableToken);
+        } catch (CairoException ex) {
+            if ((ex.isTableDropped() || ex.isTableDoesNotExist()) && op.ifExists()) {
+                // all good, table dropped already
+                return;
+            } else if (!op.ifExists() && ex.isTableDropped()) {
+                // Concurrently dropped, this should report table does not exist
+                throw CairoException.tableDoesNotExist(op.getTableName());
+            }
+            throw ex;
+        } finally {
+            queryRegistry.unregister(queryId, sqlExecutionContext);
+        }
     }
 
     private void executeWithRetries(
@@ -3327,10 +3353,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     public final static class PartitionAction {
         public static final int ATTACH = 2;
-        public static final int CONVERT = 4;
+        public static final int CONVERT_TO_NATIVE = 5;
+        public static final int CONVERT_TO_PARQUET = 4;
         public static final int DETACH = 3;
         public static final int DROP = 1;
-        public static final int FORCE_DROP = 5;
+        public static final int FORCE_DROP = 6;
     }
 
     private static class TimestampValueRecord implements Record {
@@ -3521,23 +3548,32 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                         sink.clear();
                         sink.put('\'').put(tableName).put('\'');
-                        try (
-                                SqlExecutionContext allowAllContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE);
-                                RecordCursorFactory factory = engine.select(sink, allowAllContext);
-                                RecordCursor cursor = factory.getCursor(allowAllContext)
-                        ) {
-                            // statement/query timeout value is most likely too small for backup operation
-                            copyTableData(
-                                    cursor,
-                                    factory.getMetadata(),
-                                    backupWriter,
-                                    writerMetadata,
-                                    recordToRowCopier,
-                                    configuration.getCreateTableModelBatchSize(),
-                                    configuration.getO3MaxLag(),
-                                    SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER
-                            );
+
+                        try (SqlExecutionContext allowAllContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
+                            while (true) {
+                                try (
+                                        RecordCursorFactory factory = engine.select(sink, allowAllContext);
+                                        RecordCursor cursor = factory.getCursor(allowAllContext)
+                                ) {
+                                    // statement/query timeout value is most likely too small for backup operation
+                                    copyTableData(
+                                            cursor,
+                                            factory.getMetadata(),
+                                            backupWriter,
+                                            writerMetadata,
+                                            recordToRowCopier,
+                                            configuration.getCreateTableModelBatchSize(),
+                                            configuration.getO3MaxLag(),
+                                            SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER
+                                    );
+                                    break;
+                                } catch (TableReferenceOutOfDateException ex) {
+                                    // Sometimes table can be out of data when a DDL is committed concurrently, we need to retry
+                                    LOG.info().$("retrying backup due to concurrent metadata update [table=").utf8(tableName).$(", ex=").$(ex.getFlyweightMessage()).I$();
+                                }
+                            }
                         }
+
                         backupWriter.commit();
                     }
                 } // release reader lock

@@ -35,6 +35,31 @@ import java.util.Collection;
 @RunWith(Parameterized.class)
 public class ExplicitStringyCastTest extends AbstractCairoTest {
 
+    private final String castTableDdl = "create table cast_table as (select" +
+            " rnd_boolean() a_boolean," +
+            " rnd_byte(0,1) a_byte," +
+            " rnd_short(0,1) a_short," +
+            " rnd_int(0,1,0) a_int," +
+            " rnd_long(0,1,0) a_long," +
+            " rnd_long256() a_long256," +
+            " rnd_float() a_float," +
+            " rnd_double() a_double," +
+            " rnd_date(to_date('2024','yyyy'),to_date('2025','yyyy'),0) a_date," +
+            " rnd_timestamp(to_timestamp('2024','yyyy'),to_timestamp('2025','yyyy'),0) a_timestamp," +
+            " rnd_char() a_char," +
+            " rnd_symbol('sym1') a_symbol," +
+            " rnd_uuid4() a_uuid4," +
+            " rnd_str(3,3,0) a_string," +
+            " rnd_varchar(3,3,0) a_varchar," +
+            " from long_sequence(1))";
+    private final String castType;
+    private final String expectedCastValue;
+
+    public ExplicitStringyCastTest(String castType, String expectedCastValue) {
+        this.castType = castType;
+        this.expectedCastValue = expectedCastValue;
+    }
+
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
@@ -54,32 +79,6 @@ public class ExplicitStringyCastTest extends AbstractCairoTest {
                 {"string", "XIB"},
                 {"varchar", "鼷G\uD991\uDE7E"},
         });
-    }
-
-    private final String castTableDdl = "create table cast_table as (select" +
-            " rnd_boolean() a_boolean," +
-            " rnd_byte(0,1) a_byte," +
-            " rnd_short(0,1) a_short," +
-            " rnd_int(0,1,0) a_int," +
-            " rnd_long(0,1,0) a_long," +
-            " rnd_long256() a_long256," +
-            " rnd_float() a_float," +
-            " rnd_double() a_double," +
-            " rnd_date(to_date('2024','yyyy'),to_date('2025','yyyy'),0) a_date," +
-            " rnd_timestamp(to_timestamp('2024','yyyy'),to_timestamp('2025','yyyy'),0) a_timestamp," +
-            " rnd_char() a_char," +
-            " rnd_symbol('sym1') a_symbol," +
-            " rnd_uuid4() a_uuid4," +
-            " rnd_str(3,3,0) a_string," +
-            " rnd_varchar(3,3,0) a_varchar," +
-            " from long_sequence(1))";
-
-    private final String castType;
-    private final String expectedCastValue;
-
-    public ExplicitStringyCastTest(String castType, String expectedCastValue) {
-        this.castType = castType;
-        this.expectedCastValue = expectedCastValue;
     }
 
     @Test

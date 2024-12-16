@@ -36,7 +36,7 @@
         <argLine>-ea -Dfile.encoding=UTF-8</argLine>
         <test.exclude>None</test.exclude>
         <test.include>%regex[.*[^o].class]</test.include><!-- exclude module-info.class-->
-        <web.console.version>0.6.3</web.console.version>
+        <web.console.version>0.6.5</web.console.version>
         <qdbr.path>rust/qdbr</qdbr.path>
         <qdbr.release>false</qdbr.release>
 
@@ -46,7 +46,7 @@
         <qdbr.rustflags>-D warnings</qdbr.rustflags>
     </properties>
 
-    <version>8.2.1-SNAPSHOT</version>
+    <version>8.2.2-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
     <artifactId>questdb</artifactId>
     <packaging>jar</packaging>
@@ -620,58 +620,6 @@
                     </plugin>
                 </plugins>
             </build>
-        </profile>
-        <profile>
-            <id>java8</id>
-            <properties>
-                <jdk.version>8</jdk.version>
-                <java.enforce.version>1.8.0_242</java.enforce.version>
-                <questdb.artifactid>questdb-jdk8</questdb.artifactid>
-                <compilerArg0>-XDignore.symbol.file</compilerArg0>
-                <excludePattern1>module-info.java</excludePattern1>
-                <excludeTestPattern1>module-info.java</excludeTestPattern1>
-                <javac.compile.source>1.8</javac.compile.source>
-                <javac.compile.target>1.8</javac.compile.target>
-            </properties>
-            <activation>
-                <jdk>(,1.8]</jdk>
-            </activation>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>com.igormaznitsa</groupId>
-                        <artifactId>jcp</artifactId>
-                        <version>7.0.4</version>
-                        <executions>
-                            <!-- make preprocessing of sources -->
-                            <execution>
-                                <id>preprocess-sources</id>
-                                <goals>
-                                    <goal>preprocess</goal>
-                                </goals>
-                            </execution>
-                        </executions>
-                        <configuration>
-                            <vars>
-                                <jdk.version>${jdk.version}</jdk.version>
-                            </vars>
-                            <excludeExtensions>
-                                <ext>MD</ext>
-                                <ext>md</ext>
-                                <ext>xml</ext>
-                            </excludeExtensions>
-                        </configuration>
-                    </plugin>
-                </plugins>
-            </build>
-            <dependencies>
-                <dependency>
-                    <groupId>org.jetbrains</groupId>
-                    <artifactId>annotations</artifactId>
-                    <version>16.0.2</version>
-                    <scope>provided</scope>
-                </dependency>
-            </dependencies>
         </profile>
         <profile>
             <id>java11+</id>

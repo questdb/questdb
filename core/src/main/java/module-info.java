@@ -209,6 +209,8 @@ open module io.questdb {
 //                   '<' operator
             io.questdb.griffin.engine.functions.lt.LtDoubleVVFunctionFactory,
             io.questdb.griffin.engine.functions.lt.LtTimestampFunctionFactory,
+            io.questdb.griffin.engine.functions.lt.LtTimestampCursorFunctionFactory,
+            io.questdb.griffin.engine.functions.lt.GtTimestampCursorFunctionFactory,
             io.questdb.griffin.engine.functions.lt.LtDateFunctionFactory,
             io.questdb.griffin.engine.functions.lt.LtIntFunctionFactory,
             io.questdb.griffin.engine.functions.lt.LtIPv4FunctionFactory,
@@ -821,6 +823,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgRolesFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.InformationSchemaFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.InformationSchemaColumnsFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.InformationSchemaQuestDBColumnsFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.InformationSchemaTablesFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgTypeFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgDescriptionFunctionFactory,
@@ -1013,6 +1016,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.window.CountDoubleWindowFunctionFactory,
             io.questdb.griffin.engine.functions.window.CountSymbolWindowFunctionFactory,
             io.questdb.griffin.engine.functions.window.CountVarcharWindowFunctionFactory,
+            io.questdb.griffin.engine.functions.window.MaxDoubleWindowFunctionFactory,
+            io.questdb.griffin.engine.functions.window.MinDoubleWindowFunctionFactory,
 
             // metadata functions
             io.questdb.griffin.engine.functions.metadata.BuildFunctionFactory,
