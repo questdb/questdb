@@ -175,8 +175,22 @@ public class SqlParser {
         int valuePos = lexer.getPosition();
         tok = SqlUtil.fetchNext(lexer);
         if (tok == null) {
-            throw SqlException.$(lexer.getPosition(), "missing argument, should be TTL <number> <unit>");
+            throw SqlException.$(lexer.getPosition(), "missing argument, should be TTL <number> <unit> or <number_with_unit>");
         }
+        int unit = -1;
+        int unitPos = -1;
+        if (tok.length() > 1 && Character.isLetter(tok.charAt(tok.length() - 1))) {
+            CharSequence unitChar = tok.subSequence(tok.length() - 1, tok.length());
+            unit = PartitionBy.ttlUnitFromString(unitChar);
+            if (unit != -1) {
+                tok = tok.subSequence(0, tok.length() - 1);
+                unitPos = valuePos;
+            } else {
+                throw SqlException.$(valuePos + tok.length() - 1,
+                        "invalid time unit, expecting 'H', 'D', 'W', 'M' or 'Y', but was '").put(unitChar).put('\'');
+            }
+        }
+        // at this point, unit == -1 means the syntax wasn't of the "1H" form, it can still be of the "1 HOUR" form
         int ttlValue;
         try {
             long ttlLong = Numbers.parseLong(tok);
@@ -192,16 +206,18 @@ public class SqlParser {
         if (ttlValue <= 0) {
             throw SqlException.$(lexer.getPosition(), "TTL value must be positive, but was ").put(ttlValue);
         }
-        tok = SqlUtil.fetchNext(lexer);
-        if (tok == null) {
-            throw SqlException.$(lexer.getPosition(),
-                    "missing unit, 'HOUR(S)', 'DAY(S)', 'MONTH(S)' or 'YEAR(S)' expected");
+        if (unit == -1) {
+            unitPos = lexer.getPosition();
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null) {
+                throw SqlException.$(unitPos,
+                        "missing unit, 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)' expected");
+            }
+            unit = PartitionBy.ttlUnitFromString(tok);
         }
-        boolean isPlural = (tok.charAt(tok.length() - 1) | 32) == 's';
-        int unit = PartitionBy.fromString(isPlural ? tok.subSequence(0, tok.length() - 1) : tok);
-        if (unit == -1 || unit == PartitionBy.NONE) {
-            throw SqlException.$(lexer.getPosition(),
-                            "invalid unit, expected 'HOUR(S)', 'DAY(S)', 'MONTH(S)' or 'YEAR(S)', but was '")
+        if (unit == -1) {
+            throw SqlException.$(unitPos,
+                            "invalid unit, expected 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)', but was '")
                     .put(tok).put('\'');
         }
         return Timestamps.toHoursOrMonths(ttlValue, unit, valuePos);

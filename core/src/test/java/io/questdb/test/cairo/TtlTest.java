@@ -42,7 +42,7 @@ public class TtlTest extends AbstractCairoTest {
                         "1970-01-01T01:00:00.000000Z\n" +
                         "1970-01-01T02:00:00.000001Z\n",
                 "tango", "ts", true, true);
-        execute("ALTER TABLE tango SET TTL 1 HOUR");
+        execute("ALTER TABLE tango SET TTL 1H");
         execute("INSERT INTO tango VALUES (7_200_000_002)"); // insert something just to trigger commit
         assertQuery("ts\n" +
                         "1970-01-01T01:00:00.000000Z\n" +
@@ -64,7 +64,7 @@ public class TtlTest extends AbstractCairoTest {
 
     @Test
     public void testDayOneMicrosBeyondTtl() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 DAY");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1D");
         execute("INSERT INTO tango VALUES ('1970-01-01T00:00:00'), ('1970-01-01T23:00:00'), ('1970-01-02T01:00:00')");
         assertQuery("ts\n" +
                         "1970-01-01T23:00:00.000000Z\n" +
@@ -85,7 +85,7 @@ public class TtlTest extends AbstractCairoTest {
 
     @Test
     public void testHourOneMicrosBeyondTtl() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 HOUR");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1H");
         execute("INSERT INTO tango VALUES ('1970-01-01T00:00:00'), ('1970-01-01T01:00:00'), ('1970-01-01T02:00:00')");
         assertQuery("ts\n" +
                         "1970-01-01T01:00:00.000000Z\n" +
@@ -106,7 +106,7 @@ public class TtlTest extends AbstractCairoTest {
 
     @Test
     public void testMonthOneMicrosBeyondTtl() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 MONTH");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1M");
         execute("INSERT INTO tango VALUES ('1970-02-01T04:20:00.0Z'), ('1970-02-10T04:20:00.0Z'), ('1970-03-01T05:00:00')");
         assertQuery("ts\n" +
                         "1970-02-10T04:20:00.000000Z\n" +
@@ -120,7 +120,7 @@ public class TtlTest extends AbstractCairoTest {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[69] missing argument, should be TTL <number> <unit>", e.getMessage());
+            assertEquals("[69] missing argument, should be TTL <number> <unit> or <number_with_unit>", e.getMessage());
         }
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL X");
@@ -129,23 +129,23 @@ public class TtlTest extends AbstractCairoTest {
             assertEquals("[70] invalid syntax, should be TTL <number> <unit> but was TTL X", e.getMessage());
         }
         try {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1");
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 12");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[71] missing unit, 'HOUR(S)', 'DAY(S)', 'MONTH(S)' or 'YEAR(S)' expected", e.getMessage());
+            assertEquals("[72] missing unit, 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)' expected", e.getMessage());
         }
         try {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 GROKS");
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 NONE");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[77] invalid unit, expected 'HOUR(S)', 'DAY(S)', 'MONTH(S)' or 'YEAR(S)', but was 'GROKS'",
+            assertEquals("[72] invalid unit, expected 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)', but was 'NONE'",
                     e.getMessage());
         }
         try {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 NONES");
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1G");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[77] invalid unit, expected 'HOUR(S)', 'DAY(S)', 'MONTH(S)' or 'YEAR(S)', but was 'NONES'",
+            assertEquals("[71] invalid time unit, expecting 'H', 'D', 'W', 'M' or 'Y', but was 'G'",
                     e.getMessage());
         }
     }
@@ -211,17 +211,31 @@ public class TtlTest extends AbstractCairoTest {
 
     @Test
     public void testSyntaxValid() throws Exception {
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1H");
+        execute("DROP TABLE tango");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 HOUR");
+        execute("DROP TABLE tango");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 HOURS");
+        execute("DROP TABLE tango");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1D");
+        execute("DROP TABLE tango");
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 DAY");
         execute("DROP TABLE tango");
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 DAYS");
+        execute("DROP TABLE tango");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1W");
         execute("DROP TABLE tango");
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 WEEK");
         execute("DROP TABLE tango");
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 WEEKS");
         execute("DROP TABLE tango");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1M");
+        execute("DROP TABLE tango");
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 MONTH");
         execute("DROP TABLE tango");
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 MONTHS");
+        execute("DROP TABLE tango");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1Y");
         execute("DROP TABLE tango");
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 YEAR");
         execute("DROP TABLE tango");
@@ -241,7 +255,7 @@ public class TtlTest extends AbstractCairoTest {
 
     @Test
     public void testWeekOneMicrosBeyondTtl() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 WEEK");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1W");
         execute("INSERT INTO tango VALUES ('1970-01-01'), ('1970-01-03'), ('1970-01-08T01:00:00')");
         assertQuery("ts\n" +
                         "1970-01-03T00:00:00.000000Z\n" +
@@ -262,7 +276,7 @@ public class TtlTest extends AbstractCairoTest {
 
     @Test
     public void testYearOneMicrosBeyondTtl() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 YEAR");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1Y");
         execute("INSERT INTO tango VALUES ('1970-01-01T04:20:00.0Z'), ('1970-12-01'), ('1971-01-01T05:00:00')");
         assertQuery("ts\n" +
                         "1970-12-01T00:00:00.000000Z\n" +

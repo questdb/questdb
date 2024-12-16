@@ -96,6 +96,7 @@ public final class PartitionBy {
     private static final DateFormat PARTITION_YEAR_FORMAT = new IsoDatePartitionFormat(FLOOR_YYYY, YEAR_FORMAT);
     private static final LowerCaseCharSequenceIntHashMap nameToIndexMap = new LowerCaseCharSequenceIntHashMap();
     private static final LowerCaseUtf8SequenceIntHashMap nameToIndexMapUtf8 = new LowerCaseUtf8SequenceIntHashMap();
+    private static final LowerCaseCharSequenceIntHashMap ttlUnitToIndexMap = new LowerCaseCharSequenceIntHashMap();
 
     private PartitionBy() {
     }
@@ -270,6 +271,10 @@ public final class PartitionBy {
         }
     }
 
+    public static int ttlUnitFromString(CharSequence name) {
+        return ttlUnitToIndexMap.get(name);
+    }
+
     private static CairoException expectedPartitionDirNameFormatCairoException(CharSequence partitionName, int lo, int hi, int partitionBy) {
         final CairoException ee = CairoException.critical(0).put('\'');
         switch (partitionBy) {
@@ -323,5 +328,21 @@ public final class PartitionBy {
         nameToIndexMapUtf8.put(new Utf8String("hour"), HOUR);
         nameToIndexMapUtf8.put(new Utf8String("week"), WEEK);
         nameToIndexMapUtf8.put(new Utf8String("none"), NONE);
+
+        ttlUnitToIndexMap.put("h", HOUR);
+        ttlUnitToIndexMap.put("hour", HOUR);
+        ttlUnitToIndexMap.put("hours", HOUR);
+        ttlUnitToIndexMap.put("d", DAY);
+        ttlUnitToIndexMap.put("day", DAY);
+        ttlUnitToIndexMap.put("days", DAY);
+        ttlUnitToIndexMap.put("w", WEEK);
+        ttlUnitToIndexMap.put("week", WEEK);
+        ttlUnitToIndexMap.put("weeks", WEEK);
+        ttlUnitToIndexMap.put("m", MONTH);
+        ttlUnitToIndexMap.put("month", MONTH);
+        ttlUnitToIndexMap.put("months", MONTH);
+        ttlUnitToIndexMap.put("y", YEAR);
+        ttlUnitToIndexMap.put("year", YEAR);
+        ttlUnitToIndexMap.put("years", YEAR);
     }
 }
