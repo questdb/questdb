@@ -53,6 +53,34 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnMapping() throws Exception {
+        assertMemoryLeak(() -> {
+            final long rows = 10;
+            execute("create table x as (select" +
+                    " case when x % 2 = 0 then rnd_str(4,4,4,2) end as a_str," +
+                    " case when x % 2 = 0 then rnd_long() end as a_long," +
+                    " case when x % 2 = 0 then rnd_int() end as an_int," +
+                    " rnd_timestamp('2015','2016',2) as a_ts" +
+                    " from long_sequence(" + rows + "))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("select a_ts, a_long from read_parquet('x.parquet')");
+                assertSqlCursors("select a_ts, a_long from x", sink);
+            }
+        });
+    }
+
+    @Test
     public void testCursor() throws Exception {
         assertMemoryLeak(() -> {
             final long rows = 10;
@@ -98,7 +126,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                         sink,
                         null,
                         null,
-                        false,
+                        true,
                         true
                 );
             }

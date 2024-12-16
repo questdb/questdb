@@ -255,7 +255,7 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
         frame.partitionLo = partitionLo;
         frame.partitionHi = adjustedHi;
         frame.format = PartitionFormat.NATIVE;
-        frame.parquetFd = -1;
+        frame.parquetAddr = -1;
         frame.parquetFileSize = 0;
         frame.rowGroupIndex = -1;
         frame.rowGroupLo = -1;
@@ -294,7 +294,7 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
         frame.partitionLo = partitionLo;
         frame.partitionHi = adjustedHi;
         frame.format = PartitionFormat.PARQUET;
-        frame.parquetFd = reenterParquetDecoder.getFileAddr();
+        frame.parquetAddr = reenterParquetDecoder.getFileAddr();
         frame.parquetFileSize = reenterParquetDecoder.getFileSize();
         frame.rowGroupIndex = rowGroupIndex;
         frame.rowGroupLo = (int) (partitionLo - rowCount);
@@ -305,7 +305,7 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
 
     private class TableReaderPageFrame implements PageFrame {
         private byte format;
-        private long parquetFd;
+        private long parquetAddr;
         private long parquetFileSize;
         private long partitionHi;
         private int partitionIndex;
@@ -351,7 +351,7 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
 
         @Override
         public long getParquetAddr() {
-            return parquetFd;
+            return parquetAddr;
         }
 
         @Override
