@@ -43,6 +43,8 @@ public class TypesAndSelectModern implements QuietCloseable, TypeContainer {
     // recompile the SQL for the new parameter type, which we will do after
     // reconciling these types.
     private final IntList inPgParameterTypeOIDs = new IntList();
+    // The QuestDB bind variable types (see ColumnType) as derived by the SQL Compiler
+    private final IntList outPgParameterType = new IntList();
     // The QuestDB bind variable types (see ColumnType) as scraped from the
     // BindVariableService after SQL compilation.
     //
@@ -63,13 +65,15 @@ public class TypesAndSelectModern implements QuietCloseable, TypeContainer {
             short sqlType,
             String sqlTag,
             @Transient IntList inPgParameterTypeOIDs,
-            @Transient IntList outPgParameterTypeOIDs
+            @Transient IntList outPgParameterTypeOIDs,
+            @Transient IntList outPgParameterType
     ) {
         this.factory = factory;
         this.sqlType = sqlType;
         this.sqlTag = sqlTag;
         this.inPgParameterTypeOIDs.addAll(inPgParameterTypeOIDs);
         this.outPgParameterTypeOIDs.addAll(outPgParameterTypeOIDs);
+        this.outPgParameterType.addAll(outPgParameterType);
     }
 
     @Override
@@ -79,6 +83,10 @@ public class TypesAndSelectModern implements QuietCloseable, TypeContainer {
 
     public RecordCursorFactory getFactory() {
         return factory;
+    }
+
+    public IntList getOutPgParameterType() {
+        return outPgParameterType;
     }
 
     @Override
