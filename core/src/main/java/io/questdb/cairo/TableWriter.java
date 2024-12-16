@@ -2967,7 +2967,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long metaSize = copyMetadataAndUpdateVersion();
             openMetaSwapFileByIndex(ff, ddlMem, path, pathSize, this.metaSwapIndex);
             try {
-                ddlMem.jumpTo(META_OFFSET_TTL_HOURS);
+                ddlMem.jumpTo(META_OFFSET_TTL_HOURS_OR_MONTHS);
                 ddlMem.putInt(ttlHours);
                 ddlMem.jumpTo(metaSize);
             } finally {

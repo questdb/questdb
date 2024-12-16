@@ -109,7 +109,7 @@ public final class TableUtils {
     public static final long META_OFFSET_PARTITION_BY = 4;
     public static final long META_OFFSET_TABLE_ID = 16;
     public static final long META_OFFSET_TIMESTAMP_INDEX = 8;
-    public static final long META_OFFSET_TTL_HOURS = 41; // INT
+    public static final long META_OFFSET_TTL_HOURS_OR_MONTHS = 41; // INT
     public static final long META_OFFSET_VERSION = 12;
     public static final long META_OFFSET_WAL_ENABLED = 40; // BOOLEAN
     public static final String META_PREV_FILE_NAME = "_meta.prev";

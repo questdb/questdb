@@ -186,7 +186,7 @@ public class MetadataCache implements QuietCloseable {
             table.setMaxUncommittedRows(metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS));
             table.setO3MaxLag(metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG));
             table.setTimestampIndex(metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX));
-            table.setTtlHoursOrMonths(metaMem.getInt(TableUtils.META_OFFSET_TTL_HOURS));
+            table.setTtlHoursOrMonths(metaMem.getInt(TableUtils.META_OFFSET_TTL_HOURS_OR_MONTHS));
             table.setIsSoftLink(isSoftLink);
 
             TableUtils.buildWriterOrderMap(metaMem, table.columnOrderMap, metaMem, columnCount);
