@@ -1108,6 +1108,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         // Bind variables have to be configured for the cursor.
         // We have stored the following:
         // - outTypeDescriptionTypeOIDs - OIDS of the parameter types, these are all types present in the SQL
+        // - outTypeDescriptionType - QuestDB native types, as infered by SQL compiler
         // - parameter values - list of parameter values supplied by the client; this list may be
         //                      incomplete insofar as being shorter than the list of bind variables. The values
         //                      are read from the parameter value arena.
@@ -1120,74 +1121,82 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         bindVariableService.clear();
         long lo = parameterValueArenaPtr;
         long msgLimit = parameterValueArenaHi;
-        for (int i = 0, n = outParameterTypeDescriptionType.size(); i < n; i++) {
-            if (i < msgBindParameterValueCount) {
-                // read value from the arena
-                final int valueSize = getInt(lo, msgLimit, "malformed bind variable");
-                lo += Integer.BYTES;
-                if (valueSize == -1) {
-                    // value is not provided, assume NULL
-                    bindDefineBindVariableType(bindVariableService, i);
-                } else {
-                    if (msgBindParameterFormatCodes.get(i)) {
-                        // binary value or a string (binary string and text string is the same)
-                        switch (outParameterTypeDescriptionType.getQuick(i)) {
-                            case ColumnType.INT:
-                                setBindVariableAsInt(i, lo, valueSize, bindVariableService);
-                                break;
-                            case ColumnType.LONG:
-                                setBindVariableAsLong(i, lo, valueSize, bindVariableService);
-                                break;
-                            case ColumnType.TIMESTAMP:
-                                setBindVariableAsTimestamp(i, lo, valueSize, bindVariableService);
-                                break;
-                            case ColumnType.SHORT:
-                                setBindVariableAsShort(i, lo, valueSize, bindVariableService);
-                                break;
-                            case ColumnType.BYTE:
-                                setBindVariableAsByte(i, lo, valueSize, bindVariableService);
-                                break;
-                            case ColumnType.DOUBLE:
-                                setBindVariableAsDouble(i, lo, valueSize, bindVariableService);
-                                break;
-                            case ColumnType.FLOAT:
-                                setBindVariableAsFloat(i, lo, valueSize, bindVariableService);
-                                break;
-                            case ColumnType.CHAR:
-                                setBindVariableAsChar(i, lo, valueSize, bindVariableService, characterStore);
-                                break;
-                            case ColumnType.DATE:
-                                bindDefineBindVariableType(bindVariableService, i);
-                                setBindVariableAsTimestamp(i, lo, valueSize, bindVariableService);
-                                break;
-                            case ColumnType.BOOLEAN:
-                                setBindVariableAsBoolean(i, valueSize, bindVariableService);
-                                break;
-                            case ColumnType.BINARY:
-                                setBindVariableAsBin(i, lo, valueSize, bindVariableService, binarySequenceParamsPool);
-                                break;
-                            case ColumnType.UUID:
-                                setUuidBindVariable(i, lo, valueSize, bindVariableService);
-                                break;
-                            default:
-                                // before we bind a string, we need to define the type of the variable
-                                // so the binding process can cast the string as required
-                                bindDefineBindVariableType(bindVariableService, i);
-                                setBindVariableAsStr(i, lo, valueSize, bindVariableService, characterStore, utf8String);
-                                break;
-                        }
-                    } else {
-                        // read as a string
-                        bindDefineBindVariableType(bindVariableService, i);
+        for (int i = 0, n = outParameterTypeDescriptionTypeOIDs.size(); i < n; i++) {
+
+            // define binding variable. we have to use the exact type as was inferred by the compiler. we cannot use
+            // pgwire equaivalent. why? some QuestDB native types do not have exact equivalent in pgwire so we approximate
+            // them by using the most similar/suitable type
+            // example: there is no 8-bit unsigned integer in pgwire, but there is a 'byte' type in QuestDB.
+            //          so we use int2 in pgwire for binding variables inferred as 'byte'. however, int2 is also
+            //          used for 'short' binding variables. when we are defining a binding variable we use the
+            //          exact type previously provided by sql compiler. if we drive everything by 'pgwire' types
+            //          then pgwire int2 would define a 'short binding variable. however if the compiled plan
+            //          expect 'byte' then it will call 'function.getByte()' and 'shortFunction.getByte()' throws
+            //          unsupported operation exception.
+            bindDefineBindVariableType(bindVariableService, i);
+
+            if (i >= msgBindParameterValueCount) {
+                // client did not set this binding variable, keep it unset (=null)
+                continue;
+            }
+
+            // read value from the arena
+            final int valueSize = getInt(lo, msgLimit, "malformed bind variable");
+            lo += Integer.BYTES;
+            if (valueSize == -1) {
+                // value is not provided, assume NULL
+                continue;
+            }
+
+            // read the pgwire protocol types
+            if (msgBindParameterFormatCodes.get(i)) {
+                // binary value or a string (binary string and text string is the same)
+                switch (outParameterTypeDescriptionTypeOIDs.getQuick(i)) {
+                    case X_PG_INT4:
+                        setBindVariableAsInt(i, lo, valueSize, bindVariableService);
+                        break;
+                    case X_PG_INT8:
+                        setBindVariableAsLong(i, lo, valueSize, bindVariableService);
+                        break;
+                    case X_PG_TIMESTAMP:
+                    case X_PG_TIMESTAMP_TZ:
+                        setBindVariableAsTimestamp(i, lo, valueSize, bindVariableService);
+                        break;
+                    case X_PG_INT2:
+                        setBindVariableAsShort(i, lo, valueSize, bindVariableService);
+                        break;
+                    case X_PG_FLOAT8:
+                        setBindVariableAsDouble(i, lo, valueSize, bindVariableService);
+                        break;
+                    case X_PG_FLOAT4:
+                        setBindVariableAsFloat(i, lo, valueSize, bindVariableService);
+                        break;
+                    case X_PG_CHAR:
+                        setBindVariableAsChar(i, lo, valueSize, bindVariableService, characterStore);
+                        break;
+                    case X_PG_DATE:
+                        setBindVariableAsDate(i, lo, valueSize, bindVariableService, characterStore);
+                        break;
+                    case X_PG_BOOL:
+                        setBindVariableAsBoolean(i, valueSize, bindVariableService);
+                        break;
+                    case X_PG_BYTEA:
+                        setBindVariableAsBin(i, lo, valueSize, bindVariableService, binarySequenceParamsPool);
+                        break;
+                    case X_PG_UUID:
+                        setUuidBindVariable(i, lo, valueSize, bindVariableService);
+                        break;
+                    default:
+                        // before we bind a string, we need to define the type of the variable
+                        // so the binding process can cast the string as required
                         setBindVariableAsStr(i, lo, valueSize, bindVariableService, characterStore, utf8String);
-                    }
-                    lo += valueSize;
+                        break;
                 }
             } else {
-                // set NULL for the type
-                // todo: test how this works with vararg function args.
-                defineBindVariableType(sqlExecutionContext.getBindVariableService(), i);
+                // read as a string
+                setBindVariableAsStr(i, lo, valueSize, bindVariableService, characterStore, utf8String);
             }
+            lo += valueSize;
         }
     }
 
