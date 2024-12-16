@@ -130,7 +130,6 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.Arrays;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongConsumer;
@@ -5357,7 +5356,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long partitionCeiling = ceilFn.ceil(partitionTimestamp);
             // TTL < 0 means it's in months
             boolean shouldEvict = ttl > 0
-                    ? maxTimestamp - partitionCeiling >= TimeUnit.HOURS.toMicros(ttl)
+                    ? maxTimestamp - partitionCeiling >= Timestamps.HOUR_MICROS * ttl
                     : Timestamps.getMonthsBetween(partitionCeiling, maxTimestamp) >= -ttl;
             if (shouldEvict) {
                 dropPartitionByExactTimestamp(partitionTimestamp);
