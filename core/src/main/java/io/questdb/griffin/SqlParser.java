@@ -201,7 +201,7 @@ public class SqlParser {
         int ttlValue;
         try {
             long ttlLong = Numbers.parseLong(tok);
-            if (ttlLong > Integer.MAX_VALUE) {
+            if (ttlLong > Integer.MAX_VALUE || ttlLong < 0) {
                 throw SqlException.$(valuePos, "TTL value out of range: ").put(ttlLong)
                         .put(". Max value: ").put(Integer.MAX_VALUE);
             }
@@ -209,9 +209,6 @@ public class SqlParser {
         } catch (NumericException e) {
             throw SqlException.$(valuePos,
                     "invalid syntax, should be TTL <number> <unit> but was TTL ").put(tok);
-        }
-        if (ttlValue <= 0) {
-            throw SqlException.$(lexer.getPosition(), "TTL value must be positive, but was ").put(ttlValue);
         }
         if (unit == -1) {
             unitPos = lexer.getPosition();
