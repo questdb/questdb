@@ -2981,7 +2981,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             finishMetaSwapUpdate();
-            metadata.setTtlHours(metaTtlHoursOrMonths);
+            metadata.setTtlHoursOrMonths(metaTtlHoursOrMonths);
 
             try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
                 metadataRW.hydrateTable(metadata);
