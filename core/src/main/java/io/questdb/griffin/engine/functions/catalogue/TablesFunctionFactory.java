@@ -58,6 +58,8 @@ public class TablesFunctionFactory implements FunctionFactory {
     private static final int O3_MAX_LAG_COLUMN = 5;
     private static final int PARTITION_BY_COLUMN = 3;
     private static final int TABLE_NAME = 1;
+    private static final int TTL_UNIT_COLUMN = 10;
+    private static final int TTL_VALUE_COLUMN = 9;
     private static final int WAL_ENABLED_COLUMN = 6;
 
     @Override
@@ -181,6 +183,9 @@ public class TablesFunctionFactory implements FunctionFactory {
                     if (col == ID_COLUMN) {
                         return table.getId();
                     }
+                    if (col == TTL_VALUE_COLUMN) {
+                        return Math.abs(table.getTtlHoursOrMonths());
+                    }
                     assert col == MAX_UNCOMMITTED_ROWS_COLUMN;
                     return table.getMaxUncommittedRows();
                 }
@@ -198,6 +203,8 @@ public class TablesFunctionFactory implements FunctionFactory {
                             return table.getTableName();
                         case PARTITION_BY_COLUMN:
                             return table.getPartitionByName();
+                        case TTL_UNIT_COLUMN:
+                            return table.getTtlHoursOrMonths() >= 0 ? "HOURS" : "MONTHS";
                         case DESIGNATED_TIMESTAMP_COLUMN:
                             return table.getTimestampName();
                         case DIRECTORY_NAME_COLUMN:
@@ -244,6 +251,8 @@ public class TablesFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("walEnabled", ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("directoryName", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("dedup", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("ttlValue", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("ttlUnit", ColumnType.STRING));
         METADATA = metadata;
     }
 }
