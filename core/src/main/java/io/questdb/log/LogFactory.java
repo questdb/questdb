@@ -634,7 +634,7 @@ public class LogFactory implements Closeable {
         }
 
         // ensure that file location is set, so the env var can be picked up later
-        if (!properties.contains("w.file.location")) {
+        if (properties.getProperty("w.file.location") == null) {
             properties.put("w.file.location", "");
         }
 
