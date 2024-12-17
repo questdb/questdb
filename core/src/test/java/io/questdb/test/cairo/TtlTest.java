@@ -34,6 +34,57 @@ import static org.junit.Assert.fail;
 public class TtlTest extends AbstractCairoTest {
 
     @Test
+    public void testAlterSyntaxInvalid() throws Exception {
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR");
+        try {
+            execute("ALTER TABLE tango SET TTL");
+            fail("Invalid syntax accepted");
+        } catch (SqlException e) {
+            assertEquals("[25] missing argument, should be TTL <number> <unit> or <number_with_unit>", e.getMessage());
+        }
+        try {
+            execute("ALTER TABLE tango SET TTL X");
+            fail("Invalid syntax accepted");
+        } catch (SqlException e) {
+            assertEquals("[26] invalid syntax, should be TTL <number> <unit> but was TTL X", e.getMessage());
+        }
+        try {
+            execute("ALTER TABLE tango SET TTL 12");
+            fail("Invalid syntax accepted");
+        } catch (SqlException e) {
+            assertEquals("[28] missing unit, 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)' expected", e.getMessage());
+        }
+        try {
+            execute("ALTER TABLE tango SET TTL 1 NONE");
+            fail("Invalid syntax accepted");
+        } catch (SqlException e) {
+            assertEquals("[28] invalid unit, expected 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)', but was 'NONE'",
+                    e.getMessage());
+        }
+        try {
+            execute("ALTER TABLE tango SET TTL HOURS");
+            fail("Invalid syntax accepted");
+        } catch (SqlException e) {
+            assertEquals("[26] invalid argument, should be TTL <number> <unit> or <number_with_unit>",
+                    e.getMessage());
+        }
+        try {
+            execute("ALTER TABLE tango SET TTL H");
+            fail("Invalid syntax accepted");
+        } catch (SqlException e) {
+            assertEquals("[26] invalid syntax, should be TTL <number> <unit> but was TTL H",
+                    e.getMessage());
+        }
+        try {
+            execute("ALTER TABLE tango SET TTL 1G");
+            fail("Invalid syntax accepted");
+        } catch (SqlException e) {
+            assertEquals("[27] invalid time unit, expecting 'H', 'D', 'W', 'M' or 'Y', but was 'G'",
+                    e.getMessage());
+        }
+    }
+
+    @Test
     public void testAlterTableNotPartitioned() throws Exception {
         execute("CREATE TABLE tango (n LONG)");
         execute("ALTER TABLE tango SET TTL 0H"); // zero TTL is acceptable
@@ -61,6 +112,56 @@ public class TtlTest extends AbstractCairoTest {
                         "1970-01-01T02:00:00.000001Z\n" +
                         "1970-01-01T02:00:00.000002Z\n",
                 "tango", "ts", true, true);
+    }
+
+    @Test
+    public void testCreateSyntaxInvalid() {
+        try {
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL");
+            fail("Invalid syntax accepted");
+        } catch (SqlException e) {
+            assertEquals("[69] missing argument, should be TTL <number> <unit> or <number_with_unit>", e.getMessage());
+        }
+        try {
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL X");
+            fail("Invalid syntax accepted");
+        } catch (SqlException e) {
+            assertEquals("[70] invalid syntax, should be TTL <number> <unit> but was TTL X", e.getMessage());
+        }
+        try {
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 12");
+            fail("Invalid syntax accepted");
+        } catch (SqlException e) {
+            assertEquals("[72] missing unit, 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)' expected", e.getMessage());
+        }
+        try {
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 NONE");
+            fail("Invalid syntax accepted");
+        } catch (SqlException e) {
+            assertEquals("[72] invalid unit, expected 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)', but was 'NONE'",
+                    e.getMessage());
+        }
+        try {
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL HOURS");
+            fail("Invalid syntax accepted");
+        } catch (SqlException e) {
+            assertEquals("[70] invalid argument, should be TTL <number> <unit> or <number_with_unit>",
+                    e.getMessage());
+        }
+        try {
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL H");
+            fail("Invalid syntax accepted");
+        } catch (SqlException e) {
+            assertEquals("[70] invalid syntax, should be TTL <number> <unit> but was TTL H",
+                    e.getMessage());
+        }
+        try {
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1G");
+            fail("Invalid syntax accepted");
+        } catch (SqlException e) {
+            assertEquals("[71] invalid time unit, expecting 'H', 'D', 'W', 'M' or 'Y', but was 'G'",
+                    e.getMessage());
+        }
     }
 
     @Test
@@ -124,56 +225,6 @@ public class TtlTest extends AbstractCairoTest {
                         "1970-02-10T04:20:00.000000Z\n" +
                         "1970-03-01T05:00:00.000000Z\n",
                 "tango", "ts", true, true);
-    }
-
-    @Test
-    public void testSyntaxInvalid() {
-        try {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL");
-            fail("Invalid syntax accepted");
-        } catch (SqlException e) {
-            assertEquals("[69] missing argument, should be TTL <number> <unit> or <number_with_unit>", e.getMessage());
-        }
-        try {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL X");
-            fail("Invalid syntax accepted");
-        } catch (SqlException e) {
-            assertEquals("[70] invalid syntax, should be TTL <number> <unit> but was TTL X", e.getMessage());
-        }
-        try {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 12");
-            fail("Invalid syntax accepted");
-        } catch (SqlException e) {
-            assertEquals("[72] missing unit, 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)' expected", e.getMessage());
-        }
-        try {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 NONE");
-            fail("Invalid syntax accepted");
-        } catch (SqlException e) {
-            assertEquals("[72] invalid unit, expected 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)', but was 'NONE'",
-                    e.getMessage());
-        }
-        try {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL HOURS");
-            fail("Invalid syntax accepted");
-        } catch (SqlException e) {
-            assertEquals("[70] invalid argument, should be TTL <number> <unit> or <number_with_unit>",
-                    e.getMessage());
-        }
-        try {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL H");
-            fail("Invalid syntax accepted");
-        } catch (SqlException e) {
-            assertEquals("[70] invalid syntax, should be TTL <number> <unit> but was TTL H",
-                    e.getMessage());
-        }
-        try {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1G");
-            fail("Invalid syntax accepted");
-        } catch (SqlException e) {
-            assertEquals("[71] invalid time unit, expecting 'H', 'D', 'W', 'M' or 'Y', but was 'G'",
-                    e.getMessage());
-        }
     }
 
     @Test
