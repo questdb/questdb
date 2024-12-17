@@ -73,7 +73,7 @@ public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         if (args.size() > 3) {
-            throw SqlException.$(argPositions.getQuick(4), "too many arguments");
+            throw SqlException.$(argPositions.getQuick(3), "too many arguments");
         }
 
         long offset = 1;
