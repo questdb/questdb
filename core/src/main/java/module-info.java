@@ -1024,6 +1024,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.window.MinDoubleWindowFunctionFactory,
             io.questdb.griffin.engine.functions.window.LastValueDoubleWindowFunctionFactory,
             io.questdb.griffin.engine.functions.window.LastNotNullValueDoubleWindowFunctionFactory,
+            io.questdb.griffin.engine.functions.window.LagDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.window.LeadDoubleFunctionFactory,
 
             // metadata functions
             io.questdb.griffin.engine.functions.metadata.BuildFunctionFactory,
