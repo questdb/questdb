@@ -580,7 +580,7 @@ public class TimestampFormatUtils {
                 DAY_PATTERN,                       // yyyy-MM-dd
                 WEEK_PATTERN,                      // YYYY-Www
                 MONTH_PATTERN,                     // yyyy-MM
-                YEAR_PATTERN,                      // yyyy
+                YEAR_PATTERN                      // yyyy
         };
         FORMATS = new DateFormat[patterns.length];
         CharSequenceObjHashMap<DateFormat> dateFormats = new CharSequenceObjHashMap<>();

@@ -104,6 +104,13 @@ public class TimestampsTest {
     }
 
     @Test
+    public void testAppendOffsetDateTime() throws Exception {
+        long micros = TimestampFormatUtils.parseTimestamp("1998-05-12T23:45:51.045Z");
+        TimestampFormatUtils.appendOffsetDateTime(sink, micros, "Antarctica/McMurdo");
+        Assert.assertTrue(sink.toString().contains("+12:00") || sink.toString().contains("+13:00"));
+    }
+
+    @Test
     public void testCeilDD() throws Exception {
         long micros = TimestampFormatUtils.parseTimestamp("2008-05-12T23:45:51.045Z");
         TimestampFormatUtils.appendDateTime(sink, Timestamps.ceilDD(micros));
