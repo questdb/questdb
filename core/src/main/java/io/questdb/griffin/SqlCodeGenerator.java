@@ -4556,9 +4556,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (qc.isWindowColumn()) {
                     final WindowColumn ac = (WindowColumn) qc;
                     final ExpressionNode ast = qc.getAst();
-                    if (ast.paramCount > 1) {
-                        throw SqlException.$(ast.position, "too many arguments");
-                    }
 
                     partitionByFunctions = null;
                     int psz = ac.getPartitionBy().size();
@@ -4782,9 +4779,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (qc.isWindowColumn()) {
                     final WindowColumn ac = (WindowColumn) qc;
                     final ExpressionNode ast = qc.getAst();
-                    if (ast.paramCount > 1) {
-                        throw SqlException.$(ast.position, "too many arguments");
-                    }
 
                     partitionByFunctions = null;
                     int psz = ac.getPartitionBy().size();
