@@ -177,16 +177,22 @@ public class SqlParser {
         if (tok == null) {
             throw SqlException.$(lexer.getPosition(), "missing argument, should be TTL <number> <unit> or <number_with_unit>");
         }
+        int tokLength = tok.length();
         int unit = -1;
         int unitPos = -1;
-        int tokLength = tok.length();
         if (tokLength > 1 && Character.isLetter(tok.charAt(tokLength - 1))) {
             CharSequence unitChar = tok.subSequence(tokLength - 1, tokLength);
             unit = PartitionBy.ttlUnitFromString(unitChar);
+            tok = tok.subSequence(0, tokLength - 1);
             if (unit != -1) {
-                tok = tok.subSequence(0, tokLength - 1);
                 unitPos = valuePos;
             } else {
+                try {
+                    Numbers.parseLong(tok);
+                } catch (NumericException e) {
+                    throw SqlException.$(valuePos,
+                            "invalid argument, should be TTL <number> <unit> or <number_with_unit>");
+                }
                 throw SqlException.$(valuePos + tokLength - 1,
                         "invalid time unit, expecting 'H', 'D', 'W', 'M' or 'Y', but was '").put(unitChar).put('\'');
             }

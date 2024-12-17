@@ -142,6 +142,20 @@ public class TtlTest extends AbstractCairoTest {
                     e.getMessage());
         }
         try {
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL HOURS");
+            fail("Invalid syntax accepted");
+        } catch (SqlException e) {
+            assertEquals("[70] invalid argument, should be TTL <number> <unit> or <number_with_unit>",
+                    e.getMessage());
+        }
+        try {
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL H");
+            fail("Invalid syntax accepted");
+        } catch (SqlException e) {
+            assertEquals("[70] invalid syntax, should be TTL <number> <unit> but was TTL H",
+                    e.getMessage());
+        }
+        try {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1G");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
