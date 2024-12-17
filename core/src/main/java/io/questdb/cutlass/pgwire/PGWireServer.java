@@ -39,11 +39,9 @@ import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
-import java.io.Closeable;
-
 import static io.questdb.network.IODispatcher.*;
 
-public class PGWireServer implements Closeable {
+public class PGWireServer implements IPGWireServer {
     private static final Log LOG = LogFactory.getLog(PGWireServer.class);
     private static final NoOpAssociativeCache<TypesAndSelect> NO_OP_CACHE = new NoOpAssociativeCache<>();
     private final PGConnectionContextFactory contextFactory;
@@ -133,6 +131,7 @@ public class PGWireServer implements Closeable {
         }
     }
 
+    @Override
     public void clearSelectCache() {
         typesAndSelectCache.clear();
     }
@@ -145,15 +144,18 @@ public class PGWireServer implements Closeable {
         typesAndSelectCache = Misc.free(typesAndSelectCache);
     }
 
+    @Override
     public int getPort() {
         return dispatcher.getPort();
     }
 
     @TestOnly
+    @Override
     public WorkerPool getWorkerPool() {
         return workerPool;
     }
 
+    @Override
     public void resetQueryCache() {
         if (typesAndSelectCache != null) {
             typesAndSelectCache.clear();

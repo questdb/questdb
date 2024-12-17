@@ -134,7 +134,7 @@ public class OrderByExpressionTest extends AbstractCairoTest {
     @Test
     public void testOrderByExpressionWithDuplicatesMaintainsOriginalOrder() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab as (select x x, x%2 y from long_sequence(10))");
+            execute("create table tab as (select x x, x%2 y from long_sequence(10))");
 
             assertQuery(
                     "x\ty\n" +

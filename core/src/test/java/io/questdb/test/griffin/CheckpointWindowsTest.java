@@ -72,7 +72,7 @@ public class CheckpointWindowsTest extends AbstractCairoTest {
     @Test
     public void testCheckpointCreate() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (ts timestamp, name symbol, val int)");
+            execute("create table test (ts timestamp, name symbol, val int)");
             try {
                 assertExceptionNoLeakCheck("checkpoint create");
             } catch (SqlException ex) {

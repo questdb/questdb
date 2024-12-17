@@ -491,7 +491,7 @@ public class CopyTask {
             tableNameSink.clear();
             tableNameSink.put(tableStructure.getTableName()).put('_').put(index);
             String tableName = tableNameSink.toString();
-            TableToken tableToken = new TableToken(tableName, tableName, (int) cairoEngine.getTableIdGenerator().getNextId(), false, false, false);
+            TableToken tableToken = new TableToken(tableName, tableName, cairoEngine.getNextTableId(), false, false, false);
 
             final int columnCount = metadata.getColumnCount();
             try (
@@ -646,7 +646,7 @@ public class CopyTask {
             TableToken tableToken = cairoEngine.verifyTableName(tableStructure.getTableName());
             path.of(root).concat(tableToken.getTableName()).put('_').put(index);
             int plen = path.size();
-            TableUtils.setPathForPartition(path.slash(), tableStructure.getPartitionBy(), partitionTimestamp, -1);
+            TableUtils.setPathForNativePartition(path.slash(), tableStructure.getPartitionBy(), partitionTimestamp, -1);
             path.concat(columnName).put(TableUtils.FILE_SUFFIX_D);
 
             long columnMemory = 0;
@@ -877,7 +877,7 @@ public class CopyTask {
             tableNameSink.clear();
             tableNameSink.put(targetTableStructure.getTableName()).put('_').put(index);
             String publicTableName = tableNameSink.toString();
-            TableToken tableToken = new TableToken(publicTableName, publicTableName, (int) engine.getTableIdGenerator().getNextId(), false, false, false);
+            TableToken tableToken = new TableToken(publicTableName, publicTableName, engine.getNextTableId(), false, false, false);
             createTable(ff, configuration.getMkDirMode(), importRoot, tableToken.getDirName(), publicTableName, targetTableStructure, 0, AllowAllSecurityContext.INSTANCE);
 
             try (

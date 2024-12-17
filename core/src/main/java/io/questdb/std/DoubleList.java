@@ -24,10 +24,9 @@
 
 package io.questdb.std;
 
-import io.questdb.cairo.BinarySearch;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
@@ -97,18 +96,14 @@ public class DoubleList implements Mutable, Sinkable {
                 high = mid - 1;
             } else {
                 // In case of multiple equal values, find the first
-                return scanDir == BinarySearch.SCAN_UP ?
+                return scanDir == Vect.BIN_SEARCH_SCAN_UP ?
                         scrollUp(mid, midVal) :
                         scrollDown(mid, high, midVal);
             }
         }
-        return scanDir == BinarySearch.SCAN_UP ?
+        return scanDir == Vect.BIN_SEARCH_SCAN_UP ?
                 scanUp(value, low, high + 1) :
                 scanDown(value, low, high + 1);
-    }
-
-    public void clear() {
-        pos = 0;
     }
 
     public void checkCapacity(int capacity) {
@@ -123,6 +118,10 @@ public class DoubleList implements Mutable, Sinkable {
             System.arraycopy(data, 0, buf, 0, l);
             this.data = buf;
         }
+    }
+
+    public void clear() {
+        pos = 0;
     }
 
     @Override

@@ -99,23 +99,44 @@ public class SimpleAssociativeCache<V> implements AssociativeCache<V> {
         clear();
     }
 
+    public int keyIndex(CharSequence key) {
+        int lo = lo(key);
+        for (int i = lo, hi = lo + blocks; i < hi; i++) {
+            CharSequence k = keys[i];
+            if (k == null) {
+                return NOT_FOUND;
+            }
+
+            if (Chars.equals(k, key)) {
+                return i;
+            }
+        }
+        return NOT_FOUND;
+    }
+
     public V peek(@NotNull CharSequence key) {
-        int index = getIndex(key);
-        if (index != NOT_FOUND) {
-            return values[index];
+        return peek(keyIndex(key));
+    }
+
+    public V peek(int keyIndex) {
+        if (keyIndex != NOT_FOUND) {
+            return values[keyIndex];
         }
         return null;
     }
 
     @Override
     public V poll(@NotNull CharSequence key) {
-        int index = getIndex(key);
-        if (index == NOT_FOUND) {
+        return poll(keyIndex(key));
+    }
+
+    public @Nullable V poll(int keyIndex) {
+        if (keyIndex == NOT_FOUND) {
             missCounter.inc();
             return null;
         }
-        V value = values[index];
-        values[index] = null;
+        V value = values[keyIndex];
+        values[keyIndex] = null;
         if (value != null) {
             // The value is present, so we're decrementing the gauge.
             cachedGauge.dec();
@@ -155,21 +176,6 @@ public class SimpleAssociativeCache<V> implements AssociativeCache<V> {
             // We're replacing the value with another one, no need to change the gauge.
             Misc.freeIfCloseable(outgoingValue);
         }
-    }
-
-    private int getIndex(CharSequence key) {
-        int lo = lo(key);
-        for (int i = lo, hi = lo + blocks; i < hi; i++) {
-            CharSequence k = keys[i];
-            if (k == null) {
-                return NOT_FOUND;
-            }
-
-            if (Chars.equals(k, key)) {
-                return i;
-            }
-        }
-        return NOT_FOUND;
     }
 
     private int lo(CharSequence key) {

@@ -24,9 +24,11 @@
 
 package io.questdb.std;
 
-import io.questdb.cairo.BinarySearch;
-
 public final class Vect {
+    // Down is increasing scan direction
+    public static final int BIN_SEARCH_SCAN_DOWN = 1;
+    // Up is decreasing scan direction
+    public static final int BIN_SEARCH_SCAN_UP = -1;
 
     public static native double avgDoubleAcc(long pInt, long count, long pCount);
 
@@ -46,7 +48,7 @@ public final class Vect {
         // Note: high is inclusive!
         long index = binarySearch64Bit(pData, value, low, high, scanDirection);
         if (index < 0) {
-            return (-index - 1) - (scanDirection == BinarySearch.SCAN_UP ? 0 : 1);
+            return (-index - 1) - (scanDirection == BIN_SEARCH_SCAN_UP ? 0 : 1);
         }
         return index;
     }

@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.griffin.SqlException;
@@ -235,7 +236,15 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
 
         // repeat all updates after all lines are guaranteed to be landed in the tables
         for (String updateSql : updateSqlQueue) {
-            update(updateSql);
+            while (true) {
+                try {
+                    update(updateSql);
+                    break;
+                } catch (EntryUnavailableException ex) {
+                    // ILP may be a bit slow to release the table writer
+                    Os.sleep(1);
+                }
+            }
         }
         mayDrainWalQueue();
     }

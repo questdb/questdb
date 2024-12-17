@@ -25,7 +25,10 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.std.*;
-import io.questdb.std.str.*;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.BufferedReader;

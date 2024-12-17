@@ -13,11 +13,6 @@ mod update;
 mod util;
 pub mod varchar;
 
-pub const QDB_TYPE_META_PREFIX: &str = "__qdb_type__";
-
-pub(crate) type ParquetResult<T> = parquet2::error::Result<T>;
-pub(crate) type ParquetError = parquet2::error::Error;
-
 pub trait Nullable {
     fn is_null(&self) -> bool;
 }
@@ -123,8 +118,9 @@ impl AsPrimitive<i32> for IPv4 {
 
 #[cfg(test)]
 mod tests {
+    use crate::parquet::col_type::{ColumnType, ColumnTypeTag};
     use crate::parquet_write::file::ParquetWriter;
-    use crate::parquet_write::schema::{Column, ColumnType, Partition};
+    use crate::parquet_write::schema::{Column, Partition};
     use arrow::array::Array;
     use arrow::datatypes::ToByteSlice;
     use bytes::Bytes;
@@ -160,7 +156,7 @@ mod tests {
                 Column::from_raw_data(
                     i as i32,
                     name,
-                    ColumnType::Int as i32,
+                    ColumnTypeTag::Int.into_type().code(),
                     0,
                     row_count as usize,
                     buffer.as_ptr() as *const u8,
@@ -176,7 +172,6 @@ mod tests {
 
         let partition = Partition { table: "test_table".to_string(), columns };
 
-        println!("start writing");
         // Measure the start time
         let start = Instant::now();
         ParquetWriter::new(&mut buf)
@@ -263,7 +258,10 @@ mod tests {
         col_chars: Vec<u8>,
         offsets: Vec<u64>,
     ) {
-        assert_eq!(ColumnType::Symbol, ColumnType::try_from(12).expect("fail"));
+        assert_eq!(
+            ColumnTypeTag::Symbol,
+            ColumnType::try_from(12).expect("fail").tag()
+        );
         let col1_w = Column::from_raw_data(
             0,
             "col1",

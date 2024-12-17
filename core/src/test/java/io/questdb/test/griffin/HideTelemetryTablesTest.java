@@ -36,9 +36,9 @@ public class HideTelemetryTablesTest extends AbstractCairoTest {
         node1.getConfigurationOverrides().setIsHidingTelemetryTable(true);
 
         assertMemoryLeak(() -> {
-            ddl("create table test(a int)");
-            ddl("create table " + TelemetryTask.TABLE_NAME + "(a int)");
-            ddl("create table " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + "(a int)");
+            execute("create table test(a int)");
+            execute("create table " + TelemetryTask.TABLE_NAME + "(a int)");
+            execute("create table " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + "(a int)");
             assertSql(
                     "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
                             "1\ttest\t\tNONE\t1000\t300000000\n", "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()"
@@ -51,9 +51,9 @@ public class HideTelemetryTablesTest extends AbstractCairoTest {
         node1.getConfigurationOverrides().setIsHidingTelemetryTable(false);
 
         assertMemoryLeak(() -> {
-            ddl("create table test(a int)");
-            ddl("create table " + TelemetryTask.TABLE_NAME + "(a int)");
-            ddl("create table " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + "(a int)");
+            execute("create table test(a int)");
+            execute("create table " + TelemetryTask.TABLE_NAME + "(a int)");
+            execute("create table " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + "(a int)");
             assertSql(
                     "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
                             "2\ttelemetry\t\tNONE\t1000\t300000000\n" +

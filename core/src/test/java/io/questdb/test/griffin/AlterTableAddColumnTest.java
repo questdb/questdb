@@ -46,7 +46,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                 () -> {
                     createX();
 
-                    ddl("alter table x add mycol int not null, mycol2 int");
+                    execute("alter table x add mycol int not null, mycol2 int");
 
                     assertQueryNoLeakCheck(
                             "c\tmycol\tmycol2\n" +
@@ -115,7 +115,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
 
                 startBarrier.await();
                 try {
-                    ddl("alter table x add column xx int", sqlExecutionContext);
+                    execute("alter table x add column xx int", sqlExecutionContext);
                     Assert.fail();
                 } finally {
                     haltLatch.countDown();
@@ -134,7 +134,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                 () -> {
                     createX();
 
-                    ddl("alter table x add column mycol int");
+                    execute("alter table x add column mycol int");
 
                     assertQueryNoLeakCheck(
                             "c\tmycol\n" +
@@ -161,7 +161,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     createX();
 
                     try {
-                        ddl("alter table x add column D int", sqlExecutionContext);
+                        execute("alter table x add column D int", sqlExecutionContext);
                         Assert.fail();
                     } catch (SqlException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(), "column 'D' already exists");
@@ -176,7 +176,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                 () -> {
                     createX();
 
-                    ddl("alter table x add \"mycol\" int not null");
+                    execute("alter table x add \"mycol\" int not null");
 
                     assertQueryNoLeakCheck(
                             "c\tmycol\n" +
@@ -202,7 +202,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                 () -> {
                     createX();
 
-                    ddl("alter table x add column \"mycol\" int not null");
+                    execute("alter table x add column \"mycol\" int not null");
 
                     assertQueryNoLeakCheck(
                             "c\tmycol\n" +
@@ -228,7 +228,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                 () -> {
                     createX();
 
-                    ddl("alter table x add \"spa ce\" string");
+                    execute("alter table x add \"spa ce\" string");
 
                     assertQueryNoLeakCheck(
                             "c\tspa ce\n" +
@@ -254,7 +254,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                 () -> {
                     createX();
 
-                    ddl("alter table x add mycol int");
+                    execute("alter table x add mycol int");
 
                     assertQueryNoLeakCheck(
                             "c\tmycol\n" +
@@ -280,7 +280,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                 () -> {
                     createX();
 
-                    ddl("alter table x add mycol int not null");
+                    execute("alter table x add mycol int not null");
 
                     assertQueryNoLeakCheck(
                             "c\tmycol\n" +
@@ -306,7 +306,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                 () -> {
                     createX();
 
-                    ddl("alter table x add mycol int null");
+                    execute("alter table x add mycol int null");
 
                     assertQueryNoLeakCheck(
                             "c\tmycol\n" +
@@ -393,7 +393,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
 
                     try (CairoEngine engine = new CairoEngine(configuration, metrics)) {
                         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                            ddl(compiler, "alter table x add column meh symbol cache");
+                            execute(compiler, "alter table x add column meh symbol cache");
 
                             try (TableReader reader = getReader("x")) {
                                 SymbolMapReader smr = reader.getSymbolMapReader(16);
@@ -417,7 +417,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                 () -> {
                     createX();
 
-                    ddl("alter table x add column meh symbol capacity 2048");
+                    execute("alter table x add column meh symbol capacity 2048");
 
                     try (TableReader reader = getReader("x")) {
                         SymbolMapReader smr = reader.getSymbolMapReader(16);
@@ -473,7 +473,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                 () -> {
                     createX();
 
-                    ddl("alter table x add column meh symbol index");
+                    execute("alter table x add column meh symbol index");
 
                     try (TableReader reader = getReader("x")) {
                         SymbolMapReader smr = reader.getSymbolMapReader(16);
@@ -493,7 +493,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                 () -> {
                     createX();
 
-                    ddl("alter table x add column meh symbol index capacity 9000");
+                    execute("alter table x add column meh symbol index capacity 9000");
 
                     try (TableReader reader = getReader("x")) {
                         SymbolMapReader smr = reader.getSymbolMapReader(16);
@@ -519,7 +519,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                 () -> {
                     createX();
 
-                    ddl("alter table x add column meh symbol nocache");
+                    execute("alter table x add column meh symbol nocache");
 
                     try (TableReader reader = getReader("x")) {
                         SymbolMapReader smr = reader.getSymbolMapReader(16);
@@ -540,7 +540,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     createX();
                     engine.clear();
 
-                    ddl("alter table x add column meh symbol;");
+                    execute("alter table x add column meh symbol;");
 
                     try (TableReader reader = getReader("x")) {
                         SymbolMapReader smr = reader.getSymbolMapReader(16);
@@ -570,7 +570,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
 
                     try (CairoEngine engine = new CairoEngine(configuration, metrics)) {
                         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                            ddl(compiler, "alter table x add column meh symbol", sqlExecutionContext);
+                            execute(compiler, "alter table x add column meh symbol", sqlExecutionContext);
                             try (TableReader reader = getReader("x")) {
                                 SymbolMapReader smr = reader.getSymbolMapReader(16);
                                 Assert.assertNotNull(smr);
@@ -596,7 +596,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     createX();
                     engine.clear();
 
-                    ddl("alter table x add column meh symbol");
+                    execute("alter table x add column meh symbol");
 
                     try (TableReader reader = getReader("x")) {
                         SymbolMapReader smr = reader.getSymbolMapReader(16);
@@ -621,7 +621,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                 () -> {
                     createX();
 
-                    ddl("alter table x add column mycol int, second symbol");
+                    execute("alter table x add column mycol int, second symbol");
                     assertQueryNoLeakCheck(
                             "c\tmycol\tsecond\n" +
                                     "XYZ\tnull\t\n" +
@@ -651,8 +651,8 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                 () -> {
                     createX();
 
-                    ddl("alter table x add column mycol int; \n");
-                    ddl("alter table x add column second symbol;");
+                    execute("alter table x add column mycol int; \n");
+                    execute("alter table x add column second symbol;");
                     assertQueryNoLeakCheck(
                             "c\tmycol\tsecond\n" +
                                     "XYZ\tnull\t\n" +
@@ -694,9 +694,9 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
     @Test
     public void testQueryVarcharAboveColumnTop() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select x id, from long_sequence(3))");
-            ddl("alter table x add column a_varchar varchar");
-            insert("insert into x values (4, 'added-1'), (5, 'added-2')");
+            execute("create table x as (select x id, from long_sequence(3))");
+            execute("alter table x add column a_varchar varchar");
+            execute("insert into x values (4, 'added-1'), (5, 'added-2')");
             assertQuery("a_varchar\n\n\n\nadded-1\nadded-2\n",
                     "select a_varchar from x", null, null, true, true);
         });
@@ -715,7 +715,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
     }
 
     private void createX() throws SqlException {
-        ddl(
+        execute(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +

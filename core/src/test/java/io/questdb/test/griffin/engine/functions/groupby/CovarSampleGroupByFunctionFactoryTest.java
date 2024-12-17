@@ -37,19 +37,9 @@ public class CovarSampleGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCovarSampleNoValues() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table tbl1(x int, y int)");
-            assertSql(
-                    "covar_samp\nnull\n", "select covar_samp(x, y) from tbl1"
-            );
-        });
-    }
-
-    @Test
     public void testCovarSampleAllSameValues() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tbl1 as (select 17.2151921 x, 17.2151921 y from long_sequence(100))");
+            execute("create table tbl1 as (select 17.2151921 x, 17.2151921 y from long_sequence(100))");
             assertSql(
                     "covar_samp\n0.0\n", "select covar_samp(x, y) from tbl1"
             );
@@ -59,7 +49,7 @@ public class CovarSampleGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCovarSampleDoubleValues() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tbl1 as (select cast(x as double) x, cast(x as double) y from long_sequence(100))");
+            execute("create table tbl1 as (select cast(x as double) x, cast(x as double) y from long_sequence(100))");
             assertSql(
                     "covar_samp\n841.6666666666666\n", "select covar_samp(x, y) from tbl1"
             );
@@ -69,9 +59,9 @@ public class CovarSampleGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCovarSampleFirstNull() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tbl1(x double, y double)");
-            insert("insert into 'tbl1' VALUES (null, null)");
-            insert("insert into 'tbl1' select x, x as y from long_sequence(100)");
+            execute("create table tbl1(x double, y double)");
+            execute("insert into 'tbl1' VALUES (null, null)");
+            execute("insert into 'tbl1' select x, x as y from long_sequence(100)");
             assertSql(
                     "covar_samp\n841.6666666666666\n", "select covar_samp(x, y) from tbl1"
             );
@@ -81,7 +71,7 @@ public class CovarSampleGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCovarSampleFloatValues() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tbl1 as (select cast(x as float) x, cast(x as float) y from long_sequence(100))");
+            execute("create table tbl1 as (select cast(x as float) x, cast(x as float) y from long_sequence(100))");
             assertSql(
                     "covar_samp\n841.6666666666666\n", "select covar_samp(x, y) from tbl1"
             );
@@ -91,9 +81,19 @@ public class CovarSampleGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCovarSampleIntValues() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tbl1 as (select cast(x as int) x, cast(x as int) y from long_sequence(100))");
+            execute("create table tbl1 as (select cast(x as int) x, cast(x as int) y from long_sequence(100))");
             assertSql(
                     "covar_samp\n841.6666666666666\n", "select covar_samp(x, y) from tbl1"
+            );
+        });
+    }
+
+    @Test
+    public void testCovarSampleNoValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tbl1(x int, y int)");
+            assertSql(
+                    "covar_samp\nnull\n", "select covar_samp(x, y) from tbl1"
             );
         });
     }
@@ -108,8 +108,8 @@ public class CovarSampleGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCovarSampleOneValue() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tbl1(x int, y int)");
-            insert("insert into 'tbl1' VALUES " +
+            execute("create table tbl1(x int, y int)");
+            execute("insert into 'tbl1' VALUES " +
                     "(17.2151920, 17.2151920)");
             assertSql(
                     "covar_samp\nnull\n", "select covar_samp(x, y) from tbl1"
@@ -120,7 +120,7 @@ public class CovarSampleGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCovarSampleOverflow() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tbl1 as (select 100000000 x, 100000000 y from long_sequence(1000000))");
+            execute("create table tbl1 as (select 100000000 x, 100000000 y from long_sequence(1000000))");
             assertSql(
                     "covar_samp\n0.0\n", "select covar_samp(x, y) from tbl1"
             );
@@ -130,8 +130,8 @@ public class CovarSampleGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCovarSampleSomeNull() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tbl1 as (select cast(x as double) x, cast(x as double) y from long_sequence(100))");
-            insert("insert into 'tbl1' VALUES (null, null)");
+            execute("create table tbl1 as (select cast(x as double) x, cast(x as double) y from long_sequence(100))");
+            execute("insert into 'tbl1' VALUES (null, null)");
             assertSql(
                     "covar_samp\n841.6666666666666\n", "select covar_samp(x, y) from tbl1"
             );

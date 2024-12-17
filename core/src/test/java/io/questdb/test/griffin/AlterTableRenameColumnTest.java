@@ -79,7 +79,7 @@ public class AlterTableRenameColumnTest extends AbstractCairoTest {
                     try {
                         createX();
 
-                        ddl("alter table x rename column e to z");
+                        execute("alter table x rename column e to z");
 
                         String expected = "{\"columnCount\":16,\"columns\":[{\"index\":0,\"name\":\"i\",\"type\":\"INT\"},{\"index\":1,\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"index\":2,\"name\":\"amt\",\"type\":\"DOUBLE\"},{\"index\":3,\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"},{\"index\":4,\"name\":\"b\",\"type\":\"BOOLEAN\"},{\"index\":5,\"name\":\"c\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"d\",\"type\":\"DOUBLE\"},{\"index\":7,\"name\":\"z\",\"type\":\"FLOAT\"},{\"index\":8,\"name\":\"f\",\"type\":\"SHORT\"},{\"index\":9,\"name\":\"g\",\"type\":\"DATE\"},{\"index\":10,\"name\":\"ik\",\"type\":\"SYMBOL\"},{\"index\":11,\"name\":\"j\",\"type\":\"LONG\"},{\"index\":12,\"name\":\"k\",\"type\":\"TIMESTAMP\"},{\"index\":13,\"name\":\"l\",\"type\":\"BYTE\"},{\"index\":14,\"name\":\"m\",\"type\":\"BINARY\"},{\"index\":15,\"name\":\"n\",\"type\":\"STRING\"}],\"timestampIndex\":3}";
                         try (TableReader reader = getReader("x")) {
@@ -99,7 +99,7 @@ public class AlterTableRenameColumnTest extends AbstractCairoTest {
     @Test
     public void testRenameColumnAndCheckOpenReader() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x1 (a int, b double, t timestamp) timestamp(t)");
+            execute("create table x1 (a int, b double, t timestamp) timestamp(t)");
 
             try (TableReader reader = getReader("x1")) {
                 Assert.assertEquals("b", reader.getMetadata().getColumnName(1));
@@ -174,7 +174,7 @@ public class AlterTableRenameColumnTest extends AbstractCairoTest {
     public void testRenameColumnEndsWithSemicolon() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             createX();
-            ddl("alter table x rename column i to i1;", sqlExecutionContext);
+            execute("alter table x rename column i to i1;", sqlExecutionContext);
             engine.clear();
         });
     }
@@ -183,7 +183,7 @@ public class AlterTableRenameColumnTest extends AbstractCairoTest {
     public void testRenameColumnEndsWithSemicolonEndingWithWhitesace() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             createX();
-            ddl("alter table x rename column i to i1; \n", sqlExecutionContext);
+            execute("alter table x rename column i to i1; \n", sqlExecutionContext);
             engine.clear();
         });
     }
@@ -196,7 +196,7 @@ public class AlterTableRenameColumnTest extends AbstractCairoTest {
                         createX();
 
                         try (TableReader reader = getReader("x")) {
-                            ddl("alter table x rename column e to z");
+                            execute("alter table x rename column e to z");
                             String expected = "{\"columnCount\":16,\"columns\":[{\"index\":0,\"name\":\"i\",\"type\":\"INT\"},{\"index\":1,\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"index\":2,\"name\":\"amt\",\"type\":\"DOUBLE\"},{\"index\":3,\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"},{\"index\":4,\"name\":\"b\",\"type\":\"BOOLEAN\"},{\"index\":5,\"name\":\"c\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"d\",\"type\":\"DOUBLE\"},{\"index\":7,\"name\":\"z\",\"type\":\"FLOAT\"},{\"index\":8,\"name\":\"f\",\"type\":\"SHORT\"},{\"index\":9,\"name\":\"g\",\"type\":\"DATE\"},{\"index\":10,\"name\":\"ik\",\"type\":\"SYMBOL\"},{\"index\":11,\"name\":\"j\",\"type\":\"LONG\"},{\"index\":12,\"name\":\"k\",\"type\":\"TIMESTAMP\"},{\"index\":13,\"name\":\"l\",\"type\":\"BYTE\"},{\"index\":14,\"name\":\"m\",\"type\":\"BINARY\"},{\"index\":15,\"name\":\"n\",\"type\":\"STRING\"}],\"timestampIndex\":3}";
                             sink.clear();
                             reader.reload();
@@ -266,7 +266,7 @@ public class AlterTableRenameColumnTest extends AbstractCairoTest {
                 ff,
                 () -> {
                     try {
-                        ddl(
+                        execute(
                                 "create table x as (" +
                                         "select" +
                                         " cast(x as int) i," +
@@ -294,14 +294,14 @@ public class AlterTableRenameColumnTest extends AbstractCairoTest {
 
                             rdr1.goPassive();
 
-                            ddl("alter table x rename column new_col_0 to new_col_1");
-                            ddl("alter table x rename column n to new_col_0");
-                            ddl("alter table x drop column sym");
-                            ddl("alter table x drop column i");
-                            ddl("alter table x rename column new_col_1 to new_col_2");
-                            ddl("alter table x rename column new_col_0 to new_col_1");
-                            ddl("alter table x rename column new_col_2 to new_col_0");
-                            ddl("alter table x rename column ik to new_col_3");
+                            execute("alter table x rename column new_col_0 to new_col_1");
+                            execute("alter table x rename column n to new_col_0");
+                            execute("alter table x drop column sym");
+                            execute("alter table x drop column i");
+                            execute("alter table x rename column new_col_1 to new_col_2");
+                            execute("alter table x rename column new_col_0 to new_col_1");
+                            execute("alter table x rename column new_col_2 to new_col_0");
+                            execute("alter table x rename column ik to new_col_3");
 
                             drainWalQueue();
 
@@ -333,7 +333,7 @@ public class AlterTableRenameColumnTest extends AbstractCairoTest {
                 ff,
                 () -> {
                     try {
-                        ddl(
+                        execute(
                                 "create table x as (" +
                                         "select" +
                                         " rnd_symbol('msft','ibm', 'googl') sym," +
@@ -348,8 +348,8 @@ public class AlterTableRenameColumnTest extends AbstractCairoTest {
                             rdr1.goPassive();
 
                             // Circle rename symbol column
-                            ddl("alter table x rename column sym to new_col_1");
-                            ddl("alter table x rename column new_col_1 to sym");
+                            execute("alter table x rename column sym to new_col_1");
+                            execute("alter table x rename column new_col_1 to sym");
 
                             drainWalQueue();
                             rdr1.reload();
@@ -362,8 +362,8 @@ public class AlterTableRenameColumnTest extends AbstractCairoTest {
                             rdr1.goPassive();
 
                             // Circle rename non-symbol column
-                            ddl("alter table x rename column k to new_col_1");
-                            ddl("alter table x rename column new_col_1 to k");
+                            execute("alter table x rename column k to new_col_1");
+                            execute("alter table x rename column new_col_1 to k");
 
                             drainWalQueue();
 
@@ -378,7 +378,7 @@ public class AlterTableRenameColumnTest extends AbstractCairoTest {
                             rdr1.goPassive();
 
                             // Symple rename symbol column
-                            ddl("alter table x rename column sym to new_col_1");
+                            execute("alter table x rename column sym to new_col_1");
                             drainWalQueue();
                             rdr1.reload();
 
@@ -473,7 +473,7 @@ public class AlterTableRenameColumnTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 createX();
-                ddl(sql, sqlExecutionContext);
+                execute(sql, sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(position, e.getPosition());
@@ -485,7 +485,7 @@ public class AlterTableRenameColumnTest extends AbstractCairoTest {
     }
 
     private void createX() throws SqlException {
-        ddl(
+        execute(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +

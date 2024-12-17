@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-export PGPORT=8812
+PGPORT=${PGPORT:-8812}
 
 echo "starting psycopg2 tests"
 python3 -m venv venv/psycopg2_latest

@@ -932,12 +932,6 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
         assertStringTypes(varchar ? ColumnType.VARCHAR : ColumnType.STRING);
     }
 
-    private void assertStringTypesNoTable(boolean varchar) throws Exception {
-        useLegacyString = !varchar;
-        assertStringTypes(ColumnType.UNDEFINED);
-        useLegacyString = true; // restore default
-    }
-
     private void assertStringTypes(int columnType) throws Exception {
         assertType(columnType,
                 "value\ttimestamp\n" +
@@ -968,6 +962,12 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
         );
     }
 
+    private void assertStringTypesNoTable(boolean varchar) throws Exception {
+        useLegacyString = !varchar;
+        assertStringTypes(ColumnType.UNDEFINED);
+        useLegacyString = true; // restore default
+    }
+
     private void assertTimestamp(String expected, CharSequence[] values) throws Exception {
         runInContext(() -> {
             sink.clear();
@@ -994,7 +994,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
         runInContext(() -> {
             if (columnType != ColumnType.UNDEFINED) {
                 TableModel model = new TableModel(configuration, TABLE, PartitionBy.DAY);
-                TestUtils.create(model.col(TARGET_COLUMN_NAME, columnType).timestamp(), engine);
+                TestUtils.createTable(engine, model.col(TARGET_COLUMN_NAME, columnType).timestamp());
                 if (walEnabled) {
                     Assert.assertTrue(isWalTable(TABLE));
                 }

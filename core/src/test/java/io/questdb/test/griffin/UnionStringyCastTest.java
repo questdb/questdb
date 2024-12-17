@@ -35,6 +35,45 @@ import java.util.Collection;
 @RunWith(Parameterized.class)
 public class UnionStringyCastTest extends AbstractCairoTest {
 
+    private final String castTableDdl = "create table cast_table as (select" +
+            " rnd_boolean() a_boolean," +
+            " rnd_byte(0,1) a_byte," +
+            " rnd_short(0,1) a_short," +
+            " rnd_int(0,1,0) a_int," +
+            " rnd_long(0,1,0) a_long," +
+            " rnd_long256() a_long256," +
+            " rnd_float() a_float," +
+            " rnd_double() a_double," +
+            " rnd_date(to_date('2024','yyyy'),to_date('2025','yyyy'),0) a_date," +
+            " rnd_timestamp(to_timestamp('2024','yyyy'),to_timestamp('2025','yyyy'),0) a_timestamp," +
+            " rnd_char() a_char," +
+            " rnd_symbol('sym1') a_symbol," +
+            " rnd_uuid4() a_uuid4," +
+            " rnd_str(3,3,0) a_string" +
+            " from long_sequence(1))";
+    private final String expectedCastValue;
+    private final String expectedColTypeOf;
+    private final String expectedStringyValue;
+    private final String selectFromCastTable;
+    private final String stringyType;
+
+    public UnionStringyCastTest(String stringyType, String castType, String expectedCastValue) {
+        this.stringyType = stringyType;
+        selectFromCastTable = "(select a_" + castType + " as a from cast_table)";
+        this.expectedCastValue = expectedCastValue;
+        if (stringyType.equals("str")) {
+            expectedStringyValue = "TJW";
+            expectedColTypeOf = "STRING";
+        } else {
+            expectedStringyValue = "\u1755\uDA1F\uDE98|";
+            if (castType.equals("string")) {
+                expectedColTypeOf = "STRING";
+            } else {
+                expectedColTypeOf = "VARCHAR";
+            }
+        }
+    }
+
     @Parameterized.Parameters(name = "{0}-{1}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
@@ -69,49 +108,14 @@ public class UnionStringyCastTest extends AbstractCairoTest {
         });
     }
 
-    private final String castTableDdl = "create table cast_table as (select" +
-            " rnd_boolean() a_boolean," +
-            " rnd_byte(0,1) a_byte," +
-            " rnd_short(0,1) a_short," +
-            " rnd_int(0,1,0) a_int," +
-            " rnd_long(0,1,0) a_long," +
-            " rnd_long256() a_long256," +
-            " rnd_float() a_float," +
-            " rnd_double() a_double," +
-            " rnd_date(to_date('2024','yyyy'),to_date('2025','yyyy'),0) a_date," +
-            " rnd_timestamp(to_timestamp('2024','yyyy'),to_timestamp('2025','yyyy'),0) a_timestamp," +
-            " rnd_char() a_char," +
-            " rnd_symbol('sym1') a_symbol," +
-            " rnd_uuid4() a_uuid4," +
-            " rnd_str(3,3,0) a_string" +
-            " from long_sequence(1))";
-
-    private final String stringyType;
-    private final String selectFromCastTable;
-    private final String expectedColTypeOf;
-    private final String expectedStringyValue;
-    private final String expectedCastValue;
-
-    public UnionStringyCastTest(String stringyType, String castType, String expectedCastValue) {
-        this.stringyType = stringyType;
-        selectFromCastTable = "(select a_" + castType + " as a from cast_table)";
-        this.expectedCastValue = expectedCastValue;
-        if (stringyType.equals("str")) {
-            expectedStringyValue = "TJW";
-            expectedColTypeOf = "STRING";
-        } else {
-            expectedStringyValue = "\u1755\uDA1F\uDE98|";
-            if (castType.equals("string")) {
-                expectedColTypeOf = "STRING";
-            } else {
-                expectedColTypeOf = "VARCHAR";
-            }
-        }
-    }
-
     @Test
     public void testUnionAllStringyLeft() throws Exception {
         testUnionStringyLeft0(" all");
+    }
+
+    @Test
+    public void testUnionAllStringyRight() throws Exception {
+        testUnionStringyRight0(" all");
     }
 
     @Test
@@ -119,8 +123,17 @@ public class UnionStringyCastTest extends AbstractCairoTest {
         testUnionStringyLeft0("");
     }
 
+    @Test
+    public void testUnionStringyRight() throws Exception {
+        testUnionStringyRight0("");
+    }
+
+    private static String stringyTableDdl(String typeName) {
+        return "create table " + typeName + "_table as (select rnd_" + typeName + "(3,3,0) a from long_sequence(1))";
+    }
+
     private void testUnionStringyLeft0(String allOrEmpty) throws Exception {
-        compile(stringyTableDdl(stringyType));
+        execute(stringyTableDdl(stringyType));
         engine.releaseAllWriters();
         String query = String.format("select a, typeOf(a) from (%s_table union%s %s)",
                 stringyType, allOrEmpty, selectFromCastTable);
@@ -130,27 +143,13 @@ public class UnionStringyCastTest extends AbstractCairoTest {
         assertQuery(expected, query, castTableDdl, null, false, !allOrEmpty.isEmpty());
     }
 
-    @Test
-    public void testUnionAllStringyRight() throws Exception {
-        testUnionStringyRight0(" all");
-    }
-
-    @Test
-    public void testUnionStringyRight() throws Exception {
-        testUnionStringyRight0("");
-    }
-
     private void testUnionStringyRight0(String allOrEmpty) throws Exception {
-        compile(stringyTableDdl(stringyType));
+        execute(stringyTableDdl(stringyType));
         engine.releaseAllWriters();
         String query = String.format("select a, typeOf(a) from (%s union%s %s_table)", selectFromCastTable, allOrEmpty, stringyType);
         String expected = "a\ttypeOf\n" +
                 expectedCastValue + '\t' + expectedColTypeOf + '\n' +
                 expectedStringyValue + '\t' + expectedColTypeOf + '\n';
         assertQuery(expected, query, castTableDdl, null, false, !allOrEmpty.isEmpty());
-    }
-
-    private static String stringyTableDdl(String typeName) {
-        return "create table " + typeName + "_table as (select rnd_" + typeName + "(3,3,0) a from long_sequence(1))";
     }
 }

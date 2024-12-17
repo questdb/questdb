@@ -148,10 +148,10 @@ public class WriterPoolTableFunctionTest extends AbstractCairoTest {
     @Test
     public void testWriterList() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a(u int)");
-            ddl("create table b(u int)");
-            ddl("create table c(u int)");
-            ddl("create table d(u int)");
+            execute("create table a as (select 1 as u)");
+            execute("create table b as (select 1 as u)");
+            execute("create table c as (select 1 as u)");
+            execute("create table d as (select 1 as u)");
 
             assertSql(
                     "table_name\townership_reason\n" +

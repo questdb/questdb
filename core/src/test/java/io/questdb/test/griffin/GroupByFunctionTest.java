@@ -809,7 +809,7 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testNestedGroupByFn() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as(select x, rnd_symbol('a', 'b', 'c') sym from long_sequence(1));");
+            execute("create table test as(select x, rnd_symbol('a', 'b', 'c') sym from long_sequence(1));");
             try {
                 assertExceptionNoLeakCheck("select sym, max(sum(x + min(x)) - avg(x)) from test");
             } catch (SqlException e) {
@@ -821,7 +821,7 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testNonNestedGroupByFn() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as(select x, rnd_symbol('a', 'b', 'c') sym from long_sequence(1));");
+            execute("create table test as(select x, rnd_symbol('a', 'b', 'c') sym from long_sequence(1));");
             try (RecordCursorFactory ignored = select("select sym, max(x) - (min(x) + 1) from test")) {
                 Assert.assertTrue(true);
             }

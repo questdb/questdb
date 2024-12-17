@@ -46,10 +46,12 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     private static final int TABLE_DROPPED = ILLEGAL_OPERATION - 1;
     public static final int METADATA_VALIDATION_RECOVERABLE = TABLE_DROPPED - 1;
     public static final int PARTITION_MANIPULATION_RECOVERABLE = METADATA_VALIDATION_RECOVERABLE - 1;
+    public static final int TABLE_DOES_NOT_EXIST = PARTITION_MANIPULATION_RECOVERABLE - 1;
     public static final int NON_CRITICAL = -1;
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
     private static final ThreadLocal<CairoException> tlException = new ThreadLocal<>(CairoException::new);
     protected final StringSink message = new StringSink();
+    protected final StringSink nativeBacktrace = new StringSink();
     protected int errno;
     private boolean authorizationError = false;
     private boolean cacheable;
@@ -146,7 +148,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public static CairoException tableDoesNotExist(CharSequence tableName) {
-        return nonCritical().put("table does not exist [table=").put(tableName).put(']');
+        return critical(TABLE_DOES_NOT_EXIST).put("table does not exist [table=").put(tableName).put(']');
     }
 
     public static CairoException tableDropped(TableToken tableToken) {
@@ -219,6 +221,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public boolean isOutOfMemory() {
         return outOfMemory;
+    }
+
+    public boolean isTableDoesNotExist() {
+        return errno == TABLE_DOES_NOT_EXIST;
     }
 
     public boolean isTableDropped() {
@@ -318,8 +324,25 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return ex;
     }
 
+    // N.B.: Change the API with care! This method is called from native code via JNI.
+    // See `struct CairoException` in the `qdbr` Rust crate.
+    @SuppressWarnings("unused")
+    private static CairoException paramInstance(
+            int errno, // pass `NON_CRITICAL` (-1) to create a non-critical exception
+            boolean outOfMemory,
+            CharSequence message,
+            @Nullable CharSequence nativeBacktrace
+    ) {
+        CairoException ex = instance(errno)
+                .setOutOfMemory(outOfMemory)
+                .put(message);
+        ex.nativeBacktrace.put(nativeBacktrace);
+        return ex;
+    }
+
     protected void clear(int errno) {
         message.clear();
+        nativeBacktrace.clear();
         this.errno = errno;
         cacheable = false;
         interruption = false;

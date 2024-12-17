@@ -60,7 +60,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short SET_DEDUP_ENABLE = RENAME_TABLE + 1; // 15
     public final static short SET_DEDUP_DISABLE = SET_DEDUP_ENABLE + 1; // 16
     public final static short CHANGE_COLUMN_TYPE = SET_DEDUP_DISABLE + 1; // 17
-    public final static short CONVERT_PARTITION = CHANGE_COLUMN_TYPE + 1; // 18
+    public final static short CONVERT_PARTITION_TO_PARQUET = CHANGE_COLUMN_TYPE + 1; // 18
+    public final static short CONVERT_PARTITION_TO_NATIVE = CONVERT_PARTITION_TO_PARQUET + 1; // 19
+    public final static short FORCE_DROP_PARTITION = CONVERT_PARTITION_TO_NATIVE + 1; // 20
     private static final long BIT_INDEXED = 0x1L;
     private static final long BIT_DEDUP_KEY = BIT_INDEXED << 1;
     private final static Log LOG = LogFactory.getLog(AlterOperation.class);
@@ -81,6 +83,30 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         this.extraInfo = extraInfo;
         this.extraStrInfo = new ObjCharSequenceList(charSequenceObjList);
         this.command = DO_NOTHING;
+    }
+
+    public static AlterOperation deepCloneOf(AlterOperation other) {
+        LongList extraInfo = new LongList(other.extraInfo);
+        ObjList<CharSequence> charSequenceObjList = new ObjList<>(other.extraStrInfo.size());
+        for (int i = 0, n = other.extraStrInfo.size(); i < n; i++) {
+            charSequenceObjList.add(Chars.toString(other.extraStrInfo.getStrA(i)));
+        }
+
+        AlterOperation alterOperation = new AlterOperation(extraInfo, charSequenceObjList);
+        alterOperation.command = other.command;
+        alterOperation.tableToken = other.tableToken;
+        alterOperation.tableNamePosition = other.tableNamePosition;
+
+        if (other.activeExtraStrInfo == other.extraStrInfo) {
+            alterOperation.activeExtraStrInfo = alterOperation.extraStrInfo;
+        } else if (other.activeExtraStrInfo == other.directExtraStrInfo) {
+            alterOperation.activeExtraStrInfo = alterOperation.directExtraStrInfo;
+        } else {
+            assert false;
+        }
+        alterOperation.init(other.getCmdType(), other.getCommandName(), other.tableToken, other.getTableId(), other.getTableVersion(), other.tableNamePosition);
+
+        return alterOperation;
     }
 
     public static long getFlags(boolean indexed, boolean dedupKey) {
@@ -123,14 +149,20 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 case DROP_PARTITION:
                     applyDropPartition(svc);
                     break;
-                case CONVERT_PARTITION:
-                    applyConvertPartition(svc);
+                case CONVERT_PARTITION_TO_PARQUET:
+                    applyConvertPartition(svc, true);
+                    break;
+                case CONVERT_PARTITION_TO_NATIVE:
+                    applyConvertPartition(svc, false);
                     break;
                 case DETACH_PARTITION:
                     applyDetachPartition(svc);
                     break;
                 case ATTACH_PARTITION:
                     applyAttachPartition(svc);
+                    break;
+                case FORCE_DROP_PARTITION:
+                    applyDropPartitionForce(svc);
                     break;
                 case ADD_INDEX:
                     applyAddIndex(svc);
@@ -261,6 +293,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         return command;
     }
 
+    public boolean isForceWalBypass() {
+        return command == FORCE_DROP_PARTITION;
+    }
+
     @Override
     public boolean isStructural() {
         switch (command) {
@@ -376,6 +412,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                         isIndexed,
                         indexValueBlockCapacity,
                         false,
+                        isDedupKey,
                         securityContext
                 );
             } catch (CairoException e) {
@@ -412,13 +449,22 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
-    private void applyConvertPartition(MetadataService svc) {
+    private void applyConvertPartition(MetadataService svc, boolean toParquet) {
         // long list is a set of two longs per partition - (timestamp, partitionNamePosition)
         for (int i = 0, n = extraInfo.size() / 2; i < n; i++) {
             long partitionTimestamp = extraInfo.getQuick(i * 2);
-            if (!svc.convertPartition(partitionTimestamp)) {
+            final boolean result;
+            if (toParquet) {
+                result = svc.convertPartitionNativeToParquet(partitionTimestamp);
+            } else {
+                result = svc.convertPartitionParquetToNative(partitionTimestamp);
+            }
+            if (!result) {
                 throw CairoException.partitionManipulationRecoverable()
-                        .put("could not convert partition to parquet [table=").put(tableToken != null ? tableToken.getTableName() : "<null>")
+                        .put("could not convert partition to")
+                        .put(toParquet ? "parquet" : "native")
+                        .put("[table=")
+                        .put(getTableToken().getTableName())
                         .put(", partitionTimestamp=").ts(partitionTimestamp)
                         .put(", partitionBy=").put(PartitionBy.toString(svc.getPartitionBy()))
                         .put(']')
@@ -466,7 +512,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             long partitionTimestamp = extraInfo.getQuick(i * 2);
             if (!svc.removePartition(partitionTimestamp)) {
                 throw CairoException.partitionManipulationRecoverable()
-                        .put("could not remove partition [table=").put(tableToken != null ? tableToken.getTableName() : "<null>")
+                        .put("could not remove partition [table=").put(getTableToken().getTableName())
                         .put(", partitionTimestamp=").ts(partitionTimestamp)
                         .put(", partitionBy=").put(PartitionBy.toString(svc.getPartitionBy()))
                         .put(']')
@@ -475,12 +521,16 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
+    private void applyDropPartitionForce(MetadataService svc) {
+        svc.forceRemovePartitions(extraInfo);
+    }
+
     private void applyParamO3MaxLag(MetadataService svc) {
         long o3MaxLag = extraInfo.get(0);
         try {
             svc.setMetaO3MaxLag(o3MaxLag);
         } catch (CairoException e) {
-            LOG.error().$("could not change o3MaxLag [table=").utf8(tableToken != null ? tableToken.getTableName() : "<null>")
+            LOG.error().$("could not change o3MaxLag [table=").utf8(getTableToken().getTableName())
                     .$(", errno=").$(e.getErrno())
                     .$(", error=").$(e.getFlyweightMessage())
                     .I$();
