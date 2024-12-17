@@ -635,11 +635,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private static int getOrderByDirectionOrDefault(QueryModel model, int index) {
-        IntList direction = model.getOrderByDirectionAdvice();
-        if (index >= direction.size()) {
-            return ORDER_DIRECTION_ASCENDING;
-        }
-        return model.getOrderByDirectionAdvice().getQuick(index);
+        final IntList direction = model.getOrderByDirectionAdvice();
+        return index >= direction.size() ? ORDER_DIRECTION_ASCENDING : direction.getQuick(index);
     }
 
     private static boolean isSingleColumnFunction(ExpressionNode ast, CharSequence name) {
