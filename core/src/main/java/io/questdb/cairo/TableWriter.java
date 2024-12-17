@@ -1300,7 +1300,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
                     final long columnRowCount = (columnTop != -1) ? partitionRowCount - columnTop : 0;
 
-                    // do not add the column to the parquet file if there are no rows
                     if (columnRowCount > 0) {
                         if (ColumnType.isSymbol(columnType)) {
                             partitionDescriptor.addColumn(
@@ -1380,6 +1379,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     0
                             );
                         }
+                    } else {
+                        // no rows in column
+                        partitionDescriptor.addColumn(
+                                columnName,
+                                columnType,
+                                columnId,
+                                partitionRowCount
+                        );
                     }
                 }
 
@@ -4241,6 +4248,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 final String columnName = metadata.getColumnName(columnIndex);
                 if (ColumnType.isSymbol(metadata.getColumnType(columnIndex)) && metadata.isIndexed(columnIndex)) {
+                    final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
+
+                    // no data in partition for this column
+                    if (columnTop == -1) {
+                        continue;
+                    }
+
                     final long columnNameTxn = getColumnNameTxn(partitionTimestamp, columnIndex);
 
                     BitmapIndexUtils.keyFileName(path.trimTo(partitionDirLen), columnName, columnNameTxn);
@@ -6261,15 +6275,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 if (partitionTimestamp < lastPartitionTimestamp) {
                     // increment fixedRowCount by number of rows old partition incremented
-                    this.txWriter.fixedRowCount += srcDataNewPartitionSize - srcDataOldPartitionSize + o3SplitPartitionSize;
+                    txWriter.fixedRowCount += srcDataNewPartitionSize - srcDataOldPartitionSize + o3SplitPartitionSize;
                 } else {
                     if (partitionTimestamp != lastPartitionTimestamp) {
-                        this.txWriter.fixedRowCount += commitTransientRowCount;
+                        txWriter.fixedRowCount += commitTransientRowCount;
                     }
                     if (o3SplitPartitionSize > 0) {
                         // yep, it was
                         // the "current" active becomes fixed
-                        this.txWriter.fixedRowCount += srcDataNewPartitionSize;
+                        txWriter.fixedRowCount += srcDataNewPartitionSize;
                         commitTransientRowCount = o3SplitPartitionSize;
                     } else {
                         commitTransientRowCount = srcDataNewPartitionSize;
@@ -6317,19 +6331,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     LOG.info()
                             .$("merged partition [table=`").utf8(tableToken.getTableName())
                             .$("`, ts=").$ts(partitionTimestamp)
-                            .$(", txn=").$(txWriter.txn).I$();
+                            .$(", txn=").$(txWriter.txn)
+                            .I$();
 
                     final long parquetFileSize = Unsafe.getUnsafe().getLong(blockAddress + 7 * Long.BYTES);
                     if (parquetFileSize > -1) {
-                        // Since we're technically performing an "append" here,
-                        // there's no need to increment the txn or partition table version.
                         txWriter.updatePartitionSizeByRawIndex(partitionIndexRaw, partitionTimestamp, srcDataNewPartitionSize);
                         txWriter.setPartitionParquetFormat(partitionTimestamp, parquetFileSize);
                     } else {
                         txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexRaw, srcDataNewPartitionSize);
                         partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn);
-                        txWriter.bumpPartitionTableVersion();
                     }
+                    txWriter.bumpPartitionTableVersion();
                 } else {
                     if (partitionTimestamp != lastPartitionTimestamp) {
                         txWriter.bumpPartitionTableVersion();

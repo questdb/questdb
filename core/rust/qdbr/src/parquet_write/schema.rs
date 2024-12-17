@@ -287,7 +287,11 @@ pub fn to_parquet_schema(
                 None
             };
 
-            QdbMetaCol { column_type: c.data_type, format }
+            QdbMetaCol {
+                column_type: c.data_type,
+                column_top: c.column_top,
+                format,
+            }
         })
         .collect();
 
