@@ -157,7 +157,7 @@ public interface MetadataService {
 
     void setMetaO3MaxLag(long o3MaxLagUs);
 
-    void setMetaTtlHoursOrMonths(int maxUncommittedRows);
+    void setMetaTtlHoursOrMonths(int metaTtlHoursOrMonths);
 
     void squashPartitions();
 

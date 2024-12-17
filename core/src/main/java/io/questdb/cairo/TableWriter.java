@@ -2967,21 +2967,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void setMetaTtlHoursOrMonths(int ttlHours) {
+    public void setMetaTtlHoursOrMonths(int metaTtlHoursOrMonths) {
         try {
             commit();
             long metaSize = copyMetadataAndUpdateVersion();
             openMetaSwapFileByIndex(ff, ddlMem, path, pathSize, this.metaSwapIndex);
             try {
                 ddlMem.jumpTo(META_OFFSET_TTL_HOURS_OR_MONTHS);
-                ddlMem.putInt(ttlHours);
+                ddlMem.putInt(metaTtlHoursOrMonths);
                 ddlMem.jumpTo(metaSize);
             } finally {
                 ddlMem.close();
             }
 
             finishMetaSwapUpdate();
-            metadata.setTtlHours(ttlHours);
+            metadata.setTtlHours(metaTtlHoursOrMonths);
 
             try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
                 metadataRW.hydrateTable(metadata);
