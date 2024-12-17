@@ -1439,8 +1439,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         throw SqlException.$(lexer.lastTokenPosition(), "'=' expected");
                     }
                 } else if (SqlKeywords.isTtlKeyword(tok)) {
-                    // TODO: validate that the table is partitioned
+                    int ttlValPos = lexer.getPosition();
                     int ttlHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
+                    try (TableReader reader = executionContext.getReader(tableToken)) {
+                        if (ttlHoursOrMonths != 0 && reader.getPartitionedBy() == PartitionBy.NONE) {
+                            throw SqlException.position(ttlValPos).put("cannot set TTL on a non-partitioned table");
+                        }
+                    }
                     compiledQuery.ofAlter(
                             alterOperationBuilder.ofSetTtlHoursOrMonths(tableNamePosition, tableToken, tableMetadata.getTableId(), ttlHoursOrMonths)
                                     .build()

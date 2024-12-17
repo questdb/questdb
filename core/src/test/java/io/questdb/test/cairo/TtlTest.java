@@ -34,6 +34,18 @@ import static org.junit.Assert.fail;
 public class TtlTest extends AbstractCairoTest {
 
     @Test
+    public void testAlterTableNotPartitioned() throws Exception {
+        execute("CREATE TABLE tango (n LONG)");
+        execute("ALTER TABLE tango SET TTL 0H"); // zero TTL is acceptable
+        try {
+            execute("ALTER TABLE tango SET TTL 1H");
+            fail("Accepted TTL on a non-partitioned table");
+        } catch (SqlException e) {
+            assertEquals("[26] cannot set TTL on a non-partitioned table", e.getMessage());
+        }
+    }
+
+    @Test
     public void testAlterTableSetTtl() throws Exception {
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR");
         execute("INSERT INTO tango VALUES (0), (3_600_000_000), (7_200_000_001)");
