@@ -469,7 +469,8 @@ public class FuzzRunner {
             double colRenameProb,
             double colTypeChangeProb,
             double dataAddProb,
-            double equalTsRowsProb, double partitionDropProb,
+            double equalTsRowsProb,
+            double partitionDropProb,
             double truncateProb,
             double tableDropProb
     ) {
@@ -482,10 +483,10 @@ public class FuzzRunner {
         this.colRenameProb = colRenameProb;
         this.colTypeChangeProb = colTypeChangeProb;
         this.dataAddProb = dataAddProb;
+        this.equalTsRowsProb = equalTsRowsProb;
         this.partitionDropProb = partitionDropProb;
         this.truncateProb = truncateProb;
         this.tableDropProb = tableDropProb;
-        this.equalTsRowsProb = equalTsRowsProb;
     }
 
     public void withDb(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
