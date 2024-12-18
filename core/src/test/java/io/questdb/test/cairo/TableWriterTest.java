@@ -560,7 +560,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 }
                 // Also we can't rename _meta.prev to _meta once so that writer become distressed
                 if (Utf8s.containsAscii(from, TableUtils.META_PREV_FILE_NAME) && --counter == 0) {
-                    return  -1;
+                    return -1;
                 }
                 // But rollback from meta.prev to _meta is ok
                 return super.rename(from, to);
