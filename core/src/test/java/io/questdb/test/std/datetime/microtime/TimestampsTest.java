@@ -24,6 +24,7 @@
 
 package io.questdb.test.std.datetime.microtime;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -112,8 +113,15 @@ public class TimestampsTest {
         TimestampFormatUtils.appendOffsetDateTime(sink, micros, "+05:00");
         Assert.assertTrue(sink.toString().contains("+05:00"));
         sink.clear();
-        TimestampFormatUtils.appendOffsetDateTime(sink, Long.MIN_VALUE, "05:00");
+        TimestampFormatUtils.appendOffsetDateTime(sink, Long.MIN_VALUE, "+05:00");
         Assert.assertEquals(0, sink.length());
+        sink.clear();
+        try {
+            TimestampFormatUtils.appendOffsetDateTime(sink, micros, "asdasd/asdadsa");
+            Assert.fail("invalid timezone, test should have failed");
+        } catch (CairoException ex) {
+            TestUtils.assertContains(ex.getMessage(), "could not convert");
+        }
     }
 
     @Test
