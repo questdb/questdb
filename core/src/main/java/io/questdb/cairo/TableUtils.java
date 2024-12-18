@@ -612,60 +612,6 @@ public final class TableUtils {
         mem.close(true, Vm.TRUNCATE_TO_POINTER);
     }
 
-    public static MaterializedViewDefinition loadMatViewDefinition(
-            FilesFacade ff,
-            MemoryCMR mem,
-            Path path,
-            int rootLen,
-            TableToken matViewToken
-    ) {
-        mem.smallFile(ff, path.trimTo(rootLen).concat(MAT_VIEW_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-        long offset = MV_HEADER_SIZE;
-
-        final CharSequence baseTableName = mem.getStrA(offset);
-        assert baseTableName != null;
-        // TODO(eugene): check if base table exists
-        offset += Vm.getStorageLength(baseTableName);
-
-        final long fromMicros = mem.getLong(offset);
-        assert fromMicros > 0;
-        offset += Long.BYTES;
-
-        final long toMicros = mem.getLong(offset);
-        assert toMicros > 0;
-        offset += Long.BYTES;
-
-        final long samplingInterval = mem.getLong(offset);
-        assert samplingInterval > 0;
-        offset += Long.BYTES;
-
-        final char samplingIntervalUnit = mem.getChar(offset);
-        offset += Character.BYTES;
-
-        final CharSequence timeZone = mem.getStrA(offset);
-        assert timeZone != null;
-        offset += Vm.getStorageLength(timeZone);
-
-        final CharSequence timeZoneOffset = mem.getStrA(offset);
-        assert timeZoneOffset != null;
-
-        mem.smallFile(ff, path.trimTo(rootLen).concat(MAT_VIEW_QUERY_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-        final CharSequence matViewSql = mem.getStrA(0);
-        assert matViewSql != null;
-
-        return new MaterializedViewDefinition(
-                matViewToken,
-                matViewSql.toString(),
-                baseTableName.toString(),
-                samplingInterval,
-                samplingIntervalUnit,
-                fromMicros,
-                toMicros,
-                timeZone.toString(),
-                timeZoneOffset.toString()
-        );
-    }
-
     public static LPSZ dFile(Path path, CharSequence columnName, long columnTxn) {
         path.concat(columnName).put(FILE_SUFFIX_D);
         if (columnTxn > COLUMN_NAME_TXN_NONE) {
@@ -1063,6 +1009,66 @@ public final class TableUtils {
 
     public static int lengthOf(@Nullable CharSequence columnValue) {
         return columnValue != null ? columnValue.length() : NULL_LEN;
+    }
+
+    public static @NotNull MaterializedViewDefinition loadMatViewDefinition(
+            FilesFacade ff,
+            MemoryCMR mem,
+            Path path,
+            int rootLen,
+            TableToken matViewToken
+    ) {
+
+        mem.smallFile(ff, path.trimTo(rootLen)
+                .concat(matViewToken.getDirName())
+                .concat(MAT_VIEW_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+        assert mem.size() >= MV_HEADER_SIZE + 3 * Long.BYTES + 3 * Integer.BYTES + Character.BYTES;
+
+        long offset = MV_HEADER_SIZE;
+
+        final CharSequence baseTableName = mem.getStrA(offset);
+        assert baseTableName != null;
+        final String baseTableNameStr = baseTableName.toString();
+        offset += Vm.getStorageLength(baseTableName);
+
+        final long fromMicros = mem.getLong(offset);
+        offset += Long.BYTES;
+
+        final long toMicros = mem.getLong(offset);
+        offset += Long.BYTES;
+
+        final long samplingInterval = mem.getLong(offset);
+        offset += Long.BYTES;
+
+        final char samplingIntervalUnit = mem.getChar(offset);
+        offset += Character.BYTES;
+
+        final CharSequence timeZone = mem.getStrA(offset);
+        offset += Vm.getStorageLength(timeZone);
+        final String timeZoneStr = timeZone == null ? null : timeZone.toString();
+
+        final CharSequence timeZoneOffset = mem.getStrA(offset);
+        final String timeZoneOffsetStr = timeZoneOffset == null ? null : timeZoneOffset.toString();
+
+        mem.smallFile(ff, path.trimTo(rootLen)
+                .concat(matViewToken.getDirName())
+                .concat(MAT_VIEW_QUERY_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+        assert mem.size() >= Integer.BYTES;
+        final CharSequence matViewSql = mem.getStrA(0);
+        assert matViewSql != null;
+        final String matViewSqlStr = matViewSql.toString();
+
+        return new MaterializedViewDefinition(
+                matViewToken,
+                matViewSqlStr,
+                baseTableNameStr,
+                samplingInterval,
+                samplingIntervalUnit,
+                fromMicros,
+                toMicros,
+                timeZoneStr,
+                timeZoneOffsetStr
+        );
     }
 
     public static long lock(FilesFacade ff, LPSZ path, boolean verbose) {
