@@ -108,6 +108,12 @@ public class TimestampsTest {
         long micros = TimestampFormatUtils.parseTimestamp("1998-05-12T23:45:51.045Z");
         TimestampFormatUtils.appendOffsetDateTime(sink, micros, "Antarctica/McMurdo");
         Assert.assertTrue(sink.toString().contains("+12:00") || sink.toString().contains("+13:00"));
+        sink.clear();
+        TimestampFormatUtils.appendOffsetDateTime(sink, micros, "+05:00");
+        Assert.assertTrue(sink.toString().contains("+05:00"));
+        sink.clear();
+        TimestampFormatUtils.appendOffsetDateTime(sink, Long.MIN_VALUE, "05:00");
+        Assert.assertEquals(0, sink.length());
     }
 
     @Test
