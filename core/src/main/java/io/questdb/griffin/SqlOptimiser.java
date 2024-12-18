@@ -152,7 +152,7 @@ public class SqlOptimiser implements Mutable {
     private final IntList tempCrossIndexes = new IntList();
     private final IntList tempCrosses = new IntList();
     private final IntList tempList = new IntList();
-    private final ObjList<QueryColumn> tempColumns  = new ObjList<QueryColumn>();
+    private final ObjList<QueryColumn> tempColumns = new ObjList<QueryColumn>();
     private final CharSequenceHashSet existsDependedTokens = new CharSequenceHashSet();
     private final CharSequenceHashSet missingDependedTokens = new CharSequenceHashSet();
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> tmpCursorAliases = new LowerCaseCharSequenceObjHashMap<>();
@@ -5009,7 +5009,7 @@ public class SqlOptimiser implements Mutable {
                     for (int i = 0, size = missingDependedTokens.size(); i < size; i++) {
                         model.addBottomUpColumnIfNotExists(nextColumn(missingDependedTokens.get(i)));
                     }
-                    needRemoveColumns+=missingDependedTokens.size();
+                    needRemoveColumns += missingDependedTokens.size();
                 }
 
                 if ((wrapAction & SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES) != 0 && needRemoveColumns > 0) {
