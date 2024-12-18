@@ -66,6 +66,129 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVacuumColumnIndexDropped() throws Exception {
+        FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        assertMemoryLeak(() -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                execute(
+                        "create table testPurge as" +
+                                " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
+                                " x," +
+                                " rnd_str('a', 'b', 'c', 'd') str," +
+                                " rnd_symbol('A', 'B', 'C', 'D') sym1," +
+                                " rnd_symbol('1', '2', '3', '4') sym2" +
+                                " from long_sequence(5)), index(sym2)" +
+                                " timestamp(ts) PARTITION BY DAY"
+                );
+
+                execute("checkpoint create");
+                execute("alter table testPurge alter column sym2 drop index");
+
+                purgeJob.run(0);
+                String[] partitions = new String[]{"1970-01-01", "1970-01-02", "1970-01-03", "1970-01-04", "1970-01-05"};
+                String[] files = {"sym2.k", "sym2.v"};
+                assertFilesExist(partitions, "testPurge", files, "", true);
+
+                execute("checkpoint release");
+
+                runPurgeJob(purgeJob);
+
+                assertFilesExist(partitions, "testPurge", files, "", false);
+
+                Path path = Path.getThreadLocal(configuration.getRoot());
+                path.concat(engine.verifyTableName("testPurge"));
+                int pathLen = path.size();
+                for (String partition : partitions) {
+                    for (String file : files) {
+                        path.trimTo(pathLen).concat(partition).concat(file).$();
+                        ff.touch(path.$());
+                    }
+                }
+
+                assertFilesExist(partitions, "testPurge", files, "", true);
+
+                runTableVacuum("testPurge");
+                runPurgeJob(purgeJob);
+
+                assertFilesExist(partitions, "testPurge", files, "", false);
+            }
+        });
+    }
+
+    @Test
+    public void testVacuumRogueColumnFiles() throws Exception {
+        FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        assertMemoryLeak(() -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                execute(
+                        "create table testPurge as" +
+                                " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
+                                " x," +
+                                " rnd_str('a', 'b', 'c', 'd') str," +
+                                " rnd_symbol('A', 'B', 'C', 'D') sym1," +
+                                " rnd_symbol('1', '2', '3', '4') sym2" +
+                                " from long_sequence(5)), index(sym2)" +
+                                " timestamp(ts) PARTITION BY DAY"
+                );
+
+                String[] partitions = new String[]{"1970-01-01", "1970-01-02", "1970-01-03", "1970-01-04", "1970-01-05"};
+                String[] files = {"sym_rogue.k", "sym_rogue.v", "sym_rogue.d"};
+                assertFilesExist(partitions, "testPurge", files, "", false);
+
+                execute("checkpoint release");
+
+                runPurgeJob(purgeJob);
+
+                assertFilesExist(partitions, "testPurge", files, "", false);
+
+                Path path = Path.getThreadLocal(configuration.getRoot());
+                path.concat(engine.verifyTableName("testPurge"));
+                int pathLen = path.size();
+                for (String partition : partitions) {
+                    for (String file : files) {
+                        path.trimTo(pathLen).concat(partition).concat(file).$();
+                        ff.touch(path.$());
+                    }
+                }
+
+                assertFilesExist(partitions, "testPurge", files, "", true);
+
+                runTableVacuum("testPurge");
+                runPurgeJob(purgeJob);
+
+                assertFilesExist(partitions, "testPurge", files, "", false);
+            }
+        });
+    }
+
+    @Test
+    public void testVacuumErrorWhenCheckpointInProgress() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table testPurge as" +
+                            " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
+                            " x," +
+                            " rnd_str('a', 'b', 'c', 'd') str," +
+                            " rnd_symbol('A', 'B', 'C', 'D') sym1," +
+                            " rnd_symbol('1', '2', '3', '4') sym2" +
+                            " from long_sequence(5)), index(sym2)" +
+                            " timestamp(ts) PARTITION BY DAY"
+            );
+
+            execute("checkpoint create");
+            try {
+                runTableVacuum("testPurge");
+                Assert.fail();
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(),
+                        "cannot vacuum while checkpoint is in progress");
+            } finally {
+                execute("checkpoint release");
+            }
+        });
+    }
+
+    @Test
     public void testVacuumInMiddleOfUpdate() throws Exception {
         AtomicReference<ColumnPurgeJob> purgeJobInstance = new AtomicReference<>();
 
@@ -367,7 +490,7 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
 
                 Path path = Path.getThreadLocal(configuration.getRoot());
                 TableToken tableToken = engine.verifyTableName(tableName);
-                path.concat(tableToken).concat(partitions[0]).concat("invalid_file.d");
+                path.concat(tableToken).concat(partitions[0]).concat("invalid_file.dk");
                 FilesFacade ff = configuration.getFilesFacade();
                 ff.touch(path.$());
                 path.of(configuration.getRoot()).concat(tableToken).concat(partitions[0]).concat("x.d.abcd");
@@ -383,7 +506,7 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
                 path.of(configuration.getRoot()).concat(tableToken).concat(partitions[0]).concat("x.d.abcd");
                 Assert.assertTrue(ff.exists(path.$()));
 
-                path.of(configuration.getRoot()).concat(tableToken).concat(partitions[0]).concat("invalid_file.d");
+                path.of(configuration.getRoot()).concat(tableToken).concat(partitions[0]).concat("invalid_file.dk");
                 Assert.assertTrue(ff.exists(path.$()));
             }
         });
