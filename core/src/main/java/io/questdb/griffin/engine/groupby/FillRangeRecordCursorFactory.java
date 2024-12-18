@@ -127,6 +127,11 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public int getScanDirection() {
+        return SCAN_DIRECTION_OTHER;
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }
@@ -598,7 +603,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                     if (col == timestampIndex) {
                         return nextBucketTimestamp;
                     } else {
-                        return getFillFunction(col).getLong(null);
+                        return getFillFunction(col).getTimestamp(null);
                     }
                 } else {
                     return baseRecord.getTimestamp(col);

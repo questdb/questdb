@@ -50,7 +50,11 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -70,6 +74,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.test.griffin.SqlOptimiserTest.tradesDdl;
 import static io.questdb.test.tools.TestUtils.assertEquals;
 
 public class SampleByTest extends AbstractCairoTest {
@@ -2853,6 +2858,38 @@ public class SampleByTest extends AbstractCairoTest {
                     "from xx " +
                     "where s in ('a')"
             );
+        });
+    }
+
+    @Test
+    public void testParallelFillWithMultipleFills() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(tradesDdl);
+            execute("insert into trades (timestamp, price) values ('2030-01-02T00:00:00Z', 1234)");
+            drainWalQueue();
+
+            String query = "select timestamp, count, avg(price)\n" +
+                    "from trades \n" +
+                    "sample by 1d from '2030-01-01' TO '2030-01-04'\n" +
+                    "fill(null, 5)";
+            assertPlanNoLeakCheck(query, "Sort\n" +
+                    "  keys: [timestamp]\n" +
+                    "    Fill Range\n" +
+                    "      range: ('2030-01-01','2030-01-04')\n" +
+                    "      stride: '1d'\n" +
+                    "      values: [null,5]\n" +
+                    "        Async Group By workers: 1\n" +
+                    "          keys: [timestamp]\n" +
+                    "          values: [count(*),avg(price)]\n" +
+                    "          filter: null\n" +
+                    "            PageFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Interval forward scan on: trades\n" +
+                    "                  intervals: [(\"2030-01-01T00:00:00.000000Z\",\"2030-01-03T23:59:59.999999Z\")]\n");
+            assertSql("timestamp\tcount\tavg\n" +
+                    "2030-01-01T00:00:00.000000Z\tnull\t5.0\n" +
+                    "2030-01-02T00:00:00.000000Z\t1\t1234.0\n" +
+                    "2030-01-03T00:00:00.000000Z\tnull\t5.0\n", query);
         });
     }
 
@@ -12643,22 +12680,38 @@ public class SampleByTest extends AbstractCairoTest {
                         "select timestamp_sequence('2021-03-28T01:59:00.00000Z', 3*24*3600*1000000L) ts from long_sequence(6)" +
                         ") timestamp(ts)",
                 "ts",
-                false
+                true
         );
     }
 
     @Test
     public void testTimestampFillValueUnquoted() throws Exception {
-        assertException(
-                "select ts, first(ts), last(ts) " +
-                        "from trade " +
-                        "sample by 1d fill(null, 1236) align to CALENDAR;",
-                "create table trade as (" +
-                        "select timestamp_sequence('2021-03-28T01:59:00.00000Z', 3*24*3600*1000000L) ts from long_sequence(6)" +
-                        ") timestamp(ts)",
-                66,
-                "Invalid fill value: '1236'. Timestamp fill value must be in quotes."
-        );
+        assertMemoryLeak(() -> {
+            execute("create table trade as (" +
+                    "select timestamp_sequence('2021-03-28T01:59:00.00000Z', 3*24*3600*1000000L) ts from long_sequence(6)" +
+                    ") timestamp(ts)");
+            assertSql("ts\tfirst\tlast\n" +
+                            "2021-03-28T00:00:00.000000Z\t2021-03-28T01:59:00.000000Z\t2021-03-28T01:59:00.000000Z\n" +
+                            "2021-03-29T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                            "2021-03-30T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                            "2021-03-31T00:00:00.000000Z\t2021-03-31T01:59:00.000000Z\t2021-03-31T01:59:00.000000Z\n" +
+                            "2021-04-01T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                            "2021-04-02T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                            "2021-04-03T00:00:00.000000Z\t2021-04-03T01:59:00.000000Z\t2021-04-03T01:59:00.000000Z\n" +
+                            "2021-04-04T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                            "2021-04-05T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                            "2021-04-06T00:00:00.000000Z\t2021-04-06T01:59:00.000000Z\t2021-04-06T01:59:00.000000Z\n" +
+                            "2021-04-07T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                            "2021-04-08T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                            "2021-04-09T00:00:00.000000Z\t2021-04-09T01:59:00.000000Z\t2021-04-09T01:59:00.000000Z\n" +
+                            "2021-04-10T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                            "2021-04-11T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                            "2021-04-12T00:00:00.000000Z\t2021-04-12T01:59:00.000000Z\t2021-04-12T01:59:00.000000Z\n",
+                    "select ts, first(ts), last(ts) " +
+                            "from trade " +
+                            "sample by 1d fill(null, 1236) align to CALENDAR;"
+            );
+        });
     }
 
     @Test
