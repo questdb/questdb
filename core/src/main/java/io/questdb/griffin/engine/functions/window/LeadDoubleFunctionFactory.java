@@ -39,6 +39,7 @@ import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
@@ -192,6 +193,22 @@ public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
             mapValue.putLong(2, count + 1);
             Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), leadValue);
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(getName());
+            sink.val('(').val(arg).val(", ").val(offset).val(", ");
+            if (defaultValue != null) {
+                sink.val(defaultValue);
+            } else {
+                sink.val("NULL");
+            }
+            sink.val(')');
+            sink.val(" over (");
+            sink.val("partition by ");
+            sink.val(partitionByRecord.getFunctions());
+            sink.val(')');
+        }
     }
 
     static class LeadFunction extends BaseDoubleWindowFunction implements Reopenable {
@@ -258,6 +275,19 @@ public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
             super.toTop();
             loIdx = 0;
             count = 0;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(getName());
+            sink.val('(').val(arg).val(", ").val(offset).val(", ");
+            if (defaultValue != null) {
+                sink.val(defaultValue);
+            } else {
+                sink.val("NULL");
+            }
+            sink.val(')');
+            sink.val(" over ()");
         }
     }
 }

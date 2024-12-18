@@ -39,6 +39,7 @@ import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
@@ -197,6 +198,22 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
             computeNext(record);
             Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), lagValue);
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(getName());
+            sink.val('(').val(arg).val(", ").val(offset).val(", ");
+            if (defaultValue != null) {
+                sink.val(defaultValue);
+            } else {
+                sink.val("NULL");
+            }
+            sink.val(')');
+            sink.val(" over (");
+            sink.val("partition by ");
+            sink.val(partitionByRecord.getFunctions());
+            sink.val(')');
+        }
     }
 
     public static class LagFunction extends BaseDoubleWindowFunction implements Reopenable {
@@ -277,6 +294,19 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
             loIdx = 0;
             count = 0;
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(getName());
+            sink.val('(').val(arg).val(", ").val(offset).val(", ");
+            if (defaultValue != null) {
+                sink.val(defaultValue);
+            } else {
+                sink.val("NULL");
+            }
+            sink.val(')');
+            sink.val(" over ()");
+        }
     }
 
     static class LeadLagValueCurrentRow extends BaseDoubleWindowFunction {
@@ -310,6 +340,13 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), value);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(getName());
+            sink.val('(').val(arg).val(", ").val(0).val(", NULL)");
+            sink.val(" over ()");
         }
     }
 
