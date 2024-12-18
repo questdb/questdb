@@ -469,10 +469,9 @@ public class FuzzRunner {
             double colRenameProb,
             double colTypeChangeProb,
             double dataAddProb,
-            double partitionDropProb,
+            double equalTsRowsProb, double partitionDropProb,
             double truncateProb,
-            double tableDropProb,
-            double equalTsRowsProb
+            double tableDropProb
     ) {
         this.cancelRowsProb = cancelRowsProb;
         this.notSetProb = notSetProb;
@@ -907,10 +906,10 @@ public class FuzzRunner {
                         rnd.nextDouble(),
                         rnd.nextDouble(),
                         rnd.nextDouble(),
+                        0.01,
                         0.0,
                         0.1 * rnd.nextDouble(),
-                        rnd.nextDouble(),
-                        0.01
+                        rnd.nextDouble()
                 );
             }
             if (randomiseCounts) {
