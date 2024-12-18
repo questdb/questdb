@@ -51,15 +51,6 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testVacuumTable() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table \"table\" (a int)");
-            assertException("vacuum table table", 13, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"table\"");
-            execute("vacuum table \"table\"");
-        });
-    }
-
-    @Test
     public void testCreateTable() throws Exception {
         assertMemoryLeak(() -> {
             assertException("create table from (a int)", 13, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"from\"");
@@ -139,8 +130,8 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
             assertException("rename table \"from\" to to", 23, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"to\"");
             execute("rename table \"from\" to \"to\"");
             assertSql(
-                    "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\n" +
-                            "1\tto\t\tNONE\t1000\t300000000\tfalse\tto~\tfalse\n", "tables()"
+                    "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\n" +
+                            "1\tto\t\tNONE\t1000\t300000000\tfalse\tto~\tfalse\t0\tHOURS\n", "tables()"
             );
         });
     }
@@ -277,6 +268,15 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
             execute("create table \"from\" (a int)");
             assertException("vacuum table from", 13, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"from\"");
             execute("vacuum table \"from\"");
+        });
+    }
+
+    @Test
+    public void testVacuumTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table \"table\" (a int)");
+            assertException("vacuum table table", 13, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"table\"");
+            execute("vacuum table \"table\"");
         });
     }
 

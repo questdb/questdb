@@ -228,14 +228,14 @@ public class MetadataCacheTest extends AbstractCairoTest {
             if (fooToken == null) {
                 Assert.assertFalse(cacheString.contains("name=foo"));
                 Assert.assertTrue(cacheString.contains("name=bah"));
-                assertQueryNoLeakCheck("id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\n" +
-                        "1\tbah\tts\tDAY\t1000\t300000000\ttrue\tfoo~1\tfalse\n", "tables()", "");
+                assertQueryNoLeakCheck("id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\n" +
+                        "1\tbah\tts\tDAY\t1000\t300000000\ttrue\tfoo~1\tfalse\t0\tHOURS\n", "tables()", "");
             }
             if (bahToken == null) {
                 Assert.assertFalse(cacheString.contains("name=bah"));
                 Assert.assertTrue(cacheString.contains("name=foo"));
-                assertQueryNoLeakCheck("id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\n" +
-                        "1\tfoo\tts\tDAY\t1000\t300000000\ttrue\tfoo~1\tfalse\n", "tables()", "");
+                assertQueryNoLeakCheck("id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\n" +
+                        "1\tfoo\tts\tDAY\t1000\t300000000\ttrue\tfoo~1\tfalse\t0\tHOURS\n", "tables()", "");
             }
         });
     }
@@ -632,13 +632,13 @@ public class MetadataCacheTest extends AbstractCairoTest {
     public void testMetadataUpdatedCorrectlyWhenRenamingTables() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table foo ( ts timestamp, x int) timestamp(ts) partition by day wal;");
-            assertSql("id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\n" +
-                    "1\tfoo\tts\tDAY\t1000\t300000000\ttrue\tfoo~1\tfalse\n", "tables()");
+            assertSql("id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\n" +
+                    "1\tfoo\tts\tDAY\t1000\t300000000\ttrue\tfoo~1\tfalse\t0\tHOURS\n", "tables()");
 
             execute("rename table foo to bah");
             drainWalQueue();
-            assertSql("id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\n" +
-                    "1\tbah\tts\tDAY\t1000\t300000000\ttrue\tfoo~1\tfalse\n", "tables()");
+            assertSql("id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\n" +
+                    "1\tbah\tts\tDAY\t1000\t300000000\ttrue\tfoo~1\tfalse\t0\tHOURS\n", "tables()");
         });
     }
 
