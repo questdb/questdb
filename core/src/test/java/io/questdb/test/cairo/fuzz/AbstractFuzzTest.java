@@ -123,8 +123,8 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                 0.01,
                 rnd.nextDouble(),
                 0.1 * rnd.nextDouble(),
-                rnd.nextDouble()
-        );
+                rnd.nextDouble(),
+                0);
 
         fuzzer.setFuzzCounts(
                 rnd.nextBoolean(),
@@ -247,7 +247,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     ) {
         fuzzer.setFuzzProbabilities(cancelRowsProb, notSetProb, nullSetProb, rollbackProb,
                 colAddProb, colRemoveProb, colRenameProb, colTypeChangeProb, dataAddProb,
-                equalTsRowsProb, partitionDropProb, truncateProb, tableDropProb);
+                equalTsRowsProb, partitionDropProb, truncateProb, tableDropProb, 0);
     }
 
     protected void setFuzzProperties(long maxApplyTimePerTable, long splitPartitionThreshold, int o3PartitionSplitMaxCount) {
