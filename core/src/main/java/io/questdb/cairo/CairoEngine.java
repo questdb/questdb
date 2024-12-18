@@ -200,7 +200,9 @@ public class CairoEngine implements Closeable, WriterSource {
             }
             this.metadataCache = new MetadataCache(this);
             this.matViewGraph = new MatViewGraph();
-            buildMatViewGraph();
+            if (configuration.isMatViewEnabled()) {
+                buildMatViewGraph();
+            }
         } catch (Throwable th) {
             close();
             throw th;
@@ -1360,7 +1362,17 @@ public class CairoEngine implements Closeable, WriterSource {
                             pathLen,
                             tableToken
                     );
-                    this.matViewGraph.createView(tableToken, matViewDefinition);
+                    final TableToken baseTableToken = this.tableNameRegistry.getTableToken(matViewDefinition.getBaseTableName());
+                    if (baseTableToken != null && !this.tableNameRegistry.isTableDropped(baseTableToken)) {
+                        this.matViewGraph.createView(tableToken, matViewDefinition);
+                    } else {
+                        throw CairoException.nonCritical()
+                                .put("Base table for materialized view does not exist [table=")
+                                .put(matViewDefinition.getBaseTableName())
+                                .put(", view=")
+                                .put(tableToken.getTableName())
+                                .put(']');
+                    }
                 }
             }
         }
