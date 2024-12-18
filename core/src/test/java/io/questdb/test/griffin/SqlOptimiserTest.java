@@ -3753,6 +3753,83 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertSql(result, query);
         });
+
+        assertMemoryLeak(() -> {
+            final String query = "select timestamp + 60000000 as 'timestamp', timestamp  from t where name = 'a' sample by (1m)";
+
+            final String result = "timestamp\ttimestamp1\n" +
+                    "2023-09-01T00:01:00.000000Z\t2023-09-01T00:00:00.000000Z\n" +
+                    "2023-09-01T00:11:00.000000Z\t2023-09-01T00:10:00.000000Z\n";
+
+            assertSql(result, query);
+        });
+
+        assertMemoryLeak(() -> {
+            final String query = "select timestamp + 60000000 as 'timestamp1', timestamp  from t where name = 'a' sample by (1m)";
+
+            final String result = "timestamp1\ttimestamp\n" +
+                    "2023-09-01T00:01:00.000000Z\t2023-09-01T00:00:00.000000Z\n" +
+                    "2023-09-01T00:11:00.000000Z\t2023-09-01T00:10:00.000000Z\n";
+
+            assertSql(result, query);
+        });
+
+        assertMemoryLeak(() -> {
+            final String query = "select timestamp + 60000000 as 'timestamp', timestamp as 'timestamp1'  from t where name = 'a' sample by (1m)";
+
+            final String result = "timestamp\ttimestamp1\n" +
+                    "2023-09-01T00:01:00.000000Z\t2023-09-01T00:00:00.000000Z\n" +
+                    "2023-09-01T00:11:00.000000Z\t2023-09-01T00:10:00.000000Z\n";
+
+            assertSql(result, query);
+        });
+    }
+
+    @Test
+    public void testSampleByExpressionDependOtherColumn() throws Exception {
+        execute("create table t (\n" +
+                "  timestamp TIMESTAMP,\n" +
+                "  symbol SYMBOL capacity 256 CACHE,\n" +
+                "  side SYMBOL CAPACITY 256 CACHE,\n" +
+                "  price double\n" +
+                ") timestamp(timestamp) partition by day;");
+
+        execute("INSERT INTO t (timestamp, symbol, side, price) VALUES" +
+                " ('2023-09-01T00:00:00.000Z', 'ETH-USD', 'buyer', 3240.0)," +
+                " ('2023-09-01T01:00:00.000Z', 'ETH-USD', 'buyer', 3241.0)," +
+                " ('2023-09-01T02:00:00.000Z', 'ETH-USD', 'buyer', 3242.0)," +
+                " ('2023-09-01T03:00:00.000Z', 'ETH-USD', 'buyer', 3243.0)," +
+                " ('2023-09-01T04:00:00.000Z', 'ETH-USD', 'buyer', 3244.0)," +
+                " ('2023-09-01T05:00:00.000Z', 'ETH-USD', 'seller', 5.0)");
+        assertMemoryLeak(() -> {
+            final String query = "select timestamp, symbol, side, CASE WHEN price > 3240  THEN avg(price) END as price_today, CASE WHEN price < 3240  THEN avg(price) END as price_yesterday " +
+                    "from t where timestamp >= '2023-09-01T00:00:00.000Z' and symbol = 'ETH-USD' sample by 1h";
+
+            final String result = "timestamp\tsymbol\tside\tprice_today\tprice_yesterday\n" +
+                    "2023-09-01T00:00:00.000000Z\tETH-USD\tbuyer\tnull\tnull\n" +
+                    "2023-09-01T01:00:00.000000Z\tETH-USD\tbuyer\t3241.0\tnull\n" +
+                    "2023-09-01T02:00:00.000000Z\tETH-USD\tbuyer\t3242.0\tnull\n" +
+                    "2023-09-01T03:00:00.000000Z\tETH-USD\tbuyer\t3243.0\tnull\n" +
+                    "2023-09-01T04:00:00.000000Z\tETH-USD\tbuyer\t3244.0\tnull\n" +
+                    "2023-09-01T05:00:00.000000Z\tETH-USD\tseller\tnull\t5.0\n";
+
+            assertSql(result, query);
+        });
+
+        assertMemoryLeak(() -> {
+            final String query = "select timestamp, symbol, side, CASE WHEN extract('day', timestamp) =14  THEN avg(price) END as price_today, CASE WHEN true  THEN avg(price) END as price_yesterday " +
+                    "from t where timestamp >= '2023-09-01T00:00:00.000Z' and symbol = 'ETH-USD' sample by 1h";
+
+            final String result = "timestamp\tsymbol\tside\tprice_today\tprice_yesterday\n" +
+                    "2023-09-01T00:00:00.000000Z\tETH-USD\tbuyer\tnull\t3240.0\n" +
+                    "2023-09-01T01:00:00.000000Z\tETH-USD\tbuyer\tnull\t3241.0\n" +
+                    "2023-09-01T02:00:00.000000Z\tETH-USD\tbuyer\tnull\t3242.0\n" +
+                    "2023-09-01T03:00:00.000000Z\tETH-USD\tbuyer\tnull\t3243.0\n" +
+                    "2023-09-01T04:00:00.000000Z\tETH-USD\tbuyer\tnull\t3244.0\n" +
+                    "2023-09-01T05:00:00.000000Z\tETH-USD\tseller\tnull\t5.0\n";
+
+            assertSql(result, query);
+        });
     }
 
     @Test
