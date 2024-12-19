@@ -50,10 +50,10 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
 
     @Override
     public void close() {
-        if (isOpen()) {
-            Misc.free(keyMem);
-            Misc.free(valueMem);
-        }
+        // Do not add isOpen() condition here.
+        // Failures in opening should have memories closed as well.
+        Misc.free(keyMem);
+        Misc.free(valueMem);
     }
 
     public long getKeyBaseAddress() {

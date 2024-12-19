@@ -662,7 +662,12 @@ public final class TestUtils {
 
     public static void assertMemoryLeak(LeakProneCode runnable) throws Exception {
         try (LeakCheck ignore = new LeakCheck()) {
-            runnable.run();
+            try {
+                runnable.run();
+            } catch (Throwable e) {
+                ignore.skipChecks();
+                throw e;
+            }
         }
     }
 
@@ -1975,6 +1980,7 @@ public final class TestUtils {
         private final long mem;
         private final long[] memoryUsageByTag = new long[MemoryTag.SIZE];
         private final int sockAddrCount;
+        private boolean skipChecksOnClose;
 
         public LeakCheck() {
             Path.clearThreadLocals();
@@ -1997,6 +2003,10 @@ public final class TestUtils {
 
         @Override
         public void close() {
+            if (skipChecksOnClose) {
+                return;
+            }
+
             Path.clearThreadLocals();
             if (fileCount != Files.getOpenFileCount()) {
                 Assert.assertEquals("file descriptors, expected: " + fileDebugInfo + ", actual: "
@@ -2039,6 +2049,10 @@ public final class TestUtils {
                 Assert.fail("SockAddr allocation count before the test: " + sockAddrCount
                         + ", after the test: " + sockAddrCountAfter);
             }
+        }
+
+        public void skipChecks() {
+            skipChecksOnClose = true;
         }
     }
 }
