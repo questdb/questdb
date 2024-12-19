@@ -47,6 +47,7 @@ import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 
@@ -84,13 +85,22 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
             if (!OffsetFunc.isConstant() && !OffsetFunc.isRuntimeConstant()) {
                 throw SqlException.$(argPositions.getQuick(1), "offset must be a constant");
             }
+
             offset = OffsetFunc.getLong(null);
+            if (offset < 0) {
+                throw SqlException.$(argPositions.getQuick(1), "offset must be a positive integer");
+            }
         }
+
         Function defaultValue = null;
         if (args.size() == 3) {
             defaultValue = args.getQuick(2);
             if (!(defaultValue instanceof DoubleFunction)) {
                 throw SqlException.$(argPositions.getQuick(2), "default value must be a double");
+            }
+
+            if (defaultValue instanceof WindowFunction) {
+                throw SqlException.$(argPositions.getQuick(2), "default value can not be a window function");
             }
         }
 
@@ -200,6 +210,24 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
+        public void close() {
+            super.close();
+            Misc.free(memory);
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            Misc.free(memory);
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            memory.truncate();
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(", ").val(offset).val(", ");
@@ -273,7 +301,6 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
 
         @Override
         public void reopen() {
-            lagValue = Double.NaN;
             loIdx = 0;
             count = 0;
         }
@@ -282,7 +309,6 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
         public void reset() {
             super.reset();
             buffer.close();
-            lagValue = Double.NaN;
             loIdx = 0;
             count = 0;
         }
@@ -290,7 +316,6 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void toTop() {
             super.toTop();
-            lagValue = Double.NaN;
             loIdx = 0;
             count = 0;
         }
