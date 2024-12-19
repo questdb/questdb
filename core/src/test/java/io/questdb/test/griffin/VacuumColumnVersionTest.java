@@ -68,6 +68,7 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
 
     @Test
     public void testVacuumColumnIndexDropped() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
         FilesFacade ff = engine.getConfiguration().getFilesFacade();
         assertMemoryLeak(() -> {
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
