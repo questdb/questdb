@@ -5373,6 +5373,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     ? maxTimestamp - partitionCeiling >= Timestamps.HOUR_MICROS * ttl
                     : Timestamps.getMonthsBetween(partitionCeiling, maxTimestamp) >= -ttl;
             if (shouldEvict) {
+                LOG.info().$("Evicting partition with expired TTL. timestampSeconds=")
+                        .$(partitionTimestamp / Timestamps.SECOND_MICROS).$();
                 dropPartitionByExactTimestamp(partitionTimestamp);
             } else {
                 // Partitions are sorted by timestamp, no need to check the rest
