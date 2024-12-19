@@ -103,21 +103,22 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
 
     @Test
     public void setMaxUncommittedRowsFailsToReopenBackMetaFile() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
+        spinLockTimeout = 1;
         assertMemoryLeak(() -> {
             TableModel tbl = new TableModel(configuration, "X", PartitionBy.DAY);
             createX(tbl);
             engine.releaseAllWriters();
-            node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
 
             ff = new TestFilesFacadeImpl() {
                 int attempt = 0;
 
                 @Override
-                public long openRO(LPSZ path) {
-                    if (Utf8s.endsWithAscii(path, TableUtils.META_FILE_NAME) && (attempt++ == 2)) {
+                public int rename(LPSZ from, LPSZ to) {
+                    if (Utf8s.endsWithAscii(to, TableUtils.META_FILE_NAME) && attempt++ < 2) {
                         return -1;
                     }
-                    return super.openRO(path);
+                    return super.rename(from, to);
                 }
 
             };
@@ -126,7 +127,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
                 execute(alterCommand, sqlExecutionContext);
                 Assert.fail("Alter table should fail");
             } catch (CairoError e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "could not open, file does not exist");
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not rename");
             }
 
             engine.releaseAllReaders();
@@ -190,6 +191,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
     public void setMaxUncommittedRowsFailsToSwapMetadataUntilWriterReopen() throws Exception {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
+            spinLockTimeout = 1;
             TableModel tbl = new TableModel(configuration, "X", PartitionBy.DAY);
             AbstractCairoTest.create(tbl.timestamp("ts")
                     .col("i", ColumnType.INT)
@@ -231,6 +233,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
     public void setMaxUncommittedRowsFailsToSwapMetadataUntilWriterReopen2() throws Exception {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
+            spinLockTimeout = 1;
             TableModel tbl = new TableModel(configuration, "X", PartitionBy.DAY);
             AbstractCairoTest.create(tbl.timestamp("ts")
                     .col("i", ColumnType.INT)
