@@ -27,12 +27,10 @@ package io.questdb.griffin.engine.functions.table;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
-import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFormat;
-import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StaticSymbolTable;
@@ -99,16 +97,6 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
     }
 
     @Override
-    public TableReader getTableReader() {
-        return null;
-    }
-
-    @Override
-    public long getUpdateRowId(long rowIndex) {
-        return -1;
-    }
-
-    @Override
     public SymbolTable newSymbolTable(int columnIndex) {
         return null;
     }
@@ -144,11 +132,6 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
         this.rowCount = decoder.metadata().rowCount();
         this.rowGroupCount = decoder.metadata().rowGroupCount();
         toTop();
-    }
-
-    @Override
-    public PageFrameCursor of(PartitionFrameCursor partitionFrameCursor) {
-        throw new UnsupportedOperationException("partitions are not expected for external files");
     }
 
     @Override
