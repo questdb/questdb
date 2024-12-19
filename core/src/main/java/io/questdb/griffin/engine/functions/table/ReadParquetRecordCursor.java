@@ -82,7 +82,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             this.decoder = new PartitionDecoder();
             this.rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
             this.columns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT);
-            this.record = new ParquetRecord();
+            this.record = new ParquetRecord(metadata.getColumnCount());
         } catch (Throwable th) {
             close();
             throw th;
@@ -210,13 +210,23 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     private class ParquetRecord implements Record {
-        private final ObjList<DirectBinarySequence> bsViews = new ObjList<>();
-        private final ObjList<DirectString> csViewsA = new ObjList<>();
-        private final ObjList<DirectString> csViewsB = new ObjList<>();
-        private final ObjList<Long256Impl> longs256A = new ObjList<>();
-        private final ObjList<Long256Impl> longs256B = new ObjList<>();
-        private final ObjList<Utf8SplitString> utf8ViewsA = new ObjList<>();
-        private final ObjList<Utf8SplitString> utf8ViewsB = new ObjList<>();
+        private final ObjList<DirectBinarySequence> bsViews;
+        private final ObjList<DirectString> csViewsA;
+        private final ObjList<DirectString> csViewsB;
+        private final ObjList<Long256Impl> longs256A;
+        private final ObjList<Long256Impl> longs256B;
+        private final ObjList<Utf8SplitString> utf8ViewsA;
+        private final ObjList<Utf8SplitString> utf8ViewsB;
+
+        public ParquetRecord(int columnCount) {
+            this.bsViews = new ObjList<>(columnCount);
+            this.csViewsA = new ObjList<>(columnCount);
+            this.csViewsB = new ObjList<>(columnCount);
+            this.longs256A = new ObjList<>(columnCount);
+            this.longs256B = new ObjList<>(columnCount);
+            this.utf8ViewsA = new ObjList<>(columnCount);
+            this.utf8ViewsB = new ObjList<>(columnCount);
+        }
 
         @Override
         public BinarySequence getBin(int col) {

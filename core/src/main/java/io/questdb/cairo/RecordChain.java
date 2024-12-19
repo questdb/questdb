@@ -50,11 +50,12 @@ import org.jetbrains.annotations.NotNull;
 import java.io.Closeable;
 
 public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSinkSPI, WindowSPI, Reopenable {
+    private final int columnCount;
     private final long[] columnOffsets;
     private final long fixOffset;
     private final MemoryCARW mem;
-    private final RecordChainRecord recordA = new RecordChainRecord();
-    private final RecordChainRecord recordB = new RecordChainRecord();
+    private final RecordChainRecord recordA;
+    private final RecordChainRecord recordB;
     private final RecordSink recordSink;
     private final long varOffset;
     private long nextRecordOffset = -1L;
@@ -72,12 +73,14 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         try {
             this.mem = Vm.getCARWInstance(pageSize, maxPages, MemoryTag.NATIVE_RECORD_CHAIN);
             this.recordSink = recordSink;
-            int count = columnTypes.getColumnCount();
+            this.columnCount = columnTypes.getColumnCount();
+            this.recordA = new RecordChainRecord(columnCount);
+            this.recordB = new RecordChainRecord(columnCount);
             long varOffset = 0L;
             long fixOffset = 0L;
 
-            this.columnOffsets = new long[count];
-            for (int i = 0; i < count; i++) {
+            this.columnOffsets = new long[columnCount];
+            for (int i = 0; i < columnCount; i++) {
                 int type = columnTypes.getColumnType(i);
                 if (ColumnType.isVarSize(type)) {
                     columnOffsets[i] = varOffset;
@@ -152,7 +155,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     @Override
     public Record getRecordAt(long recordOffset) {
         if (recordC == null) {
-            recordC = new RecordChainRecord();
+            recordC = new RecordChainRecord(columnCount);
         }
         recordC.of(rowToDataOffset(recordOffset));
         return recordC;
@@ -358,16 +361,27 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     }
 
     private class RecordChainRecord implements Record {
-        private final ObjList<MemoryCR.ByteSequenceView> bsViews = new ObjList<>();
-        private final ObjList<DirectString> csViewsA = new ObjList<>();
-        private final ObjList<DirectString> csViewsB = new ObjList<>();
-        private final ObjList<Interval> intervals = new ObjList<>();
-        private final ObjList<Long256Impl> longs256A = new ObjList<>();
-        private final ObjList<Long256Impl> longs256B = new ObjList<>();
-        private final ObjList<DirectUtf8String> utf8ViewsA = new ObjList<>();
-        private final ObjList<DirectUtf8String> utf8ViewsB = new ObjList<>();
+        private final ObjList<MemoryCR.ByteSequenceView> bsViews;
+        private final ObjList<DirectString> csViewsA;
+        private final ObjList<DirectString> csViewsB;
+        private final ObjList<Interval> intervals;
+        private final ObjList<Long256Impl> longs256A;
+        private final ObjList<Long256Impl> longs256B;
+        private final ObjList<DirectUtf8String> utf8ViewsA;
+        private final ObjList<DirectUtf8String> utf8ViewsB;
         private long baseOffset;
         private long fixedOffset;
+
+        public RecordChainRecord(int columnCount) {
+            this.bsViews = new ObjList<>(columnCount);
+            this.csViewsA = new ObjList<>(columnCount);
+            this.csViewsB = new ObjList<>(columnCount);
+            this.intervals = new ObjList<>(columnCount);
+            this.longs256A = new ObjList<>(columnCount);
+            this.longs256B = new ObjList<>(columnCount);
+            this.utf8ViewsA = new ObjList<>(columnCount);
+            this.utf8ViewsB = new ObjList<>(columnCount);
+        }
 
         @Override
         public BinarySequence getBin(int col) {
