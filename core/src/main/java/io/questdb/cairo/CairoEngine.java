@@ -200,9 +200,6 @@ public class CairoEngine implements Closeable, WriterSource {
             }
             this.metadataCache = new MetadataCache(this);
             this.matViewGraph = new MatViewGraph();
-            if (configuration.isMatViewEnabled()) {
-                buildMatViewGraph();
-            }
         } catch (Throwable th) {
             close();
             throw th;
@@ -889,6 +886,9 @@ public class CairoEngine implements Closeable, WriterSource {
         // Convert tables to WAL/non-WAL, if necessary.
         final ObjList<TableToken> convertedTables = TableConverter.convertTables(this, tableSequencerAPI, tableFlagResolver);
         tableNameRegistry.reload(convertedTables);
+        if (configuration.isMatViewEnabled()) {
+            buildMatViewGraph();
+        }
     }
 
     public String lockAll(TableToken tableToken, String lockReason, boolean ignoreInProgressCheckpoint) {
@@ -1363,16 +1363,15 @@ public class CairoEngine implements Closeable, WriterSource {
                             tableToken
                     );
                     final TableToken baseTableToken = this.tableNameRegistry.getTableToken(matViewDefinition.getBaseTableName());
-                    if (baseTableToken != null && !this.tableNameRegistry.isTableDropped(baseTableToken)) {
-                        this.matViewGraph.createView(tableToken, matViewDefinition);
-                    } else {
-                        throw CairoException.nonCritical()
-                                .put("Base table for materialized view does not exist [table=")
-                                .put(matViewDefinition.getBaseTableName())
-                                .put(", view=")
-                                .put(tableToken.getTableName())
-                                .put(']');
+                    if (baseTableToken == null || this.tableNameRegistry.isTableDropped(baseTableToken)) {
+                        LOG.error()
+                                .$("base table for materialized view does not exist [table=")
+                                .$(matViewDefinition.getBaseTableName())
+                                .$(", view=").$(tableToken.getTableName())
+                                .I$();
                     }
+                    this.matViewGraph.createView(tableToken, matViewDefinition);
+                    this.matViewGraph.refresh(tableToken);
                 }
             }
         }

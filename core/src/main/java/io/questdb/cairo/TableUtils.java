@@ -1028,8 +1028,8 @@ public final class TableUtils {
 
         final CharSequence baseTableName = mem.getStrA(offset);
         assert baseTableName != null;
-        final String baseTableNameStr = baseTableName.toString();
         offset += Vm.getStorageLength(baseTableName);
+        final String baseTableNameStr = Chars.toString(baseTableName);
 
         final long fromMicros = mem.getLong(offset);
         offset += Long.BYTES;
@@ -1045,10 +1045,10 @@ public final class TableUtils {
 
         final CharSequence timeZone = mem.getStrA(offset);
         offset += Vm.getStorageLength(timeZone);
-        final String timeZoneStr = timeZone == null ? null : timeZone.toString();
+        final String timeZoneStr = Chars.toString(timeZone);
 
         final CharSequence timeZoneOffset = mem.getStrA(offset);
-        final String timeZoneOffsetStr = timeZoneOffset == null ? null : timeZoneOffset.toString();
+        final String timeZoneOffsetStr = Chars.toString(timeZoneOffset);
 
         mem.smallFile(ff, path.trimTo(rootLen)
                 .concat(matViewToken.getDirName())
@@ -1056,7 +1056,7 @@ public final class TableUtils {
         assert mem.size() >= Integer.BYTES;
         final CharSequence matViewSql = mem.getStrA(0);
         assert matViewSql != null;
-        final String matViewSqlStr = matViewSql.toString();
+        final String matViewSqlStr = Chars.toString(matViewSql);
 
         return new MaterializedViewDefinition(
                 matViewToken,
