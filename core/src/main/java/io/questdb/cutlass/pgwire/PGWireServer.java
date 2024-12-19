@@ -34,8 +34,21 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
-import io.questdb.network.*;
-import io.questdb.std.*;
+import io.questdb.network.IOContextFactoryImpl;
+import io.questdb.network.IODispatcher;
+import io.questdb.network.IODispatchers;
+import io.questdb.network.IOOperation;
+import io.questdb.network.IORequestProcessor;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.PeerIsSlowToWriteException;
+import io.questdb.network.QueryPausedException;
+import io.questdb.std.AssociativeCache;
+import io.questdb.std.ConcurrentAssociativeCache;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.NoOpAssociativeCache;
+import io.questdb.std.ObjectFactory;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
@@ -77,7 +90,7 @@ public class PGWireServer implements IPGWireServer {
                 executionContextObjectFactory,
                 typesAndSelectCache
         );
-        this.dispatcher = IODispatchers.create(configuration.getDispatcherConfiguration(), contextFactory);
+        this.dispatcher = IODispatchers.create(configuration, contextFactory, metrics.pgWire().connectionCountGauge());
         this.workerPool = workerPool;
         this.registry = registry;
 

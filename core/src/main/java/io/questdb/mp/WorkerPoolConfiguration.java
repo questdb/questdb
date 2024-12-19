@@ -25,6 +25,7 @@
 package io.questdb.mp;
 
 public interface WorkerPoolConfiguration {
+
     default long getNapThreshold() {
         return 7000;
     }

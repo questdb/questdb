@@ -28,7 +28,17 @@ import io.questdb.mp.QueueConsumer;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SynchronizedJob;
-import io.questdb.std.*;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.FindVisitor;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -425,8 +435,8 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
                 logFileNameSink.put(logFileName);
                 int endOffset = logFileNameSink.length();
                 // It will be sorted as 128 bits hence
-                // set 2 longs for an entry, [packedOffsets, last_modification_ts]
-                // and it will sort it by last_modification_ts first and then by packedOffsets
+                // set 2 longs for an entry, [packed_offsets, last_modification_ts]
+                // and it will sort it by last_modification_ts first and then by packed_offsets
                 long packedOffsets = Numbers.encodeLowHighInts(startOffset, endOffset);
                 logFileList.add(packedOffsets);
                 logFileList.add(ff.getLastModified(path.$()));

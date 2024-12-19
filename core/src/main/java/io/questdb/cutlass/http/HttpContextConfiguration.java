@@ -59,11 +59,7 @@ public interface HttpContextConfiguration {
 
     NetworkFacade getNetworkFacade();
 
-    int getRecvBufferSize();
-
     int getRequestHeaderBufferSize();
-
-    int getSendBufferSize();
 
     boolean getServerKeepAlive();
 

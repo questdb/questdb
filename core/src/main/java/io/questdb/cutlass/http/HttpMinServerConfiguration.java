@@ -28,9 +28,7 @@ import io.questdb.FactoryProvider;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 
-public interface HttpMinServerConfiguration extends WorkerPoolConfiguration {
-
-    IODispatcherConfiguration getDispatcherConfiguration();
+public interface HttpMinServerConfiguration extends IODispatcherConfiguration, WorkerPoolConfiguration {
 
     FactoryProvider getFactoryProvider();
 
