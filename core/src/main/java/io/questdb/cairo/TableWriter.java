@@ -7529,12 +7529,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void recoverOpenColumnFailure(CharSequence columnName) {
-        final int index = columnCount - 1;
         removeMetaFile();
-        removeLastColumn();
-        columnCount--;
         recoverFromSwapRenameFailure(columnName);
-        removeSymbolMapWriter(index);
+        // Some writer in-memory state will be still dirty, and it's not easy to roll back everything
+        // for all the failure points. It's safer to re-open the writer object after a column add failure.
+        distressed = true;
     }
 
     private void releaseIndexerWriters() {
@@ -7728,10 +7727,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         removeFileOrLog(ff, keyFileName(path.trimTo(plen), columnName, columnNameTxn));
         removeFileOrLog(ff, valueFileName(path.trimTo(plen), columnName, columnNameTxn));
         path.trimTo(pathSize);
-    }
-
-    private void removeLastColumn() {
-        freeColumnMemory(columnCount - 1);
     }
 
     private void removeMetaFile() {
