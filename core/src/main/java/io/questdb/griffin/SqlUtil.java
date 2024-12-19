@@ -34,8 +34,20 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.Chars;
+import io.questdb.std.GenericLexer;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Acceptor;
+import io.questdb.std.Long256FromCharSequenceDecoder;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.*;
+import io.questdb.std.Uuid;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatCompiler;
@@ -776,6 +788,14 @@ public class SqlUtil {
         }
     }
 
+    public static int toNdArrayType(CharSequence tok, int tokPosition) throws SqlException {
+        final int ndArrayType = ColumnType.parseNdArrayType(tok);
+        if (ndArrayType == -1) {
+            throw SqlException.$(tokPosition, "non-array element type: ").put(tok);
+        }
+        return ndArrayType;
+    }
+
     public static short toPersistedTypeTag(CharSequence tok, int tokPosition) throws SqlException {
         final short typeTag = ColumnType.tagOf(tok);
         if (typeTag == -1) {
@@ -785,7 +805,6 @@ public class SqlUtil {
             return typeTag;
         }
         throw SqlException.$(tokPosition, "non-persisted type: ").put(tok);
-
     }
 
     private static long implicitCastStrVarcharAsDate0(CharSequence value, int columnType) {

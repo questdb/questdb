@@ -466,6 +466,48 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testInsertNdArray() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                serverMain.start();
+
+                String tableName = "ndarr_test";
+                serverMain.ddl("create table " + tableName + " (x symbol, y symbol, l1 long, a1 array(double), a2 array(long), ts timestamp) timestamp(ts) partition by DAY WAL");
+                serverMain.awaitTxn(tableName, 0);
+
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
+                        .retryTimeoutMillis(0)
+                        .build()
+                ) {
+                    sender.table(tableName)
+                            .symbol("x", "42i")
+                            .symbol("y", "{6f1.0,2.5,3.0,4.5,5.0}")  // ensuring no array parsing for symbol
+                            .longColumn("l1", 23452345)
+                            .arrayColumn("a1", "{6f1.0,2.5,3.0,4.5,5.0}")  // TODO(amunra): API it's the raw buffer passed into ILP
+                            .arrayColumn("a2", "{6s-1,0,100000000}")  // TODO(amunra): API it's the raw buffer passed into ILP
+                            .at(100000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTxn(tableName, 1);
+
+                serverMain.assertSql("select * from " + tableName, "x\ty\tl1\ta1\ta2\tts\n" +
+                        "42i\t" +
+                        "{6f1.0,2.5,3.0,4.5,5.0}\t" +
+                        "23452345\t" +
+                        "[1.0,2.5,3.0,4.5,5.0]\t" +
+                        "[-1,0,100000000]\t" +
+                        "1970-01-02T03:46:40.000000Z\n");
+            }
+        });
+    }
+
+    @Test
     public void testLineHttpDisabled() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(

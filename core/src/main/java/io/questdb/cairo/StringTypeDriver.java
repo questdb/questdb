@@ -259,7 +259,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public long setAppendAuxMemAppendPosition(MemoryMA auxMem, long rowCount) {
+    public long setAppendAuxMemAppendPosition(MemoryMA auxMem, MemoryMA dataMem, int columnType, long rowCount) {
         // For STRING storage aux vector (mem) contains N+1 offsets. Where N is the
         // row count. Offset indexes are 0 based, so reading Nth element of the vector gives
         // the size of the data vector.
