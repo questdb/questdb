@@ -376,7 +376,13 @@ abstract class AbstractLogRecord implements LogRecord, Log {
 
     @Override
     public LogRecord ts() {
-        sink().putISODate(clock.getTicks());
+        final long us = clock.getTicks();
+        if (LogLevel.TIMEZONE != null) {
+            TimestampFormatUtils.appendOffsetDateTime(sink(), us, LogLevel.TIMEZONE);
+        } else {
+            sink().putISODate(us);
+        }
+
         return this;
     }
 

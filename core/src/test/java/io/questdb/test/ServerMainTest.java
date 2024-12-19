@@ -150,7 +150,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                     printSql(compiler, executionContext,
                             "(show parameters) where property_path not in (" +
                                     "'cairo.root', 'cairo.sql.backup.root', 'cairo.sql.copy.root', 'cairo.sql.copy.work.root', " +
-                                    "'cairo.writer.misc.append.page.size', 'line.tcp.io.worker.count', 'wal.apply.worker.count'" +
+                                    "'cairo.writer.misc.append.page.size', 'line.tcp.io.worker.count', 'wal.apply.worker.count', 'log.timezone'" +
                                     ") order by 1",
                             actualSink
                     );
