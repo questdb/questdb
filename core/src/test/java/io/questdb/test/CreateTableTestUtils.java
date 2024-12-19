@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Utf8StringSink;
@@ -85,9 +86,10 @@ public class CreateTableTestUtils {
                     .col("k", ColumnType.BOOLEAN)
                     .col("l", ColumnType.BINARY)
                     .col("m", ColumnType.UUID)
-                    .col("n", ColumnType.VARCHAR);
+                    .col("n", ColumnType.VARCHAR)
+                    .col("o", ColumnType.LONG256)
+                    .col("p", ColumnType.IPv4);
             TestUtils.createTable(engine, model);
-
         } catch (RuntimeException e) {
             if ("table already exists: x".equals(e.getMessage())) {
                 try (TableWriter writer = TestUtils.newOffPoolWriter(engine.getConfiguration(), engine.verifyTableName("x"), engine)) {
@@ -182,6 +184,18 @@ public class CreateTableTestUtils {
                     }
                 }
 
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putLong256(14, Long256Impl.NULL_LONG256);
+                } else {
+                    row.putLong256(14, rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
+                }
+
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putInt(15, Numbers.INT_NULL);
+                } else {
+                    row.putInt(15, rnd.nextInt());
+                }
+
                 row.append();
             }
             writer.commit();
@@ -227,6 +241,11 @@ public class CreateTableTestUtils {
     }
 
     public static TableModel getGeoHashTypesModelWithNewTypes(CairoConfiguration configuration, int partitionBy) {
-        return new TableModel(configuration, "allgeo", partitionBy).col("hb", ColumnType.getGeoHashTypeWithBits(6)).col("hs", ColumnType.getGeoHashTypeWithBits(12)).col("hi", ColumnType.getGeoHashTypeWithBits(27)).col("hl", ColumnType.getGeoHashTypeWithBits(44)).timestamp();
+        return new TableModel(configuration, "allgeo", partitionBy)
+                .col("hb", ColumnType.getGeoHashTypeWithBits(6))
+                .col("hs", ColumnType.getGeoHashTypeWithBits(12))
+                .col("hi", ColumnType.getGeoHashTypeWithBits(27))
+                .col("hl", ColumnType.getGeoHashTypeWithBits(44))
+                .timestamp();
     }
 }

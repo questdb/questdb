@@ -38,7 +38,6 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -48,9 +47,8 @@ import org.jetbrains.annotations.Nullable;
  */
 final class UnorderedVarcharMapRecord implements MapRecord {
     private final long[] columnOffsets;
-    private final Long256Impl[] keyLong256A;
-    private final Long256Impl[] keyLong256B;
-    private final DirectUtf8String usA;
+    private final Long256Impl[] longs256;
+    private final DirectUtf8String us;
     private final DirectUtf8String usB;
     private final UnorderedVarcharMapValue value;
     private final long[] valueOffsets;
@@ -80,19 +78,16 @@ final class UnorderedVarcharMapRecord implements MapRecord {
 
         columnOffsets = new long[nColumns];
 
-        Long256Impl[] long256A = null;
-        Long256Impl[] long256B = null;
+        Long256Impl[] longs256 = null;
         long offset = UnorderedVarcharMap.KEY_SIZE;
         if (valueTypes != null) {
             for (int i = 0, n = valueTypes.getColumnCount(); i < n; i++) {
                 int columnType = valueTypes.getColumnType(i);
                 if (ColumnType.tagOf(columnType) == ColumnType.LONG256) {
-                    if (long256A == null) {
-                        long256A = new Long256Impl[nColumns];
-                        long256B = new Long256Impl[nColumns];
+                    if (longs256 == null) {
+                        longs256 = new Long256Impl[nColumns];
                     }
-                    long256A[i] = new Long256Impl();
-                    long256B[i] = new Long256Impl();
+                    longs256[i] = new Long256Impl();
                 }
                 final int size = ColumnType.sizeOf(columnType);
                 if (size <= 0) {
@@ -103,9 +98,8 @@ final class UnorderedVarcharMapRecord implements MapRecord {
             }
         }
 
-        this.keyLong256A = long256A;
-        this.keyLong256B = long256B;
-        this.usA = new DirectUtf8String();
+        this.longs256 = longs256;
+        this.us = new DirectUtf8String();
         this.usB = new DirectUtf8String();
     }
 
@@ -113,41 +107,35 @@ final class UnorderedVarcharMapRecord implements MapRecord {
             long valueSize,
             long[] valueOffsets,
             long[] columnOffsets,
-            Long256Impl[] keyLong256A,
-            Long256Impl[] keyLong256B
+            Long256Impl[] longs256
     ) {
         this.valueSize = valueSize;
         this.valueOffsets = valueOffsets;
         this.columnOffsets = columnOffsets;
         this.value = new UnorderedVarcharMapValue(valueSize, valueOffsets);
-        this.keyLong256A = keyLong256A;
-        this.keyLong256B = keyLong256B;
-        this.usA = new DirectUtf8String();
+        this.longs256 = longs256;
+        this.us = new DirectUtf8String();
         this.usB = new DirectUtf8String();
     }
 
     @SuppressWarnings("MethodDoesntCallSuperMethod")
     @Override
     public UnorderedVarcharMapRecord clone() {
-        final Long256Impl[] long256A;
-        final Long256Impl[] long256B;
+        final Long256Impl[] longs256;
 
-        if (keyLong256A != null) {
-            int n = keyLong256A.length;
-            long256A = new Long256Impl[n];
-            long256B = new Long256Impl[n];
+        if (this.longs256 != null) {
+            int n = this.longs256.length;
+            longs256 = new Long256Impl[n];
 
             for (int i = 0; i < n; i++) {
-                if (keyLong256A[i] != null) {
-                    long256A[i] = new Long256Impl();
-                    long256B[i] = new Long256Impl();
+                if (this.longs256[i] != null) {
+                    longs256[i] = new Long256Impl();
                 }
             }
         } else {
-            long256A = null;
-            long256B = null;
+            longs256 = null;
         }
-        return new UnorderedVarcharMapRecord(valueSize, valueOffsets, columnOffsets, long256A, long256B);
+        return new UnorderedVarcharMapRecord(valueSize, valueOffsets, columnOffsets, longs256);
     }
 
     @Override
@@ -239,12 +227,14 @@ final class UnorderedVarcharMapRecord implements MapRecord {
 
     @Override
     public Long256 getLong256A(int columnIndex) {
-        return getLong256Generic(keyLong256A, columnIndex);
+        Long256Impl long256 = longs256[columnIndex];
+        long256.fromAddress(addressOfColumn(columnIndex));
+        return long256;
     }
 
     @Override
     public Long256 getLong256B(int columnIndex) {
-        return getLong256Generic(keyLong256B, columnIndex);
+        return getLong256A(columnIndex);
     }
 
     @Override
@@ -276,7 +266,7 @@ final class UnorderedVarcharMapRecord implements MapRecord {
 
     @Override
     public @Nullable Utf8Sequence getVarcharA(int col) {
-        return getVarchar0(col, usA);
+        return getVarchar0(col, us);
     }
 
     @Override
@@ -324,14 +314,6 @@ final class UnorderedVarcharMapRecord implements MapRecord {
 
     private long addressOfColumn(int index) {
         return startAddress + columnOffsets[index];
-    }
-
-    @NotNull
-    private Long256 getLong256Generic(Long256Impl[] keyLong256, int columnIndex) {
-        long address = addressOfColumn(columnIndex);
-        Long256Impl long256 = keyLong256[columnIndex];
-        long256.fromAddress(address);
-        return long256;
     }
 
     private DirectUtf8String getVarchar0(int col, DirectUtf8String us) {

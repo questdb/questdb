@@ -22,32 +22,25 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.lt;
+package io.questdb.griffin.engine.functions.conditional;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
-import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 
-public class LtVarcharFunctionFactory implements FunctionFactory {
+public class NullIfVarcharFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "<(ØØ)";
-    }
-
-    @Override
-    public boolean isBoolean() {
-        return true;
+        return "nullif(ØØ)";
     }
 
     @Override
@@ -58,63 +51,57 @@ public class LtVarcharFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        final Function a = args.getQuick(0);
-        final Function b = args.getQuick(1);
-        if (a.isConstant() && !b.isConstant()) {
-            Utf8Sequence constValue = a.getVarcharA(null);
-            if (constValue == null) {
-                return BooleanConstant.FALSE;
-            }
-            return new LtStrVarcharFunctionFactory.ConstOnLeftFunc(constValue, b);
-        }
-        if (!a.isConstant() && b.isConstant()) {
-            Utf8Sequence constValue = b.getVarcharA(null);
-            if (constValue == null) {
-                return BooleanConstant.FALSE;
-            }
-            return new LtVarcharStrFunctionFactory.ConstOnRightFunc(a, constValue);
-        }
-        return new Func(a, b);
+        return new Func(args.getQuick(0), args.getQuick(1));
     }
 
-    static class Func extends NegatableBooleanFunction implements BinaryFunction {
-        private final Function left;
-        private final Function right;
+    private static class Func extends VarcharFunction implements BinaryFunction {
+        private final Function varcharFunc1;
+        private final Function varcharFunc2;
 
-        public Func(Function left, Function right) {
-            this.left = left;
-            this.right = right;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return Utf8s.lessThan(left.getVarcharA(rec), right.getVarcharA(rec), negated);
+        public Func(Function varcharFunc1, Function varcharFunc2) {
+            this.varcharFunc1 = varcharFunc1;
+            this.varcharFunc2 = varcharFunc2;
         }
 
         @Override
         public Function getLeft() {
-            return left;
+            return varcharFunc1;
         }
 
         @Override
         public String getName() {
-            if (negated) {
-                return ">=";
-            } else {
-                return "<";
-            }
+            return "nullif";
         }
 
         @Override
         public Function getRight() {
-            return right;
+            return varcharFunc2;
         }
 
         @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(left);
-            sink.val(getName());
-            sink.val(right);
+        public Utf8Sequence getVarcharA(Record rec) {
+            Utf8Sequence us1 = varcharFunc1.getVarcharA(rec);
+            if (us1 == null) {
+                return null;
+            }
+            Utf8Sequence us2 = varcharFunc2.getVarcharA(rec);
+            if (us2 == null || !Utf8s.equals(us1, us2)) {
+                return us1;
+            }
+            return null;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(Record rec) {
+            Utf8Sequence us1 = varcharFunc1.getVarcharB(rec);
+            if (us1 == null) {
+                return null;
+            }
+            Utf8Sequence us2 = varcharFunc2.getVarcharB(rec);
+            if (us2 == null || !Utf8s.equals(us1, us2)) {
+                return us1;
+            }
+            return null;
         }
     }
 }

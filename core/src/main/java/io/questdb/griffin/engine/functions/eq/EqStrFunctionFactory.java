@@ -119,16 +119,11 @@ public class EqStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            // important to compare A and B strings in case
-            // these are columns of the same record
-            // records have re-usable character sequences
             final CharSequence a = left.getStrA(rec);
-            final CharSequence b = right.getStrB(rec);
-
+            final CharSequence b = right.getStrA(rec);
             if (a == null) {
                 return negated != (b == null);
             }
-
             return negated != Chars.equalsNc(a, b);
         }
 
