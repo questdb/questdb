@@ -88,6 +88,11 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
         }
     }
 
+    @Override
+    public int resolvePreferredVariadicType(int sqlPos, int argPos, ObjList<Function> args) {
+        return ColumnType.DOUBLE;
+    }
+
     private static boolean allowedColumnType(int type, boolean allowUndefined) {
         switch (type) {
             case ColumnType.BYTE:
