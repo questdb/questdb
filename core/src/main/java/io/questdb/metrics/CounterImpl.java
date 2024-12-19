@@ -50,6 +50,11 @@ public class CounterImpl implements Counter {
     }
 
     @Override
+    public void reset() {
+        counter.reset();
+    }
+
+    @Override
     public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
         PrometheusFormatUtils.appendCounterType(name, sink);
         PrometheusFormatUtils.appendCounterNamePrefix(name, sink);

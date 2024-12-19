@@ -31,6 +31,11 @@ import io.questdb.std.Os;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
+// File watchers were added for the purpose of config file reload,
+// but since they aren't reliable reload_config() SQL function
+// was introduced.
+//
+// Still, file watchers may be handy in the future, so we kept them.
 public class FileWatcherFactory {
 
     public static FileWatcher getFileWatcher(@NotNull Utf8Sequence filePath, @NotNull FileEventCallback callback) {

@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.ConfigReloader;
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
@@ -140,6 +141,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
+    private @NotNull ConfigReloader configReloader = () -> false; // no-op
     private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
     private @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
@@ -474,6 +476,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public long getCommandCorrelationId() {
         return asyncCommandCorrelationId.incrementAndGet();
+    }
+
+    public @NotNull ConfigReloader getConfigReloader() {
+        return configReloader;
     }
 
     public CairoConfiguration getConfiguration() {
@@ -827,12 +833,12 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableNameRegistry.isTableDropped(tableToken);
     }
 
-    public boolean isWalTableDropped(CharSequence tableDir) {
-        return tableNameRegistry.isWalTableDropped(tableDir);
-    }
-
     public boolean isWalTable(TableToken tableToken) {
         return tableToken.isWal();
+    }
+
+    public boolean isWalTableDropped(CharSequence tableDir) {
+        return tableNameRegistry.isWalTableDropped(tableDir);
     }
 
     public void load() {
@@ -1152,6 +1158,10 @@ public class CairoEngine implements Closeable, WriterSource {
         try (SqlCompiler compiler = getSqlCompiler()) {
             return select(compiler, selectSql, sqlExecutionContext);
         }
+    }
+
+    public void setConfigReloader(@NotNull ConfigReloader configReloader) {
+        this.configReloader = configReloader;
     }
 
     @SuppressWarnings("unused")
