@@ -27,12 +27,28 @@ package io.questdb.cutlass.http.processors;
 import io.questdb.Telemetry;
 import io.questdb.TelemetryOrigin;
 import io.questdb.TelemetrySystemEvent;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CommitFailedException;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cutlass.line.tcp.*;
-import io.questdb.std.*;
-import io.questdb.std.str.*;
+import io.questdb.cutlass.line.tcp.DefaultColumnTypes;
+import io.questdb.cutlass.line.tcp.LineTcpParser;
+import io.questdb.cutlass.line.tcp.SymbolCache;
+import io.questdb.cutlass.line.tcp.TableStructureAdapter;
+import io.questdb.cutlass.line.tcp.WalTableUpdateDetails;
+import io.questdb.std.LowerCaseUtf8SequenceObjHashMap;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.Pool;
+import io.questdb.std.QuietCloseable;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
 
@@ -208,6 +224,7 @@ public class LineHttpTudCache implements QuietCloseable {
             }
             tableToken = engine.createTable(securityContext, ddlMem, path, true, tsa, false);
         }
+        // TODO(eugene): check mat view
         return tableToken;
     }
 

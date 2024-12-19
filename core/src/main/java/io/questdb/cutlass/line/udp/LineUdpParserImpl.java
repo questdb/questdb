@@ -301,6 +301,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 int exists = engine.getTableStatus(path, tableToken);
                 switch (exists) {
                     case TABLE_EXISTS:
+                        // TODO(eugene): check mat view
                         entry.state = 1;
                         cacheWriter(entry, token, tableToken);
                         break;
