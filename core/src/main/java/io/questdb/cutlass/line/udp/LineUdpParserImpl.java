@@ -641,6 +641,12 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         }
 
         @Override
+        public int getTtlHoursOrMonths() {
+            // todo: pass configuration  value instead of 0
+            return 0;
+        }
+
+        @Override
         public boolean isDedupKey(int columnIndex) {
             return false;
         }

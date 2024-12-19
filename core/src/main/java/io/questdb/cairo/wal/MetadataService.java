@@ -129,6 +129,8 @@ public interface MetadataService {
 
     void enableDeduplicationWithUpsertKeys(LongList columnsIndexes);
 
+    void forceRemovePartitions(LongList partitionTimestamps);
+
     int getMetaMaxUncommittedRows();
 
     TableRecordMetadata getMetadata();
@@ -138,8 +140,6 @@ public interface MetadataService {
     TableToken getTableToken();
 
     UpdateOperator getUpdateOperator();
-
-    void forceRemovePartitions(LongList partitionTimestamps);
 
     void removeColumn(@NotNull CharSequence columnName);
 
@@ -156,6 +156,8 @@ public interface MetadataService {
     void setMetaMaxUncommittedRows(int maxUncommittedRows);
 
     void setMetaO3MaxLag(long o3MaxLagUs);
+
+    void setMetaTtlHoursOrMonths(int metaTtlHoursOrMonths);
 
     void squashPartitions();
 
