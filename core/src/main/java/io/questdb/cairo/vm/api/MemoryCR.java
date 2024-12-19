@@ -36,8 +36,9 @@ import io.questdb.std.Vect;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectString;
 
-//contiguous readable 
+// contiguous readable
 public interface MemoryCR extends MemoryC, MemoryR {
+
     long addressHi();
 
     default boolean checkOffsetMapped(long offset) {
