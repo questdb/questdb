@@ -31,6 +31,7 @@ import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.std.Chars;
@@ -72,12 +73,14 @@ public class FuzzDropPartitionOperation implements FuzzTransactionOperation {
                 if (Chars.contains(e.getFlyweightMessage(), "table does not exist") || e.isTableDropped()) {
                     // Table can be dropped by another drop/recreate fuzz operation.
                     return true;
+                } else if (Chars.contains(e.getFlyweightMessage(), "no partitions matched WHERE clause")) {
+                    return true;
                 } else {
                     throw e;
                 }
             }
-        } catch (Exception e) {
-            return false;
+        } catch (SqlException e) {
+            throw new RuntimeException(e);
         }
     }
 }
