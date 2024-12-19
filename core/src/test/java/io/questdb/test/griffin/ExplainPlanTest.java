@@ -10377,9 +10377,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    CachedWindow\n" +
                             "      orderedFunctions: [[i desc, j] => [row_number() over (partition by [i])]," +
-                            "[j, i desc] => [avg(j) over (partition by [i] rows between unbounded preceding and current row )," +
-                            "sum(j) over (partition by [i] rows between unbounded preceding and current row )," +
-                            "first_value(j) over (partition by [i] rows between unbounded preceding and current row )]]\n" +
+                            "[j, i desc] => [avg(j) over (partition by [i] rows between unbounded preceding and current row)," +
+                            "sum(j) over (partition by [i] rows between unbounded preceding and current row)," +
+                            "first_value(j) over (partition by [i] rows between unbounded preceding and current row)]]\n" +
                             "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: tab\n"
@@ -10394,9 +10394,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "from tab order by ts desc",
                     "SelectedRecord\n" +
                             "    CachedWindow\n" +
-                            "      orderedFunctions: [[i desc, j] => [row_number() over (partition by [i]),avg(j) over (partition by [i,j] rows between unbounded preceding and current row )," +
-                            "sum(j) over (partition by [i,j] rows between unbounded preceding and current row )," +
-                            "first_value(j) over (partition by [i,j] rows between unbounded preceding and current row )]]\n" +
+                            "      orderedFunctions: [[i desc, j] => [row_number() over (partition by [i]),avg(j) over (partition by [i,j] rows between unbounded preceding and current row)," +
+                            "sum(j) over (partition by [i,j] rows between unbounded preceding and current row)," +
+                            "first_value(j) over (partition by [i,j] rows between unbounded preceding and current row)]]\n" +
                             "      unorderedFunctions: [rank() over (partition by [j,i])]\n" +
                             "        PageFrame\n" +
                             "            Row backward scan\n" +
@@ -10949,9 +10949,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Limit lo: 3\n" +
                             "    Window\n" +
                             "      functions: [row_number() over (partition by [sym])," +
-                            "avg(i) over (partition by [i] rows between unbounded preceding and current row )," +
-                            "sum(i) over (partition by [i] rows between unbounded preceding and current row )," +
-                            "first_value(i) over (partition by [i] rows between unbounded preceding and current row )]\n" +
+                            "avg(i) over (partition by [i] rows between unbounded preceding and current row)," +
+                            "sum(i) over (partition by [i] rows between unbounded preceding and current row)," +
+                            "first_value(i) over (partition by [i] rows between unbounded preceding and current row)]\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: x\n"
