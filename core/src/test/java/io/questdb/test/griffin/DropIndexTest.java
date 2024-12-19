@@ -99,6 +99,7 @@ public class DropIndexTest extends AbstractCairoTest {
         execute("alter table " + tableName + " add column sym symbol index");
         execute("insert into " + tableName +
                 " select x, timestamp_sequence('2022-02-24T01:30', 1000000000), rnd_symbol('A', 'B', 'C') from long_sequence(5)");
+        assertIndexFileExist(tableName, "sym", ".1", true);
 
         assertSql("a\tts\tsym\n" +
                 "1\t2022-02-24T00:23:59.800000Z\t\n" +
@@ -144,6 +145,8 @@ public class DropIndexTest extends AbstractCairoTest {
         assertSql("a\tts\tsym\n" +
                 "1\t2022-02-24T01:30:00.000000Z\tA\n" +
                 "2\t2022-02-24T01:46:40.000000Z\tA\n", "select * from " + tableName + " where sym = 'A'");
+
+        assertIndexFileExist(tableName, "sym", ".1", false);
     }
 
     @Test
@@ -608,6 +611,20 @@ public class DropIndexTest extends AbstractCairoTest {
             V = V + "." + txn;
         }
         return fn.endsWith(K) || fn.endsWith(V);
+    }
+
+    private void assertIndexFileExist(String tableName, String index, String version, boolean exists) {
+        Path path = Path.getThreadLocal(engine.getConfiguration().getRoot());
+        TableToken token = engine.verifyTableName(tableName);
+        path.concat(token);
+        try (TableReader rdr = engine.getReader(token)) {
+            long lastPartition = rdr.getTxFile().getLastPartitionTimestamp();
+            long lastPartitionNameTxn = rdr.getTxFile().getPartitionNameTxnByPartitionTimestamp(lastPartition);
+            int partitionBy = rdr.getPartitionedBy();
+            TableUtils.setPathForNativePartition(path, partitionBy, lastPartition, lastPartitionNameTxn);
+        }
+        path.concat(index).put(".k").put(version);
+        Assert.assertEquals(exists, engine.getConfiguration().getFilesFacade().exists(path.$()));
     }
 
     private long countDFiles(long txn) throws IOException {

@@ -640,7 +640,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                 writer.changeColumnType("non_existing", ColumnType.INT, 0, false, false, 0, false, null);
                 Assert.fail();
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "cannot change column type, column does not exists");
+                TestUtils.assertContains(e.getFlyweightMessage(), "cannot change column type, column does not exist");
             }
 
             execute("insert into x(c, timestamp) values('abc', now())", sqlExecutionContext);
