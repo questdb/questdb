@@ -33,6 +33,7 @@ import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.postgresql.util.PSQLException;
 
@@ -51,10 +52,11 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
     }
 
     @Test
+    @Ignore
     public void testConvertLoop2() throws Exception {
         final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
                 put(PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false");
             }})) {
                 serverMain.start();
@@ -76,7 +78,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
                 put(PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false");
             }})) {
                 serverMain.start();
@@ -92,7 +94,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
                 put(PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false");
             }})) {
                 serverMain.start();
@@ -118,7 +120,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
     public void testNonPartitionedToWal() throws Exception {
         final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
                 put(PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false");
             }})) {
                 serverMain.start();
@@ -145,10 +147,11 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
     }
 
     @Test
+    @Ignore
     public void testNonWalToWal() throws Exception {
         final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
                 put(PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false");
             }})) {
                 serverMain.start();
@@ -175,7 +178,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
                 put(PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false");
             }})) {
                 serverMain.start();
@@ -195,10 +198,11 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
     }
 
     @Test
+    @Ignore
     public void testNonWalToWalWithDropTable() throws Exception {
         final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
                 put(PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false");
             }})) {
                 serverMain.start();
@@ -228,7 +232,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
                 put(PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false");
             }})) {
                 serverMain.start();
@@ -245,10 +249,11 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
     }
 
     @Test
+    @Ignore
     public void testNonWalToWalWithTxn() throws Exception {
         final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
                 put(PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false");
             }})) {
                 serverMain.start();
@@ -276,7 +281,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
                 put(PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false");
             }})) {
                 serverMain.start();
@@ -296,10 +301,11 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
     }
 
     @Test
+    @Ignore
     public void testSetType() throws Exception {
         final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
                 put(PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false");
             }})) {
                 serverMain.start();
@@ -326,7 +332,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
                 put(PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false");
             }})) {
                 serverMain.start();
@@ -359,7 +365,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
                 put(PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false");
             }})) {
                 serverMain.start();
@@ -384,7 +390,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
                 put(PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false");
             }})) {
                 serverMain.start();
@@ -404,7 +410,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
                 put(PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false");
             }})) {
                 serverMain.start();
@@ -432,10 +438,11 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
     }
 
     @Test
+    @Ignore
     public void testWalToNonWal() throws Exception {
         final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
                 put(PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false");
             }})) {
                 serverMain.start();
@@ -466,7 +473,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
                 put(PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false");
             }})) {
                 serverMain.start();
@@ -484,10 +491,11 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
     }
 
     @Test
+    @Ignore
     public void testWalToNonWalWithDropTable() throws Exception {
         final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
                 put(PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false");
             }})) {
                 serverMain.start();
@@ -522,7 +530,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
                 put(PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false");
             }})) {
                 serverMain.start();

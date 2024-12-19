@@ -48,7 +48,6 @@ final class TimestampFloorOffsetFunctions {
             this.arg = arg;
             this.stride = stride;
             this.offset = offset;
-            assert offset >= 0;
         }
 
         @Override
@@ -82,22 +81,6 @@ final class TimestampFloorOffsetFunctions {
         abstract protected long floor(long timestamp);
 
         abstract CharSequence getUnit();
-    }
-
-    static class TimestampFloorMillenniumFunction extends TimestampFloorFunctions.AbstractTimestampFloorFunction {
-        public TimestampFloorMillenniumFunction(Function arg) {
-            super(arg);
-        }
-
-        @Override
-        public long floor(long timestamp) {
-            return Timestamps.floorMillennium(timestamp);
-        }
-
-        @Override
-        CharSequence getUnit() {
-            return "millennium";
-        }
     }
 
     static class TimestampFloorOffsetDDFunction extends AbstractTimestampFloorOffsetFunction {

@@ -24,7 +24,12 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.FullFwdPartitionFrameCursorFactory;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -34,10 +39,30 @@ import io.questdb.test.cutlass.text.SqlExecutionContextStub;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+
+import java.util.Arrays;
+import java.util.Collection;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
+@RunWith(Parameterized.class)
 public class FullFwdPartitionFrameCursorFactoryTest extends AbstractCairoTest {
+    private final boolean convertToParquet;
+
+    public FullFwdPartitionFrameCursorFactoryTest(boolean convertToParquet) {
+        this.convertToParquet = convertToParquet;
+    }
+
+    @Parameterized.Parameters(name = "parquet={0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {true},
+                {false},
+        });
+    }
+
     @Test
     public void testFactory() throws Exception {
         assertMemoryLeak(() -> {
@@ -55,7 +80,7 @@ public class FullFwdPartitionFrameCursorFactoryTest extends AbstractCairoTest {
             final Rnd rnd = new Rnd();
             final String[] symbols = new String[N];
             final int M = 1000;
-            final long increment = 1000000 * 60L * 10;
+            final long increment = 1000000L * 60 * 10;
 
             for (int i = 0; i < N; i++) {
                 symbols[i] = rnd.nextChars(8).toString();
@@ -77,6 +102,10 @@ public class FullFwdPartitionFrameCursorFactoryTest extends AbstractCairoTest {
                 metadata = GenericRecordMetadata.copyOf(writer.getMetadata());
             }
 
+            if (convertToParquet) {
+                execute("alter table x convert partition to parquet where timestamp >= 0;");
+            }
+
             try (FullFwdPartitionFrameCursorFactory factory = new FullFwdPartitionFrameCursorFactory(tableToken, 0, metadata)) {
                 long count = 0;
                 try (PartitionFrameCursor cursor = factory.getCursor(new SqlExecutionContextStub(engine), ORDER_ASC)) {
@@ -88,14 +117,17 @@ public class FullFwdPartitionFrameCursorFactoryTest extends AbstractCairoTest {
                 Assert.assertEquals(0, engine.getBusyReaderCount());
                 Assert.assertEquals(M, count);
 
-                try (TableWriter writer = TestUtils.getWriter(engine, tableToken)) {
-                    writer.removeColumn("b");
-                }
+                // TODO(puzpuzpuz): remove if condition when we handle column drop properly in parquet
+                if (!convertToParquet) {
+                    try (TableWriter writer = TestUtils.getWriter(engine, tableToken)) {
+                        writer.removeColumn("b");
+                    }
 
-                try {
-                    factory.getCursor(new SqlExecutionContextStub(engine), ORDER_ASC);
-                    Assert.fail();
-                } catch (TableReferenceOutOfDateException ignored) {
+                    try {
+                        factory.getCursor(new SqlExecutionContextStub(engine), ORDER_ASC);
+                        Assert.fail();
+                    } catch (TableReferenceOutOfDateException ignored) {
+                    }
                 }
             }
         });

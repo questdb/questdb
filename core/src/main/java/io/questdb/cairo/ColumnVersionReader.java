@@ -30,7 +30,14 @@ import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.cairo.vm.api.MemoryW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.LPSZ;
@@ -173,7 +180,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
 
     public long getMaxPartitionVersion(long partitionTimestamp) {
         long maxVersion = -1;
-        int index = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_UP);
+        int index = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, Vect.BIN_SEARCH_SCAN_UP);
         if (index > -1) {
             final int sz = cachedColumnVersionList.size();
             for (; index < sz && cachedColumnVersionList.getQuick(index) == partitionTimestamp; index += BLOCK_SIZE) {
@@ -189,7 +196,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
     }
 
     public int getRecordIndex(long partitionTimestamp, int columnIndex) {
-        int index = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_UP);
+        int index = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, Vect.BIN_SEARCH_SCAN_UP);
         if (index > -1) {
             final int sz = cachedColumnVersionList.size();
             for (; index < sz && cachedColumnVersionList.getQuick(index) == partitionTimestamp; index += BLOCK_SIZE) {

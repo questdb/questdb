@@ -30,19 +30,43 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 import org.postgresql.util.PSQLException;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.util.Collection;
 import java.util.Properties;
 
+import static io.questdb.test.cutlass.pgwire.BasePGTest.LegacyMode.LEGACY;
+import static io.questdb.test.cutlass.pgwire.BasePGTest.legacyModeParams;
+
+@RunWith(Parameterized.class)
 public class PgBootstrapTest extends AbstractBootstrapTest {
+
+    private final boolean testParamLegacyMode;
+
+    public PgBootstrapTest(BasePGTest.LegacyMode legacyMode) {
+        this.testParamLegacyMode = legacyMode == LEGACY;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> testParams() {
+        return legacyModeParams();
+    }
 
     @Before
     public void setUp() {
         super.setUp();
-        TestUtils.unchecked(() -> createDummyConfiguration());
+        TestUtils.unchecked(() -> {
+            if (testParamLegacyMode) {
+                createDummyConfiguration("pg.legacy.mode.enabled=true");
+            } else {
+                createDummyConfiguration();
+            }
+        });
         dbPath.parent().$();
     }
 
@@ -52,7 +76,7 @@ public class PgBootstrapTest extends AbstractBootstrapTest {
             try (ServerMain serverMain = startWithEnvVariables()) {
                 int port = serverMain.getConfiguration().getPGWireConfiguration().getDispatcherConfiguration().getBindPort();
 
-                try (Connection conn = getTlsConnection("admin", "quest", port)) {
+                try (Connection conn = getTlsConnection(port)) {
                     conn.createStatement().execute("select 1;");
                     Assert.fail();
                 } catch (PSQLException e) {
@@ -204,10 +228,10 @@ public class PgBootstrapTest extends AbstractBootstrapTest {
         });
     }
 
-    private static Connection getTlsConnection(String username, String password, int port) throws SQLException {
+    private static Connection getTlsConnection(int port) throws SQLException {
         Properties properties = new Properties();
-        properties.setProperty("user", username);
-        properties.setProperty("password", password);
+        properties.setProperty("user", "admin");
+        properties.setProperty("password", "quest");
         properties.setProperty("sslmode", "require");
         final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", port);
         return DriverManager.getConnection(url, properties);

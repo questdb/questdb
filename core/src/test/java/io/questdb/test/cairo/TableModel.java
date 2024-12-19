@@ -99,6 +99,12 @@ public class TableModel implements TableStructure {
         return configuration.getMaxUncommittedRows();
     }
 
+    @Override
+    public long getMetadataVersion() {
+        // new table only
+        return 0;
+    }
+
     public String getName() {
         return name;
     }
@@ -154,11 +160,6 @@ public class TableModel implements TableStructure {
     @Override
     public boolean isIndexed(int index) {
         return (columnBits.getQuick(index * 2 + 1) & COLUMN_FLAG_INDEXED) == COLUMN_FLAG_INDEXED;
-    }
-
-    @Override
-    public boolean isSequential(int columnIndex) {
-        return false;
     }
 
     @Override

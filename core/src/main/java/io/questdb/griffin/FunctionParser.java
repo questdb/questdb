@@ -783,7 +783,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
             // this is no-arg function, match right away
             if (argCount == 0 && sigArgCount == 0) {
-                return checkAndCreateFunction(factory, args, argPositions, node, configuration);
+                if (factory.isWindow() == isWindowContext || n == 1) {
+                    return checkAndCreateFunction(factory, args, argPositions, node, configuration);
+                }
+                continue;
             }
 
             // otherwise, is number of arguments the same?
@@ -883,15 +886,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     continue;
                 }
 
-                if (factory.isWindow()) {
-                    // prefer window functions in window context, otherwise non-window functions
-                    if (isWindowContext) {
-                        // choose window-ed avg(D) over group by implementation that matches arg type better
-                        match = MATCH_EXACT_MATCH;
-                        sigArgTypeScore -= 10;
-                    } else {
-                        sigArgTypeScore += 10;
-                    }
+                if (isWindowContext != factory.isWindow()) {
+                    match = MATCH_FUZZY_MATCH;
+                } else if (factory.isWindow()) { // make windowFunction high priority when isWindowContext
+                    sigArgTypeScore -= 20;
                 }
 
                 if (match == MATCH_EXACT_MATCH || match >= bestMatch) {
@@ -948,14 +946,18 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 }
             }
         }
-
-        // it is possible that we have more undefined variables than
-        // args in the descriptor, in case of vararg for example
+        // resolve previously UNDEFINED function types
         for (int i = 0, n = undefinedVariables.size(); i < n; i++) {
             final int pos = undefinedVariables.getQuick(i);
             if (pos < candidateSigArgCount) {
+                // assign arguments based on the candidate function descriptor
                 final int sigArgType = FunctionFactoryDescriptor.toType(candidateDescriptor.getArgTypeMask(pos));
                 args.getQuick(pos).assignType(sigArgType, sqlExecutionContext.getBindVariableService());
+            } else {
+                // in case of vararg it is possible that we have more undefined variables than args in the function descriptor,
+                // assign type to all remaining undefined variables based on the preference of the candidate function factory
+                int type = candidate.resolvePreferredVariadicType(argPositions.getQuick(pos), pos, args);
+                args.getQuick(pos).assignType(type, sqlExecutionContext.getBindVariableService());
             }
         }
 

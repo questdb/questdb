@@ -32,9 +32,9 @@ import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 
 public class CairoTable implements Sinkable {
-    public LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
-    public IntList columnOrderMap = new IntList();
-    public ObjList<CairoColumn> columns = new ObjList<>();
+    public final LowerCaseCharSequenceIntHashMap columnNameIndexMap;
+    public final IntList columnOrderMap;
+    public final ObjList<CairoColumn> columns;
     private boolean isDedup;
     private boolean isSoftLink;
     private int maxUncommittedRows;
@@ -44,11 +44,25 @@ public class CairoTable implements Sinkable {
     private int timestampIndex;
     private TableToken token;
 
-    public CairoTable() {
-    }
-
     public CairoTable(@NotNull TableToken token) {
         this.setTableToken(token);
+        columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
+        columnOrderMap = new IntList();
+        columns = new ObjList<>();
+    }
+
+    public CairoTable(@NotNull TableToken token, CairoTable fromTab) {
+        this.setTableToken(token);
+        columnOrderMap = fromTab.columnOrderMap;
+        columns = fromTab.columns;
+        columnNameIndexMap = fromTab.columnNameIndexMap;
+        this.metadataVersion = fromTab.getMetadataVersion();
+        this.partitionBy = fromTab.getPartitionBy();
+        this.maxUncommittedRows = fromTab.getMaxUncommittedRows();
+        this.o3MaxLag = fromTab.getO3MaxLag();
+        this.timestampIndex = fromTab.getTimestampIndex();
+        this.isSoftLink = fromTab.getIsSoftLink();
+        this.isDedup = fromTab.getIsDedup();
     }
 
     public void clear() {
@@ -56,7 +70,7 @@ public class CairoTable implements Sinkable {
         columnOrderMap.clear();
     }
 
-    public long getColumnCount() {
+    public int getColumnCount() {
         return this.columns.size();
     }
 

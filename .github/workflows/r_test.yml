@@ -1,0 +1,43 @@
+name: PGWire - R test
+
+on:
+  pull_request:
+    types: [ synchronize, opened, reopened, edited ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }} # Only run on non-forked PRs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'maven'
+      - name: Build distribution
+        run: mvn -B clean install -Dmaven.test.skip=true -Pbuild-binaries -pl '!benchmarks'
+      - name: Unpack distribution
+        run: tar -xzf core/target/questdb-*-no-jre-bin.tar.gz
+      - name: Start QuestDB
+        run: ./questdb-*bin/questdb.sh start
+
+      - uses: questdb/r-actions/setup-r@0e77d7c32d9cce8e8c21dbeaaac4a47ea97538c5
+        name: Set up R
+        with:
+          use-public-rspm: true
+
+      - name: Run R Script
+        run: Rscript compat/src/test/R/test_sequence.R
+
+      - name: Stop QuestDB
+        run: ./questdb-*bin/questdb.sh stop
+
+      - name: Upload logs
+        if: failure() # Only upload logs if the job failed
+        uses: actions/upload-artifact@v4
+        with:
+          path: ~/.questdb/log/*
+          name: logs
+          retention-days: 5

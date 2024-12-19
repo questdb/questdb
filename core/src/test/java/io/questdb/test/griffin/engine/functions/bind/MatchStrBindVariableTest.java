@@ -74,7 +74,7 @@ public class MatchStrBindVariableTest extends AbstractCairoTest {
     @Test
     public void testSimple() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_str() s from long_sequence(100))");
+            execute("create table x as (select rnd_str() s from long_sequence(100))");
 
             try (RecordCursorFactory factory = select("x where s ~ $1")) {
                 bindVariableService.setStr(0, "GQO");

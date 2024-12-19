@@ -49,8 +49,13 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
-    default boolean convertPartition(long partitionTimestamp) {
-        throw CairoException.critical(0).put("convert partition to parquet does not update sequencer metadata");
+    default boolean convertPartitionNativeToParquet(long partitionTimestamp) {
+        throw CairoException.critical(0).put("convert native partition to parquet does not update sequencer metadata");
+    }
+
+    @Override
+    default boolean convertPartitionParquetToNative(long partitionTimestamp) {
+        throw CairoException.critical(0).put("convert parquet partition to native does not update sequencer metadata");
     }
 
     @Override
@@ -77,11 +82,6 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
-    default long getMetaO3MaxLag() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     default int getPartitionBy() {
         throw new UnsupportedOperationException();
     }
@@ -89,6 +89,10 @@ public interface MetadataServiceStub extends MetadataService {
     @Override
     default UpdateOperator getUpdateOperator() {
         throw new UnsupportedOperationException();
+    }
+
+    default void forceRemovePartitions(LongList partitionTimestamps) {
+        throw CairoException.critical(0).put("recover partitions does not update sequencer metadata");
     }
 
     @Override

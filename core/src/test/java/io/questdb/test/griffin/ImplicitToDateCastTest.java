@@ -36,7 +36,7 @@ public class ImplicitToDateCastTest extends AbstractCairoTest {
     public void testImplicitNonConstSymbolExpressionToDateConversion() throws Exception {
         assertMemoryLeak(() -> {
             // we do not want to support general implicit conversion of symbol to date, implicit conversions symbol -> date are reserved for literals
-            ddl(
+            execute(
                     "CREATE TABLE balances as (" +
                             "select cast('abc' as symbol) as cust_id, cast('2022-03-23' as date) as date from long_sequence(1) " +
                             ");"

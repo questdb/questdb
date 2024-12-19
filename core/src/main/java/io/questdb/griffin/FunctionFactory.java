@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.IntList;
@@ -108,4 +109,22 @@ public interface FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException;
+
+    /**
+     * If function has variable number of arguments, this method should return preferred type
+     * for a variadic argument at given index.
+     * <p>
+     * SQL Compiler will use this as a hint to determine type of variadic arguments when they have the
+     * UNDEFINED type at compile time.
+     * <p>
+     *
+     * @param sqlPos sql position of the argument being resolved
+     * @param argPos index of the argument being resolved
+     * @param args   list of arguments, function type can be undefined
+     * @return preferred type for variadic arguments
+     * @throws SqlException if a function cannot resolve preferred type
+     */
+    default int resolvePreferredVariadicType(int sqlPos, int argPos, ObjList<Function> args) throws SqlException {
+        return ColumnType.STRING;
+    }
 }

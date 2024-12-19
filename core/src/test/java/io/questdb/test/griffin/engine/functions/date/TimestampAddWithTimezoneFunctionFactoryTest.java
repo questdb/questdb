@@ -28,377 +28,135 @@ import org.junit.Test;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.engine.functions.date.TimestampAddWithTimezoneFunctionFactory;
-import io.questdb.std.Numbers;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 
 public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
 
+    public static char[] units = {'y', 'M', 'w', 'd', 'h', 'm', 's', 'T', 'u'};
+
     @Test
-    public void testDayAdditionWithTimezone() throws Exception {
-        assertMemoryLeak(() -> call('d', 5, 1587275359886758L, "Europe/Bratislava").andAssert(1587707359886758L, 0.0001));
+    public void testNullStride() throws Exception {
+        for (int i = 0; i < units.length; i++) {
+            assertException("select dateadd('" + units[i] + "', null, 1587275359886758L, 'Europe/Bratislava')", 20, "`null` is not a valid stride");
+        }
     }
 
     @Test
-    public void testDayAdditionWithDifferentTimezone() throws Exception {
-        assertMemoryLeak(() -> call('d', 5, 1587275359886758L, "America/New_York").andAssert(1587707359886758L, 0.0001));
+    public void testNullTimestamp() throws Exception {
+        for (int i = 0; i < units.length; i++) {
+            assertSqlWithTypes("dateadd\n:TIMESTAMP\n", "select dateadd('" + units[i] + "', 5, null, 'Europe/Bratislava')");
+        }
     }
 
     @Test
-    public void testDaySubtractionWithTimezone() throws Exception {
-        assertMemoryLeak(() -> call('d', -5, 1587275359886758L, "Europe/London").andAssert(1586843359886758L, 0.0001));
+    public void testPeriodNullChar() throws Exception {
+        assertException("select dateadd('\0', 5, 1587275359886758L, 'Europe/Bratislava')", 15, "invalid time period unit");
     }
 
     @Test
-    public void testDayAdditionDuringDSTChange() throws Exception {
-        assertMemoryLeak(() -> call('d', 2, 1603580400000000L, "America/New_York").andAssert(1603753200000000L, 0.0001));
+    public void testSimple() throws Exception {
+        assertSqlWithTypes("dateadd\n2025-04-19T05:49:19.886758Z:TIMESTAMP\n", "select dateadd('y', 5, 1587275359886758L, 'Europe/Bratislava')");
+        assertSqlWithTypes("dateadd\n2015-04-19T05:49:19.886758Z:TIMESTAMP\n", "select dateadd('y', -5, 1587275359886758L, 'Europe/Bratislava')");
+        assertSqlWithTypes("dateadd\n2020-09-19T05:49:19.886758Z:TIMESTAMP\n", "select dateadd('M', 5, 1587275359886758L, 'Europe/Bratislava')");
+        assertSqlWithTypes("dateadd\n2019-11-19T06:49:19.886758Z:TIMESTAMP\n", "select dateadd('M', -5, 1587275359886758L, 'Europe/Bratislava')");
+        assertSqlWithTypes("dateadd\n2020-05-24T05:49:19.886758Z:TIMESTAMP\n", "select dateadd('w', 5, 1587275359886758L, 'Europe/Bratislava')");
+        assertSqlWithTypes("dateadd\n2020-03-15T06:49:19.886758Z:TIMESTAMP\n", "select dateadd('w', -5, 1587275359886758L, 'Europe/Bratislava')");
+        assertSqlWithTypes("dateadd\n2020-04-24T05:49:19.886758Z:TIMESTAMP\n", "select dateadd('d', 5, 1587275359886758L, 'Europe/Bratislava')");
+        assertSqlWithTypes("dateadd\n2020-04-14T05:49:19.886758Z:TIMESTAMP\n", "select dateadd('d', -5, 1587275359886758L, 'Europe/Bratislava')");
+        assertSqlWithTypes("dateadd\n2020-04-19T10:49:19.886758Z:TIMESTAMP\n", "select dateadd('h', 5, 1587275359886758L, 'Europe/Bratislava')");
+        assertSqlWithTypes("dateadd\n2020-04-19T00:49:19.886758Z:TIMESTAMP\n", "select dateadd('h', -5, 1587275359886758L, 'Europe/Bratislava')");
+        assertSqlWithTypes("dateadd\n2020-04-19T05:54:19.886758Z:TIMESTAMP\n", "select dateadd('m', 5, 1587275359886758L, 'Europe/Bratislava')");
+        assertSqlWithTypes("dateadd\n2020-04-19T05:44:19.886758Z:TIMESTAMP\n", "select dateadd('m', -5, 1587275359886758L, 'Europe/Bratislava')");
+        assertSqlWithTypes("dateadd\n2020-04-19T05:49:24.886758Z:TIMESTAMP\n", "select dateadd('s', 5, 1587275359886758L, 'Europe/Bratislava')");
+        assertSqlWithTypes("dateadd\n2020-04-19T05:49:14.886758Z:TIMESTAMP\n", "select dateadd('s', -5, 1587275359886758L, 'Europe/Bratislava')");
+        assertSqlWithTypes("dateadd\n2020-04-19T05:49:19.891758Z:TIMESTAMP\n", "select dateadd('T', 5, 1587275359886758L, 'Europe/Bratislava')");
+        assertSqlWithTypes("dateadd\n2020-04-19T05:49:19.881758Z:TIMESTAMP\n", "select dateadd('T', -5, 1587275359886758L, 'Europe/Bratislava')");
+        assertSqlWithTypes("dateadd\n2020-04-19T05:49:19.886763Z:TIMESTAMP\n", "select dateadd('u', 5, 1587275359886758L, 'Europe/Bratislava')");
+        assertSqlWithTypes("dateadd\n2020-04-19T05:49:19.886753Z:TIMESTAMP\n", "select dateadd('u', -5, 1587275359886758L, 'Europe/Bratislava')");
     }
 
     @Test
-    public void testInvalidTimezone() throws Exception {
-        assertMemoryLeak(() -> call('d', 5, 1587275359886758L, "Invalid/Timezone").andAssert(1587707359886758L, 0.0001));
+    public void testStrideConstantPeriodVariableWithNulls() throws Exception {
+        String timezone = "Europe/Bratislava"; // Dynamically set this at runtime
+        assertSqlWithTypes("dateadd\n:TIMESTAMP\n:TIMESTAMP\n", 
+            String.format("select dateadd('y', cast(x as int), null, '%s') from long_sequence(2)", timezone));
+        assertSqlWithTypes("dateadd\n2021-04-19T05:49:19.886758Z:TIMESTAMP\n:TIMESTAMP\n", 
+            String.format("select dateadd('y', case when x = 1 then cast(x as int) else null end, 1587275359886758L, '%s') from long_sequence(2)", timezone));
+        assertSqlWithTypes("dateadd\n:TIMESTAMP\n:TIMESTAMP\n", 
+            String.format("select dateadd('M', cast(x as int), null, '%s') from long_sequence(2)", timezone));
+        assertSqlWithTypes("dateadd\n2020-05-19T05:49:19.886758Z:TIMESTAMP\n:TIMESTAMP\n", 
+            String.format("select dateadd('M', case when x = 1 then cast(x as int) else null end, 1587275359886758L, '%s') from long_sequence(2)", timezone));
+        assertSqlWithTypes("dateadd\n:TIMESTAMP\n:TIMESTAMP\n", 
+            String.format("select dateadd('w', cast(x as int), null, '%s') from long_sequence(2)", timezone));
+        assertSqlWithTypes("dateadd\n2020-04-26T05:49:19.886758Z:TIMESTAMP\n:TIMESTAMP\n", 
+            String.format("select dateadd('w', case when x = 1 then cast(x as int) else null end, 1587275359886758L, '%s') from long_sequence(2)", timezone));
+        assertSqlWithTypes("dateadd\n:TIMESTAMP\n:TIMESTAMP\n", 
+            String.format("select dateadd('d', cast(x as int), null, '%s') from long_sequence(2)", timezone));
+        assertSqlWithTypes("dateadd\n2020-04-20T05:49:19.886758Z:TIMESTAMP\n:TIMESTAMP\n", 
+            String.format("select dateadd('d', case when x = 1 then cast(x as int) else null end, 1587275359886758L, '%s') from long_sequence(2)", timezone));
+        assertSqlWithTypes("dateadd\n:TIMESTAMP\n:TIMESTAMP\n", 
+            String.format("select dateadd('h', cast(x as int), null, '%s') from long_sequence(2)", timezone));
+        assertSqlWithTypes("dateadd\n2020-04-19T06:49:19.886758Z:TIMESTAMP\n:TIMESTAMP\n", 
+            String.format("select dateadd('h', case when x = 1 then cast(x as int) else null end, 1587275359886758L, '%s') from long_sequence(2)", timezone));
+        assertSqlWithTypes("dateadd\n:TIMESTAMP\n:TIMESTAMP\n", 
+            String.format("select dateadd('m', cast(x as int), null, '%s') from long_sequence(2)", timezone));
+        assertSqlWithTypes("dateadd\n2020-04-19T05:50:19.886758Z:TIMESTAMP\n:TIMESTAMP\n", 
+            String.format("select dateadd('m', case when x = 1 then cast(x as int) else null end, 1587275359886758L, '%s') from long_sequence(2)", timezone));
+        assertSqlWithTypes("dateadd\n:TIMESTAMP\n:TIMESTAMP\n", 
+            String.format("select dateadd('s', cast(x as int), null, '%s') from long_sequence(2)", timezone));
+        assertSqlWithTypes("dateadd\n2020-04-19T05:49:20.886758Z:TIMESTAMP\n:TIMESTAMP\n", 
+            String.format("select dateadd('s', case when x = 1 then cast(x as int) else null end, 1587275359886758L, '%s') from long_sequence(2)", timezone));
     }
 
     @Test
-    public void testLeftNaNDay() throws Exception {
-        assertMemoryLeak(() -> call('d', 5, Numbers.LONG_NULL, "America/New_York").andAssert(Double.NaN, 0.0001));
+    public void testUnknownPeriod() throws Exception {
+        assertException("select dateadd('q', -5, 1587275359886758L, 'Europe/Bratislava')", 15, "invalid time period unit");
     }
 
     @Test
-    public void testLeftNaNHour() throws Exception {
-        assertMemoryLeak(() -> call('h', 5, Numbers.LONG_NULL, "America/New_York").andAssert(Double.NaN, 0.0001));
+    public void testUnknownTimezone() throws Exception {
+        assertSqlWithTypes("dateadd\n2020-10-26T23:00:00.000000Z:TIMESTAMP\n", "select dateadd('d', 2, 1603580400000000L, 'Random/Time')");
     }
 
     @Test
-    public void testLeftNaNMicro() throws Exception {
-        assertMemoryLeak(() -> call('u', 5, Numbers.LONG_NULL, "America/New_York").andAssert(Double.NaN, 0.0001));
-    }
+    public void testDateAddEquivalenceWithUTC() throws Exception {
+        // Direct calculation with DATEADD
+        String directQuery = "select dateadd('w', 1, '2024-10-21', 'Europe/Bratislava') as direct";
+        // Equivalent calculation with intermediate conversions
+        String conversionQuery = "select to_utc(dateadd('w', 1, to_timezone('2024-10-21', 'Europe/Bratislava')), 'Europe/Bratislava') as via_conversion";
 
-    @Test
-    public void testLeftNaNMilli() throws Exception {
-        assertMemoryLeak(() -> call('T', 5, Numbers.LONG_NULL, "America/New_York").andAssert(Double.NaN, 0.0001));
-    }
-
-    @Test
-    public void testLeftNaNMinute() throws Exception {
-        assertMemoryLeak(() -> call('m', 5, Numbers.LONG_NULL, "America/New_York").andAssert(Double.NaN, 0.0001));
-    }
-
-    @Test
-    public void testLeftNaNMonth() throws Exception {
-        assertMemoryLeak(() -> call('M', 5, Numbers.LONG_NULL, "America/New_York").andAssert(Double.NaN, 0.0001));
-    }
-
-    @Test
-    public void testLeftNaNSecond() throws Exception {
-        assertMemoryLeak(() -> call('s', 5, Numbers.LONG_NULL, "America/New_York").andAssert(Double.NaN, 0.0001));
-    }
-
-    @Test
-    public void testLeftNaNWeek() throws Exception {
-        assertMemoryLeak(() -> call('w', 5, Numbers.LONG_NULL, "America/New_York").andAssert(Double.NaN, 0.0001));
-    }
-
-    @Test
-    public void testLeftNaNYear() throws Exception {
-        assertMemoryLeak(() -> call('y', 5, Numbers.LONG_NULL, "America/New_York").andAssert(Double.NaN, 0.0001));
-    }
-
-    @Test
-    public void testLeftNan() throws Exception {
-        assertMemoryLeak(() -> call('d', 5, Numbers.LONG_NULL, "America/New_York").andAssert(Double.NaN, 0.0001));
-    }
-
-    @Test
-    public void testMicroSimple() throws Exception {
-        assertMemoryLeak(() -> call('u', 5, 1587275359886758L, "America/New_York").andAssert(1587275359886763L, 0.0001));
-    }
-
-    @Test
-    public void testMicroSimpleNeg() throws Exception {
-        assertMemoryLeak(() -> call('u', -5, 1587275359886758L, "America/New_York").andAssert(1587275359886753L, 0.0001));
-    }
-
-    @Test
-    public void testMilliSimple() throws Exception {
-        assertMemoryLeak(() -> call('T', 5, 1587275359886758L, "America/New_York").andAssert(1587275359891758L, 0.0001));
-    }
-
-    @Test
-    public void testMilliSimpleNeg() throws Exception {
-        assertMemoryLeak(() -> call('T', -5, 1587275359886758L, "America/New_York").andAssert(1587275359881758L, 0.0001));
-    }
-
-    @Test
-    public void testMinuteSimple() throws Exception {
-        assertMemoryLeak(() -> call('m', 5, 1587275359886758L, "America/New_York").andAssert(1587275659886758L, 0.0001));
-    }
-
-    @Test
-    public void testMinuteSimpleNeg() throws Exception {
-        assertMemoryLeak(() -> call('m', -5, 1587275359886758L, "America/New_York").andAssert(1587275059886758L, 0.0001));
-    }
-
-    @Test
-    public void testMonthSimple() throws Exception {
-        assertMemoryLeak(() -> call('M', 5, 1587275359886758L, "America/New_York").andAssert(1600494559886758L, 0.0001));
-    }
-
-    @Test
-    public void testRightNaNDay() throws Exception {
-        assertMemoryLeak(() -> call('d', Numbers.INT_NULL, 1587275359886758L, "America/New_York").andAssert(Double.NaN, 0.0001));
-    }
-
-    @Test
-    public void testRightNaNHour() throws Exception {
-        assertMemoryLeak(() -> call('h', Numbers.INT_NULL, 1587275359886758L, "America/New_York").andAssert(Double.NaN, 0.0001));
-    }
-
-    @Test
-    public void testRightNaNMicro() throws Exception {
-        assertMemoryLeak(() -> call('u', Numbers.INT_NULL, 1587275359886758L, "America/New_York").andAssert(Double.NaN, 0.0001));
-    }
-
-    @Test
-    public void testRightNaNMilli() throws Exception {
-        assertMemoryLeak(() -> call('T', Numbers.INT_NULL, 1587275359886758L, "America/New_York").andAssert(Double.NaN, 0.0001));
-    }
-
-    @Test
-    public void testRightNaNMinute() throws Exception {
-        assertMemoryLeak(() -> call('m', Numbers.INT_NULL, 1587275359886758L, "America/New_York").andAssert(Double.NaN, 0.0001));
-    }
-
-    @Test
-    public void testRightNaNMonth() throws Exception {
-        assertMemoryLeak(() -> call('M', Numbers.INT_NULL, 1587275359886758L, "America/New_York").andAssert(Double.NaN, 0.0001));
-    }
-
-    @Test
-    public void testRightNaNSecond() throws Exception {
-        assertMemoryLeak(() -> call('s', Numbers.INT_NULL, 1587275359886758L, "America/New_York").andAssert(Double.NaN, 0.0001));
-    }
-
-    @Test
-    public void testRightNaNWeek() throws Exception {
-        assertMemoryLeak(() -> call('w', Numbers.INT_NULL, 1587275359886758L, "America/New_York").andAssert(Double.NaN, 0.0001));
-    }
-
-    @Test
-    public void testRightNaNYear() throws Exception {
-        assertMemoryLeak(() -> call('y', Numbers.INT_NULL, 1587275359886758L, "America/New_York").andAssert(Double.NaN, 0.0001));
-    }
-
-    @Test
-    public void testSecondSimple() throws Exception {
-        assertMemoryLeak(() -> call('s', 5, 1587275359886758L, "America/New_York").andAssert(1587275364886758L, 0.0001));
-    }
-
-    @Test
-    public void testSecondSimpleNeg() throws Exception {
-        assertMemoryLeak(() -> call('s', -5, 1587275359886758L, "America/New_York").andAssert(1587275354886758L, 0.0001));
-    }
-
-    @Test
-    public void testWeekSimple() throws Exception {
-        assertMemoryLeak(() -> call('w', 5, 1587275359886758L, "America/New_York").andAssert(1590299359886758L, 0.0001));
-    }
-
-    @Test
-    public void testWeekSimpleNeg() throws Exception {
-        assertMemoryLeak(() -> call('w', -5, 1587275359886758L, "America/New_York").andAssert(1584251359886758L, 0.0001));
-    }
-
-    @Test
-    public void testYearsSimple() throws Exception {
-        assertMemoryLeak(() -> call('y', 5, 1587275359886758L, "America/New_York").andAssert(1745041759886758L, 0.0001));
-    }
-
-    @Test
-    public void testYearsSimpleNeg() throws Exception {
-        assertMemoryLeak(() -> call('y', -5, 1587275359886758L, "America/New_York").andAssert(1429422559886758L, 0.0001));
-    }
-
-    @Test
-    public void testIntervalConstantPeriodVariableDayLeftNaN() throws Exception {
+        // Validate the two produce the same result
         assertQuery(
-                "dateadd\n" +
-                        "\n" +
-                        "\n",
-                "select dateadd('d', cast(x as int), Cast(NaN as Long), 'Europe/Paris') from long_sequence(2)",
-                null,
-                true,
-                true
+            "direct\tvia_conversion\n" +
+            "2024-10-28T01:00:00.000000Z\t2024-10-28T01:00:00.000000Z\n",
+            String.format("select direct, via_conversion from (%s) cross join (%s)", directQuery, conversionQuery)
         );
     }
 
     @Test
-    public void testIntervalConstantPeriodVariableDayRightNaN() throws Exception {
+    public void testDSTTransitionToUTC() throws Exception {
+        // Input query performing DATEADD and converting to UTC
+        String query = "select to_utc(dateadd('w', 1, '2024-10-21'), 'Europe/Bratislava') as utc_time";
+
+        // Validate the result accounts for DST transition correctly
         assertQuery(
-                "dateadd\n" +
-                        "2020-04-20T05:49:19.886758Z\n" +
-                        "\n",
-                "select dateadd('d', case when x = 1 then cast(x as int) else Cast(NaN as int) end, 1587275359886758L, 'Europe/Paris') from long_sequence(2)",
-                null,
-                true,
-                true
+            "utc_time\n" +
+            "2024-10-27T23:00:00.000000Z\n",
+            query
         );
     }
 
     @Test
-    public void testIntervalConstantPeriodVariableHourLeftNaN() throws Exception {
-        assertQuery(
-                "dateadd\n" +
-                        "\n" +
-                        "\n",
-                "select dateadd('h', cast(x as int), Cast(NaN as Long), 'Europe/Paris') from long_sequence(2)",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testIntervalConstantPeriodVariableHourRightNaN() throws Exception {
-        assertQuery(
-                "dateadd\n" +
-                        "2020-04-19T06:49:19.886758Z\n" +
-                        "\n",
-                "select dateadd('h', case when x = 1 then cast(x as int) else Cast(NaN as int) end, 1587275359886758L, 'Europe/Paris') from long_sequence(2)",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testIntervalConstantPeriodVariableMinuteLeftNaN() throws Exception {
-        assertQuery(
-                "dateadd\n" +
-                        "\n" +
-                        "\n",
-                "select dateadd('m', cast(x as int), Cast(NaN as Long), 'Europe/Paris') from long_sequence(2)",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testIntervalConstantPeriodVariableMinuteRightNaN() throws Exception {
-        assertQuery(
-                "dateadd\n" +
-                        "2020-04-19T05:50:19.886758Z\n" +
-                        "\n",
-                "select dateadd('m', case when x = 1 then cast(x as int) else Cast(NaN as int) end, 1587275359886758L, 'Europe/Paris') from long_sequence(2)",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testIntervalConstantPeriodVariableMonthLeftNaN() throws Exception {
-        assertQuery(
-                "dateadd\n" +
-                        "\n" +
-                        "\n",
-                "select dateadd('M', cast(x as int), Cast(NaN as Long), 'Europe/Paris') from long_sequence(2)",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testIntervalConstantPeriodVariableMonthRightNaN() throws Exception {
-        assertQuery(
-                "dateadd\n" +
-                        "2020-05-19T05:49:19.886758Z\n" +
-                        "\n",
-                "select dateadd('M', case when x = 1 then cast(x as int) else Cast(NaN as int) end, 1587275359886758L, 'Europe/Paris') from long_sequence(2)",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testIntervalConstantPeriodVariableSecondLeftNaN() throws Exception {
-        assertQuery(
-                "dateadd\n" +
-                        "\n" +
-                        "\n",
-                "select dateadd('s', cast(x as int), Cast(NaN as Long), 'Europe/Paris') from long_sequence(2)",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testIntervalConstantPeriodVariableSecondRightNaN() throws Exception {
-        assertQuery(
-                "dateadd\n" +
-                        "2020-04-19T05:49:20.886758Z\n" +
-                        "\n",
-                "select dateadd('s', case when x = 1 then cast(x as int) else Cast(NaN as int) end, 1587275359886758L, 'Europe/Paris') from long_sequence(2)",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testIntervalConstantPeriodVariableWeekLeftNaN() throws Exception {
-        assertQuery(
-                "dateadd\n" +
-                        "\n" +
-                        "\n",
-                "select dateadd('w', cast(x as int), Cast(NaN as Long), 'Europe/Paris') from long_sequence(2)",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testIntervalConstantPeriodVariableWeekRightNaN() throws Exception {
-        assertQuery(
-                "dateadd\n" +
-                        "2020-04-26T05:49:19.886758Z\n" +
-                        "\n",
-                "select dateadd('w', case when x = 1 then cast(x as int) else Cast(NaN as int) end, 1587275359886758L, 'Europe/Paris') from long_sequence(2)",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testIntervalConstantPeriodVariableYearLeftNaN() throws Exception {
-        assertQuery(
-                "dateadd\n" +
-                        "\n" +
-                        "\n",
-                "select dateadd('y', cast(x as int), Cast(NaN as Long), 'Europe/Paris') from long_sequence(2)",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testIntervalConstantPeriodVariableYearRightNaN() throws Exception {
-        assertQuery(
-                "dateadd\n" +
-                        "2021-04-19T05:49:19.886758Z\n" +
-                        "\n",
-                "select dateadd('y', case when x = 1 then cast(x as int) else Cast(NaN as int) end, 1587275359886758L, 'Europe/Paris') from long_sequence(2)",
-                null,
-                true,
-                true
-        );
+    public void testDateAddWithTimezonePlan() throws Exception {
+        assertMemoryLeak(() -> assertPlanNoLeakCheck(
+            // Input query testing DATEADD behavior
+            "select dateadd('w', 1, '2024-10-21', 'Europe/Bratislava')",
+            // Updated expected plan
+            "VirtualRecord\n" +
+            "  functions: [1730077200000000]\n" +
+            "    long_sequence count: 1\n"
+        ));
     }
 
     @Override

@@ -29,13 +29,13 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.QuaternaryFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -45,42 +45,61 @@ import io.questdb.std.datetime.microtime.Timestamps;
 
 public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory {
 
-    private static final ObjList<LongAddIntFunction> addFunctions = new ObjList<>();
-    private static final int addFunctionsMax;
-
     @Override
     public String getSignature() {
         return "dateadd(AINS)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         Function periodFunc = args.getQuick(0);
-        Function intervalFunc = args.getQuick(1);
+        Function strideFunc = args.getQuick(1);
         Function timestampFunc = args.getQuick(2);
         Function tzFunc = args.getQuick(3);
+        int stride;
+
         if (periodFunc.isConstant()) {
             char period = periodFunc.getChar(null);
-            if (period < addFunctionsMax) {
-                LongAddIntFunction periodAddFunc = addFunctions.getQuick(period);
-                if (periodAddFunc != null) {
-                    if (intervalFunc.isConstant()) {
-                        if (tzFunc.isConstant()) {
-                            if (intervalFunc.getInt(null) != Numbers.INT_NULL) {
-                                return new AddLongIntVarConstFunction(timestampFunc, intervalFunc.getInt(null), periodAddFunc, period, tzFunc.getStrA(null));
-                            }
-                            return TimestampConstant.NULL;
-                        } else {
-                            return new AddLongIntVarVarConstFunction(timestampFunc, intervalFunc.getInt(null), periodAddFunc, period, tzFunc);
-                        }
-                    } else {
-                        return new AddLongIntVarVarVarFunction(timestampFunc, intervalFunc, periodAddFunc, period, tzFunc);
+            LongAddIntFunction periodAddFunc = lookupAddFunction(period, argPositions.getQuick(0));
+            if (strideFunc.isConstant()) {
+                if ((stride = strideFunc.getInt(null)) != Numbers.INT_NULL) {
+                    if (tzFunc.isConstant()) {
+                        return new TimestampAddConstConstVarConst(period, periodAddFunc, stride, timestampFunc, tzFunc.getStrA(null));
                     }
+                    return new TimestampAddConstConstVarVar(period, periodAddFunc, stride, timestampFunc, tzFunc);
+                } else {
+                    throw SqlException.$(argPositions.getQuick(1), "`null` is not a valid stride");
                 }
             }
-            return TimestampConstant.NULL;
+            return new TimestampAddConstVarVarVar(period, periodAddFunc, strideFunc, timestampFunc, tzFunc);
         }
-        return new DateAddFunc(timestampFunc, intervalFunc, periodFunc, tzFunc);
+        return new TimestampAddFunc(periodFunc, strideFunc, timestampFunc, tzFunc);
+    }
+
+
+    private LongAddIntFunction lookupAddFunction(char period, int periodPos) throws SqlException {
+        switch (period) {
+            case 'u':
+                return Timestamps::addMicros;
+            case 'T':
+                return Timestamps::addMillis;
+            case 's':
+                return Timestamps::addSeconds;
+            case 'm':
+                return Timestamps::addMinutes;
+            case 'h':
+                return Timestamps::addHours;
+            case 'd':
+                return Timestamps::addDays;
+            case 'w':
+                return Timestamps::addWeeks;
+            case 'M':
+                return Timestamps::addMonths;
+            case 'y':
+                return Timestamps::addYears;
+            default:
+                throw SqlException.$(periodPos, "invalid time period unit '").put(period).put("'");
+        }
     }
 
     @FunctionalInterface
@@ -88,18 +107,18 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
         long add(long a, int b);
     }
 
-    private static class AddLongIntVarConstFunction extends TimestampFunction implements UnaryFunction {
-        private final Function timestampFunc;
-        private final LongAddIntFunction periodAddFunc;
-        private final int interval;
+    private static class TimestampAddConstConstVarConst extends TimestampFunction implements UnaryFunction {
         private final char period;
+        private final LongAddIntFunction periodAddFunction;
+        private final int stride;
+        private final Function timestampFunc;
         private final CharSequence tz;
 
-        public AddLongIntVarConstFunction(Function timestampFunc, int interval, LongAddIntFunction periodAddFunc, char period, CharSequence tz) {
-            this.timestampFunc = timestampFunc;
-            this.interval = interval;
-            this.periodAddFunc = periodAddFunc;
+        public TimestampAddConstConstVarConst(char period, LongAddIntFunction periodAddFunction, int stride, Function timestampFunc, CharSequence tz) {
             this.period = period;
+            this.periodAddFunction = periodAddFunction;
+            this.stride = stride;
+            this.timestampFunc = timestampFunc;
             this.tz = tz;
         }
 
@@ -117,32 +136,32 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
 
             try {
                 long tzTime = tz != null ? Timestamps.toTimezone(timestamp, TimestampFormatUtils.EN_LOCALE, tz) : timestamp;
-                long addedTime = periodAddFunc.add(tzTime, interval);
+                long addedTime = periodAddFunction.add(tzTime, stride);
                 return tz != null ? Timestamps.toUTC(addedTime, TimestampFormatUtils.EN_LOCALE, tz) : addedTime;
             } catch (NumericException e) {
-                return periodAddFunc.add(timestamp, interval);
+                return periodAddFunction.add(timestamp, stride);
             }
         }
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("dateadd('").val(period).val("',").val(interval).val(',').val(timestampFunc).val(',').val(tz).val(')');
+            sink.val("dateadd('").val(period).val("',").val(stride).val(',').val(timestampFunc).val(',').val(tz).val(')');
         }
     }
 
-    private static class AddLongIntVarVarConstFunction extends TimestampFunction implements BinaryFunction {
-        private final LongAddIntFunction periodAddFunc;
-        private final Function timestampFunc;
+    private static class TimestampAddConstConstVarVar extends TimestampFunction implements BinaryFunction {
         private final char period;
+        private final LongAddIntFunction periodAddFunction;
+        private final int stride;
+        private final Function timestampFunc;
         private final Function tzFunc;
-        private final int interval;
 
-        public AddLongIntVarVarConstFunction(Function timestampFunc, int interval, LongAddIntFunction periodAddFunc, char period, Function tzFunc) {
-            this.timestampFunc = timestampFunc;
+        public TimestampAddConstConstVarVar(char period, LongAddIntFunction periodAddFunction, int stride, Function timestampFunc, Function tzFunc) {
             this.tzFunc = tzFunc;
-            this.interval = interval;
-            this.periodAddFunc = periodAddFunc;
             this.period = period;
+            this.periodAddFunction = periodAddFunction;
+            this.stride = stride;
+            this.timestampFunc = timestampFunc;
         }
 
         @Override
@@ -165,32 +184,32 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
 
             try {
                 long tzTime = tz != null ? Timestamps.toTimezone(timestamp, TimestampFormatUtils.EN_LOCALE, tz) : timestamp;
-                long addedTime = periodAddFunc.add(tzTime, interval);
+                long addedTime = periodAddFunction.add(tzTime, stride);
                 return tz != null ? Timestamps.toUTC(addedTime, TimestampFormatUtils.EN_LOCALE, tz) : addedTime;
             } catch (NumericException e) {
-                return periodAddFunc.add(timestamp, interval);
+                return periodAddFunction.add(timestamp, stride);
             }
         }
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("dateadd('").val(period).val("',").val(interval).val(',').val(timestampFunc).val(',').val(tzFunc).val(')');
+            sink.val("dateadd('").val(period).val("',").val(stride).val(',').val(timestampFunc).val(',').val(tzFunc).val(')');
         }
     }
 
-    private static class AddLongIntVarVarVarFunction extends TimestampFunction implements TernaryFunction {
+    private static class TimestampAddConstVarVarVar extends TimestampFunction implements TernaryFunction {
+        private final char period;
         private final LongAddIntFunction periodAddFunc;
+        private final Function strideFunc;
         private final Function timestampFunc;
         private final Function tzFunc;
-        private final char period;
-        private final Function intervalFunc;
 
-        public AddLongIntVarVarVarFunction(Function timestampFunc, Function intervalFunc, LongAddIntFunction periodAddFunc, char period, Function tzFunc) {
-            this.timestampFunc = timestampFunc;
+        public TimestampAddConstVarVarVar(char period, LongAddIntFunction periodAddFunc, Function strideFunc, Function timestampFunc, Function tzFunc) {
             this.tzFunc = tzFunc;
-            this.intervalFunc = intervalFunc;
-            this.periodAddFunc = periodAddFunc;
             this.period = period;
+            this.periodAddFunc = periodAddFunc;
+            this.strideFunc = strideFunc;
+            this.timestampFunc = timestampFunc;
         }
 
         @Override
@@ -205,13 +224,13 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
 
         @Override
         public Function getRight() {
-            return intervalFunc;
+            return strideFunc;
         }
 
         @Override
         public long getTimestamp(Record rec) {
             final long timestamp = timestampFunc.getTimestamp(rec);
-            final int periodValue = intervalFunc.getInt(rec);
+            final int periodValue = strideFunc.getInt(rec);
             final CharSequence tz = tzFunc.getStrA(rec);
             if (timestamp == Numbers.LONG_NULL || periodValue == Numbers.INT_NULL) {
                 return Numbers.LONG_NULL;
@@ -228,19 +247,19 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("dateadd('").val(period).val("',").val(timestampFunc).val(',').val(intervalFunc).val(tzFunc).val(',').val(')');
+            sink.val("dateadd('").val(period).val("',").val(timestampFunc).val(',').val(strideFunc).val(tzFunc).val(',').val(')');
         }
     }
 
-    private static class DateAddFunc extends TimestampFunction implements QuaternaryFunction {
-        private final Function timestampFunc;
-        private final Function intervalFunc;
+    private static class TimestampAddFunc extends TimestampFunction implements QuaternaryFunction {
         private final Function periodFunc;
+        private final Function strideFunc;
+        private final Function timestampFunc;
         private final Function tzFunc;
 
-        public DateAddFunc(Function timestampFunc, Function intervalFunc, Function periodFunc, Function tzFunc) {
+        public TimestampAddFunc(Function periodFunc, Function strideFunc, Function timestampFunc, Function tzFunc) {
             this.timestampFunc = timestampFunc;
-            this.intervalFunc = intervalFunc;
+            this.strideFunc = strideFunc;
             this.periodFunc = periodFunc;
             this.tzFunc = tzFunc;
         }
@@ -252,9 +271,8 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
 
         @Override
         public Function getFunc1() {
-            return intervalFunc;
+            return strideFunc;
         }
-
 
         @Override
         public Function getFunc2() {
@@ -269,7 +287,7 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
         @Override
         public long getTimestamp(Record rec) {
             final long timestamp = timestampFunc.getTimestamp(rec);
-            final int periodOccurrence = intervalFunc.getInt(rec);
+            final int periodOccurrence = strideFunc.getInt(rec);
             final char period = periodFunc.getChar(rec);
             final CharSequence tz = tzFunc.getStrA(rec);
             if (timestamp == Numbers.LONG_NULL || periodOccurrence == Numbers.INT_NULL) {
@@ -284,18 +302,5 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
                 return Timestamps.addPeriod(timestamp, period, periodOccurrence);
             }
         }
-    }
-
-    static {
-        addFunctions.extendAndSet('u', Timestamps::addMicros);
-        addFunctions.extendAndSet('T', Timestamps::addMillis);
-        addFunctions.extendAndSet('s', Timestamps::addSeconds);
-        addFunctions.extendAndSet('m', Timestamps::addMinutes);
-        addFunctions.extendAndSet('h', Timestamps::addHours);
-        addFunctions.extendAndSet('d', Timestamps::addDays);
-        addFunctions.extendAndSet('w', Timestamps::addWeeks);
-        addFunctions.extendAndSet('M', Timestamps::addMonths);
-        addFunctions.extendAndSet('y', Timestamps::addYears);
-        addFunctionsMax = addFunctions.size();
     }
 }

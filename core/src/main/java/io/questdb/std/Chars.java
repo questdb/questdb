@@ -27,7 +27,11 @@ package io.questdb.std;
 import io.questdb.cairo.CairoException;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.str.TrimType;
-import io.questdb.std.str.*;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -117,6 +121,18 @@ public final class Chars {
     public static void base64UrlEncode(BinarySequence sequence, int maxLength, CharSink<?> buffer) {
         base64Encode(sequence, maxLength, buffer, base64Url);
         // base64 url does not use padding
+    }
+
+    public static int charBytes(char c) {
+        if (c < 0x80) {
+            return 1;
+        } else if (c < 0x800) {
+            return 2;
+        } else if (Character.isSurrogate(c)) {
+            return 1; // replaced with '?'
+        } else {
+            return 3;
+        }
     }
 
     public static int compare(CharSequence l, CharSequence r) {
@@ -663,6 +679,46 @@ public final class Chars {
         return -1;
     }
 
+    public static int indexOfUnquoted(@NotNull CharSequence seq, char ch) {
+        return indexOfUnquoted(seq, ch, 0, seq.length(), 1);
+    }
+
+    public static int indexOfUnquoted(@NotNull CharSequence seq, char ch, int seqLo, int seqHi, int occurrence) {
+        if (occurrence == 0) {
+            return -1;
+        }
+
+        int count = 0;
+        boolean inQuotes = false;
+        if (occurrence > 0) {
+            for (int i = seqLo; i < seqHi; i++) {
+                if (seq.charAt(i) == '\"') {
+                    inQuotes = !inQuotes;
+                }
+                if (seq.charAt(i) == ch && !inQuotes) {
+                    count++;
+                    if (count == occurrence) {
+                        return i;
+                    }
+                }
+            }
+        } else {    // if occurrence is negative, search in reverse
+            for (int i = seqHi - 1; i >= seqLo; i--) {
+                if (seq.charAt(i) == '\"') {
+                    inQuotes = !inQuotes;
+                }
+                if (seq.charAt(i) == ch && !inQuotes) {
+                    count--;
+                    if (count == occurrence) {
+                        return i;
+                    }
+                }
+            }
+        }
+
+        return -1;
+    }
+
     public static boolean isAscii(@NotNull CharSequence cs) {
         for (int i = 0, n = cs.length(); i < n; i++) {
             if (cs.charAt(i) > 127) {
@@ -718,7 +774,7 @@ public final class Chars {
         return isQuote(open) && open == s.charAt(s.length() - 1);
     }
 
-    public static int lastIndexOf(CharSequence sequence, int sequenceLo, int sequenceHi, CharSequence term) {
+    public static int lastIndexOf(@NotNull CharSequence sequence, int sequenceLo, int sequenceHi, @NotNull CharSequence term) {
         return indexOf(sequence, sequenceLo, sequenceHi, term, -1);
     }
 
@@ -1280,7 +1336,6 @@ public final class Chars {
         }
         return true;
     }
-
 
     static {
         CHAR_STRINGS = new String[128];
