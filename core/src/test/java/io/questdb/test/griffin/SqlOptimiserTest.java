@@ -40,6 +40,13 @@ import static io.questdb.griffin.SqlOptimiser.aliasAppearsInFuncArgs;
 import static org.junit.Assert.assertEquals;
 
 public class SqlOptimiserTest extends AbstractSqlParserTest {
+    public static final String tradesDdl = "CREATE TABLE 'trades' (\n" +
+            "  symbol SYMBOL,\n" +
+            "  side SYMBOL,\n" +
+            "  price DOUBLE,\n" +
+            "  amount DOUBLE,\n" +
+            "  timestamp TIMESTAMP\n" +
+            ") timestamp (timestamp) PARTITION BY DAY WAL;";
     private static final String orderByAdviceDdl = "CREATE TABLE t (\n" +
             "  s SYMBOL index,\n" +
             "  ts TIMESTAMP\n" +
@@ -55,13 +62,6 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     " ('c', '2023-09-01T01:00:00.000Z')," +
                     " ('c', '2023-09-01T02:00:00.000Z')," +
                     " ('c', '2023-09-01T03:00:00.000Z')";
-    private static final String tradesDdl = "CREATE TABLE 'trades' (\n" +
-            "  symbol SYMBOL,\n" +
-            "  side SYMBOL,\n" +
-            "  price DOUBLE,\n" +
-            "  amount DOUBLE,\n" +
-            "  timestamp TIMESTAMP\n" +
-            ") timestamp (timestamp) PARTITION BY DAY WAL;";
     private static final String tripsDdl = "\n" +
             "CREATE TABLE 'trips' (\n" +
             "  cab_type SYMBOL capacity 12,\n" +
@@ -3173,14 +3173,20 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String query = "select ts, avg(x), sum(x) from fromto\n" +
                     "sample by 5d from '2017-12-20' to '2018-01-31' fill(42, 41)";
 
-            assertPlanNoLeakCheck(query, "Sample By\n" +
-                    "  fill: value\n" +
-                    "  range: ('2017-12-20','2018-01-31')\n" +
-                    "  values: [avg(x),sum(x)]\n" +
-                    "    PageFrame\n" +
-                    "        Row forward scan\n" +
-                    "        Interval forward scan on: fromto\n" +
-                    "          intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
+            assertPlanNoLeakCheck(query, "Sort\n" +
+                    "  keys: [ts]\n" +
+                    "    Fill Range\n" +
+                    "      range: ('2017-12-20','2018-01-31')\n" +
+                    "      stride: '5d'\n" +
+                    "      values: [42,41]\n" +
+                    "        Async Group By workers: 1\n" +
+                    "          keys: [ts]\n" +
+                    "          values: [avg(x),sum(x)]\n" +
+                    "          filter: null\n" +
+                    "            PageFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Interval forward scan on: fromto\n" +
+                    "                  intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
             assertSql("ts\tavg\tsum\n" +
                     "2017-12-20T00:00:00.000000Z\t42.0\t41\n" +
                     "2017-12-25T00:00:00.000000Z\t42.0\t41\n" +
