@@ -284,7 +284,7 @@ public class ExpressionParser {
                                 ExpressionNode en = opStack.pop();
                                 // table prefix cannot be unquoted keywords
                                 CharacterStoreEntry cse = characterStore.newEntry();
-                                cse.put(GenericLexer.unquote(en.token)).put('.');
+                                cse.put(GenericLexer.unquoteIfNoDots(en.token)).put('.');
                                 opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, cse.toImmutable(), Integer.MIN_VALUE, en.position));
                             } else {
                                 // attach dot to existing literal or constant
@@ -1295,7 +1295,7 @@ public class ExpressionParser {
                                 // this was more analogous to 'a."b"'
                                 CharacterStoreEntry cse = characterStore.newEntry();
                                 SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, en.position);
-                                cse.put(en.token).put(GenericLexer.unquote(tok));
+                                cse.put(en.token).put(GenericLexer.unquoteIfNoDots(tok));
                                 opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, cse.toImmutable(), Integer.MIN_VALUE, en.position));
                             } else {
                                 final GenericLexer.FloatingSequence fsA = (GenericLexer.FloatingSequence) en.token;
