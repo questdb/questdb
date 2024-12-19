@@ -679,6 +679,46 @@ public final class Chars {
         return -1;
     }
 
+    public static int indexOfUnquoted(@NotNull CharSequence seq, char ch) {
+        return indexOfUnquoted(seq, ch, 0, seq.length(), 1);
+    }
+
+    public static int indexOfUnquoted(@NotNull CharSequence seq, char ch, int seqLo, int seqHi, int occurrence) {
+        if (occurrence == 0) {
+            return -1;
+        }
+
+        int count = 0;
+        boolean inQuotes = false;
+        if (occurrence > 0) {
+            for (int i = seqLo; i < seqHi; i++) {
+                if (seq.charAt(i) == '\"') {
+                    inQuotes = !inQuotes;
+                }
+                if (seq.charAt(i) == ch && !inQuotes) {
+                    count++;
+                    if (count == occurrence) {
+                        return i;
+                    }
+                }
+            }
+        } else {    // if occurrence is negative, search in reverse
+            for (int i = seqHi - 1; i >= seqLo; i--) {
+                if (seq.charAt(i) == '\"') {
+                    inQuotes = !inQuotes;
+                }
+                if (seq.charAt(i) == ch && !inQuotes) {
+                    count--;
+                    if (count == occurrence) {
+                        return i;
+                    }
+                }
+            }
+        }
+
+        return -1;
+    }
+
     public static boolean isAscii(@NotNull CharSequence cs) {
         for (int i = 0, n = cs.length(); i < n; i++) {
             if (cs.charAt(i) > 127) {
@@ -734,7 +774,7 @@ public final class Chars {
         return isQuote(open) && open == s.charAt(s.length() - 1);
     }
 
-    public static int lastIndexOf(CharSequence sequence, int sequenceLo, int sequenceHi, CharSequence term) {
+    public static int lastIndexOf(@NotNull CharSequence sequence, int sequenceLo, int sequenceHi, @NotNull CharSequence term) {
         return indexOf(sequence, sequenceLo, sequenceHi, term, -1);
     }
 
