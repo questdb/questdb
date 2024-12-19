@@ -92,6 +92,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final ObjList<VectorAggregateFunction> vafList;
     private final WorkStealingStrategy workStealingStrategy;
     private final int workerCount;
+    private long rowNumber = 0;
 
     public GroupByRecordCursorFactory(
             CairoConfiguration configuration,
@@ -346,6 +347,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         public boolean hasNext() {
             if (!isRostiBuilt) {
                 buildRosti();
+                rowNumber = 0;
                 isRostiBuilt = true;
             }
             while (count < size) {
@@ -355,7 +357,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                     continue;
                 }
                 count++;
-                record.of(slots + ((ctrl - ctrlStart) << shift));
+                record.of(slots + ((ctrl - ctrlStart) << shift), rowNumber++);
                 ctrl++;
                 return true;
             }
@@ -386,8 +388,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public void recordAt(Record record, long atRowId) {
-            ((RostiRecord) record).of(atRowId);
+        public void recordAt(Record record, long atRowId, long rowNumber) {
+            ((RostiRecord) record).of(atRowId, rowNumber);
         }
 
         @Override
@@ -402,6 +404,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             size = raf.getSize(pRostiBig);
             shift = Rosti.getSlotShift(pRostiBig);
             count = 0;
+            rowNumber = 0;
         }
 
         private void buildRosti() {
@@ -617,6 +620,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             private final Long256Impl long256A = new Long256Impl();
             private final Long256Impl long256B = new Long256Impl();
             private long pRow;
+            private long rowNumber;
 
             @Override
             public long getDate(int col) {
@@ -695,6 +699,11 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             }
 
             @Override
+            public long getRowNumber() {
+                return rowNumber;
+            }
+
+            @Override
             public short getShort(int col) {
                 return 0;
             }
@@ -729,8 +738,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 return getLong(col);
             }
 
-            public void of(long pRow) {
+            public void of(long pRow, long rowNumber) {
                 this.pRow = pRow;
+                this.rowNumber = rowNumber;
             }
 
             private long getValueAddress(int column) {

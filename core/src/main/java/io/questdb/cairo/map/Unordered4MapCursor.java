@@ -107,7 +107,7 @@ public final class Unordered4MapCursor implements MapRecordCursor {
     }
 
     @Override
-    public void recordAt(Record record, long atRowId) {
+    public void recordAt(Record record, long atRowId, long rowNumber) {
         ((Unordered4MapRecord) record).of(atRowId);
     }
 

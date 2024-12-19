@@ -87,8 +87,8 @@ class SelectedRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void recordAt(Record record, long atRowId) {
-        baseCursor.recordAt(((SelectedRecord) record).getBaseRecord(), atRowId);
+    public void recordAt(Record record, long atRowId, long rowNumber) {
+        baseCursor.recordAt(((SelectedRecord) record).getBaseRecord(), atRowId, rowNumber);
     }
 
     @Override

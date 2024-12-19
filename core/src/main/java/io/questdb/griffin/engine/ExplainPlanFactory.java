@@ -28,10 +28,15 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.*;
+import io.questdb.griffin.JsonPlanSink;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.model.ExplainModel;
 import io.questdb.std.Misc;
 
@@ -100,7 +105,7 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
         }
     }
 
-    public class ExplainPlanRecordCursor implements RecordCursor {
+    public class ExplainPlanRecordCursor implements NoRandomAccessRecordCursor {
         private final PlanSink planSink;
         private final Record record;
         private int row = 0;
@@ -125,11 +130,6 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public Record getRecordB() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public boolean hasNext() {
             return row++ < rowCount;
         }
@@ -148,11 +148,6 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
             }
             rowCount = planSink.getLineCount();
             toTop();
-        }
-
-        @Override
-        public void recordAt(Record record, long atRowId) {
-            throw new UnsupportedOperationException();
         }
 
         @Override

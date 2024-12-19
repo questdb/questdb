@@ -342,8 +342,8 @@ public class QueryProgress extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public void recordAt(Record record, long atRowId) {
-            base.recordAt(record, atRowId);
+        public void recordAt(Record record, long atRowId, long rowNumber) {
+            base.recordAt(record, atRowId, rowNumber);
         }
 
         @Override

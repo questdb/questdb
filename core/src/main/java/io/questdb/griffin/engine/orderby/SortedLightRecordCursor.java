@@ -24,8 +24,11 @@
 
 package io.questdb.griffin.engine.orderby;
 
+import io.questdb.cairo.sql.DelegatingRecordCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.Misc;
@@ -39,6 +42,7 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
     private SqlExecutionCircuitBreaker circuitBreaker;
     private boolean isChainBuilt;
     private boolean isOpen;
+    private long rowNumber = 0;
 
     public SortedLightRecordCursor(LongTreeChain chain, RecordComparator comparator) {
         this.chain = chain;
@@ -80,7 +84,7 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
             isChainBuilt = true;
         }
         if (chainCursor.hasNext()) {
-            baseCursor.recordAt(baseRecord, chainCursor.next());
+            baseCursor.recordAt(baseRecord, chainCursor.next(), rowNumber++);
             return true;
         }
         return false;
@@ -104,8 +108,8 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
     }
 
     @Override
-    public void recordAt(Record record, long atRowId) {
-        baseCursor.recordAt(record, atRowId);
+    public void recordAt(Record record, long atRowId, long rowNumber) {
+        baseCursor.recordAt(record, atRowId, rowNumber);
     }
 
     @Override
@@ -116,6 +120,7 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
     @Override
     public void toTop() {
         chainCursor.toTop();
+        rowNumber = 0;
     }
 
     private void buildChain() {

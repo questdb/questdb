@@ -33,7 +33,10 @@ import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -209,7 +212,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             buildMapOfSlaveRecords();
 
             if (slaveChainCursor != null && slaveChainCursor.hasNext()) {
-                slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
+                slaveCursor.recordAt(slaveRecord, slaveChainCursor.next(), 0);
                 return true;
             }
 
@@ -222,7 +225,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                     // we know cursor has values
                     // advance to get the first value
                     slaveChainCursor.hasNext();
-                    slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
+                    slaveCursor.recordAt(slaveRecord, slaveChainCursor.next(), 0);
                     return true;
                 }
             }

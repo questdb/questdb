@@ -31,8 +31,12 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -181,7 +185,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
             if (slaveChainCursor != null && slaveChainCursor.hasNext()) {
                 record.hasSlave(true);
                 while (slaveChainCursor.hasNext()) {
-                    slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
+                    slaveCursor.recordAt(slaveRecord, slaveChainCursor.next(), 0);
                     if (filter.getBool(record)) {
                         return true;
                     }
@@ -196,7 +200,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                     slaveChainCursor = slaveChain.getCursor(value.getInt(0));
                     record.hasSlave(true);
                     while (slaveChainCursor.hasNext()) {
-                        slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
+                        slaveCursor.recordAt(slaveRecord, slaveChainCursor.next(), 0);
                         if (filter.getBool(record)) {
                             return true;
                         }

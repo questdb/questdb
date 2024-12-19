@@ -24,18 +24,41 @@
 
 package io.questdb.test.cairo.map;
 
-import io.questdb.cairo.*;
-import io.questdb.cairo.map.*;
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.SingleColumnType;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapRecord;
+import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.map.MapValueMergeFunction;
+import io.questdb.cairo.map.OrderedMap;
+import io.questdb.cairo.map.Unordered4Map;
+import io.questdb.cairo.map.Unordered8Map;
+import io.questdb.cairo.map.UnorderedVarcharMap;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.LongList;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TestDirectUtf8String;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.After;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
@@ -187,7 +210,7 @@ public class MapTest extends AbstractCairoTest {
                         int in = rnd.nextInt();
                         String key = String.valueOf(in);
                         long rowId = keyToRowIds.get(key);
-                        cursor.recordAt(record, rowId);
+                        cursor.recordAt(record, rowId, 0);
 
                         // value part, it comes first in record
                         int col = 0;
@@ -808,7 +831,7 @@ public class MapTest extends AbstractCairoTest {
                     Assert.assertNotSame(recordB, recordA);
 
                     for (int i = 0, n = rowIds.size(); i < n; i++) {
-                        cursor.recordAt(recordB, rowIds.getQuick(i));
+                        cursor.recordAt(recordB, rowIds.getQuick(i), 0);
                         int expected = readKey(recordB, 1, ColumnType.INT) * 2;
                         Assert.assertEquals(expected, recordB.getInt(0));
                     }

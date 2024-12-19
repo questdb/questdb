@@ -25,7 +25,11 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.ColumnTypes;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Interval;
+import io.questdb.std.Long256;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 
@@ -175,6 +179,11 @@ public class VirtualRecord implements ColumnTypes, Record {
     @Override
     public long getRowId() {
         return base.getRowId();
+    }
+
+    @Override
+    public long getRowNumber() {
+        return base.getRowNumber();
     }
 
     @Override

@@ -40,6 +40,7 @@ public final class Unordered8MapCursor implements MapRecordCursor {
     private long memStart;
     private int remaining;
     private long zeroKeyAddress; // set to 0 when there is no zero
+    private long rowNumber = 0;
 
     Unordered8MapCursor(Unordered8MapRecord record, Unordered8Map map) {
         this.recordA = record;
@@ -75,11 +76,11 @@ public final class Unordered8MapCursor implements MapRecordCursor {
     public boolean hasNext() {
         if (remaining > 0) {
             if (remaining == 1 && zeroKeyAddress != 0) {
-                recordA.of(zeroKeyAddress);
+                recordA.of(zeroKeyAddress, rowNumber++);
                 remaining--;
                 return true;
             }
-            recordA.of(address);
+            recordA.of(address, rowNumber++);
             skipToNonZeroKey();
             remaining--;
             return true;
@@ -91,7 +92,7 @@ public final class Unordered8MapCursor implements MapRecordCursor {
     public void longTopK(DirectLongLongHeap heap, Function recordFunction) {
         // First, we handle zero key.
         if (zeroKeyAddress != 0) {
-            recordA.of(zeroKeyAddress);
+            recordA.of(zeroKeyAddress, 0);
             long v = recordFunction.getLong(recordA);
             heap.add(zeroKeyAddress, v);
         }
@@ -99,7 +100,7 @@ public final class Unordered8MapCursor implements MapRecordCursor {
         // Then we handle all non-zero keys.
         for (long addr = memStart; addr < memLimit; addr += entrySize) {
             if (!map.isZeroKey(addr)) {
-                recordA.of(addr);
+                recordA.of(addr, 0);
                 long v = recordFunction.getLong(recordA);
                 heap.add(addr, v);
             }
@@ -107,8 +108,8 @@ public final class Unordered8MapCursor implements MapRecordCursor {
     }
 
     @Override
-    public void recordAt(Record record, long atRowId) {
-        ((Unordered8MapRecord) record).of(atRowId);
+    public void recordAt(Record record, long atRowId, long rowNumber) {
+        ((Unordered8MapRecord) record).of(atRowId, rowNumber);
     }
 
     @Override
@@ -123,6 +124,7 @@ public final class Unordered8MapCursor implements MapRecordCursor {
         if (count > 0 && (zeroKeyAddress == 0 || count > 1) && map.isZeroKey(address)) {
             skipToNonZeroKey();
         }
+        rowNumber = 0;
     }
 
     private void skipToNonZeroKey() {
@@ -139,6 +141,7 @@ public final class Unordered8MapCursor implements MapRecordCursor {
         toTop();
         recordA.setLimit(memLimit);
         recordB.setLimit(memLimit);
+        rowNumber = 0;
         return this;
     }
 }

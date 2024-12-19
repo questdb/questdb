@@ -27,7 +27,12 @@ package io.questdb.test.cairo.map;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.SingleColumnType;
-import io.questdb.cairo.map.*;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapRecord;
+import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.map.OrderedMap;
+import io.questdb.cairo.map.ShardedMapCursor;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
@@ -139,7 +144,7 @@ public class ShardedMapCursorTest extends AbstractCairoTest {
 
                     rnd.reset();
                     for (int i = 0, n = list.size(); i < n; i++) {
-                        cursor.recordAt(recordB, list.getQuick(i));
+                        cursor.recordAt(recordB, list.getQuick(i), 0);
                         Assert.assertEquals((i + 1) * 2, recordB.getInt(0));
                         Assert.assertEquals(rnd.nextInt(), recordB.getInt(1));
                     }

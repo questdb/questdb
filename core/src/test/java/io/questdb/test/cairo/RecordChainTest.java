@@ -24,14 +24,28 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.RecordChain;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkFactory;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
-import io.questdb.std.*;
+import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.LongList;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
@@ -96,7 +110,7 @@ public class RecordChainTest extends AbstractCairoTest {
                     for (int i = 0, n = rows.size(); i < n; i++) {
                         long row = rows.getQuick(i);
                         Assert.assertTrue(cursor.hasNext());
-                        chain.recordAt(rec, row);
+                        chain.recordAt(rec, row, 0);
                         Assert.assertEquals(row, rec.getRowId());
                         assertSame(cursorRecord, rec, reader.getMetadata());
                     }

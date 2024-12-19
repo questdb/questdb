@@ -100,10 +100,10 @@ public class ShardedMapCursor implements MapRecordCursor {
     }
 
     @Override
-    public void recordAt(Record record, long atRowId) {
+    public void recordAt(Record record, long atRowId, long rowNumber) {
         int shardIndex = toShardIndex(atRowId);
         long rowId = toShardRowId(atRowId);
-        ((ShardedMapRecord) record).at(shardIndex, rowId);
+        ((ShardedMapRecord) record).at(shardIndex, rowId, rowNumber);
     }
 
     @Override
@@ -322,7 +322,7 @@ public class ShardedMapCursor implements MapRecordCursor {
             }
         }
 
-        void at(int shardIndex, long rowId) {
+        void at(int shardIndex, long rowId, long rowNumber) {
             MapRecordCursor baseCursor = shardCursors.getQuick(shardIndex);
             if (isPrimary) {
                 this.baseRecord = baseCursor.getRecord();
@@ -330,7 +330,7 @@ public class ShardedMapCursor implements MapRecordCursor {
                 this.baseRecord = baseCursor.getRecordB();
             }
             this.shardIndex = shardIndex;
-            baseCursor.recordAt(baseRecord, rowId);
+            baseCursor.recordAt(baseRecord, rowId, rowNumber);
         }
 
         void of(MapRecord baseRecord, int shardIndex) {

@@ -96,8 +96,8 @@ class ExceptAllCastRecordCursor extends AbstractSetRecordCursor {
     }
 
     @Override
-    public void recordAt(Record record, long atRowId) {
-        cursorA.recordAt(((UnionCastRecord) record).getRecordA(), atRowId);
+    public void recordAt(Record record, long atRowId, long rowNumber) {
+        cursorA.recordAt(((UnionCastRecord) record).getRecordA(), atRowId, rowNumber);
     }
 
     @Override

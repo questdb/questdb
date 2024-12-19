@@ -150,7 +150,7 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
      * @param record  to position
      * @param atRowId rowid of the desired record
      */
-    void recordAt(Record record, long atRowId);
+    void recordAt(Record record, long atRowId, long rowNumber);
 
     /**
      * Not every record cursor has a size, may return -1, in this case, keep going until hasNext()

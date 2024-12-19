@@ -36,7 +36,7 @@ public class EmptyTableRecordCursorTest {
     public void testRecordAt2() {
         // This cursor does not return row ids. Looking up records from cursor by rowid is most
         // likely a bug. Make sure we report it.
-        CURSOR.recordAt(CURSOR.getRecord(), 123);
+        CURSOR.recordAt(CURSOR.getRecord(), 123, 0);
     }
 
     @Test

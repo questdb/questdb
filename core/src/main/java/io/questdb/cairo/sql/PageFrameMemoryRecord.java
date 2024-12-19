@@ -76,6 +76,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     private LongList pageSizes;
     private long rowIdOffset;
     private long rowIndex;
+    private long rowNumber;
     private boolean stableStrings;
     private SymbolTableSource symbolTableSource;
 
@@ -341,6 +342,11 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     }
 
     @Override
+    public long getRowNumber() {
+        return rowNumber;
+    }
+
+    @Override
     public short getShort(int columnIndex) {
         final long address = pageAddresses.getQuick(columnIndex);
         if (address != 0) {
@@ -490,6 +496,10 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     public void setRowIndex(long rowIndex) {
         this.rowIndex = rowIndex;
+    }
+
+    public void setRowNumber(long rowNumber) {
+        this.rowNumber = rowNumber;
     }
 
     private MemoryCR.ByteSequenceView bsView(int columnIndex) {

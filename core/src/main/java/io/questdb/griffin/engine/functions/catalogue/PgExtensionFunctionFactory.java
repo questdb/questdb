@@ -31,6 +31,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -82,7 +83,7 @@ public class PgExtensionFunctionFactory implements FunctionFactory {
             sink.type("pg_extension()");
         }
 
-        private static class PgExtensionRecordCursor implements RecordCursor {
+        private static class PgExtensionRecordCursor implements NoRandomAccessRecordCursor {
 
             private static final String[][] EXTENSIONS = {{"1", "questdb", "1", "1", "false", null, null, null}};
             private final PgExtensionRecord record = new PgExtensionRecord();
@@ -104,18 +105,8 @@ public class PgExtensionFunctionFactory implements FunctionFactory {
             }
 
             @Override
-            public Record getRecordB() {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
             public boolean hasNext() {
                 return ++index < EXTENSIONS.length;
-            }
-
-            @Override
-            public void recordAt(Record record, long atRowId) {
-                throw new UnsupportedOperationException();
             }
 
             @Override

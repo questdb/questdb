@@ -24,8 +24,13 @@
 
 package io.questdb.griffin.engine.functions.test;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -98,7 +103,7 @@ public class TestOwnerCountingFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class OwnerCountingRecordCursor implements RecordCursor {
+    private static class OwnerCountingRecordCursor implements NoRandomAccessRecordCursor {
         private final OwnerCountingRecord record = new OwnerCountingRecord();
         private int remaining = 1;
 
@@ -113,11 +118,6 @@ public class TestOwnerCountingFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Record getRecordB() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public boolean hasNext() {
             return remaining-- > 0;
         }
@@ -126,11 +126,6 @@ public class TestOwnerCountingFunctionFactory implements FunctionFactory {
             remaining = 1;
             record.acquire();
             return this;
-        }
-
-        @Override
-        public void recordAt(Record record, long atRowId) {
-            throw new UnsupportedOperationException();
         }
 
         @Override

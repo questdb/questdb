@@ -26,8 +26,17 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.RowCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -195,8 +204,8 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
         }
 
         @Override
-        public void recordAt(Record record, long atRowId) {
-            delegate.recordAt(record, atRowId);
+        public void recordAt(Record record, long atRowId, long rowNumber) {
+            delegate.recordAt(record, atRowId, rowNumber);
         }
 
         @Override

@@ -96,7 +96,7 @@ public class TestTableReaderRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void recordAt(Record record, long rowId) {
+    public void recordAt(Record record, long rowId, long rowNumber) {
         ((TestTableReaderRecord) record).jumpTo(Rows.toPartitionIndex(rowId), Rows.toLocalRowID(rowId));
     }
 

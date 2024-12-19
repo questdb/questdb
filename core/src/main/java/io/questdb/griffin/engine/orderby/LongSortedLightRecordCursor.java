@@ -26,11 +26,18 @@ package io.questdb.griffin.engine.orderby;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.DelegatingRecordCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.*;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.Vect;
 
 class LongSortedLightRecordCursor implements DelegatingRecordCursor {
     private static final RecordAdapter getIPv4AsLongRef = LongSortedLightRecordCursor::getIPv4AsLong;
@@ -48,6 +55,7 @@ class LongSortedLightRecordCursor implements DelegatingRecordCursor {
     private SqlExecutionCircuitBreaker circuitBreaker;
     private boolean isOpen;
     private RecordAdapter recordAdapter;
+    private long rowNumber = 0;
 
     public LongSortedLightRecordCursor(CairoConfiguration configuration, int columnIndex, int columnType, boolean ascOrder) {
         try {
@@ -97,7 +105,7 @@ class LongSortedLightRecordCursor implements DelegatingRecordCursor {
             areValuesSorted = true;
         }
         if (rowIdCursor.hasNext()) {
-            baseCursor.recordAt(baseRecord, rowIdCursor.next());
+            baseCursor.recordAt(baseRecord, rowIdCursor.next(), rowNumber++);
             return true;
         }
         return false;
@@ -112,6 +120,7 @@ class LongSortedLightRecordCursor implements DelegatingRecordCursor {
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
         // assign base cursor as the first step, so that we close it in close() call
         this.baseCursor = baseCursor;
+        this.rowNumber = 0;
         baseRecord = baseCursor.getRecord();
 
         if (!isOpen) {
@@ -140,8 +149,8 @@ class LongSortedLightRecordCursor implements DelegatingRecordCursor {
     }
 
     @Override
-    public void recordAt(Record record, long atRowId) {
-        baseCursor.recordAt(record, atRowId);
+    public void recordAt(Record record, long atRowId, long rowNumber) {
+        baseCursor.recordAt(record, atRowId, rowNumber);
     }
 
     @Override
@@ -152,6 +161,7 @@ class LongSortedLightRecordCursor implements DelegatingRecordCursor {
     @Override
     public void toTop() {
         rowIdCursor.toTop();
+        rowNumber = 0;
         if (!areValuesSorted) {
             valueRowIdMem.clear();
             baseCursor.toTop();

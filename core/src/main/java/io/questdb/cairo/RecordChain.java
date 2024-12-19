@@ -25,10 +25,19 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Interval;
+import io.questdb.std.Long256;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.Transient;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
@@ -302,7 +311,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     }
 
     @Override
-    public void recordAt(Record record, long row) {
+    public void recordAt(Record record, long row, long rowNumber) {
         ((RecordChainRecord) record).of(rowToDataOffset(row));
     }
 

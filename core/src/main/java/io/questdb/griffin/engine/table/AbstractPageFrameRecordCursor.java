@@ -25,8 +25,14 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.PageFrameAddressCache;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.Misc;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
@@ -83,10 +89,11 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
     }
 
     @Override
-    public void recordAt(Record record, long rowId) {
+    public void recordAt(Record record, long rowId, long rowNumber) {
         final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
         frameMemoryPool.navigateTo(Rows.toPartitionIndex(rowId), frameMemoryRecord);
         frameMemoryRecord.setRowIndex(Rows.toLocalRowID(rowId));
+        frameMemoryRecord.setRowNumber(rowNumber);
     }
 
     @Override

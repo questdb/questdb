@@ -73,6 +73,7 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
     private int lastKeyIndex = -1;
     private int lastKeyOffset = -1;
     private long limit;
+    private long rowNumber;
     private long startAddress; // key-value pair start address
     private IntList symbolTableIndex;
     private RecordCursor symbolTableResolver;
@@ -429,6 +430,11 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
     }
 
     @Override
+    public long getRowNumber() {
+        return rowNumber;
+    }
+
+    @Override
     public short getShort(int columnIndex) {
         return Unsafe.getUnsafe().getShort(addressOfColumn(columnIndex));
     }
@@ -490,13 +496,14 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
     }
 
     @Override
-    public void of(long address) {
+    public void of(long address, long rowNumber) {
         this.startAddress = address;
         this.keyAddress = address + Integer.BYTES;
         this.keySize = Unsafe.getUnsafe().getInt(address);
         this.valueAddress = address + Integer.BYTES + keySize;
         this.lastKeyIndex = -1;
         this.lastKeyOffset = -1;
+        this.rowNumber = rowNumber;
     }
 
     @Override

@@ -27,7 +27,10 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
@@ -762,8 +765,8 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         }
 
         @Override
-        public void recordAt(Record record, long atRowId) {
-            delegate.recordAt(record, atRowId);
+        public void recordAt(Record record, long atRowId, long rowNumber) {
+            delegate.recordAt(record, atRowId, rowNumber);
         }
 
         @Override
