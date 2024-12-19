@@ -31,7 +31,6 @@ import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Utf8Sequence;
-import org.jetbrains.annotations.NotNull;
 
 /**
  * Allows for setting the values of bind variables passed
@@ -58,20 +57,6 @@ public interface BindVariableService extends Mutable {
      * @return list of named variables in a query
      */
     ObjList<CharSequence> getNamedVariables();
-
-    /**
-     * Checks if bind variable is defined. Bind variable will usually be defined by the SQL compiler when
-     * the type of the variable can be inferred from the expression where this variable is used. However, in
-     * cases where bind variable is selected instead of a column, the type is ambiguous and the variable is
-     * left undefined.
-     * <p>
-     * The undefined variables will need to be assigned types (and values) by the client. For example a PostgresSQL
-     * client.
-     *
-     * @param index the 0-based index of the bind variable in question.
-     * @return true when variable type is defined and false otherwise.
-     */
-    boolean isDefined(int index);
 
     /**
      * Set the type of bind variable by name as binary and provide a value

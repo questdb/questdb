@@ -127,5 +127,4 @@ public interface FunctionFactory {
     default int resolvePreferredVariadicType(int sqlPos, int argPos, ObjList<Function> args) throws SqlException {
         return ColumnType.STRING;
     }
-
 }
