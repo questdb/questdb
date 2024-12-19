@@ -152,11 +152,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getColumnCastModelPoolCapacity() {
-        return 32;
-    }
-
-    @Override
     public int getColumnIndexerQueueCapacity() {
         return 1024;
     }
@@ -222,13 +217,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getCreateTableModelBatchSize() {
-        return 1_000_000;
+    public int getCreateTableColumnModelPoolCapacity() {
+        return 32;
     }
 
     @Override
-    public int getCreateTableModelPoolCapacity() {
-        return 32;
+    public long getCreateTableModelBatchSize() {
+        return 1_000_000;
     }
 
     @Override
@@ -342,13 +337,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getGroupByPresizeMaxHeapSize() {
-        return 128 * Numbers.SIZE_1MB;
+    public long getGroupByPresizeMaxCapacity() {
+        return 1_000_000;
     }
 
     @Override
-    public long getGroupByPresizeMaxCapacity() {
-        return 1_000_000;
+    public long getGroupByPresizeMaxHeapSize() {
+        return 128 * Numbers.SIZE_1MB;
     }
 
     @Override
@@ -835,6 +830,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlParquetFrameCacheCapacity() {
+        return 3;
+    }
+
+    @Override
     public int getSqlSmallMapKeyCapacity() {
         return 64;
     }
@@ -1154,6 +1154,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isPartitionO3OverwriteControlEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isReadOnlyInstance() {
         return false;
     }
@@ -1205,11 +1210,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean mangleTableDirNames() {
-        return false;
-    }
-
-    @Override
-    public boolean getPartitionO3OverwriteControlEnabled() {
         return false;
     }
 

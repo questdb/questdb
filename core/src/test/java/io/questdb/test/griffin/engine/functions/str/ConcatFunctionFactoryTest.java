@@ -39,7 +39,7 @@ public class ConcatFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             CreateTableTestUtils.createAllTableWithNewTypes(engine, PartitionBy.NONE);
 
-            insert(
+            execute(
                     "insert into all2 select * from (" +
                             "select" +
                             " rnd_int()," +
@@ -124,7 +124,7 @@ public class ConcatFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testColumn() throws Exception {
-        ddl("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(5))");
+        execute("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(5))");
 
         final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
         tuples.add(new BindVariableTestTuple(

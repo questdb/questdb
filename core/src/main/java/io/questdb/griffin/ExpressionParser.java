@@ -284,7 +284,7 @@ public class ExpressionParser {
                                 ExpressionNode en = opStack.pop();
                                 // table prefix cannot be unquoted keywords
                                 CharacterStoreEntry cse = characterStore.newEntry();
-                                cse.put(GenericLexer.unquote(en.token)).put('.');
+                                cse.put(GenericLexer.unquoteIfNoDots(en.token)).put('.');
                                 opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, cse.toImmutable(), Integer.MIN_VALUE, en.position));
                             } else {
                                 // attach dot to existing literal or constant
@@ -1295,7 +1295,7 @@ public class ExpressionParser {
                                 // this was more analogous to 'a."b"'
                                 CharacterStoreEntry cse = characterStore.newEntry();
                                 SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, en.position);
-                                cse.put(en.token).put(GenericLexer.unquote(tok));
+                                cse.put(en.token).put(GenericLexer.unquoteIfNoDots(tok));
                                 opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, cse.toImmutable(), Integer.MIN_VALUE, en.position));
                             } else {
                                 final GenericLexer.FloatingSequence fsA = (GenericLexer.FloatingSequence) en.token;
@@ -1340,6 +1340,14 @@ public class ExpressionParser {
                                         if (tok != null && (isInActiveCastAs || tok.charAt(0) == '\'')) {
                                             lexer.backTo(zoneTokPosition, zoneTok);
                                             continue;
+                                        }
+                                        if (opStack.size() > 1) {
+                                            ExpressionNode en = opStack.peek(1);
+                                            if (SqlKeywords.isColonColon(en.token)) {
+                                                // '1970-01-01 00:08:20.023+00'::timestamp with time zone
+                                                lexer.backTo(zoneTokPosition, zoneTok);
+                                                continue;
+                                            }
                                         }
                                         throw SqlException.$(zoneTokPosition, "String literal expected after 'timestamp with time zone'");
                                     }
@@ -1397,6 +1405,9 @@ public class ExpressionParser {
                                         }
                                     }
                                 }
+                            } else if (SqlKeywords.isDoubleKeyword(last.token) && SqlKeywords.isPrecisionKeyword(tok)) {
+                                // ignore 'precision' keyword after 'double'
+                                continue;
                             }
                         }
                         // literal can be at start of input, after a bracket or part of an operator

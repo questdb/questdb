@@ -33,7 +33,7 @@ import io.questdb.std.QuietCloseable;
 
 /**
  * Unlike other TypesAnd* classes, this one doesn't self-return to a pool. That's because
- * it's used for multi-threaded calls to {@link io.questdb.std.ConcurrentAssociativeCache}.
+ * it's used for multithreaded calls to {@link io.questdb.std.ConcurrentAssociativeCache}.
  */
 public class TypesAndSelect implements QuietCloseable {
     private final IntList types = new IntList();

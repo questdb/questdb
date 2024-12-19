@@ -33,7 +33,7 @@ import io.questdb.std.str.Path;
 public class WalUtils {
     public static final String CONVERT_FILE_NAME = "_convert";
     public static final int DROP_TABLE_STRUCTURE_VERSION = -2;
-    public static final int DROP_TABLE_WALID = -2;
+    public static final int DROP_TABLE_WAL_ID = -2;
     public static final String EVENT_FILE_NAME = "_event";
     public static final String EVENT_INDEX_FILE_NAME = "_event.i";
     public static final CharSequence INITIAL_META_FILE_NAME = "_meta.0";
@@ -53,19 +53,18 @@ public class WalUtils {
     public static final long SEQ_META_OFFSET_COLUMNS = SEQ_META_SUSPENDED + Byte.BYTES;
     public static final String TABLE_REGISTRY_NAME_FILE = "tables.d";
     public static final String TXNLOG_FILE_NAME = "_txnlog";
-    public static final String TXNLOG_PARTS_DIR = "_txn_parts";
     public static final String TXNLOG_FILE_NAME_META_INX = "_txnlog.meta.i";
     public static final String TXNLOG_FILE_NAME_META_VAR = "_txnlog.meta.d";
+    public static final String TXNLOG_PARTS_DIR = "_txn_parts";
     public static final int WALE_HEADER_SIZE = Integer.BYTES + Integer.BYTES;
     public static final long WALE_MAX_TXN_OFFSET_32 = 0L;
     public static final int WAL_FORMAT_OFFSET_32 = Integer.BYTES;
     public static final int WAL_FORMAT_VERSION = 0;
-    public static final int WAL_SEQUENCER_FORMAT_VERSION_V1 = 0;
-    public static final int WAL_SEQUENCER_FORMAT_VERSION_V2 = 1;
     public static final String WAL_INDEX_FILE_NAME = "_wal_index.d";
     public static final String WAL_NAME_BASE = "wal";
     public static final String WAL_PENDING_FS_MARKER = ".pending";
-
+    public static final int WAL_SEQUENCER_FORMAT_VERSION_V1 = 0;
+    public static final int WAL_SEQUENCER_FORMAT_VERSION_V2 = 1;
 
     public static void createTxnLogFile(FilesFacade ff, MemoryMARW mem, Path txnSeqDirPath, long tableCreateDate, int chunkSize, int mkDirMode) {
         int rootLen = txnSeqDirPath.size();

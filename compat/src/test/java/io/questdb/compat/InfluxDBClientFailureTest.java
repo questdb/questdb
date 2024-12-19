@@ -137,7 +137,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             private long fd;
 
             @Override
-            public long append(long fd, long buf, int len) {
+            public long append(long fd, long buf, long len) {
                 if (fd == this.fd && counter.decrementAndGet() == 0) {
                     throw CairoException.critical(24).put("test error");
                 }
@@ -189,7 +189,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             public long openRW(LPSZ name, long opts) {
                 if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "x.d") && attempt.getAndIncrement() == 0) {
                     try {
-                        server.get().getEngine().compile("drop table m1");
+                        server.get().getEngine().execute("drop table m1");
                     } catch (SqlException e) {
                         throw new RuntimeException(e);
                     }
@@ -229,7 +229,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             public long openRW(LPSZ name, long opts) {
                 if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "x.d") && attempt.getAndIncrement() == 0) {
                     try {
-                        server.get().getEngine().compile("drop table m1");
+                        server.get().getEngine().execute("drop table m1");
                     } catch (SqlException e) {
                         throw new AssertionError(e);
                     }
@@ -346,7 +346,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             public long openRW(LPSZ name, long opts) {
                 if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "good_y.d") && attempt.getAndIncrement() == 0) {
                     try {
-                        server.get().getEngine().compile("drop table \"drop\"");
+                        server.get().getEngine().execute("drop table \"drop\"");
                     } catch (SqlException e) {
                         throw new RuntimeException(e);
                     }

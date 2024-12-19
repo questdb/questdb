@@ -32,7 +32,17 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.SqlUtil;
-import io.questdb.std.*;
+import io.questdb.griffin.engine.functions.UndefinedFunction;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.Transient;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
@@ -105,6 +115,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         switch (ColumnType.tagOf(type)) {
             // unable to define undefined type
             case ColumnType.UNDEFINED:
+                setUndefined(index);
                 return type;
             case ColumnType.BOOLEAN:
                 setBoolean(index);
@@ -720,7 +731,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     @Override
-    public void setVarchar(int index, Utf8Sequence value) throws SqlException {
+    public void setVarchar(int index, @Transient Utf8Sequence value) throws SqlException {
         indexedVariables.extendPos(index + 1);
         // variable exists
         Function function = indexedVariables.getQuick(index);
@@ -1201,7 +1212,12 @@ public class BindVariableServiceImpl implements BindVariableService {
         }
     }
 
-    private static void setVarchar0(Function function, Utf8Sequence value, int index, @Nullable CharSequence name) throws SqlException {
+    private static void setVarchar0(
+            Function function,
+            @Transient Utf8Sequence value,
+            int index,
+            @Nullable CharSequence name
+    ) throws SqlException {
         final int functionType = ColumnType.tagOf(function.getType());
         switch (functionType) {
             case ColumnType.BOOLEAN:
@@ -1269,6 +1285,20 @@ public class BindVariableServiceImpl implements BindVariableService {
             default:
                 reportError(function, ColumnType.VARCHAR, index, name);
                 break;
+        }
+    }
+
+    private void setUndefined(int index) {
+        indexedVariables.extendPos(index + 1);
+        // variable exists
+        Function function = indexedVariables.getQuick(index);
+        if (function != null) {
+            if (function.getType() != ColumnType.UNDEFINED) {
+                Misc.free(function);
+                indexedVariables.extendAndSet(index, UndefinedFunction.INSTANCE);
+            }
+        } else {
+            indexedVariables.extendAndSet(index, UndefinedFunction.INSTANCE);
         }
     }
 }

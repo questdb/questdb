@@ -24,6 +24,7 @@
 
 package io.questdb.test.std;
 
+import io.questdb.std.IntList;
 import io.questdb.std.Long256FromCharSequenceDecoder;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
@@ -39,10 +40,11 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.Random;
 
 public class NumbersTest {
-
     private final StringSink sink = new StringSink();
     private Rnd rnd;
 
@@ -518,6 +520,90 @@ public class NumbersTest {
         Assert.assertEquals("1/11111111111111111111111111111111", toBinaryString(Numbers.getIPv4Subnet("0.0.0.1/32")));
 
         Assert.assertEquals("12.2.6.8/255.255.0.0", TestUtils.ipv4ToString2(Numbers.getIPv4Subnet("12.2.6.8/16")));
+    }
+
+    @Test
+    public void testHexDigitsLong256() {
+        Long256Impl long256 = new Long256Impl();
+
+        // null
+        long256.setAll(Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE);
+        sink.clear();
+        long256.toSink(sink);
+        Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+
+        long256.setAll(0, Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE);
+        sink.clear();
+        long256.toSink(sink);
+        Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+
+        long256.setAll(0, 0, Long.MIN_VALUE, Long.MIN_VALUE);
+        sink.clear();
+        long256.toSink(sink);
+        Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+
+        long256.setAll(0, 0, 0, Long.MIN_VALUE);
+        sink.clear();
+        long256.toSink(sink);
+        Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+
+        long256.setAll(Long.MIN_VALUE, 0, Long.MIN_VALUE, Long.MIN_VALUE);
+        sink.clear();
+        long256.toSink(sink);
+        Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+
+        long256.setAll(Long.MIN_VALUE, Long.MIN_VALUE, 0, Long.MIN_VALUE);
+        sink.clear();
+        long256.toSink(sink);
+        Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+
+        long256.setAll(Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, 0);
+        sink.clear();
+        long256.toSink(sink);
+        Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+
+        for (int i = -1; i < 1024; i++) {
+            long256.setAll(i, i, i, i);
+            sink.clear();
+            long256.toSink(sink);
+            Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+        }
+
+        long256.setAll(Short.MAX_VALUE, Short.MAX_VALUE, Short.MAX_VALUE, Short.MAX_VALUE);
+        sink.clear();
+        long256.toSink(sink);
+        Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+
+        // We used to print all NaNs here
+        long256.setAll(Integer.MIN_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE);
+        sink.clear();
+        long256.toSink(sink);
+        Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+
+        long256.setAll(Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE);
+        sink.clear();
+        long256.toSink(sink);
+        Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+
+        long256.setAll(Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE);
+        sink.clear();
+        long256.toSink(sink);
+        Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+    }
+
+    @Test
+    public void testHexDigitsLong256Fuzz() {
+        final int N = 1000;
+        Rnd rnd = TestUtils.generateRandom(null);
+
+        Long256Impl long256 = new Long256Impl();
+
+        for (int i = 0; i < N; i++) {
+            long256.setAll(rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
+            sink.clear();
+            long256.toSink(sink);
+            Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+        }
     }
 
     @Test
@@ -1316,91 +1402,6 @@ public class NumbersTest {
     }
 
     @Test
-    public void testParseMillis() throws NumericException {
-        Assert.assertEquals(25, Numbers.parseMillis("25ms"));
-        Assert.assertEquals(25, Numbers.parseMillis("25MS"));
-        Assert.assertEquals(1_500_000L, Numbers.parseMillis("25m"));
-        Assert.assertEquals(1_500_000L, Numbers.parseMillis("25M"));
-        Assert.assertEquals(14_400_000L, Numbers.parseMillis("4h"));
-        Assert.assertEquals(10_800_000L, Numbers.parseMillis("3H"));
-        Assert.assertEquals(90_000L, Numbers.parseMillis("90s"));
-        Assert.assertEquals(0L, Numbers.parseMillis("234us"));
-        Assert.assertEquals(3_600L, Numbers.parseMillis("3_600_000us"));
-        Assert.assertEquals(50L, Numbers.parseMillis("50_600_000ns"));
-
-        assertParseMillisException(null);
-        assertParseMillisException("");
-        // overflow
-        assertParseMillisException("80980982938408234823048028340284820");
-
-
-        // check similar keywords are not picked up
-
-        // n
-        assertParseMillisException("60nk");
-        assertParseMillisException("3msa");
-
-        // u
-        assertParseMillisException("60uk");
-        assertParseMillisException("3usa");
-
-        // m
-        assertParseMillisException("60mk");
-        assertParseMillisException("3umsa");
-
-        // s
-        assertParseMillisException("3sk");
-
-        // h
-        assertParseMillisException("3hu");
-
-        // arbitrary
-        assertParseMillisException("3k");
-
-        // assert unit without value
-
-        // n
-        assertParseMillisException("ns");
-        assertParseMillisException("-ns");
-        assertParseMillisException("_ns");
-
-        // u
-        assertParseMillisException("us");
-        assertParseMillisException("-us");
-        assertParseMillisException("_us");
-
-        // m
-        assertParseMillisException("ms");
-        assertParseMillisException("-ms");
-        assertParseMillisException("_ms");
-
-        assertParseMillisException("m");
-        assertParseMillisException("-m");
-        assertParseMillisException("_m");
-
-        // s
-        assertParseMillisException("s");
-        assertParseMillisException("-s");
-        assertParseMillisException("_s");
-
-        // h
-        assertParseMillisException("h");
-        assertParseMillisException("-h");
-        assertParseMillisException("_h");
-
-        // no unit
-        assertParseMillisException("_");
-
-        // underscore misuse
-        assertParseMillisException("_");
-        assertParseMillisException("_22");
-        assertParseMillisException("_444_");
-        assertParseMillisException("_28989__");
-        assertParseMillisException("90902__");
-        assertParseMillisException("123_");
-    }
-
-    @Test
     public void testParseMicros() throws NumericException {
         Assert.assertEquals(25_000, Numbers.parseMicros("25ms"));
         Assert.assertEquals(25_000, Numbers.parseMicros("25MS"));
@@ -1483,6 +1484,91 @@ public class NumbersTest {
         assertParseMicrosException("_28989__");
         assertParseMicrosException("90902__");
         assertParseMicrosException("123_");
+    }
+
+    @Test
+    public void testParseMillis() throws NumericException {
+        Assert.assertEquals(25, Numbers.parseMillis("25ms"));
+        Assert.assertEquals(25, Numbers.parseMillis("25MS"));
+        Assert.assertEquals(1_500_000L, Numbers.parseMillis("25m"));
+        Assert.assertEquals(1_500_000L, Numbers.parseMillis("25M"));
+        Assert.assertEquals(14_400_000L, Numbers.parseMillis("4h"));
+        Assert.assertEquals(10_800_000L, Numbers.parseMillis("3H"));
+        Assert.assertEquals(90_000L, Numbers.parseMillis("90s"));
+        Assert.assertEquals(0L, Numbers.parseMillis("234us"));
+        Assert.assertEquals(3_600L, Numbers.parseMillis("3_600_000us"));
+        Assert.assertEquals(50L, Numbers.parseMillis("50_600_000ns"));
+
+        assertParseMillisException(null);
+        assertParseMillisException("");
+        // overflow
+        assertParseMillisException("80980982938408234823048028340284820");
+
+
+        // check similar keywords are not picked up
+
+        // n
+        assertParseMillisException("60nk");
+        assertParseMillisException("3msa");
+
+        // u
+        assertParseMillisException("60uk");
+        assertParseMillisException("3usa");
+
+        // m
+        assertParseMillisException("60mk");
+        assertParseMillisException("3umsa");
+
+        // s
+        assertParseMillisException("3sk");
+
+        // h
+        assertParseMillisException("3hu");
+
+        // arbitrary
+        assertParseMillisException("3k");
+
+        // assert unit without value
+
+        // n
+        assertParseMillisException("ns");
+        assertParseMillisException("-ns");
+        assertParseMillisException("_ns");
+
+        // u
+        assertParseMillisException("us");
+        assertParseMillisException("-us");
+        assertParseMillisException("_us");
+
+        // m
+        assertParseMillisException("ms");
+        assertParseMillisException("-ms");
+        assertParseMillisException("_ms");
+
+        assertParseMillisException("m");
+        assertParseMillisException("-m");
+        assertParseMillisException("_m");
+
+        // s
+        assertParseMillisException("s");
+        assertParseMillisException("-s");
+        assertParseMillisException("_s");
+
+        // h
+        assertParseMillisException("h");
+        assertParseMillisException("-h");
+        assertParseMillisException("_h");
+
+        // no unit
+        assertParseMillisException("_");
+
+        // underscore misuse
+        assertParseMillisException("_");
+        assertParseMillisException("_22");
+        assertParseMillisException("_444_");
+        assertParseMillisException("_28989__");
+        assertParseMillisException("90902__");
+        assertParseMillisException("123_");
     }
 
     @Test
@@ -1659,6 +1745,31 @@ public class NumbersTest {
     }
 
     @Test
+    public void testReverseBits() {
+        // this is a simple method to convert BigEndian to readable LittleEndian and vice versa.
+        // The test will check if it does the same as the Java library
+
+        int bufSize = 4096;
+        int count = bufSize / Integer.BYTES;
+        ByteBuffer buf = ByteBuffer.allocate(bufSize);
+        buf.order(ByteOrder.LITTLE_ENDIAN);
+        Rnd rnd = TestUtils.generateRandom(null);
+        IntList values = new IntList(count);
+        for (int i = 0; i < count; i++) {
+            int val = rnd.nextInt();
+            buf.putInt(val);
+            values.add(val);
+        }
+        buf.rewind();
+        buf.order(ByteOrder.BIG_ENDIAN);
+
+        for (int i = 0; i < count; i++) {
+            int val = values.get(i);
+            Assert.assertEquals(buf.getInt(), Numbers.reverseBits(val));
+        }
+    }
+
+    @Test
     public void testRoundDown() throws Exception {
         Rnd rnd = new Rnd();
         for (int i = 0; i < 1000; i++) {
@@ -1720,6 +1831,44 @@ public class NumbersTest {
         Assert.assertEquals(-7976, Numbers.bswap(v));
     }
 
+    @Test
+    public void testSinkSizeInt() throws NumericException {
+        int ipv4 = Numbers.IPv4_NULL;
+        sink.clear();
+        Numbers.intToIPv4Sink(sink, ipv4);
+        Assert.assertEquals(sink.length(), Numbers.sinkSizeIPv4(ipv4));
+
+        ipv4 = Numbers.parseIPv4("0.0.0.1");
+        sink.clear();
+        Numbers.intToIPv4Sink(sink, ipv4);
+        Assert.assertEquals(sink.length(), Numbers.sinkSizeIPv4(ipv4));
+
+        ipv4 = Numbers.parseIPv4("0.0.1.1");
+        sink.clear();
+        Numbers.intToIPv4Sink(sink, ipv4);
+        Assert.assertEquals(sink.length(), Numbers.sinkSizeIPv4(ipv4));
+
+        ipv4 = Numbers.parseIPv4("0.1.1.1");
+        sink.clear();
+        Numbers.intToIPv4Sink(sink, ipv4);
+        Assert.assertEquals(sink.length(), Numbers.sinkSizeIPv4(ipv4));
+
+        ipv4 = Numbers.parseIPv4("1.1.1.1");
+        sink.clear();
+        Numbers.intToIPv4Sink(sink, ipv4);
+        Assert.assertEquals(sink.length(), Numbers.sinkSizeIPv4(ipv4));
+
+        ipv4 = Numbers.parseIPv4("255.255.255.255");
+        sink.clear();
+        Numbers.intToIPv4Sink(sink, ipv4);
+        Assert.assertEquals(sink.length(), Numbers.sinkSizeIPv4(ipv4));
+
+        ipv4 = Numbers.parseIPv4("128.0.0.1");
+        sink.clear();
+        Numbers.intToIPv4Sink(sink, ipv4);
+        Assert.assertEquals(sink.length(), Numbers.sinkSizeIPv4(ipv4));
+    }
+
     private static void assertFails(ExceptionalRunnable r) {
         try {
             r.run();
@@ -1737,17 +1886,17 @@ public class NumbersTest {
         }
     }
 
-    private static void assertParseMillisException(String sequence) {
+    private static void assertParseMicrosException(String sequence) {
         try {
-            Numbers.parseMillis(sequence);
+            Numbers.parseMicros(sequence);
             Assert.fail();
         } catch (NumericException ignore) {
         }
     }
 
-    private static void assertParseMicrosException(String sequence) {
+    private static void assertParseMillisException(String sequence) {
         try {
-            Numbers.parseMicros(sequence);
+            Numbers.parseMillis(sequence);
             Assert.fail();
         } catch (NumericException ignore) {
         }

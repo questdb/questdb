@@ -836,8 +836,8 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             TableToken tableToken = createTable(createTableModel(tableName).wal());
             TableToken tableCopyToken = createTable(createTableModel(tableCopyName).wal());
 
-            insert("INSERT INTO " + tableName + " (ts) VALUES ('2014')");
-            insert("INSERT INTO " + tableCopyName + " (ts) VALUES ('2015')");
+            execute("INSERT INTO " + tableName + " (ts) VALUES ('2014')");
+            execute("INSERT INTO " + tableCopyName + " (ts) VALUES ('2015')");
 
             CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
             checkWalTransactionsJob.runSerially();
@@ -1019,7 +1019,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
         AtomicReference<TableToken> tableToken = new AtomicReference<>();
         // tableName is WAL enabled
         final TableModel model = createTableModel(tableName).wal();
-        forEachNode(node -> tableToken.set(TestUtils.create(model, node.getEngine()))
+        forEachNode(node -> tableToken.set(TestUtils.createTable(node.getEngine(), model))
         );
 
         // tableCopyName is not WAL enabled
@@ -1088,7 +1088,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     }
 
     private void updateMaxUncommittedRows(CharSequence tableName, int maxUncommittedRows, int tableId) throws SqlException {
-        ddl("ALTER TABLE " + tableName + " SET PARAM maxUncommittedRows = " + maxUncommittedRows);
+        execute("ALTER TABLE " + tableName + " SET PARAM maxUncommittedRows = " + maxUncommittedRows);
         if (tableId > 0) {
             drainWalQueue();
         }

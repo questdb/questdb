@@ -40,21 +40,26 @@ import io.questdb.std.Os;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public class TestSleepFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "sleep(l)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         Function arg = args.getQuick(0);
         long sleepMillis = arg.getLong(null);
-
         return new Func(configuration, sleepMillis);
     }
 
-    static class Func extends BooleanFunction {
-
+    private static class Func extends BooleanFunction {
         private final MillisecondClock clock;
         private final long sleepMillis;
         private SqlExecutionCircuitBreaker circuitBreaker;
@@ -67,13 +72,11 @@ public class TestSleepFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             circuitBreaker.statefulThrowExceptionIfTripped();
-
             long sleepStart = clock.getTicks();
             while ((clock.getTicks() - sleepStart) < sleepMillis) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
                 Os.sleep(1);
             }
-
             return true;
         }
 

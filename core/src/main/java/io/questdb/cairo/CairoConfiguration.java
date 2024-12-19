@@ -114,8 +114,6 @@ public interface CairoConfiguration {
     @NotNull
     SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
 
-    int getColumnCastModelPoolCapacity();
-
     int getColumnIndexerQueueCapacity();
 
     int getColumnPurgeQueueCapacity();
@@ -148,9 +146,9 @@ public interface CairoConfiguration {
 
     int getCreateAsSelectRetryCount();
 
-    long getCreateTableModelBatchSize();
+    int getCreateTableColumnModelPoolCapacity();
 
-    int getCreateTableModelPoolCapacity();
+    long getCreateTableModelBatchSize();
 
     long getDataAppendPageSize();
 
@@ -204,9 +202,9 @@ public interface CairoConfiguration {
 
     int getGroupByPoolCapacity();
 
-    long getGroupByPresizeMaxHeapSize();
-
     long getGroupByPresizeMaxCapacity();
+
+    long getGroupByPresizeMaxHeapSize();
 
     int getGroupByShardingThreshold();
 
@@ -334,8 +332,6 @@ public interface CairoConfiguration {
     int getPartitionEncoderParquetRowGroupSize();
 
     int getPartitionEncoderParquetVersion();
-
-    boolean getPartitionO3OverwriteControlEnabled();
 
     long getPartitionO3SplitMinSize();
 
@@ -475,6 +471,8 @@ public interface CairoConfiguration {
     int getSqlPageFrameMinRows();
 
     int getSqlParallelWorkStealingThreshold();
+
+    int getSqlParquetFrameCacheCapacity();
 
     int getSqlSmallMapKeyCapacity();
 
@@ -626,6 +624,8 @@ public interface CairoConfiguration {
     boolean isParallelIndexingEnabled();
 
     boolean isPartitionEncoderParquetStatisticsEnabled();
+
+    boolean isPartitionO3OverwriteControlEnabled();
 
     boolean isReadOnlyInstance();
 

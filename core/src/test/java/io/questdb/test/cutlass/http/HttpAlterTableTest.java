@@ -50,7 +50,7 @@ public class HttpAlterTableTest extends AbstractTest {
     @Test
     public void testAlterTableSetType() throws Exception {
         Metrics metrics = Metrics.enabled();
-        testJsonQuery(metrics, engine -> {
+        testJsonQuery(metrics, (engine, sqlExecutionContext) -> {
             // create table
             sendAndReceiveDdl("CREATE TABLE test\n" +
                     "AS(\n" +
@@ -76,7 +76,7 @@ public class HttpAlterTableTest extends AbstractTest {
     @Test
     public void testAlterTableSquashPartition() throws Exception {
         Metrics metrics = Metrics.enabled();
-        testJsonQuery(metrics, engine -> {
+        testJsonQuery(metrics, (engine, sqlExecutionContext) -> {
             // create table
             sendAndReceiveDdl("CREATE TABLE test\n" +
                     "AS(\n" +
@@ -94,7 +94,7 @@ public class HttpAlterTableTest extends AbstractTest {
     @Test
     public void testAlterTableSuspendResume() throws Exception {
         Metrics metrics = Metrics.enabled();
-        testJsonQuery(metrics, engine -> {
+        testJsonQuery(metrics, (engine, sqlExecutionContext) -> {
             // create table
             sendAndReceiveDdl("CREATE TABLE test\n" +
                     "AS(\n" +

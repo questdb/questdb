@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
@@ -43,17 +42,17 @@ public class CreateTableTestUtils {
 
     public static void createAllTable(CairoEngine engine, int partitionBy) {
         TableModel model = getAllTypesModel(engine.getConfiguration(), partitionBy);
-        TestUtils.create(model, engine);
+        TestUtils.createTable(engine, model);
     }
 
     public static void createAllTableWithNewTypes(CairoEngine engine, int partitionBy) {
         TableModel model = getAllTypesModelWithNewTypes(engine.getConfiguration(), partitionBy);
-        TestUtils.create(model, engine);
+        TestUtils.createTable(engine, model);
     }
 
     public static void createAllTableWithTimestamp(CairoEngine engine, int partitionBy) {
         TableModel model = getAllTypesModel(engine.getConfiguration(), partitionBy).col("ts", ColumnType.TIMESTAMP).timestamp();
-        TestUtils.create(model, engine);
+        TestUtils.createTable(engine, model);
     }
 
     public static void createTableWithVersionAndId(TableModel model, CairoEngine engine, int version, int tableId) {
@@ -87,7 +86,7 @@ public class CreateTableTestUtils {
                     .col("l", ColumnType.BINARY)
                     .col("m", ColumnType.UUID)
                     .col("n", ColumnType.VARCHAR);
-            TestUtils.create(model, engine);
+            TestUtils.createTable(engine, model);
 
         } catch (RuntimeException e) {
             if ("table already exists: x".equals(e.getMessage())) {
@@ -97,10 +96,6 @@ public class CreateTableTestUtils {
             } else {
                 throw e;
             }
-        }
-
-        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-            metadataRW.hydrateTable("x");
         }
 
         Utf8StringSink utf8Sink = new Utf8StringSink();

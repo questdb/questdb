@@ -26,9 +26,9 @@ package io.questdb.test.griffin.engine.functions.eq;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.eq.EqBinaryFunctionFactory;
 import io.questdb.std.Files;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
 public class EqBinaryFunctionFactoryTest extends AbstractFunctionFactoryTest {

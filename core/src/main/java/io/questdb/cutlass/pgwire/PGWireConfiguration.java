@@ -70,6 +70,8 @@ public interface PGWireConfiguration extends WorkerPoolConfiguration {
 
     int getNamedStatementCacheCapacity();
 
+    int getNamedStatementLimit();
+
     int getNamesStatementPoolCapacity();
 
     NetworkFacade getNetworkFacade();
@@ -100,6 +102,8 @@ public interface PGWireConfiguration extends WorkerPoolConfiguration {
     int getUpdateCacheRowCount();
 
     boolean isInsertCacheEnabled();
+
+    boolean isLegacyModeEnabled();
 
     boolean isReadOnlyUserEnabled();
 

@@ -30,7 +30,11 @@ import io.questdb.griffin.engine.functions.SwappingArgsFunctionFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -76,6 +80,15 @@ public class FunctionFactoryCache {
                                 addFactoryToList(factories, greaterThan);
                                 // `b > a` == !(`b <= a`)
                                 addFactoryToList(factories, createNegatingFactory("<=", greaterThan));
+                                break;
+                            case ">":
+                                // `a > b` == `a <= b`
+                                addFactoryToList(factories, createNegatingFactory("<=", factory));
+                                FunctionFactory lessThan = createSwappingFactory("<", factory);
+                                // `a > b` == `b < a`
+                                addFactoryToList(factories, lessThan);
+                                // `b < a` == !(`b >= a`)
+                                addFactoryToList(factories, createNegatingFactory(">=", lessThan));
                                 break;
                         }
                     } else if (factory.isGroupBy()) {

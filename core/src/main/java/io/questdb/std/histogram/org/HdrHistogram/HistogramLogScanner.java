@@ -29,7 +29,10 @@
 
 package io.questdb.std.histogram.org.HdrHistogram;
 
-import java.io.*;
+import java.io.Closeable;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.util.Locale;
 import java.util.Scanner;
@@ -207,9 +210,7 @@ public class HistogramLogScanner implements Closeable {
             final String compressedPayloadString = scanner.next();
             final ByteBuffer buffer = ByteBuffer.wrap(Base64Helper.parseBase64Binary(compressedPayloadString));
 
-            EncodableHistogram histogram = EncodableHistogram.decodeFromCompressedByteBuffer(buffer, 0);
-
-            return histogram;
+            return EncodableHistogram.decodeFromCompressedByteBuffer(buffer, 0);
         }
 
         private void allowGet() {

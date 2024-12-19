@@ -132,6 +132,11 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     }
 
     @Override
+    public int getNamedStatementLimit() {
+        return 10_000;
+    }
+
+    @Override
     public int getNamesStatementPoolCapacity() {
         return 32;
     }
@@ -204,6 +209,11 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     @Override
     public boolean isInsertCacheEnabled() {
         return true;
+    }
+
+    @Override
+    public boolean isLegacyModeEnabled() {
+        return false;
     }
 
     @Override

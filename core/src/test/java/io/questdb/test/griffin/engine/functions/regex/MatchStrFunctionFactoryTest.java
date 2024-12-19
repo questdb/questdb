@@ -37,7 +37,7 @@ public class MatchStrFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNullRegex() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_str() name from long_sequence(2000))");
+            execute("create table x as (select rnd_str() name from long_sequence(2000))");
             assertQuery(
                     "name\n",
                     "select * from x where name ~ null",
@@ -50,7 +50,7 @@ public class MatchStrFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testRegexSyntaxError() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_str() name from long_sequence(2000))");
+            execute("create table x as (select rnd_str() name from long_sequence(2000))");
             try {
                 assertExceptionNoLeakCheck("select * from x where name ~ 'XJ**'");
             } catch (SqlException e) {
@@ -82,7 +82,7 @@ public class MatchStrFunctionFactoryTest extends AbstractCairoTest {
                     "HXJULSPH\n" +
                     "IPCBXJG\n" +
                     "XJN\n";
-            ddl("create table x as (select rnd_str() name from long_sequence(2000))");
+            execute("create table x as (select rnd_str() name from long_sequence(2000))");
 
             try (RecordCursorFactory factory = select("select * from x where name ~ 'XJ'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -100,7 +100,7 @@ public class MatchStrFunctionFactoryTest extends AbstractCairoTest {
                     "NGST\n" +
                     "NGVP\n" +
                     "NGTDNKSBXM\n";
-            ddl("create table x as (select rnd_str(4,10,1) name from long_sequence(2000))");
+            execute("create table x as (select rnd_str(4,10,1) name from long_sequence(2000))");
 
             try (RecordCursorFactory factory = select("select * from x where name ~ '^NG.*'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {

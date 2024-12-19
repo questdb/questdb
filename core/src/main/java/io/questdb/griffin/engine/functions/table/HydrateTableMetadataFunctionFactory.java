@@ -106,44 +106,46 @@ public class HydrateTableMetadataFunctionFactory implements FunctionFactory {
         }
 
         if (tableTokens.size() > 0) {
-            return new HydrateTableMetadataFunction(tableTokens, engine);
+            return new HydrateTableMetadataFunction(tableTokens, engine, position);
         } else {
             throw SqlException.$(position, "no valid table names provided");
         }
     }
 
     private static class HydrateTableMetadataFunction extends BooleanFunction {
+        private final int functionPosition;
         private final ObjList<TableToken> tableTokens;
         private CairoEngine engine;
 
-        public HydrateTableMetadataFunction(@NotNull ObjList<TableToken> tableTokens, @NotNull CairoEngine engine) {
+        public HydrateTableMetadataFunction(@NotNull ObjList<TableToken> tableTokens, @NotNull CairoEngine engine, int functionPosition) {
             this.tableTokens = tableTokens;
             this.engine = engine;
+            this.functionPosition = functionPosition;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            for (int i = 0, n = tableTokens.size(); i < n; i++) {
-                final TableToken tableToken = tableTokens.getQuick(i);
-                if (!tableToken.isSystem()) {
-                    try {
-                        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                            metadataRW.hydrateTable(tableTokens.getQuick(i));
-                        }
-                    } catch (CairoException ex) {
-                        LOG.error().$("could not hydrate metadata [table=").$(tableToken).I$();
-                        return false;
-                    }
-                }
-            }
             return true;
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            executionContext.getSecurityContext().authorizeAdminAction();
+            executionContext.getSecurityContext().authorizeSystemAdmin();
             engine = executionContext.getCairoEngine();
             super.init(symbolTableSource, executionContext);
+            for (int i = 0, n = tableTokens.size(); i < n; i++) {
+                final TableToken tableToken = tableTokens.getQuick(i);
+                if (!tableToken.isSystem()) {
+                    try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                        metadataRW.hydrateTable(tableTokens.getQuick(i));
+                    } catch (Throwable e) {
+                        if (e instanceof CairoException) {
+                            ((CairoException) e).position(functionPosition);
+                        }
+                        throw e;
+                    }
+                }
+            }
         }
 
         @Override

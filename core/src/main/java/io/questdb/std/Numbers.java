@@ -24,7 +24,6 @@
 
 package io.questdb.std;
 
-// @formatter:off
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -34,12 +33,9 @@ import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8s;import org.jetbrains.annotations.NotNull;
-//#if jdk.version==8
-//$import sun.misc.FDBigInteger;
-//#else
+import io.questdb.std.str.Utf8s;
 import jdk.internal.math.FDBigInteger;
-//#endif
+import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 
@@ -341,11 +337,7 @@ public final class Numbers {
         }
     }
 
-    public static void appendHex(CharSink<?> sink, final long value, boolean pad) {
-        if (value == Integer.MIN_VALUE) {
-            sink.putAscii("NaN");
-            return;
-        }
+    public static void appendHex(CharSink<?> sink, long value, boolean pad) {
         int bit = value == 0 ? 0 : 64 - Long.numberOfLeadingZeros(value);
         LongHexAppender[] array = pad ? longHexAppenderPad64 : longHexAppender;
         array[bit].append(sink, value);
@@ -479,22 +471,27 @@ public final class Numbers {
             return;
         }
         sink.putAscii("0x");
-        if (d != 0L) {
+        if (d != 0) {
             appendLong256Four(a, b, c, d, sink);
             return;
         }
-
-        if (c != 0L) {
+        if (c != 0) {
             appendLong256Three(a, b, c, sink);
             return;
         }
-
-        if (b != 0L) {
+        if (b != 0) {
             appendLong256Two(a, b, sink);
             return;
         }
-
         appendHex(sink, a, false);
+    }
+
+    public static void appendLong256FromUnsafe(long address, CharSink<?> sink) {
+        final long a = Unsafe.getUnsafe().getLong(address);
+        final long b = Unsafe.getUnsafe().getLong(address + Long.BYTES);
+        final long c = Unsafe.getUnsafe().getLong(address + Long.BYTES * 2);
+        final long d = Unsafe.getUnsafe().getLong(address + Long.BYTES * 3);
+        appendLong256(a, b, c, d, sink);
     }
 
     public static void appendUuid(long lo, long hi, CharSink<?> sink) {
@@ -576,7 +573,7 @@ public final class Numbers {
     }
 
     public static int compare(float a, float b) {
-        if (equals(a,b)) {
+        if (equals(a, b)) {
             return 0;
         }
 
@@ -709,6 +706,40 @@ public final class Numbers {
         return 32 - Integer.numberOfTrailingZeros(netmask);
     }
 
+    public static int hexDigitNumber(long value) {
+        int mag = 64 - Long.numberOfLeadingZeros(value | 1);
+        int v = (mag + 3) / 4;
+        return v + (v & 1); // round up to even number of digits 0x123 -> 0x0123
+    }
+
+    public static int hexDigitsLong256(Long256 long256) {
+        return hexDigitsLong256(long256.getLong0(), long256.getLong1(), long256.getLong2(), long256.getLong3());
+    }
+
+    public static int hexDigitsLong256(long a, long b, long c, long d) {
+        if (a == LONG_NULL && b == LONG_NULL && c == LONG_NULL && d == LONG_NULL) {
+            return 0;
+        }
+        int digits = 2; // 0x
+        if (d != 0) {
+            digits += hexDigitNumber(d);
+            digits += 48; // a, b, c are padded
+            return digits;
+        }
+        if (c != 0) {
+            digits += hexDigitNumber(c);
+            digits += 32; // a, b are padded
+            return digits;
+        }
+        if (b != 0) {
+            digits += hexDigitNumber(b);
+            digits += 16; // a is padded
+            return digits;
+        }
+        digits += hexDigitNumber(a);
+        return digits;
+    }
+
     public static int hexToDecimal(int c) throws NumericException {
         if (c > 127) {
             throw NumericException.INSTANCE;
@@ -761,6 +792,17 @@ public final class Numbers {
         return value & (-1L >>> 32);
     }
 
+    public static boolean isDecimal(CharSequence value, int start) {
+        int len = value.length();
+        for (int i = start; i < len; i++) {
+            char c = value.charAt(i);
+            if (c < '0' || c > '9') {
+                return false;
+            }
+        }
+        return len > start;
+    }
+
     public static boolean isFinite(double d) {
         return ((Double.doubleToRawLongBits(d) & EXP_BIT_MASK) != EXP_BIT_MASK);
     }
@@ -775,12 +817,13 @@ public final class Numbers {
      * infinities that arise from division by 0.
      */
     public static boolean isNull(double value) {
-        return (Double.doubleToRawLongBits(value) & EXP_BIT_MASK)==EXP_BIT_MASK;
+        return (Double.doubleToRawLongBits(value) & EXP_BIT_MASK) == EXP_BIT_MASK;
     }
 
     public static boolean isNull(float value) {
         return Float.isNaN(value) || Float.isInfinite(value);
     }
+
     public static boolean isPow2(int value) {
         return (value & (value - 1)) == 0;
     }
@@ -971,7 +1014,7 @@ public final class Numbers {
             if (sign == '.') {
                 do {
                     lo++;
-                }while(sequence.charAt(lo) == '.');
+                } while (sequence.charAt(lo) == '.');
             } else {
                 throw NumericException.INSTANCE;
             }
@@ -1043,7 +1086,6 @@ public final class Numbers {
     }
 
     public static long parseInt000Greedy(CharSequence sequence, final int p, int lim) throws NumericException {
-
         if (lim == p) {
             throw NumericException.INSTANCE;
         }
@@ -1101,7 +1143,6 @@ public final class Numbers {
     }
 
     public static long parseIntSafely(CharSequence sequence, final int p, int lim) throws NumericException {
-
         if (lim == p) {
             throw NumericException.INSTANCE;
         }
@@ -1547,7 +1588,7 @@ public final class Numbers {
             }
         }
 
-        if ((val == Long.MIN_VALUE && !negative) || digitCount == 0 ) {
+        if ((val == Long.MIN_VALUE && !negative) || digitCount == 0) {
             throw NumericException.INSTANCE;
         }
         return negative ? val : -val;
@@ -1588,7 +1629,7 @@ public final class Numbers {
                     }
                     if (i + 1 < lim) {
                         // could be 'ms' or an error
-                        if ((sequence.charAt(i + 1) | 32)!='s' || i + 2!=lim) {
+                        if ((sequence.charAt(i + 1) | 32) != 's' || i + 2 != lim) {
                             throw NumericException.INSTANCE;
                         }
                         // 'ms' at the end of the string
@@ -1648,7 +1689,7 @@ public final class Numbers {
             }
         }
 
-        if ((val == Long.MIN_VALUE && !negative) || digitCount == 0 ) {
+        if ((val == Long.MIN_VALUE && !negative) || digitCount == 0) {
             throw NumericException.INSTANCE;
         }
         return negative ? val : -val;
@@ -1697,7 +1738,7 @@ public final class Numbers {
                         }
                     } else {
                         // 'm' at the end of the string
-                        val *= Timestamps.MINUTE_MICROS*1000;
+                        val *= Timestamps.MINUTE_MICROS * 1000;
                     }
                     break OUT;
                 case 's':
@@ -1750,7 +1791,7 @@ public final class Numbers {
             }
         }
 
-        if ((val == Long.MIN_VALUE && !negative) || digitCount == 0 ) {
+        if ((val == Long.MIN_VALUE && !negative) || digitCount == 0) {
             throw NumericException.INSTANCE;
         }
         return negative ? val : -val;
@@ -1859,6 +1900,10 @@ public final class Numbers {
         ipv4 = ipv4 & checker;
 
         return ipv4;
+    }
+
+    public static int reverseBits(int i) {
+        return i << 24 | i >> 8 & 0xff00 | i << 8 & 0xff0000 | i >>> 24;
     }
 
     public static double roundDown(double value, int scale) throws NumericException {
@@ -1979,6 +2024,38 @@ public final class Numbers {
         return Double.longBitsToDouble(Double.doubleToRawLongBits(roundUp00PosScale(absValue, scale)) | signMask);
     }
 
+    public static int sinkSizeIPv4(int value) {
+        // NULL handling should be done outside
+        int sz = sinkSizeInt((value >> 24) & 0xff);
+        sz += 1; // '.'
+        sz += sinkSizeInt((value >> 16) & 0xff);
+        sz += 1; // '.'
+        sz += sinkSizeInt((value >> 8) & 0xff);
+        sz += 1; // '.'
+        sz += sinkSizeInt(value & 0xff);
+        return sz;
+    }
+
+    public static int sinkSizeInt(int value) {
+        if (value == Numbers.INT_NULL) {
+            return 4; // "null"
+        }
+
+        int sz = (value < 0) ? 1 : 0;
+        value = Math.abs(value);
+
+        if (value < 10) return sz + 1;
+        if (value < 100) return sz + 2;
+        if (value < 1000) return sz + 3;
+        if (value < 10000) return sz + 4;
+        if (value < 100000) return sz + 5;
+        if (value < 1000000) return sz + 6;
+        if (value < 10000000) return sz + 7;
+        if (value < 100000000) return sz + 8;
+        if (value < 1000000000) return sz + 9;
+        return sz + 10;
+    }
+
     public static long spreadBits(long v) {
         v = (v | (v << 16)) & 0X0000FFFF0000FFFFL;
         v = (v | (v << 8)) & 0X00FF00FF00FF00FFL;
@@ -2090,8 +2167,6 @@ public final class Numbers {
             decExp = binExp2 + 1;
             firstDigitIndex = digitIndex;
             nDigits = digits.length - digitIndex;
-
-            //
         } else {
             int estDecExp = estimateDecExpDouble(fractionBits, binExp);
             int B5 = Math.max(0, -estDecExp);
@@ -2898,7 +2973,6 @@ public final class Numbers {
     }
 
     private static int parseInt0(CharSequence sequence, final int p, int lim) throws NumericException {
-
         if (lim == p) {
             throw NumericException.INSTANCE;
         }
@@ -3146,12 +3220,10 @@ public final class Numbers {
         void append(CharSink<?> sink, long value);
     }
 
-    //#if jdk.version!=8
     static {
         Module currentModule = Numbers.class.getModule();
         Unsafe.addExports(Unsafe.JAVA_BASE_MODULE, currentModule, "jdk.internal.math");
     }
-    //#endif
 
     static {
         pow10 = new long[20];

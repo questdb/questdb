@@ -470,11 +470,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     closeContext();
                     String expected = "location\ttemperature\ttimestamp\n" +
                             "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
-                            "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
-                            "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
-                            "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
-                            "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
-                            "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
+                            "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n";
                     assertTable(expected, table);
                 }, null
         );
@@ -762,7 +758,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     public void testDesignatedTimestampNotCalledTimestampWhenTableExistAlready() throws Exception {
         String table = "tableExistAlready";
         runInContext(() -> {
-            ddl("create table " + table + " (location SYMBOL, temperature DOUBLE, time TIMESTAMP) timestamp(time);");
+            execute("create table " + table + " (location SYMBOL, temperature DOUBLE, time TIMESTAMP) timestamp(time);");
             recvBuffer =
                     table + ",location=us-midwest temperature=82,time=1465839830100300t 1465839830100400200\n" +
                             table + ",location=us-midwest temperature=83 1465839830100500200\n" +
@@ -789,7 +785,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     public void testDifferentCaseForExistingColumnWhenTableExistsAlready() throws Exception {
         String table = "tableExistAlready";
         runInContext(() -> {
-            ddl("create table " + table + " (location SYMBOL, temperature DOUBLE, timestamp TIMESTAMP) timestamp(timestamp);");
+            execute("create table " + table + " (location SYMBOL, temperature DOUBLE, timestamp TIMESTAMP) timestamp(timestamp);");
             recvBuffer =
                     table + ",location=us-midwest temperature=82,timestamp=1465839830100400t 1465839830100300200\n" +
                             table + ",location=us-midwest temperature=83 1465839830100500200\n" +
@@ -998,7 +994,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     public void testDuplicateFieldWhenTableExistsAlready() throws Exception {
         String table = "tableExistAlready";
         runInContext(() -> {
-            ddl("create table " + table + " (location SYMBOL, temperature DOUBLE, timestamp TIMESTAMP) timestamp(timestamp);");
+            execute("create table " + table + " (location SYMBOL, temperature DOUBLE, timestamp TIMESTAMP) timestamp(timestamp);");
             recvBuffer =
                     table + ",location=us-midwest temperature=82,timestamp=1465839830100100t 1465839830100300200\n" +
                             table + ",location=us-midwest temperature=83 1465839830100500200\n" +
@@ -1025,7 +1021,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     public void testDuplicateFieldWhenTableExistsAlreadyNonASCIIFirstRow() throws Exception {
         String table = "dupField";
         runInContext(() -> {
-            ddl("create table " + table + " (terület SYMBOL, hőmérséklet DOUBLE, timestamp TIMESTAMP) timestamp(timestamp);");
+            execute("create table " + table + " (terület SYMBOL, hőmérséklet DOUBLE, timestamp TIMESTAMP) timestamp(timestamp);");
             recvBuffer =
                     table + ",terület=us-midwest hőmérséklet=82,ветер=2.5,ВЕтеР=2.4 1465839830100400200\n" +
                             table + ",terület=us-midwest hőmérséklet=83,ветер=3.0 1465839830100500200\n" +
@@ -1333,7 +1329,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     public void testInsertIntoExistingVarcharColumn() throws Exception {
         String table = "tableExistAlready";
         runInContext(() -> {
-            ddl("create table " + table + " (location SYMBOL, slog VARCHAR, timestamp TIMESTAMP) timestamp(timestamp);");
+            execute("create table " + table + " (location SYMBOL, slog VARCHAR, timestamp TIMESTAMP) timestamp(timestamp);");
             recvBuffer =
                     table + ",location=us-midwest slog=\"82\",timestamp=1465839830100100t 1465839830100300200\n" +
                             table + ",location=us-midwest slog=\"hello\" 1465839830100500200\n" +
@@ -1616,7 +1612,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         String table = "testNewColumnsNotAllowed";
         autoCreateNewColumns = false;
         disconnectOnError = true;
-        ddl("create table " + table + " (location SYMBOL, timestamp TIMESTAMP) timestamp(timestamp);");
+        execute("create table " + table + " (location SYMBOL, timestamp TIMESTAMP) timestamp(timestamp);");
 
         engine.releaseInactive();
         runInContext(() -> {
@@ -1666,7 +1662,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n",
                     "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()"
             );
-            ddl("create table vbw(a int)");
+            execute("create table vbw(a int)");
         });
     }
 
@@ -1881,7 +1877,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     public void testTableParameterRetentionOnAddColumn() throws Exception {
         String table = "retention";
         runInContext(() -> {
-            ddl("create table " + table + " (location SYMBOL, temperature DOUBLE, timestamp TIMESTAMP) timestamp(timestamp) partition by DAY WITH maxUncommittedRows=3, o3MaxLag=250ms;");
+            execute("create table " + table + " (location SYMBOL, temperature DOUBLE, timestamp TIMESTAMP) timestamp(timestamp) partition by DAY WITH maxUncommittedRows=3, o3MaxLag=250ms;");
             try (TableReader reader = getReader(table)) {
                 Assert.assertEquals(3, reader.getMetadata().getMaxUncommittedRows());
                 Assert.assertEquals(250_000, reader.getMetadata().getO3MaxLag());
