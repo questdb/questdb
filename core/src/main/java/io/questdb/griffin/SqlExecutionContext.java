@@ -25,10 +25,20 @@
 package io.questdb.griffin;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
+import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
@@ -169,6 +179,16 @@ public interface SqlExecutionContext extends Closeable {
     }
 
     boolean isWalApplication();
+
+    default boolean overrideIntrinsics(TableToken tableToken) {
+        return false;
+    }
+
+    // This method is used to override intrinsic values in the query execution context
+    // It is initial usage is in the Materialized view refresh
+    // where the queried timestamp of the base table is limited to the range affected since last refresh
+    default void overrideWhereIntrinsics(TableToken tableToken, IntrinsicModel intrinsicModel) {
+    }
 
     void popTimestampRequiredFlag();
 

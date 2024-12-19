@@ -30,4 +30,9 @@ public class DropAllTablesOperation implements Operation {
     public int getOperationCode() {
         return OperationCodes.DROP_ALL_TABLES;
     }
+
+    @Override
+    public OperationFuture getOperationFuture() {
+        return future;
+    }
 }

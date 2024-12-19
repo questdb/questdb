@@ -46,6 +46,11 @@ public class GenericDropOperation implements Operation {
         return operationCode;
     }
 
+    @Override
+    public OperationFuture getOperationFuture() {
+        return future;
+    }
+
     public boolean ifExists() {
         return ifExists;
     }

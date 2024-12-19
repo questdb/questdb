@@ -2424,7 +2424,8 @@ public class GroupByTest extends AbstractCairoTest {
                 true,
                 true
         );
-        assertSql(expected,
+        assertSql(
+                expected,
                 "WITH x_sample AS (\n" +
                         "  SELECT id, uuid, url, sum(metric) m_sum\n" +
                         "  FROM x\n" +
@@ -2433,7 +2434,8 @@ public class GroupByTest extends AbstractCairoTest {
                         ")\n" +
                         "SELECT url, count(distinct uuid) u_count, count() cnt, avg(m_sum) avg_m_sum\n" +
                         "FROM x_sample\n" +
-                        "GROUP BY url");
+                        "GROUP BY url"
+        );
     }
 
     @Test

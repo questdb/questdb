@@ -57,6 +57,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.VacuumColumnVersions;
+import io.questdb.cairo.mv.MaterializedViewDefinition;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
@@ -78,6 +79,8 @@ import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.engine.ops.CopyCancelFactory;
 import io.questdb.griffin.engine.ops.CopyFactory;
+import io.questdb.griffin.engine.ops.CreateMatViewOperation;
+import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.engine.ops.DropAllTablesOperation;
@@ -394,6 +397,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             case OperationCodes.CREATE_TABLE:
                 executeCreateTable((CreateTableOperation) op, executionContext);
                 break;
+            case OperationCodes.CREATE_MAT_VIEW:
+                executeCreateMatView((CreateMatViewOperation) op, executionContext);
+                break;
             case OperationCodes.DROP_TABLE:
                 executeDropTable((DropTableOperation) op, executionContext);
                 break;
@@ -426,6 +432,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 queryModel = (QueryModel) compileExecutionModel(executionContext);
             }
         }
+    }
+
+    @Override
+    public BytecodeAssembler getAsm() {
+        return asm;
     }
 
     @Override
@@ -1227,7 +1238,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private CharSequence authorizeInsertForCopy(SecurityContext securityContext, CopyModel model) {
-        final CharSequence tableName = GenericLexer.unquote(model.getTarget().token);
+        final CharSequence tableName = GenericLexer.unquote(model.getTableName());
         final TableToken tt = engine.getTableTokenIfExists(tableName);
         if (tt != null) {
             // for existing table user have to have INSERT permission
@@ -1235,6 +1246,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             securityContext.authorizeInsert(tt);
         }
         return tableName;
+    }
+
+    private void checkMatViewModification(ExecutionModel executionModel) throws SqlException {
+        final CharSequence name = executionModel.getTableName();
+        final TableToken tt = engine.getTableTokenIfExists(name);
+        if (tt != null && tt.isMatView()) {
+            throw SqlException.position(executionModel.getTableNameExpr().position).put("cannot modify materialized view [view=").put(name).put(']');
+        }
     }
 
     private void compileAlter(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
@@ -1640,7 +1659,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         assert model.isCancel();
 
         long cancelCopyID;
-        String cancelCopyIDStr = Chars.toString(GenericLexer.unquote(model.getTarget().token));
+        String cancelCopyIDStr = Chars.toString(GenericLexer.unquote(model.getTableName()));
         try {
             cancelCopyID = Numbers.parseHexLong(cancelCopyIDStr);
         } catch (NumericException e) {
@@ -2060,20 +2079,26 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 case ExecutionModel.CREATE_TABLE:
                     compiledQuery.ofCreateTable(((CreateTableOperationBuilder) executionModel).build(this, executionContext, sqlText));
                     break;
+                case ExecutionModel.CREATE_MAT_VIEW:
+                    compiledQuery.ofCreateMatView(((CreateMatViewOperationBuilder) executionModel).build(this, executionContext, sqlText));
+                    break;
                 case ExecutionModel.COPY:
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
+                    checkMatViewModification(executionModel);
                     copy(executionContext, (CopyModel) executionModel);
                     QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos, false);
                     break;
                 case ExecutionModel.RENAME_TABLE:
                     sqlId = queryRegistry.register(sqlText, executionContext);
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
+                    checkMatViewModification(executionModel);
                     final RenameTableModel rtm = (RenameTableModel) executionModel;
                     engine.rename(executionContext.getSecurityContext(), path, mem, GenericLexer.unquote(rtm.getFrom().token), renamePath, GenericLexer.unquote(rtm.getTo().token));
                     compiledQuery.ofRenameTable();
                     break;
                 case ExecutionModel.UPDATE:
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
+                    checkMatViewModification(executionModel);
                     final QueryModel updateQueryModel = (QueryModel) executionModel;
                     TableToken tableToken = executionContext.getTableToken(updateQueryModel.getTableName());
                     try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken)) {
@@ -2089,8 +2114,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos, false);
                     break;
                 default:
-                    final InsertModel insertModel = (InsertModel) executionModel;
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
+                    checkMatViewModification(executionModel);
+                    final InsertModel insertModel = (InsertModel) executionModel;
                     if (insertModel.getQueryModel() != null) {
                         sqlId = queryRegistry.register(sqlText, executionContext);
                         executeWithRetries(
@@ -2431,18 +2457,116 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return rowCount;
     }
 
+    private void executeCreateMatView(CreateMatViewOperation createMatViewOp, SqlExecutionContext executionContext) throws SqlException {
+        final long sqlId = queryRegistry.register(createMatViewOp.getSqlText(), executionContext);
+        long beginNanos = configuration.getMicrosecondClock().getTicks();
+        QueryProgress.logStart(sqlId, createMatViewOp.getSqlText(), executionContext, false);
+        try {
+            final int status = executionContext.getTableStatus(path, createMatViewOp.getTableName());
+            if (status == TableUtils.TABLE_EXISTS) {
+                final TableToken tt = executionContext.getTableTokenIfExists(createMatViewOp.getTableName());
+                if (tt != null && !tt.isMatView()) {
+                    throw SqlException.$(createMatViewOp.getTableNamePosition(), "a table already exists with the requested name");
+                }
+                if (createMatViewOp.ignoreIfExists()) {
+                    createMatViewOp.updateOperationFutureTableToken(tt);
+                } else {
+                    throw SqlException.$(createMatViewOp.getTableNamePosition(), "materialized view already exists");
+                }
+            } else {
+                CharSequence volumeAlias = createMatViewOp.getVolumeAlias();
+                if (volumeAlias != null) {
+                    CharSequence volumePath = configuration.getVolumeDefinitions().resolveAlias(volumeAlias);
+                    if (volumePath != null) {
+                        if (!ff.isDirOrSoftLinkDir(path.of(volumePath).$())) {
+                            throw CairoException.critical(0).put("not a valid path for volume [alias=")
+                                    .put(volumeAlias).put(", path=").put(path).put(']');
+                        }
+                    } else {
+                        throw SqlException.position(0).put("volume alias is not allowed [alias=")
+                                .put(volumeAlias).put(']');
+                    }
+                }
+
+                final MaterializedViewDefinition matViewDefinition;
+                final TableToken matViewToken;
+
+                final CreateTableOperation createTableOp = createMatViewOp.getCreateTableOperation();
+                if (createTableOp.getRecordCursorFactory() != null) {
+                    RecordCursorFactory factory = createTableOp.getRecordCursorFactory();
+                    RecordCursor newCursor;
+                    for (int retryCount = 0; ; retryCount++) {
+                        try {
+                            newCursor = factory.getCursor(executionContext);
+                            break;
+                        } catch (TableReferenceOutOfDateException e) {
+                            if (retryCount == maxRecompileAttempts) {
+                                throw SqlException.$(0, e.getFlyweightMessage());
+                            }
+                            lexer.of(createTableOp.getSelectText());
+                            clear();
+                            compileInner(executionContext, createTableOp.getSelectText());
+                            factory.close();
+                            factory = this.compiledQuery.getRecordCursorFactory();
+                            LOG.info().$("retrying plan [q=`").$(createTableOp.getSelectText()).$("`]").$();
+                        }
+                    }
+                    try (RecordCursor cursor = newCursor) {
+                        typeCast.clear();
+                        final RecordMetadata metadata = factory.getMetadata();
+                        createMatViewOp.validateAndUpdateMetadataFromSelect(metadata);
+
+                        matViewDefinition = engine.createMatView(
+                                executionContext.getSecurityContext(),
+                                mem,
+                                path,
+                                createMatViewOp.ignoreIfExists(),
+                                createMatViewOp,
+                                !createMatViewOp.isWalEnabled(),
+                                volumeAlias != null
+                        );
+                        matViewToken = matViewDefinition.getMatViewToken();
+
+                        cursor.hasNext();
+                        queryRegistry.unregister(sqlId, executionContext);
+                    }
+
+                    final TableToken baseTableToken = engine.getTableTokenIfExists(matViewDefinition.getBaseTableName());
+                    engine.getMaterializedViewGraph().createView(baseTableToken, matViewDefinition);
+                    createMatViewOp.updateOperationFutureTableToken(matViewToken);
+                } else {
+                    throw SqlException.$(createTableOp.getTableNamePosition(), "materialized view requires a SELECT statement");
+                }
+            }
+            // todo: jit is always false, why?
+            QueryProgress.logEnd(sqlId, createMatViewOp.getSqlText(), executionContext, beginNanos, false);
+        } catch (Throwable e) {
+            if (e instanceof CairoException) {
+                ((CairoException) e).position(createMatViewOp.getTableNamePosition());
+            }
+            // todo: jit is always false, why?
+            QueryProgress.logError(e, sqlId, createMatViewOp.getSqlText(), executionContext, beginNanos, false);
+            throw e;
+        }
+    }
+
     private void executeCreateTable(CreateTableOperation createTableOp, SqlExecutionContext executionContext) throws SqlException {
         final long sqlId = queryRegistry.register(createTableOp.getSqlText(), executionContext);
         long beginNanos = configuration.getMicrosecondClock().getTicks();
         QueryProgress.logStart(sqlId, createTableOp.getSqlText(), executionContext, false);
         try {
-
             // Fast path for CREATE TABLE IF NOT EXISTS in scenario when the table already exists
             final int status = executionContext.getTableStatus(path, createTableOp.getTableName());
-            if (createTableOp.ignoreIfExists() && status == TableUtils.TABLE_EXISTS) {
-                createTableOp.updateOperationFutureTableToken(executionContext.getTableTokenIfExists(createTableOp.getTableName()));
-            } else if (status == TableUtils.TABLE_EXISTS) {
-                throw SqlException.$(createTableOp.getTableNamePosition(), "table already exists");
+            if (status == TableUtils.TABLE_EXISTS) {
+                final TableToken tt = executionContext.getTableTokenIfExists(createTableOp.getTableName());
+                if (tt != null && tt.isMatView()) {
+                    throw SqlException.$(createTableOp.getTableNamePosition(), "a materialized view already exists with the requested name");
+                }
+                if (createTableOp.ignoreIfExists()) {
+                    createTableOp.updateOperationFutureTableToken(tt);
+                } else {
+                    throw SqlException.$(createTableOp.getTableNamePosition(), "table already exists");
+                }
             } else {
                 // create table (...) ... in volume volumeAlias;
                 CharSequence volumeAlias = createTableOp.getVolumeAlias();
@@ -2678,7 +2802,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
             }
         } while (true);
-
     }
 
     private int filterApply(
@@ -3530,6 +3653,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     metadata
                             );
                             mem.close(true, Vm.TRUNCATE_TO_POINTER);
+                        }
+
+                        if (tableToken.isMatView()) {
+                            // todo: clone mat view meta files
                         }
                     } finally {
                         mem.close();
