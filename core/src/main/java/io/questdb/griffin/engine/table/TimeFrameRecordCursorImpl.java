@@ -24,10 +24,29 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.DataUnavailableException;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameAddressCache;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemory;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
-import io.questdb.std.*;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.TimeFrame;
+import io.questdb.cairo.sql.TimeFrameRecordCursor;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.Rows;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -121,7 +140,7 @@ public class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
         return false;
     }
 
-    public TimeFrameRecordCursor of(PageFrameCursor frameCursor) {
+    public TimeFrameRecordCursor of(TablePageFrameCursor frameCursor) {
         this.frameCursor = frameCursor;
         frameAddressCache.of(metadata, frameCursor.getColumnIndexes());
         frameMemoryPool.of(frameAddressCache);
