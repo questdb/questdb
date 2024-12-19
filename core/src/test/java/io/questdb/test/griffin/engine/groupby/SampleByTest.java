@@ -97,8 +97,19 @@ public class SampleByTest extends AbstractCairoTest {
             "x::timestamp as n," +
             "FROM long_sequence(480)\n" +
             ") timestamp(ts)";
-
     private static final Log LOG = LogFactory.getLog(SampleByTest.class);
+    final String sysTelemetryWalDdl = "CREATE TABLE IF NOT EXISTS 'sys.telemetry_wal' ( " +
+            "created TIMESTAMP, " +
+            "event SHORT, " +
+            "tableId INT, " +
+            "walId INT, " +
+            "seqTxn LONG, " +
+            "rowCount LONG, " +
+            "physicalRowCount LONG, " +
+            "latency FLOAT " +
+            ") timestamp(created) " +
+            "PARTITION BY MONTH BYPASS WAL " +
+            "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;";
 
     @Test
     public void testBadFunction() throws Exception {
@@ -2890,6 +2901,82 @@ public class SampleByTest extends AbstractCairoTest {
                     "2030-01-01T00:00:00.000000Z\tnull\t5.0\n" +
                     "2030-01-02T00:00:00.000000Z\t1\t1234.0\n" +
                     "2030-01-03T00:00:00.000000Z\tnull\t5.0\n", query);
+        });
+    }
+
+    @Test
+    public void testPrefixedTableNames() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(sysTelemetryWalDdl);
+            assertSql("created\tcommit_rate\n" +
+                    "2024-12-08T00:00:00.000000Z\t0\n" +
+                    "2024-12-08T08:00:00.000000Z\t0\n" +
+                    "2024-12-08T16:00:00.000000Z\t0\n", "select created, count() commit_rate\n" +
+                    "from sys.telemetry_wal\n" +
+                    "where tableId = 1017 and event = 103\n" +
+                    "and created >= '2024-12-08' and created < '2024-12-09'\n" +
+                    "sample by 8h from\n" +
+                    "'2024-12-08' to '2024-12-09'\n" +
+                    "fill(0)");
+            assertSql(
+                    "created\tcommit_rate\n" +
+                            "2024-12-08T00:00:00.000000Z\t0\n" +
+                            "2024-12-08T08:00:00.000000Z\t0\n" +
+                            "2024-12-08T16:00:00.000000Z\t0\n",
+                    "select created, count() commit_rate\n" +
+                            "from \"sys.telemetry_wal\"\n" +
+                            "where tableId = 1017 and event = 103\n" +
+                            "and \"sys.telemetry_wal\".created >= '2024-12-08' and created < '2024-12-09'\n" +
+                            "sample by 8h from\n" +
+                            "'2024-12-08' to '2024-12-09'\n" +
+                            "fill(0)"
+            );
+        });
+    }
+
+    @Test
+    public void testQueryCorrectlyFillsSides() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(sysTelemetryWalDdl);
+            drainWalQueue();
+            assertSql("created\twriteAmplification\n" +
+                            "2024-12-10T23:31:02.000000Z\tnull\n" +
+                            "2024-12-11T00:31:02.000000Z\tnull\n" +
+                            "2024-12-11T01:31:02.000000Z\tnull\n" +
+                            "2024-12-11T02:31:02.000000Z\tnull\n" +
+                            "2024-12-11T03:31:02.000000Z\tnull\n" +
+                            "2024-12-11T04:31:02.000000Z\tnull\n" +
+                            "2024-12-11T05:31:02.000000Z\tnull\n" +
+                            "2024-12-11T06:31:02.000000Z\tnull\n" +
+                            "2024-12-11T07:31:02.000000Z\tnull\n" +
+                            "2024-12-11T08:31:02.000000Z\tnull\n" +
+                            "2024-12-11T09:31:02.000000Z\tnull\n" +
+                            "2024-12-11T10:31:02.000000Z\tnull\n",
+                    "select \n" +
+                            "  created,\n" +
+                            "  -- coars, actual write amplification bucketed in 1s buckets\n" +
+                            "  phy_row_count/row_count writeAmplification\n" +
+                            "from (  \n" +
+                            "  select \n" +
+                            "    created, \n" +
+                            "    sum(phy_row_count) over (order by created rows between 59 PRECEDING and CURRENT row) phy_row_count,\n" +
+                            "    sum(row_count) over (order by created rows between 59 PRECEDING and CURRENT row) row_count\n" +
+                            "    from (\n" +
+                            "      select \n" +
+                            "        created, \n" +
+                            "        sum(rowcount) row_count,\n" +
+                            "        sum(physicalRowCount) phy_row_count,\n" +
+                            "      from sys.telemetry_wal\n" +
+                            "      where tableId = 10 and \n" +
+                            "         event = 105\n" +
+                            "         and rowCount > 0 -- this is fixed clause, we have rows with - rowCount logged\n" +
+                            "      sample by 1h\n" +
+                            "      FROM '2024-12-11T00:31:02+01:00' TO '2024-12-11T12:31:02+01:00'\n" +
+                            "      -- fill with null to avoid spurious values and division by 0\n" +
+                            "      fill(null)\n" +
+                            "      \n" +
+                            "  )\n" +
+                            ");");
         });
     }
 

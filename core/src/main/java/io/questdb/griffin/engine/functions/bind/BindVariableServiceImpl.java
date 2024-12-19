@@ -33,7 +33,16 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.UndefinedFunction;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.Transient;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
@@ -173,15 +182,6 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     @Override
-    public boolean isDefined(int index) {
-        Function f = getFunction(index);
-        if (f != null) {
-            return f.getType() == ColumnType.UNDEFINED;
-        }
-        throw new IllegalStateException("variable index is out of range: " + index);
-    }
-
-    @Override
     public Function getFunction(CharSequence name) {
         assert name != null;
         assert Chars.startsWith(name, ':');
@@ -195,20 +195,6 @@ public class BindVariableServiceImpl implements BindVariableService {
             return indexedVariables.getQuick(index);
         }
         return null;
-    }
-
-    private void setUndefined(int index) {
-        indexedVariables.extendPos(index + 1);
-        // variable exists
-        Function function = indexedVariables.getQuick(index);
-        if (function != null) {
-            if (function.getType() != ColumnType.UNDEFINED) {
-                Misc.free(function);
-                indexedVariables.extendAndSet(index, UndefinedFunction.INSTANCE);
-            }
-        } else {
-            indexedVariables.extendAndSet(index, UndefinedFunction.INSTANCE);
-        }
     }
 
     @Override
@@ -1299,6 +1285,20 @@ public class BindVariableServiceImpl implements BindVariableService {
             default:
                 reportError(function, ColumnType.VARCHAR, index, name);
                 break;
+        }
+    }
+
+    private void setUndefined(int index) {
+        indexedVariables.extendPos(index + 1);
+        // variable exists
+        Function function = indexedVariables.getQuick(index);
+        if (function != null) {
+            if (function.getType() != ColumnType.UNDEFINED) {
+                Misc.free(function);
+                indexedVariables.extendAndSet(index, UndefinedFunction.INSTANCE);
+            }
+        } else {
+            indexedVariables.extendAndSet(index, UndefinedFunction.INSTANCE);
         }
     }
 }
