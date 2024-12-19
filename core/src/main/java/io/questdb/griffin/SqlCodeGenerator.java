@@ -1929,7 +1929,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return castFunctions;
     }
 
-    private RecordCursorFactory generateFill(QueryModel model, RecordCursorFactory groupByFactory, SqlExecutionContext executionContext) throws SqlException {
+    private RecordCursorFactory generateFill(RecordCursorFactory groupByFactory, QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         // locate fill
         QueryModel curr = model;
 
@@ -1959,7 +1959,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             ExpressionNode expr;
             for (int i = 0, n = fillValuesExprs.size(); i < n; i++) {
-                expr = fillValuesExprs.getQuick(0);
+                expr = fillValuesExprs.getQuick(i);
                 if (isNoneKeyword(expr.token)) {
                     Misc.freeObjList(fillValues);
                     return groupByFactory;
@@ -3012,7 +3012,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 listColumnFilterA.clear();
                 intHashSet.clear();
 
-                int orderedByTimestampIndex = -1;
+                int orderedByTimestampIndex = Integer.MIN_VALUE;
                 // column index sign indicates direction
                 // therefore 0 index is not allowed
                 for (int i = 0; i < orderByColumnCount; i++) {
@@ -3038,6 +3038,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (intHashSet.add(index)) {
                         if (orderByColumnNameToIndexMap.get(column) == QueryModel.ORDER_DIRECTION_DESCENDING) {
                             listColumnFilterA.add(-index - 1);
+                            if (i == 0 && metadata.getColumnType(index) == ColumnType.TIMESTAMP) {
+                                orderedByTimestampIndex = -index - 1;
+                            }
                         } else {
                             listColumnFilterA.add(index + 1);
                             if (i == 0 && metadata.getColumnType(index) == ColumnType.TIMESTAMP) {
@@ -3074,11 +3077,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 GenericRecordMetadata orderedMetadata;
                 int firstOrderByColumnIndex = metadata.getColumnIndexQuiet(orderByColumnNames.getQuick(0));
-                if (firstOrderByColumnIndex == timestampIndex) {
+                if (firstOrderByColumnIndex == timestampIndex && preSortedByTs) {
                     orderedMetadata = GenericRecordMetadata.copyOf(metadata);
                 } else {
                     orderedMetadata = GenericRecordMetadata.copyOfSansTimestamp(metadata);
-                    orderedMetadata.setTimestampIndex(orderedByTimestampIndex);
+                    if (orderedByTimestampIndex != Integer.MIN_VALUE) {
+                        if (orderedByTimestampIndex > -1) {
+                            orderedMetadata.setTimestampIndex(orderedByTimestampIndex);
+                        } else {
+                            orderedMetadata.setTimestampIndex(-orderedByTimestampIndex - 1);
+                        }
+                    }
                 }
                 final Function loFunc = getLoFunction(model, executionContext);
                 final Function hiFunc = getHiFunction(model, executionContext);
@@ -4078,7 +4087,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     guardAgainstFillWithKeyedGroupBy(model, keyTypes);
 
                     return generateFill(
-                            model,
                             new GroupByRecordCursorFactory(
                                     configuration,
                                     factory,
@@ -4090,6 +4098,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     tempKeyIndex.getQuick(0),
                                     tempSymbolSkewIndexes
                             ),
+                            model,
                             executionContext
                     );
                 }
@@ -4223,7 +4232,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     guardAgainstFillWithKeyedGroupBy(model, keyTypes);
 
                     return generateFill(
-                            model,
                             new AsyncGroupByRecordCursorFactory(
                                     asm,
                                     configuration,
@@ -4264,6 +4272,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     ),
                                     executionContext.getSharedWorkerCount()
                             ),
+                            model,
                             executionContext
                     );
                 }
@@ -4285,7 +4294,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             guardAgainstFillWithKeyedGroupBy(model, keyTypes);
 
             return generateFill(
-                    model,
                     new io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory(
                             asm,
                             configuration,
@@ -4298,6 +4306,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             keyFunctions,
                             recordFunctions
                     ),
+                    model,
                     executionContext
             );
         } catch (Throwable e) {
