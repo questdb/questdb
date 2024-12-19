@@ -144,6 +144,7 @@ public class DropIndexTest extends AbstractCairoTest {
         assertSql("a\tts\tsym\n" +
                 "1\t2022-02-24T01:30:00.000000Z\tA\n" +
                 "2\t2022-02-24T01:46:40.000000Z\tA\n", "select * from " + tableName + " where sym = 'A'");
+
     }
 
     @Test
@@ -609,6 +610,7 @@ public class DropIndexTest extends AbstractCairoTest {
         }
         return fn.endsWith(K) || fn.endsWith(V);
     }
+
 
     private long countDFiles(long txn) throws IOException {
         return countFiles(columnName, txn, DropIndexTest::isDataFile);
