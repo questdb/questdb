@@ -38,6 +38,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 // However, the `delegate` circuit breaker instance referenced by the wrapper has to be thread-safe
 // if it is used by multiple threads (i.e. set as a delegate in multiple wrappers at the same time).
 public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBreaker, Closeable {
+    private final AtomicBooleanCircuitBreaker atomicBooleanCircuitBreaker = new AtomicBooleanCircuitBreaker();
     private SqlExecutionCircuitBreaker delegate;
     private NetworkSqlExecutionCircuitBreaker networkSqlExecutionCircuitBreaker;
 
@@ -100,9 +101,11 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
         init(wrapper.delegate);
     }
 
-    @Override
     public void init(SqlExecutionCircuitBreaker executionContextCircuitBreaker) {
-        if (executionContextCircuitBreaker.isThreadsafe()) {
+        if (executionContextCircuitBreaker instanceof AtomicBooleanCircuitBreaker) {
+            atomicBooleanCircuitBreaker.init(executionContextCircuitBreaker);
+            delegate = atomicBooleanCircuitBreaker;
+        } else if (executionContextCircuitBreaker.isThreadsafe()) {
             delegate = executionContextCircuitBreaker;
         } else {
             networkSqlExecutionCircuitBreaker.init(executionContextCircuitBreaker);
