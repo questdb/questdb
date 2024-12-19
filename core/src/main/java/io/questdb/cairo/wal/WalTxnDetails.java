@@ -43,7 +43,6 @@ public class WalTxnDetails {
     public static final long LAST_ROW_COMMIT = Long.MAX_VALUE - 1;
     private static final int SEQ_TXN_OFFSET = 0;
     private static final int COMMIT_TO_TIMESTAMP_OFFSET = SEQ_TXN_OFFSET + 1;
-    private static final int TXN_DETAIL_RECORD_SIZE = 5;
     private static final int WAL_TXN_MIN_TIMESTAMP_OFFSET = COMMIT_TO_TIMESTAMP_OFFSET + 1;
     private static final int WAL_TXN_MAX_TIMESTAMP_OFFSET = WAL_TXN_MIN_TIMESTAMP_OFFSET + 1;
     private static final int WAL_TXN_ID_SEG_ID_OFFSET = WAL_TXN_MAX_TIMESTAMP_OFFSET + 1;
@@ -52,6 +51,7 @@ public class WalTxnDetails {
     private static final int WAL_TXN_ROW_IN_ORDER_DATA_TYPE = WAL_TXN_ROW_HI_OFFSET + 1;
     private static final int WAL_TXN_SYMBOL_DIFF_OFFSET = WAL_TXN_ROW_IN_ORDER_DATA_TYPE + 1;
     public static final int TXN_METADATA_LONGS_SIZE = WAL_TXN_SYMBOL_DIFF_OFFSET + 1;
+    private static final int TXN_DETAIL_RECORD_SIZE = 5;
     private final CharSequenceIntHashMap allSymbols = new CharSequenceIntHashMap();
     private final LongHashSet futureWalSegments = new LongHashSet();
     private final int maxLookahead;
@@ -123,7 +123,7 @@ public class WalTxnDetails {
         return Math.abs(walId);
     }
 
-    public long getWalSegmentId(long seqTxn) {
+    public int getWalSegmentId(long seqTxn) {
         long value = transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ID_SEG_ID_OFFSET));
         return Numbers.decodeLowInt(value);
     }
@@ -358,17 +358,21 @@ public class WalTxnDetails {
             while ((entry = symbolMapDiff.nextEntry()) != null) {
                 final int key = entry.getKey();
                 symbolIndexes.add(key);
-
-                final CharSequence symbolValue = entry.getSymbol();
-                int keyIndex = allSymbols.keyIndex(symbolValue);
-                int valueOffset;
-                if (keyIndex < 0) {
-                    valueOffset = allSymbols.valueAt(keyIndex);
+                if (key >= cleanSymbolCount) {
+                    final CharSequence symbolValue = entry.getSymbol();
+                    int keyIndex = allSymbols.keyIndex(symbolValue);
+                    int valueOffset;
+                    if (keyIndex < 0) {
+                        valueOffset = allSymbols.valueAt(keyIndex);
+                    } else {
+                        valueOffset = allSymbols.keys().size();
+                        allSymbols.putAt(keyIndex, symbolValue, valueOffset);
+                    }
+                    symbolIndexes.add(valueOffset);
                 } else {
-                    valueOffset = allSymbols.keys().size();
-                    allSymbols.putAt(keyIndex, symbolValue, valueOffset);
+                    assert false;
+                    symbolIndexes.add(-1);
                 }
-                symbolIndexes.add(valueOffset);
                 count++;
             }
 
@@ -392,6 +396,8 @@ public class WalTxnDetails {
         int nextRecordLen;
         private long hi;
         private int lo;
+        private long seqTxn;
+        private int symbolIndex;
         private int symbolsCount;
 
         public SymbolMapDiffCursorImpl(CharSequenceIntHashMap allSymbols, IntList symbolIndexes) {
@@ -401,7 +407,7 @@ public class WalTxnDetails {
 
         @Override
         public SymbolMapDiff nextSymbolMapDiff() {
-            if (symbolsCount-- > 0) {
+            if (symbolIndex++ < symbolsCount) {
                 assert lo <= hi;
                 symbolMapDiff.switchToColumnRecord(lo);
                 lo += symbolMapDiff.getRecordSize();
@@ -416,8 +422,10 @@ public class WalTxnDetails {
             assert recordSize >= 4;
             this.hi = this.lo + recordSize;
             this.symbolsCount = symbolIndexes.get(startOffset + 1);
+            this.seqTxn = Numbers.encodeLowHighInts(symbolIndexes.get(startOffset + 2), symbolIndexes.get(startOffset + 3));
             assert this.symbolsCount > -1;
             this.lo += 4;
+            symbolIndex = 0;
         }
 
         private static class SymbolMapDiffColumnRecord implements SymbolMapDiff, SymbolMapDiffEntry {
@@ -480,7 +488,6 @@ public class WalTxnDetails {
                 if (nextSymbolOffset < offsetHi) {
                     return this;
                 } else {
-                    savedSymbolRecordCount = -1;
                     return null;
                 }
             }

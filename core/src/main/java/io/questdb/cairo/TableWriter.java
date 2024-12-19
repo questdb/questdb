@@ -1164,7 +1164,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", commitToTs=").$ts(commitToTimestamp)
                     .I$();
 
-            final long walSegmentId = walTxnDetails.getWalSegmentId(seqTxn);
+            final int walSegmentId = walTxnDetails.getWalSegmentId(seqTxn);
             boolean isLastSegmentUsage = walTxnDetails.isLastSegmentUsage(seqTxn);
             SymbolMapDiffCursor mapDiffCursor = walTxnDetails.getWalSymbolDiffCursor(seqTxn);
 
@@ -1179,7 +1179,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         txnMaxTs,
                         mapDiffCursor,
                         commitToTimestamp,
-                        walSegmentId,
+                        Numbers.encodeLowHighInts(walSegmentId, walId),
                         isLastSegmentUsage,
                         regulator
                 );
@@ -2369,7 +2369,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final long o3TimestampMax,
             SymbolMapDiffCursor mapDiffCursor,
             long commitToTimestamp,
-            long walSegmentId,
+            long walIdSegmentId,
             boolean isLastSegmentUsage,
             O3JobParallelismRegulator regulator
     ) {
@@ -2399,7 +2399,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean forceFullCommit = commitToTimestamp == WalTxnDetails.FORCE_FULL_COMMIT;
             final long maxLagRows = getWalMaxLagRows();
             final long walLagMaxTimestampBefore = txWriter.getLagMaxTimestamp();
-            mmapWalColumns(walPath, walSegmentId, timestampIndex, rowLo, rowHi);
+            mmapWalColumns(walPath, walIdSegmentId, timestampIndex, rowLo, rowHi);
             final long newMinLagTimestamp = Math.min(o3TimestampMin, txWriter.getLagMinTimestamp());
             long initialPartitionTimestampHi = partitionTimestampHi;
             long commitMaxTimestamp, commitMinTimestamp;
@@ -2628,7 +2628,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw th;
         } finally {
             walPath.trimTo(walRootPathLen);
-            closeWalColumns(isLastSegmentUsage || !success, walSegmentId);
+            closeWalColumns(isLastSegmentUsage || !success, walIdSegmentId);
         }
     }
 
@@ -4385,7 +4385,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final CharSequence symbolValue = entry.getSymbol();
             final int newKey = mapWriter.put(symbolValue);
             identical &= newKey == entry.getKey();
-            symbolMap.setQuick(entry.getKey() - cleanSymbolCount, newKey);
+            symbolMap.set(entry.getKey() - cleanSymbolCount, newKey);
         }
         return identical;
     }

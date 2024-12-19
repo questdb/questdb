@@ -39,6 +39,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
+import java.io.Console;
 
 import static io.questdb.cairo.wal.WalUtils.*;
 
@@ -189,13 +190,13 @@ class WalEventWriter implements Closeable {
 
     private void writeSymbolMapDiffs() {
         final int columns = txnSymbolMaps.size();
-        for (int i = 0; i < columns; i++) {
-            final CharSequenceIntHashMap symbolMap = txnSymbolMaps.getQuick(i);
+        for (int columnIndex = 0; columnIndex < columns; columnIndex++) {
+            final CharSequenceIntHashMap symbolMap = txnSymbolMaps.getQuick(columnIndex);
             if (symbolMap != null) {
-                final int initialCount = initialSymbolCounts.get(i);
+                final int initialCount = initialSymbolCounts.get(columnIndex);
                 if (initialCount > 0 || (initialCount == 0 && symbolMap.size() > 0)) {
-                    eventMem.putInt(i);
-                    eventMem.putBool(symbolMapNullFlags.get(i));
+                    eventMem.putInt(columnIndex);
+                    eventMem.putBool(symbolMapNullFlags.get(columnIndex));
                     eventMem.putInt(initialCount);
 
                     final int size = symbolMap.size();
@@ -211,7 +212,7 @@ class WalEventWriter implements Closeable {
                         if (value >= initialCount) {
                             eventMem.putInt(value);
                             eventMem.putStr(symbol);
-                            symbolCount += 1;
+                            symbolCount++;
                         }
                     }
                     // Update the size with the exact symbolCount
