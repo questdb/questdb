@@ -48,6 +48,7 @@ public class VacuumColumnVersions implements Closeable {
     private final CairoEngine engine;
     private final FilesFacade ff;
     private final ColumnPurgeTask purgeTask = new ColumnPurgeTask();
+    private final CharSequenceIntHashMap rogueColumns = new CharSequenceIntHashMap();
     private StringSink columnNameSink;
     private Utf8StringSink fileNameSink;
     private int partitionBy;
@@ -59,7 +60,6 @@ public class VacuumColumnVersions implements Closeable {
     private TableReader tableReader;
     private final FindVisitor visitTableFiles = this::visitTableFiles;
     private final FindVisitor visitTablePartition = this::visitTablePartition;
-    private final CharSequenceIntHashMap rogueColumns = new CharSequenceIntHashMap();
 
     public VacuumColumnVersions(CairoEngine engine) {
         try {
@@ -141,7 +141,7 @@ public class VacuumColumnVersions implements Closeable {
                             metadata.getColumnName(newReaderIndex) :
                             rogueColumns.keys().get(-newReaderIndex - 1).toString();
 
-                    int columnType =  newReaderIndex > -1 ? metadata.getColumnType(newReaderIndex) : ColumnType.UNDEFINED;
+                    int columnType = newReaderIndex > -1 ? metadata.getColumnType(newReaderIndex) : ColumnType.UNDEFINED;
                     purgeTask.of(reader.getTableToken(), columnName, tableId, truncateVersion, columnType, partitionBy, updateTxn);
                 }
             }
