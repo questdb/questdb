@@ -118,6 +118,12 @@ public class TableStructMetadataAdapter implements TableStructure {
     }
 
     @Override
+    public int getTtlHoursOrMonths() {
+        // todo: fuzz TTL later
+        return 0;
+    }
+
+    @Override
     public boolean isDedupKey(int columnIndex) {
         return false;
     }

@@ -56,7 +56,6 @@ import io.questdb.cairo.wal.SymbolMapDiffCursor;
 import io.questdb.cairo.wal.SymbolMapDiffEntry;
 import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WriterRowUtils;
-import io.questdb.cairo.wal.seq.TableSequencer;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.ConvertOperatorImpl;
 import io.questdb.griffin.DropIndexOperator;
@@ -930,7 +929,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final MapWriter symbolMapWriter = symbolMapWriters.getQuick(columnIndex);
         if (symbolMapWriter.isCached() != cache) {
             symbolMapWriter.updateCacheFlag(cache);
-            TableWriterMetadata.WriterTableColumnMetadata columnMetadata = (TableWriterMetadata.WriterTableColumnMetadata) metadata.getColumnMetadata(columnIndex);
+            TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
             columnMetadata.setSymbolCacheFlag(cache);
             updateMetaStructureVersion();
             txWriter.bumpTruncateVersion();
@@ -1116,8 +1115,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public long commit() {
-        return commit(0);
+    public void commit() {
+        commit(0);
     }
 
     public void commitSeqTxn(long seqTxn) {
@@ -1214,6 +1213,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             metrics.tableWriter().incrementCommits();
 
             shrinkO3Mem();
+            enforceTtl();
         }
 
         // Nothing was committed to the table, only copied to LAG.
@@ -2981,6 +2981,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    @Override
+    public void setMetaTtlHoursOrMonths(int metaTtlHoursOrMonths) {
+        try {
+            commit();
+            long metaSize = copyMetadataAndUpdateVersion();
+            openMetaSwapFileByIndex(ff, ddlMem, path, pathSize, this.metaSwapIndex);
+            try {
+                ddlMem.jumpTo(META_OFFSET_TTL_HOURS_OR_MONTHS);
+                ddlMem.putInt(metaTtlHoursOrMonths);
+                ddlMem.jumpTo(metaSize);
+            } finally {
+                ddlMem.close();
+            }
+
+            finishMetaSwapUpdate();
+            metadata.setTtlHoursOrMonths(metaTtlHoursOrMonths);
+
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.hydrateTable(metadata);
+            }
+
+        } finally {
+            ddlMem.close();
+        }
+    }
+
     public void setSeqTxn(long seqTxn) {
         assert txWriter.getLagRowCount() == 0 && txWriter.getLagTxnCount() == 0;
         txWriter.setSeqTxn(seqTxn);
@@ -3976,15 +4002,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * <p>This method will cancel pending rows by calling {@link #rowCancel()}. Data in partially appended row will be lost.</p>
      *
      * @param o3MaxLag if > 0 then do a partial commit, leaving the rows within the lag in a new uncommitted transaction
-     * @return commit transaction number or -1 if there was nothing to commit
      */
-    private long commit(long o3MaxLag) {
+    private void commit(long o3MaxLag) {
         checkDistressed();
         physicallyWrittenRowsSinceLastCommit.set(0);
 
         if (o3InError) {
             rollback();
-            return TableSequencer.NO_TXN;
+            return;
         }
 
         if ((masterRef & 1) != 0) {
@@ -3998,7 +4023,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (noop) {
                     // Bookmark masterRef to track how many rows is in uncommitted state
                     this.committedMasterRef = masterRef;
-                    return getTxn();
+                    getTxn();
+                    return;
                 } else if (o3MaxLag > 0) {
                     // It is possible that O3 commit will create partition just before
                     // the last one, leaving last partition row count 0 when doing ic().
@@ -4044,9 +4070,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             noOpRowCount = 0L;
-            return getTxn();
+            enforceTtl();
         }
-        return TableSequencer.NO_TXN;
     }
 
     private void configureAppendPosition() {
@@ -5098,8 +5123,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                             if (lagRows > 0) {
                                 long roLo = txWriter.getTransientRowCount() - getColumnTop(i);
-                                long roHi = roLo + lagRows;
-
                                 long lagAuxOffset = driver.getAuxVectorOffset(roLo);
                                 long lagAuxSize = driver.getAuxVectorSize(lagRows);
                                 long lagAuxKeyAddrRaw = mapAppendColumnBuffer(columns.get(getSecondaryColumnIndex(i)), lagAuxOffset, lagAuxSize, false);
@@ -5335,6 +5358,44 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Call O3 methods to remove check TxnScoreboard and remove partition directly
         safeDeletePartitionDir(timestamp, partitionNameTxn);
         return true;
+    }
+
+    private void enforceTtl() {
+        int ttl = metadata.getTtlHoursOrMonths();
+        if (ttl == 0) {
+            return;
+        }
+        PartitionBy.PartitionFloorMethod floorFn = PartitionBy.getPartitionFloorMethod(metadata.getPartitionBy());
+        PartitionBy.PartitionCeilMethod ceilFn = PartitionBy.getPartitionCeilMethod(metadata.getPartitionBy());
+        if (floorFn == null || ceilFn == null) {
+            LOG.error().$("TTL set on a non-partitioned table. Ignoring");
+            return;
+        }
+        int partitionCount = getPartitionCount();
+        if (partitionCount < 2) {
+            return;
+        }
+        long maxTimestamp = getMaxTimestamp();
+        for (int i = 0; i < partitionCount - 1; i++) {
+            long partitionTimestamp = getPartitionTimestamp(i);
+            if (partitionTimestamp != floorFn.floor(partitionTimestamp)) {
+                // This is a high chunk of a split partition, don't mess with it
+                continue;
+            }
+            long partitionCeiling = ceilFn.ceil(partitionTimestamp);
+            // TTL < 0 means it's in months
+            boolean shouldEvict = ttl > 0
+                    ? maxTimestamp - partitionCeiling >= Timestamps.HOUR_MICROS * ttl
+                    : Timestamps.getMonthsBetween(partitionCeiling, maxTimestamp) >= -ttl;
+            if (shouldEvict) {
+                LOG.info().$("Evicting partition with expired TTL. timestampSeconds=")
+                        .$(partitionTimestamp / Timestamps.SECOND_MICROS).$();
+                dropPartitionByExactTimestamp(partitionTimestamp);
+            } else {
+                // Partitions are sorted by timestamp, no need to check the rest
+                break;
+            }
+        }
     }
 
     private long findMinSplitPartitionTimestamp() {
