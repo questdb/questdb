@@ -116,7 +116,7 @@ public class ConvertOperatorImpl implements Closeable {
     }
 
     public void finishColumnConversion() {
-        if (partitionUpdated > -1 && asyncProcessingErrorCount.get() == 0) {
+        if (partitionUpdated > 0 && asyncProcessingErrorCount.get() == 0 && !tableWriter.isDistressed()) {
             partitionUpdated = 0;
             purgingOperator.purge(
                     path.trimTo(rootLen),
