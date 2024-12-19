@@ -41,12 +41,15 @@ import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 
-public class ReadParquetRecordCursorFactory extends AbstractRecordCursorFactory {
+/**
+ * Factory for parallel read_parquet() SQL function.
+ */
+public class ParquetPageFrameRecordCursorFactory extends AbstractRecordCursorFactory {
     private final PageFrameRecordCursorImpl cursor;
     private final ReadParquetPageFrameCursor pageFrameCursor;
     private Path path;
 
-    public ReadParquetRecordCursorFactory(
+    public ParquetPageFrameRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             @Transient Path path,
             RecordMetadata metadata
@@ -94,7 +97,7 @@ public class ReadParquetRecordCursorFactory extends AbstractRecordCursorFactory 
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("parquet file sequential scan");
+        sink.type("parquet page frame scan");
     }
 
     @Override

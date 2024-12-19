@@ -316,7 +316,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                 sink.clear();
                 sink.put("select * from read_parquet('x.parquet')");
 
-                assertPlanNoLeakCheck(sink, "parquet file sequential scan\n");
+                assertPlanNoLeakCheck(sink, "parquet page frame scan\n");
 
                 sink.put(" where 1 = 2");
                 assertSqlCursors("x where 1 = 2", sink);

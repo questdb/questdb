@@ -86,7 +86,7 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
                 final GenericRecordMetadata metadata = new GenericRecordMetadata();
                 // `read_parquet` function will request symbols to be converted to varchar
                 decoder.metadata().copyTo(metadata, true);
-                return new CursorFunction(new ReadParquetRecordCursorFactory(configuration, path, metadata));
+                return new CursorFunction(new ParquetPageFrameRecordCursorFactory(configuration, path, metadata));
             } finally {
                 ff.close(fd);
                 ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
