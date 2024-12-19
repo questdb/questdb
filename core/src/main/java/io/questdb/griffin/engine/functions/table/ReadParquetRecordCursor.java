@@ -49,6 +49,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectString;
@@ -81,7 +82,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             this.decoder = new PartitionDecoder();
             this.rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
             this.columns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT);
-            this.record = new ParquetRecord();
+            this.record = new ParquetRecord(metadata.getColumnCount());
         } catch (Throwable th) {
             close();
             throw th;
@@ -209,13 +210,23 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     private class ParquetRecord implements Record {
-        private final DirectBinarySequence binarySequence = new DirectBinarySequence();
-        private final DirectString directCharSequenceA = new DirectString();
-        private final DirectString directCharSequenceB = new DirectString();
-        private final Long256Impl long256A = new Long256Impl();
-        private final Long256Impl long256B = new Long256Impl();
-        private final Utf8SplitString utf8SplitViewA = new Utf8SplitString();
-        private final Utf8SplitString utf8SplitViewB = new Utf8SplitString();
+        private final ObjList<DirectBinarySequence> bsViews;
+        private final ObjList<DirectString> csViewsA;
+        private final ObjList<DirectString> csViewsB;
+        private final ObjList<Long256Impl> longs256A;
+        private final ObjList<Long256Impl> longs256B;
+        private final ObjList<Utf8SplitString> utf8ViewsA;
+        private final ObjList<Utf8SplitString> utf8ViewsB;
+
+        public ParquetRecord(int columnCount) {
+            this.bsViews = new ObjList<>(columnCount);
+            this.csViewsA = new ObjList<>(columnCount);
+            this.csViewsB = new ObjList<>(columnCount);
+            this.longs256A = new ObjList<>(columnCount);
+            this.longs256B = new ObjList<>(columnCount);
+            this.utf8ViewsA = new ObjList<>(columnCount);
+            this.utf8ViewsB = new ObjList<>(columnCount);
+        }
 
         @Override
         public BinarySequence getBin(int col) {
@@ -224,8 +235,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             long data_offset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
             long len = Unsafe.getUnsafe().getLong(dataPtr + data_offset);
             if (len != TableUtils.NULL_LEN) {
-                binarySequence.of(dataPtr + data_offset + 8L, len);
-                return binarySequence;
+                return bsView(col).of(dataPtr + data_offset + 8L, len);
             }
             return null;
         }
@@ -335,8 +345,9 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             final long b = Unsafe.getUnsafe().getLong(dataPtr + offset + Long.BYTES);
             final long c = Unsafe.getUnsafe().getLong(dataPtr + offset + Long.BYTES * 2);
             final long d = Unsafe.getUnsafe().getLong(dataPtr + offset + Long.BYTES * 3);
-            long256A.setAll(a, b, c, d);
-            return long256A;
+            Long256Impl long256 = long256A(col);
+            long256.setAll(a, b, c, d);
+            return long256;
         }
 
         @Override
@@ -347,8 +358,9 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             final long b = Unsafe.getUnsafe().getLong(dataPtr + offset + Long.BYTES);
             final long c = Unsafe.getUnsafe().getLong(dataPtr + offset + Long.BYTES * 2);
             final long d = Unsafe.getUnsafe().getLong(dataPtr + offset + Long.BYTES * 3);
-            long256B.setAll(a, b, c, d);
-            return long256B;
+            Long256Impl long256 = long256B(col);
+            long256.setAll(a, b, c, d);
+            return long256;
         }
 
         @Override
@@ -359,12 +371,12 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
 
         @Override
         public CharSequence getStrA(int col) {
-            return getStr(getStrAddr(col), directCharSequenceA);
+            return getStr(getStrAddr(col), csViewA(col));
         }
 
         @Override
         public CharSequence getStrB(int col) {
-            return getStr(getStrAddr(col), directCharSequenceB);
+            return getStr(getStrAddr(col), csViewB(col));
         }
 
         @Override
@@ -377,7 +389,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         public Utf8Sequence getVarcharA(int col) {
             long auxPtr = auxPtrs.get(col);
             long dataPtr = dataPtrs.get(col);
-            return VarcharTypeDriver.getSplitValue(auxPtr, Long.MAX_VALUE, dataPtr, Long.MAX_VALUE, currentRowInRowGroup, utf8SplitViewA);
+            return VarcharTypeDriver.getSplitValue(auxPtr, Long.MAX_VALUE, dataPtr, Long.MAX_VALUE, currentRowInRowGroup, utf8ViewA(col));
         }
 
         @Nullable
@@ -385,13 +397,34 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         public Utf8Sequence getVarcharB(int col) {
             long auxPtr = auxPtrs.get(col);
             long dataPtr = dataPtrs.get(col);
-            return VarcharTypeDriver.getSplitValue(auxPtr, Long.MAX_VALUE, dataPtr, Long.MAX_VALUE, currentRowInRowGroup, utf8SplitViewB);
+            return VarcharTypeDriver.getSplitValue(auxPtr, Long.MAX_VALUE, dataPtr, Long.MAX_VALUE, currentRowInRowGroup, utf8ViewB(col));
         }
 
         @Override
         public int getVarcharSize(int col) {
             long auxPtr = auxPtrs.get(col);
             return VarcharTypeDriver.getValueSize(auxPtr, currentRowInRowGroup);
+        }
+
+        private DirectBinarySequence bsView(int columnIndex) {
+            if (bsViews.getQuiet(columnIndex) == null) {
+                bsViews.extendAndSet(columnIndex, new DirectBinarySequence());
+            }
+            return bsViews.getQuick(columnIndex);
+        }
+
+        private DirectString csViewA(int columnIndex) {
+            if (csViewsA.getQuiet(columnIndex) == null) {
+                csViewsA.extendAndSet(columnIndex, new DirectString());
+            }
+            return csViewsA.getQuick(columnIndex);
+        }
+
+        private DirectString csViewB(int columnIndex) {
+            if (csViewsB.getQuiet(columnIndex) == null) {
+                csViewsB.extendAndSet(columnIndex, new DirectString());
+            }
+            return csViewsB.getQuick(columnIndex);
         }
 
         private DirectString getStr(long addr, DirectString view) {
@@ -401,6 +434,34 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
                 return view.of(addr + Vm.STRING_LENGTH_BYTES, len);
             }
             return null;
+        }
+
+        private Long256Impl long256A(int columnIndex) {
+            if (longs256A.getQuiet(columnIndex) == null) {
+                longs256A.extendAndSet(columnIndex, new Long256Impl());
+            }
+            return longs256A.getQuick(columnIndex);
+        }
+
+        private Long256Impl long256B(int columnIndex) {
+            if (longs256B.getQuiet(columnIndex) == null) {
+                longs256B.extendAndSet(columnIndex, new Long256Impl());
+            }
+            return longs256B.getQuick(columnIndex);
+        }
+
+        private Utf8SplitString utf8ViewA(int columnIndex) {
+            if (utf8ViewsA.getQuiet(columnIndex) == null) {
+                utf8ViewsA.extendAndSet(columnIndex, new Utf8SplitString());
+            }
+            return utf8ViewsA.getQuick(columnIndex);
+        }
+
+        private Utf8SplitString utf8ViewB(int columnIndex) {
+            if (utf8ViewsB.getQuiet(columnIndex) == null) {
+                utf8ViewsB.extendAndSet(columnIndex, new Utf8SplitString());
+            }
+            return utf8ViewsB.getQuick(columnIndex);
         }
     }
 }
