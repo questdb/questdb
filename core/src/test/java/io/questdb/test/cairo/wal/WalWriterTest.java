@@ -2195,7 +2195,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 assertEquals(0, dataInfo.getMaxTimestamp());
                 assertFalse(dataInfo.isOutOfOrder());
                 SymbolMapDiff symbolMapDiff = dataInfo.nextSymbolMapDiff();
-                assertEquals(1, symbolMapDiff.getSize());
+                assertEquals(1, symbolMapDiff.getRecordCount());
                 assertEquals(2, symbolMapDiff.getColumnIndex());
                 assertEquals(0, symbolMapDiff.getCleanSymbolCount());
 
@@ -3229,7 +3229,7 @@ public class WalWriterTest extends AbstractCairoTest {
     private void assertEmptySymbolDiff(WalEventCursor.DataInfo dataInfo, int columnIndex) {
         SymbolMapDiff symbolMapDiff = dataInfo.nextSymbolMapDiff();
         assertEquals(columnIndex, symbolMapDiff.getColumnIndex());
-        assertEquals(0, symbolMapDiff.getSize());
+        assertEquals(0, symbolMapDiff.getRecordCount());
         assertNotNull(symbolMapDiff);
         assertNull(symbolMapDiff.nextEntry());
     }

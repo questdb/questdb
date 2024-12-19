@@ -55,7 +55,7 @@ public class SymbolMapDiffImpl implements SymbolMapDiff {
     }
 
     @Override
-    public int getSize() {
+    public int getRecordCount() {
         return size;
     }
 

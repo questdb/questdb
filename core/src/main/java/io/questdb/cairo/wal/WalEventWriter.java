@@ -174,7 +174,7 @@ class WalEventWriter implements Closeable {
     private void appendIndex(long value) {
         Unsafe.getUnsafe().putLong(longBuffer, value);
         if (ff.append(indexFd, longBuffer, Long.BYTES) != Long.BYTES) {
-            throw CairoException.critical(ff.errno()).put("could not append WAL invent index value [value=").put(value).put(']');
+            throw CairoException.critical(ff.errno()).put("could not append WAL event index value [value=").put(value).put(']');
         }
     }
 

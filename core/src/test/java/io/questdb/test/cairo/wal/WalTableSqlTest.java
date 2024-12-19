@@ -1801,9 +1801,11 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
                 walApplyJob.run(0, runStatus);
-
                 engine.releaseInactive();
+                isTerminating.set(false);
 
+                // Run one more time, we want to be on seqTxn 2 for the next step
+                walApplyJob.run(0, runStatus);
                 isTerminating.set(false);
 
                 //noinspection StatementWithEmptyBody

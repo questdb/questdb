@@ -1128,14 +1128,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.commit(denseSymbolMapWriters);
     }
 
-    public long commitWalTransaction(
+    public void commitWalInsertTransactions(
             @Transient Path walPath,
-            boolean inOrder,
-            long rowLo,
-            long rowHi,
-            long o3TimestampMin,
-            long o3TimestampMax,
-            SymbolMapDiffCursor mapDiffCursor,
             long seqTxn,
             O3JobParallelismRegulator regulator
     ) {
@@ -1150,41 +1144,57 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.beginPartitionSizeUpdate();
         long commitToTimestamp = walTxnDetails.getCommitToTimestamp(seqTxn);
 
-        LOG.info().$("processing WAL [path=").$substr(pathRootSize, walPath).$(", roLo=").$(rowLo)
-                .$(", roHi=").$(rowHi)
-                .$(", seqTxn=").$(seqTxn)
-                .$(", tsMin=").$ts(o3TimestampMin).$(", tsMax=").$ts(o3TimestampMax)
-                .$(", commitToTs=").$ts(commitToTimestamp)
-                .I$();
+        int trasactionBlock = walTxnDetails.calculateInsertTransactionBlock(seqTxn);
 
-        final long committedRowCount = txWriter.getRowCount();
-        final long walSegmentId = walTxnDetails.getWalSegmentId(seqTxn);
-        boolean isLastSegmentUsage = walTxnDetails.isLastSegmentUsage(seqTxn);
         boolean committed;
-        try {
-            committed = processWalBlock(
-                    walPath,
-                    metadata.getTimestampIndex(),
-                    inOrder,
-                    rowLo,
-                    rowHi,
-                    o3TimestampMin,
-                    o3TimestampMax,
-                    mapDiffCursor,
-                    commitToTimestamp,
-                    walSegmentId,
-                    isLastSegmentUsage,
-                    regulator
-            );
-        } catch (CairoException e) {
-            if (e.isOutOfMemory()) {
-                // oom -> we cannot rely on internal TableWriter consistency, all bets are off, better to discard it and re-recreate
-                distressed = true;
-            }
-            throw e;
-        }
-        final long rowsAdded = txWriter.getRowCount() - committedRowCount;
+        final long initialCommittedRowCount = txWriter.getRowCount();
 
+        if (trasactionBlock == 1) {
+            int walId = walTxnDetails.getWalId(seqTxn);
+            long txnMinTs = walTxnDetails.getMinTimestamp(seqTxn);
+            long txnMaxTs = walTxnDetails.getMaxTimestamp(seqTxn);
+            long rowLo = walTxnDetails.getSegmentRowLo(seqTxn);
+            long rowHi = walTxnDetails.getSegmentRowHi(seqTxn);
+            boolean inOrder = walTxnDetails.getTxnInOrder(seqTxn);
+
+            LOG.info().$("processing WAL [path=").$substr(pathRootSize, walPath).$(", roLo=").$(rowLo)
+                    .$(", roHi=").$(rowHi)
+                    .$(", seqTxn=").$(seqTxn)
+                    .$(", tsMin=").$ts(txnMinTs).$(", tsMax=").$ts(txnMaxTs)
+                    .$(", commitToTs=").$ts(commitToTimestamp)
+                    .I$();
+
+            final long walSegmentId = walTxnDetails.getWalSegmentId(seqTxn);
+            boolean isLastSegmentUsage = walTxnDetails.isLastSegmentUsage(seqTxn);
+            SymbolMapDiffCursor mapDiffCursor = walTxnDetails.getWalSymbolDiffCursor(seqTxn);
+
+            try {
+                committed = processWalBlock(
+                        walPath,
+                        metadata.getTimestampIndex(),
+                        inOrder,
+                        rowLo,
+                        rowHi,
+                        txnMinTs,
+                        txnMaxTs,
+                        mapDiffCursor,
+                        commitToTimestamp,
+                        walSegmentId,
+                        isLastSegmentUsage,
+                        regulator
+                );
+            } catch (CairoException e) {
+                if (e.isOutOfMemory()) {
+                    // oom -> we cannot rely on internal TableWriter consistency, all bets are off, better to discard it and re-recreate
+                    distressed = true;
+                }
+                throw e;
+            }
+        } else {
+            throw new IllegalStateException();
+        }
+
+        final long rowsAdded = txWriter.getRowCount() - initialCommittedRowCount;
         if (committed) {
             // Useful for debugging
             assert txWriter.getLagRowCount() == 0;
@@ -1216,7 +1226,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Keep in memory last committed seq txn, but do not write it to _txn file.
         assert txWriter.getLagTxnCount() == (seqTxn - txWriter.getSeqTxn());
         metrics.tableWriter().addCommittedRows(rowsAdded);
-        return rowsAdded;
     }
 
     @Override
@@ -4360,10 +4369,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private boolean createWalSymbolMapping(SymbolMapDiff symbolMapDiff, int columnIndex, IntList symbolMap) {
         final int cleanSymbolCount = symbolMapDiff.getCleanSymbolCount();
-        symbolMap.setPos(symbolMapDiff.getSize());
+        symbolMap.setPos(symbolMapDiff.getRecordCount());
 
         // This is defensive. It validates that all the symbols used in WAL are set in SymbolMapDiff
-        symbolMap.setAll(symbolMapDiff.getSize(), -1);
+        symbolMap.setAll(symbolMapDiff.getRecordCount(), -1);
         final MapWriter mapWriter = symbolMapWriters.get(columnIndex);
         boolean identical = true;
 
