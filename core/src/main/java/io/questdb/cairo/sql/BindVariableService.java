@@ -59,20 +59,6 @@ public interface BindVariableService extends Mutable {
     ObjList<CharSequence> getNamedVariables();
 
     /**
-     * Checks if bind variable is defined. Bind variable will usually be defined by tge SQL compiler when
-     * the type of the variable can be inferred from the expression where this variable is used. However, in
-     * cases where bind variable is selected instead of a column, the type is ambiguous and the variable is
-     * left undefined.
-     * <p>
-     * The undefined variables will need to be assigned types (and values) but the client. For example a PostgreSQL
-     * client.
-     *
-     * @param index the 0-based index of the bind variable in question.
-     * @return true when variable type is defined and false otherwise.
-     */
-    boolean isDefined(int index);
-
-    /**
      * Set the type of bind variable by name as binary and provide a value
      *
      * @param name  of the bind variable
