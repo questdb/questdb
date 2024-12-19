@@ -24,7 +24,12 @@
 
 package io.questdb.cairo.map;
 
-import io.questdb.std.*;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Long256Util;
+import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 
 final class OrderedMapValue implements MapValue {
     private final Long256Impl long256 = new Long256Impl();
@@ -306,7 +311,7 @@ final class OrderedMapValue implements MapValue {
 
     @Override
     public void setMapRecordHere() {
-        record.of(startAddress);
+        record.of(startAddress, 0);
     }
 
     private long address0(int index) {

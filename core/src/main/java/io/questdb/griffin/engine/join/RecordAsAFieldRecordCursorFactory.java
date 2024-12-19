@@ -140,8 +140,8 @@ public class RecordAsAFieldRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
-        public void recordAt(Record record, long atRowId) {
-            baseCursor.recordAt(((RecordAsAFieldRecord) record).base, atRowId);
+        public void recordAt(Record record, long atRowId, long rowNumber) {
+            baseCursor.recordAt(((RecordAsAFieldRecord) record).base, atRowId, rowNumber);
         }
 
         @Override

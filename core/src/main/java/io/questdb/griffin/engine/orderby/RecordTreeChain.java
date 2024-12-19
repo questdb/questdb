@@ -111,7 +111,7 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
         do {
             parent = p;
             long r = refOf(p);
-            recordChain.recordAt(recordChainRecord, r);
+            recordChain.recordAt(recordChainRecord, r, 0);
             cmp = comparator.compare(recordChainRecord);
             if (cmp < 0) {
                 p = leftOf(p);
@@ -361,8 +361,8 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
         }
 
         @Override
-        public void recordAt(Record record, long atRowId) {
-            recordChain.recordAt(record, atRowId);
+        public void recordAt(Record record, long atRowId, long rowNumber) {
+            recordChain.recordAt(record, atRowId, rowNumber);
         }
 
         @Override

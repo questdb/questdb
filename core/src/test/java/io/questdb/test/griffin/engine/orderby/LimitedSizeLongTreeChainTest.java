@@ -368,7 +368,7 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     private String toString(TestRecordCursor cursor, TestRecord right) {
         StringSink sink = new StringSink();
         chain.print(sink, rowid -> {
-            cursor.recordAt(right, rowid);
+            cursor.recordAt(right, rowid, 0);
             return String.valueOf(right.getLong(0));
         });
         return sink.toString();
@@ -434,7 +434,7 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
         public boolean hasNext() {
             if (position < values.size() - 1) {
                 position++;
-                recordAt(left, position);
+                recordAt(left, position, 0);
                 return true;
             }
 
@@ -442,7 +442,7 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
         }
 
         @Override
-        public void recordAt(Record record, long atRowId) {
+        public void recordAt(Record record, long atRowId, long rowNumber) {
             ((TestRecord) record).value = values.get((int) atRowId);
             ((TestRecord) record).position = atRowId;
         }
@@ -450,7 +450,7 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
         public void recordAtValue(Record record, long value) {
             for (int i = 0; i < values.size(); i++) {
                 if (values.get(i) == value) {
-                    recordAt(record, i);
+                    recordAt(record, i, 0);
                     return;
                 }
             }

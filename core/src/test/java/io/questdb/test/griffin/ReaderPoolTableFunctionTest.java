@@ -28,8 +28,11 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.pool.ReaderPool;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.table.ReaderPoolFunctionFactory;
 import io.questdb.griffin.engine.table.ReaderPoolRecordCursorFactory;
@@ -144,7 +147,7 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
                     RecordCursor readerPoolCursor = readerPoolFactory.getCursor(sqlExecutionContext)
             ) {
                 Record record = readerPoolCursor.getRecord();
-                readerPoolCursor.recordAt(record, 0);
+                readerPoolCursor.recordAt(record, 0, 0);
                 Assert.fail("Random access is not expected to be implemented");
             } catch (UnsupportedOperationException ignored) {
             }

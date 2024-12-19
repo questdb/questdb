@@ -151,7 +151,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         int p = root;
         int cmp;
         do {
-            sourceCursor.recordAt(placeholder, rowId(refOf(p)));
+            sourceCursor.recordAt(placeholder, rowId(refOf(p)), 0);
             cmp = comparator.compare(placeholder);
             if (cmp < 0) {
                 p = leftOf(p);
@@ -244,7 +244,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
             parent = p;
             final int r = refOf(p);
             final long rowId = rowId(r);
-            sourceCursor.recordAt(ownedRecord, rowId);
+            sourceCursor.recordAt(ownedRecord, rowId, 0);
             cmp = comparator.compare(ownedRecord);
             if (cmp < 0) {
                 p = leftOf(p);
@@ -376,7 +376,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     private void prepareComparatorLeftSideIfAtMaxCapacity(RecordCursor sourceCursor, Record ownedRecord, RecordComparator comparator) {
         if (currentValues == maxValues) {
             assert minMaxRowId != -1;
-            sourceCursor.recordAt(ownedRecord, minMaxRowId);
+            sourceCursor.recordAt(ownedRecord, minMaxRowId, 0);
             comparator.setLeft(ownedRecord);
         }
     }

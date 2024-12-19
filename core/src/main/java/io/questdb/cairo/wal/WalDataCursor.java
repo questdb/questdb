@@ -24,11 +24,11 @@
 
 package io.questdb.cairo.wal;
 
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.Misc;
 
-public class WalDataCursor implements RecordCursor {
+public class WalDataCursor implements NoRandomAccessRecordCursor {
     private final WalDataRecord recordA = new WalDataRecord();
     private long maxRecordIndex = -1;
     private WalReader reader;
@@ -41,11 +41,6 @@ public class WalDataCursor implements RecordCursor {
     @Override
     public Record getRecord() {
         return recordA;
-    }
-
-    @Override
-    public Record getRecordB() {
-        throw new UnsupportedOperationException("No B record for WAL");
     }
 
     @Override
@@ -65,11 +60,6 @@ public class WalDataCursor implements RecordCursor {
 
         final long segmentSize = reader.openSegment();
         maxRecordIndex = segmentSize - 1;
-    }
-
-    @Override
-    public void recordAt(Record record, long rowId) {
-        throw new UnsupportedOperationException();
     }
 
     @Override

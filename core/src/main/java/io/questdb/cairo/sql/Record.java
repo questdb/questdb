@@ -288,6 +288,10 @@ public interface Record {
         throw new UnsupportedOperationException();
     }
 
+    default long getRowNumber() {
+        throw new UnsupportedOperationException();
+    }
+
     /**
      * Gets the value of a short column by index
      *
