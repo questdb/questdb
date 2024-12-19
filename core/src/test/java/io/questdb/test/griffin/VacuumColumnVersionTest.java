@@ -41,6 +41,7 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -163,6 +164,7 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
 
     @Test
     public void testVacuumErrorWhenCheckpointInProgress() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
         assertMemoryLeak(() -> {
             execute(
                     "create table testPurge as" +
