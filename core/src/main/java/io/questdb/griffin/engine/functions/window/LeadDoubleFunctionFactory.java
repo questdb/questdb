@@ -47,6 +47,7 @@ import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 
@@ -83,13 +84,21 @@ public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
             if (!OffsetFunc.isConstant() && !OffsetFunc.isRuntimeConstant()) {
                 throw SqlException.$(argPositions.getQuick(1), "offset must be a constant");
             }
+
             offset = OffsetFunc.getLong(null);
+            if (offset < 0) {
+                throw SqlException.$(argPositions.getQuick(1), "offset must be a positive integer");
+            }
         }
         Function defaultValue = null;
         if (args.size() == 3) {
             defaultValue = args.getQuick(2);
             if (!(defaultValue instanceof DoubleFunction)) {
                 throw SqlException.$(argPositions.getQuick(2), "default value must be a double");
+            }
+
+            if (defaultValue instanceof WindowFunction) {
+                throw SqlException.$(argPositions.getQuick(2), "default value can not be a window function");
             }
         }
 
@@ -192,6 +201,24 @@ public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
             mapValue.putLong(1, (firstIdx + 1) % offset);
             mapValue.putLong(2, count + 1);
             Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), leadValue);
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            Misc.free(memory);
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            Misc.free(memory);
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            memory.truncate();
         }
 
         @Override
