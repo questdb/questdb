@@ -32,6 +32,7 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
+import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -121,6 +122,10 @@ public class DropIndexTest extends AbstractCairoTest {
                 "4\t2022-02-24T01:35:59.200000Z\t\n" +
                 "5\t2022-02-24T01:59:59.000000Z\t\n", "select * from " + tableName + " where sym is null");
 
+        if (Os.isWindows()) {
+            // Release readers so that we can drop index files
+            engine.releaseInactive();
+        }
         execute("alter table " + tableName + " alter column sym drop index");
 
         assertSql("a\tts\tsym\n" +
