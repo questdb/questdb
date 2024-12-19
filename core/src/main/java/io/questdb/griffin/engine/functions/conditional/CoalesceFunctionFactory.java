@@ -123,6 +123,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
+    @Override
+    public int resolvePreferredVariadicType(int sqlPos, int argPos, ObjList<Function> args) throws SqlException {
+        throw SqlException.$(sqlPos, "coalesce cannot be used with bind variables");
+    }
+
     private static boolean isNotNull(Long256 value) {
         return value != null &&
                 value != Long256Impl.NULL_LONG256 && (value.getLong0() != Numbers.LONG_NULL ||

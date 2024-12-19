@@ -4419,7 +4419,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     targetColumnType = model.getUpdateTableColumnTypes().get(columnIndex);
                 }
 
-                // define "undefined" functions as string unless it's update. Leave Undefined if update
+                // define "undefined" functions as string unless it's update.
                 if (function.isUndefined()) {
                     if (!model.isUpdate()) {
                         function.assignType(ColumnType.STRING, executionContext.getBindVariableService());
