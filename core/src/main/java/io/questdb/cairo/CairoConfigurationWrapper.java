@@ -391,6 +391,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public String getLogTimezone() {
+        return getDelegate().getLogTimezone();
+    }
+
+    @Override
     public int getMaxCrashFiles() {
         return getDelegate().getMaxCrashFiles();
     }
@@ -548,11 +553,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getPartitionEncoderParquetVersion() {
         return getDelegate().getPartitionEncoderParquetVersion();
-    }
-
-    @Override
-    public boolean isPartitionO3OverwriteControlEnabled() {
-        return getDelegate().isPartitionO3OverwriteControlEnabled();
     }
 
     @Override
@@ -1143,6 +1143,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isPartitionEncoderParquetStatisticsEnabled() {
         return getDelegate().isPartitionEncoderParquetStatisticsEnabled();
+    }
+
+    @Override
+    public boolean isPartitionO3OverwriteControlEnabled() {
+        return getDelegate().isPartitionO3OverwriteControlEnabled();
     }
 
     @Override
