@@ -29,7 +29,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.PageFrame;
-import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
@@ -42,10 +41,9 @@ import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
-import io.questdb.std.Rows;
 import org.jetbrains.annotations.Nullable;
 
-public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
+public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private final int columnCount;
     private final IntList columnIndexes;
     private final LongList columnPageAddresses = new LongList();
@@ -105,11 +103,6 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
     }
 
     @Override
-    public long getUpdateRowId(long rowIndex) {
-        return Rows.toRowID(frame.getPartitionIndex(), frame.getPartitionLo() + rowIndex);
-    }
-
-    @Override
     public SymbolTable newSymbolTable(int columnIndex) {
         return reader.newSymbolTable(columnIndexes.getQuick(columnIndex));
     }
@@ -149,7 +142,7 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
     }
 
     @Override
-    public PageFrameCursor of(PartitionFrameCursor partitionFrameCursor) {
+    public TablePageFrameCursor of(PartitionFrameCursor partitionFrameCursor) {
         this.partitionFrameCursor = partitionFrameCursor;
         reader = partitionFrameCursor.getTableReader();
         toTop();
