@@ -46,6 +46,11 @@ public class DropTableOperation implements Operation {
         return OperationCodes.DROP_TABLE;
     }
 
+    @Override
+    public OperationFuture getOperationFuture() {
+        return future;
+    }
+
     public String getSqlText() {
         return sqlText;
     }

@@ -1134,6 +1134,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isMatViewEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isMultiKeyDedupEnabled() {
         return false;
     }

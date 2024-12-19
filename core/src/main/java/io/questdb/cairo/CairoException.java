@@ -306,6 +306,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return this;
     }
 
+    public boolean tableDoesNotExist() {
+        return errno == TABLE_DOES_NOT_EXIST;
+    }
+
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         sink.putAscii('[').put(errno).putAscii("]: ").put(message);

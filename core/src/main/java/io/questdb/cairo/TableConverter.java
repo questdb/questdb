@@ -100,7 +100,8 @@ public class TableConverter {
                                 boolean isProtected = tableFlagResolver.isProtected(tableName);
                                 boolean isSystem = tableFlagResolver.isSystem(tableName);
                                 boolean isPublic = tableFlagResolver.isPublic(tableName);
-                                final TableToken token = new TableToken(tableName, dirName, tableId, walEnabled, isSystem, isProtected, isPublic);
+                                boolean isMatView = doesMvFileExist(configuration, path, dirName, ff);
+                                final TableToken token = new TableToken(tableName, dirName, tableId, isMatView, walEnabled, isSystem, isProtected, isPublic);
 
                                 if (txWriter == null) {
                                     txWriter = new TxWriter(ff, configuration);
@@ -164,6 +165,8 @@ public class TableConverter {
             final byte walType = ff.readNonNegativeByte(fd, 0);
             switch (walType) {
                 case TABLE_TYPE_WAL:
+                    // fall through
+                case TABLE_TYPE_MAT:
                     return true;
                 case TABLE_TYPE_NON_WAL:
                     return false;
