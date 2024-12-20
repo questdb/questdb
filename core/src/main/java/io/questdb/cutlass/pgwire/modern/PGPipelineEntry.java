@@ -127,10 +127,18 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private final BitSet msgBindSelectFormatCodes = new BitSet();
     // types are sent to us via "parse" message
     private final IntList msgParseParameterTypeOIDs;
-    // native types as derived by the SQL compiler
-    private final IntList outParameterTypeDescriptionType;
     // types combined
     private final IntList outParameterTypeDescriptionTypeOIDs;
+    // The QuestDB bind variable types (see ColumnType) as derived by the SQL Compiler
+    // It contains the same types as outPgParameterTypeOIDs, but in our native format instead
+    // of PGWire OID.
+    // Q: Why do we have to duplicate it? Cannot we just maintain a single list and convert when needed?
+    // A: Some QuestDB natives do not have native equivalents. For example BYTE or GEOHASH
+    // Q: Cannot we just maintain a list of QuestDB native types and convert to PGWire OIDs when needed?
+    // A: PGWire clients could have specified their own expectations about type in a PARSE message
+    //    and we have to respect this. Thus if a PARSE message contains a type VARCHAR then
+    //    we need to read it from wire as VARCHAR even we use e.g. INT internally. So we need both.
+    private final IntList outParameterTypeDescriptionTypes;
     private final ObjList<String> pgResultSetColumnNames;
     // list of pair: column types (with format flag stored in first bit) AND additional type flag
     private final IntList pgResultSetColumnTypes;
@@ -203,7 +211,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.maxRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
         this.msgParseParameterTypeOIDs = new IntList();
         this.outParameterTypeDescriptionTypeOIDs = new IntList();
-        this.outParameterTypeDescriptionType = new IntList();
+        this.outParameterTypeDescriptionTypes = new IntList();
         this.pgResultSetColumnTypes = new IntList();
         this.pgResultSetColumnNames = new ObjList<>();
     }
@@ -263,7 +271,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         msgBindParameterFormatCodes.clear();
         msgBindSelectFormatCodes.clear();
         msgParseParameterTypeOIDs.clear();
-        outParameterTypeDescriptionType.clear();
+        outParameterTypeDescriptionTypes.clear();
         outParameterTypeDescriptionTypeOIDs.clear();
         pgResultSetColumnNames.clear();
         pgResultSetColumnTypes.clear();
@@ -830,8 +838,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.tai = tai;
         this.outParameterTypeDescriptionTypeOIDs.clear();
         this.outParameterTypeDescriptionTypeOIDs.addAll(tai.getPgOutParameterTypeOIDs());
-        this.outParameterTypeDescriptionType.clear();
-        this.outParameterTypeDescriptionType.addAll(tai.getPgOutParameterType());
+        this.outParameterTypeDescriptionTypes.clear();
+        this.outParameterTypeDescriptionTypes.addAll(tai.getPgOutParameterTypes());
     }
 
     public void ofCachedSelect(CharSequence utf16SqlText, TypesAndSelectModern tas) {
@@ -843,8 +851,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.cacheHit = true;
         this.outParameterTypeDescriptionTypeOIDs.clear();
         this.outParameterTypeDescriptionTypeOIDs.addAll(tas.getPgOutParameterTypeOIDs());
-        this.outParameterTypeDescriptionType.clear();
-        this.outParameterTypeDescriptionType.addAll(tas.getOutPgParameterType());
+        this.outParameterTypeDescriptionTypes.clear();
+        this.outParameterTypeDescriptionTypes.addAll(tas.getOutPgParameterTypes());
     }
 
     public void ofEmpty(CharSequence utf16SqlText) {
@@ -862,9 +870,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.tas = tas;
         this.cacheHit = true;
         this.outParameterTypeDescriptionTypeOIDs.clear();
-        this.outParameterTypeDescriptionType.clear();
+        this.outParameterTypeDescriptionTypes.clear();
         assert tas.getPgOutParameterTypeOIDs().size() == 0;
-        assert tas.getOutPgParameterType().size() == 0;
+        assert tas.getOutPgParameterTypes().size() == 0;
 
         // We cannot use regular msgExecuteSelect() since this method is called from a callback in SqlCompiler and
         // msgExecuteSelect() may try to recompile the query on its own when it gets TableReferenceOutOfDateException.
@@ -1027,7 +1035,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private void bindDefineBindVariableType(BindVariableService bindVariableService, int j) throws SqlException {
-        int nativeType = outParameterTypeDescriptionType.getQuick(j);
+        int nativeType = outParameterTypeDescriptionTypes.getQuick(j);
         bindVariableService.define(j, nativeType, 0);
     }
 
@@ -1072,8 +1080,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.outParameterTypeDescriptionTypeOIDs.clear();
         this.outParameterTypeDescriptionTypeOIDs.addAll(blueprint.outParameterTypeDescriptionTypeOIDs);
 
-        this.outParameterTypeDescriptionType.clear();
-        this.outParameterTypeDescriptionType.addAll(blueprint.outParameterTypeDescriptionType);
+        this.outParameterTypeDescriptionTypes.clear();
+        this.outParameterTypeDescriptionTypes.addAll(blueprint.outParameterTypeDescriptionTypes);
 
         this.pgResultSetColumnTypes.clear();
         this.pgResultSetColumnTypes.addAll(blueprint.pgResultSetColumnTypes);
@@ -1568,10 +1576,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         // - Type mismatches between PARSE and subsequent DESCRIBE messages can cause client errors
         // - Some clients (e.g., PG JDBC) strictly validate type consistency between types in PARSE and DESCRIBE messages
         // In contract, QuestDB natives types are always stored as derifed by compiler. Without considering
-        // types from the PARSE message.
+
         final int n = bindVariableService.getIndexedVariableCount();
         outParameterTypeDescriptionTypeOIDs.setPos(n);
-        outParameterTypeDescriptionType.setPos(n);
+        outParameterTypeDescriptionTypes.setPos(n);
         if (n > 0) {
             for (int i = 0; i < n; i++) {
                 int oid = PG_UNSPECIFIED;
@@ -1593,7 +1601,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     oid = Numbers.bswap(PGOids.getTypeOid(funType));
                 }
                 outParameterTypeDescriptionTypeOIDs.setQuick(i, oid);
-                outParameterTypeDescriptionType.setQuick(i, funType);
+                outParameterTypeDescriptionTypes.setQuick(i, funType);
             }
         }
     }
@@ -2531,7 +2539,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         TAG_EXPLAIN,
                         msgParseParameterTypeOIDs,
                         outParameterTypeDescriptionTypeOIDs,
-                        outParameterTypeDescriptionType
+                        outParameterTypeDescriptionTypes
                 );
                 break;
             case CompiledQuery.SELECT:
@@ -2543,7 +2551,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         sqlTag,
                         msgParseParameterTypeOIDs,
                         outParameterTypeDescriptionTypeOIDs,
-                        outParameterTypeDescriptionType
+                        outParameterTypeDescriptionTypes
                 );
                 break;
             case CompiledQuery.PSEUDO_SELECT:
@@ -2564,7 +2572,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         sqlTag,
                         msgParseParameterTypeOIDs,
                         outParameterTypeDescriptionTypeOIDs,
-                        outParameterTypeDescriptionType
+                        outParameterTypeDescriptionTypes
                 );
                 break;
             case CompiledQuery.UPDATE:

@@ -35,7 +35,7 @@ public class TypesAndInsertModern extends AbstractSelfReturningObject<TypesAndIn
     // arbitrary number of parameters, which does not have to match the number of actual
     // bind variable used in the INSERT SQL. These are PostgresSQL OIDs in BigEndian.
     private final IntList pgInParameterTypeOIDs = new IntList();
-    private final IntList pgOutParameterType = new IntList();
+    private final IntList pgOutParameterTypes = new IntList();
     // Bind variable columns types, typically scraped from BindVariableService after SQL is parsed. These are
     // our column types and are LittleEndian.
     private final IntList pgOutParameterTypeOIDs = new IntList();
@@ -56,7 +56,7 @@ public class TypesAndInsertModern extends AbstractSelfReturningObject<TypesAndIn
             super.close();
             pgInParameterTypeOIDs.clear();
             pgOutParameterTypeOIDs.clear();
-            pgOutParameterType.clear();
+            pgOutParameterTypes.clear();
             closing = false;
         }
     }
@@ -70,8 +70,8 @@ public class TypesAndInsertModern extends AbstractSelfReturningObject<TypesAndIn
         return pgInParameterTypeOIDs;
     }
 
-    public IntList getPgOutParameterType() {
-        return pgOutParameterType;
+    public IntList getPgOutParameterTypes() {
+        return pgOutParameterTypes;
     }
 
     public IntList getPgOutParameterTypeOIDs() {
@@ -104,6 +104,6 @@ public class TypesAndInsertModern extends AbstractSelfReturningObject<TypesAndIn
         this.hasBindVariables = pgOutParameterTypeOIDs.size() > 0;
         this.pgInParameterTypeOIDs.addAll(pgInParameterTypeOIDs);
         this.pgOutParameterTypeOIDs.addAll(pgOutParameterTypeOIDs);
-        this.pgOutParameterType.addAll(pgOutParameterType);
+        this.pgOutParameterTypes.addAll(pgOutParameterType);
     }
 }

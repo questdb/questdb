@@ -43,8 +43,6 @@ public class TypesAndSelectModern implements QuietCloseable, TypeContainer {
     // recompile the SQL for the new parameter type, which we will do after
     // reconciling these types.
     private final IntList inPgParameterTypeOIDs = new IntList();
-    // The QuestDB bind variable types (see ColumnType) as derived by the SQL Compiler
-    private final IntList outPgParameterType = new IntList();
     // The QuestDB bind variable types (see ColumnType) as scraped from the
     // BindVariableService after SQL compilation.
     //
@@ -54,6 +52,8 @@ public class TypesAndSelectModern implements QuietCloseable, TypeContainer {
     // and bindVariableTypes uses ours. bindVariableTypes may have more values, in case
     // the client did not define types any times or did not define enough.
     private final IntList outPgParameterTypeOIDs = new IntList();
+    // The QuestDB bind variable types (see ColumnType) as derived by the SQL Compiler
+    private final IntList outPgParameterTypes = new IntList();
     // sqlTag is the value we will be returning back to the client
     private final String sqlTag;
     // sqlType is the value determined by the SQL Compiler
@@ -66,14 +66,14 @@ public class TypesAndSelectModern implements QuietCloseable, TypeContainer {
             String sqlTag,
             @Transient IntList inPgParameterTypeOIDs,
             @Transient IntList outPgParameterTypeOIDs,
-            @Transient IntList outPgParameterType
+            @Transient IntList outPgParameterTypes
     ) {
         this.factory = factory;
         this.sqlType = sqlType;
         this.sqlTag = sqlTag;
         this.inPgParameterTypeOIDs.addAll(inPgParameterTypeOIDs);
         this.outPgParameterTypeOIDs.addAll(outPgParameterTypeOIDs);
-        this.outPgParameterType.addAll(outPgParameterType);
+        this.outPgParameterTypes.addAll(outPgParameterTypes);
     }
 
     @Override
@@ -85,8 +85,8 @@ public class TypesAndSelectModern implements QuietCloseable, TypeContainer {
         return factory;
     }
 
-    public IntList getOutPgParameterType() {
-        return outPgParameterType;
+    public IntList getOutPgParameterTypes() {
+        return outPgParameterTypes;
     }
 
     @Override
