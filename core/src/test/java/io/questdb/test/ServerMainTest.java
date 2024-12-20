@@ -596,7 +596,10 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.o3.partition.overwrite.control.enabled\tQDB_CAIRO_O3_PARTITION_OVERWRITE_CONTROL_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "http.min.worker.priority\tQDB_HTTP_MIN_WORKER_PRIORITY\t8\tdefault\tfalse\tfalse\n" +
                                     "cairo.commit.latency\tQDB_CAIRO_COMMIT_LATENCY\t30000000\tdefault\tfalse\tfalse\n" +
-                                    "cairo.create.table.column.model.pool.capacity\tQDB_CAIRO_CREATE_TABLE_COLUMN_MODEL_POOL_CAPACITY\t16\tdefault\tfalse\tfalse\n"
+                                    "cairo.create.table.column.model.pool.capacity\tQDB_CAIRO_CREATE_TABLE_COLUMN_MODEL_POOL_CAPACITY\t16\tdefault\tfalse\tfalse\n" +
+                                    "log.timestamp.format\tQDB_LOG_TIMESTAMP_FORMAT\tyyyy-MM-ddTHH:mm:ss.SSSUUUz\tdefault\tfalse\tfalse\n" +
+                                    "log.timestamp.locale\tQDB_LOG_TIMESTAMP_LOCALE\ten\tdefault\tfalse\tfalse\n" +
+                                    "log.timestamp.timezone\tQDB_LOG_TIMESTAMP_TIMEZONE\tUTC\tdefault\tfalse\tfalse\n"
                             )
                                     .split("\n");
 

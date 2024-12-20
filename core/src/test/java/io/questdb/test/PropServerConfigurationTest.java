@@ -904,9 +904,9 @@ public class PropServerConfigurationTest {
         );
 
         assertTimestampTimezone(
-                "seg., 11 mar. 2024 00:11:40 CET",
+                "lun, 11 mar 2024 00:11:40 CET",
                 "CET",
-                "pt",
+                "it",
                 "E, d MMM yyyy HH:mm:ss Z",
                 "2024-03-10T23:11:40.000000Z"
         );
