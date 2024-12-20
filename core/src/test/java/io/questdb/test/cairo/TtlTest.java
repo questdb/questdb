@@ -236,6 +236,16 @@ public class TtlTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRandomInsertion() throws Exception {
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1D");
+        execute("INSERT INTO tango SELECT rnd_timestamp('1970-01-01', '1970-12-01', 0) ts from long_sequence(4_000_000)");
+        execute("INSERT INTO tango values ('1970-12-02')");
+        assertQuery("name\n1970-12-02T00\n",
+                "SELECT name FROM (SHOW PARTITIONS FROM tango)",
+                "", false, true);
+    }
+
+    @Test
     public void testSyntaxJustWithinRange() throws Exception {
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 2_147_483_647 HOURS");
         execute("DROP TABLE tango");
