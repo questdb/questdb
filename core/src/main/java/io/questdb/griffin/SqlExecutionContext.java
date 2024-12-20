@@ -176,7 +176,7 @@ public interface SqlExecutionContext extends Closeable {
 
     void setCacheHit(boolean value);
 
-    void setCancelledFlag(AtomicBoolean cancelled);
+    void setCancelledFlag(@NotNull AtomicBoolean cancelled);
 
     void setCloneSymbolTables(boolean cloneSymbolTables);
 

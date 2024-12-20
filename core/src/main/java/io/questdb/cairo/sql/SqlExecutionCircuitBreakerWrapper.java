@@ -38,6 +38,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 // However, the `delegate` circuit breaker instance referenced by the wrapper has to be thread-safe
 // if it is used by multiple threads (i.e. set as a delegate in multiple wrappers at the same time).
 public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBreaker, Closeable {
+    private final AtomicBooleanCircuitBreaker atomicBooleanCircuitBreaker = new AtomicBooleanCircuitBreaker();
     private SqlExecutionCircuitBreaker delegate;
     private NetworkSqlExecutionCircuitBreaker networkSqlExecutionCircuitBreaker;
 
@@ -64,6 +65,11 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
     public void close() {
         networkSqlExecutionCircuitBreaker = Misc.free(networkSqlExecutionCircuitBreaker);
         delegate = null;
+    }
+
+    @Override
+    public AtomicBoolean getCancelledFlag() {
+        return delegate.getCancelledFlag();
     }
 
     @Override
@@ -102,7 +108,12 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
 
     @Override
     public void init(SqlExecutionCircuitBreaker executionContextCircuitBreaker) {
-        if (executionContextCircuitBreaker.isThreadsafe()) {
+        if (executionContextCircuitBreaker instanceof AtomicBooleanCircuitBreaker) {
+            // we want to copy the state of the circuit breaker, most importantly the cancelled flag
+            // since the flag instance can be different for a different queries
+            atomicBooleanCircuitBreaker.init(executionContextCircuitBreaker);
+            delegate = atomicBooleanCircuitBreaker;
+        } else if (executionContextCircuitBreaker.isThreadsafe()) {
             delegate = executionContextCircuitBreaker;
         } else {
             networkSqlExecutionCircuitBreaker.init(executionContextCircuitBreaker);
@@ -127,7 +138,7 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
     }
 
     @Override
-    public void setCancelledFlag(AtomicBoolean cancelled) {
+    public void setCancelledFlag(@NotNull AtomicBoolean cancelled) {
         delegate.setCancelledFlag(cancelled);
     }
 

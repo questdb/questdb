@@ -487,6 +487,43 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testQueryInterleaving() throws Exception {
+        WorkerPool pool = new WorkerPool((() -> 4));
+        TestUtils.execute(
+                pool, (engine, compiler, sqlExecutionContext) -> {
+                    engine.execute(
+                            "CREATE TABLE x (" +
+                                    "  ts TIMESTAMP," +
+                                    "  id long" +
+                                    ") timestamp (ts) PARTITION BY DAY;",
+                            sqlExecutionContext
+                    );
+                    engine.execute("insert into x select x::timestamp, x from long_sequence(10)", sqlExecutionContext);
+
+                    // A special CB is needed to be able to track NPEs since otherwise the exception will come unnoticed.
+                    final NpeCountingAtomicBooleanCircuitBreaker npeCountingCircuitBreaker = new NpeCountingAtomicBooleanCircuitBreaker();
+                    ((SqlExecutionContextImpl) sqlExecutionContext).with(npeCountingCircuitBreaker);
+
+                    try (RecordCursorFactory factoryA = compiler.compile("x where id != -1;", sqlExecutionContext).getRecordCursorFactory();
+                         RecordCursorFactory factoryB = compiler.compile("x where id != -1;", sqlExecutionContext).getRecordCursorFactory();
+                         RecordCursor cursorB = factoryB.getCursor(sqlExecutionContext)
+                    ) {
+
+                        // open and close cursorA. closing a cursor triggers query de-registration
+                        try (RecordCursor cursorA = factoryA.getCursor(sqlExecutionContext)) {
+                            Assert.assertTrue(cursorA.hasNext());
+                        }
+
+                        // cursorB should be still usable
+                        Assert.assertTrue(cursorB.hasNext());
+                    }
+                },
+                configuration,
+                LOG
+        );
+    }
+
+    @Test
     public void testStrBindVariable() throws Exception {
         testStrBindVariable("STRING", SqlJitMode.JIT_MODE_ENABLED);
     }

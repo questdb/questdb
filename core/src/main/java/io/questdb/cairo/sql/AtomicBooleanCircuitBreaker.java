@@ -25,30 +25,30 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.CairoException;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
 // Circuit breaker that doesn't check network connection status or timeout and only allows cancelling statement via CANCEL QUERY command .
 public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
-    private final int throttle;
+    @NotNull
     protected AtomicBoolean cancelledFlag;
     private long fd = -1;
     private int testCount = 0;
+    private int throttle;
 
     public AtomicBooleanCircuitBreaker() {
         this(0);
-        cancelledFlag = new AtomicBoolean(false);
     }
 
     public AtomicBooleanCircuitBreaker(int throttle) {
         this.throttle = throttle;
+        cancelledFlag = new AtomicBoolean(false);
     }
 
     public void cancel() {
-        if (cancelledFlag != null) {
-            cancelledFlag.set(true);
-        }
+        cancelledFlag.set(true);
     }
 
     @Override
@@ -64,6 +64,11 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     public void clear() {
         fd = -1;
         testCount = 0;
+    }
+
+    @Override
+    public @NotNull AtomicBoolean getCancelledFlag() {
+        return cancelledFlag;
     }
 
     @Override
@@ -94,6 +99,15 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     @Override
     public void init(SqlExecutionCircuitBreaker circuitBreaker) {
         fd = circuitBreaker.getFd();
+        testCount = 0;
+        if (circuitBreaker instanceof AtomicBooleanCircuitBreaker) {
+            AtomicBooleanCircuitBreaker cb = (AtomicBooleanCircuitBreaker) circuitBreaker;
+            cancelledFlag = cb.cancelledFlag;
+            throttle = cb.throttle;
+        } else if (circuitBreaker instanceof NetworkSqlExecutionCircuitBreaker) {
+            NetworkSqlExecutionCircuitBreaker cb = (NetworkSqlExecutionCircuitBreaker) circuitBreaker;
+            cancelledFlag = cb.getCancelledFlag();
+        }
     }
 
     @Override
@@ -107,9 +121,7 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     public void reset() {
-        if (cancelledFlag != null) {
-            cancelledFlag.set(false);
-        }
+        cancelledFlag.set(false);
     }
 
     @Override
@@ -118,7 +130,7 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     @Override
-    public void setCancelledFlag(AtomicBoolean cancelledFlag) {
+    public void setCancelledFlag(@NotNull AtomicBoolean cancelledFlag) {
         this.cancelledFlag = cancelledFlag;
     }
 
@@ -149,6 +161,6 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     private boolean isCancelled() {
-        return cancelledFlag == null || cancelledFlag.get();
+        return cancelledFlag.get();
     }
 }
