@@ -55,6 +55,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
+import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -163,6 +164,67 @@ public class SqlParser {
                 && (tok.charAt(3) | 32) == 'l'
                 && (tok.charAt(4) | 32) == 'i'
                 && (tok.charAt(5) | 32) == 'c';
+    }
+
+    /**
+     * Parses a value and time unit into a TTL value. If the returned value is positive, the time unit
+     * is hours. If it's negative, the time unit is months (and the actual value is positive).
+     */
+    public static int parseTtlHoursOrMonths(GenericLexer lexer) throws SqlException {
+        CharSequence tok;
+        int valuePos = lexer.getPosition();
+        tok = SqlUtil.fetchNext(lexer);
+        if (tok == null) {
+            throw SqlException.$(lexer.getPosition(), "missing argument, should be TTL <number> <unit> or <number_with_unit>");
+        }
+        int tokLength = tok.length();
+        int unit = -1;
+        int unitPos = -1;
+        if (tokLength > 1 && Character.isLetter(tok.charAt(tokLength - 1))) {
+            CharSequence unitChar = tok.subSequence(tokLength - 1, tokLength);
+            unit = PartitionBy.ttlUnitFromString(unitChar);
+            tok = tok.subSequence(0, tokLength - 1);
+            if (unit != -1) {
+                unitPos = valuePos;
+            } else {
+                try {
+                    Numbers.parseLong(tok);
+                } catch (NumericException e) {
+                    throw SqlException.$(valuePos,
+                            "invalid argument, should be TTL <number> <unit> or <number_with_unit>");
+                }
+                throw SqlException.$(valuePos + tokLength - 1,
+                        "invalid time unit, expecting 'H', 'D', 'W', 'M' or 'Y', but was '").put(unitChar).put('\'');
+            }
+        }
+        // at this point, unit == -1 means the syntax wasn't of the "1H" form, it can still be of the "1 HOUR" form
+        int ttlValue;
+        try {
+            long ttlLong = Numbers.parseLong(tok);
+            if (ttlLong > Integer.MAX_VALUE || ttlLong < 0) {
+                throw SqlException.$(valuePos, "TTL value out of range: ").put(ttlLong)
+                        .put(". Max value: ").put(Integer.MAX_VALUE);
+            }
+            ttlValue = (int) ttlLong;
+        } catch (NumericException e) {
+            throw SqlException.$(valuePos,
+                    "invalid syntax, should be TTL <number> <unit> but was TTL ").put(tok);
+        }
+        if (unit == -1) {
+            unitPos = lexer.getPosition();
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null) {
+                throw SqlException.$(unitPos,
+                        "missing unit, 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)' expected");
+            }
+            unit = PartitionBy.ttlUnitFromString(tok);
+        }
+        if (unit == -1) {
+            throw SqlException.$(unitPos,
+                            "invalid unit, expected 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)', but was '")
+                    .put(tok).put('\'');
+        }
+        return Timestamps.toHoursOrMonths(ttlValue, unit, valuePos);
     }
 
     private static SqlException err(GenericLexer lexer, @Nullable CharSequence tok, @NotNull String msg) {
@@ -547,7 +609,7 @@ public class SqlParser {
                         tok = optTok(lexer);
                     } else if (isPartitionKeyword(tok)) {
                         expectTok(lexer, "by");
-                        tok = tok(lexer, "year month day hour");
+                        tok = tok(lexer, "year month day hour none");
                         int partitionBy = PartitionBy.fromString(tok);
                         if (partitionBy == -1) {
                             throw SqlException.$(lexer.getPosition(), "'NONE', 'HOUR', 'DAY', 'MONTH' or 'YEAR' expected");
@@ -744,6 +806,12 @@ public class SqlParser {
             }
             builder.setPartitionByExpr(partitionBy);
             tok = optTok(lexer);
+
+            if (tok != null && isTtlKeyword(tok)) {
+                int ttlHours = parseTtlHoursOrMonths(lexer);
+                builder.setTtlHoursOrMonths(ttlHours);
+                tok = optTok(lexer);
+            }
 
             if (tok != null) {
                 if (isWalKeyword(tok)) {

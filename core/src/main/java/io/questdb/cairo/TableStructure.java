@@ -50,6 +50,8 @@ public interface TableStructure {
 
     int getTimestampIndex();
 
+    int getTtlHoursOrMonths();
+
     boolean isDedupKey(int columnIndex);
 
     boolean isIndexed(int columnIndex);
