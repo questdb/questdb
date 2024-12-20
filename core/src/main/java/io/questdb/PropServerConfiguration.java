@@ -96,6 +96,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
@@ -112,8 +113,6 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
 import java.io.IOException;
-import java.time.DateTimeException;
-import java.time.ZoneId;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -260,6 +259,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final Log log;
     private final boolean logLevelVerbose;
     private final boolean logSqlQueryProgressExe;
+    private final DateFormat logTimestampFormat;
+    private final DateLocale logTimestampLocale;
+    private final String logTimestampTimezone;
+    private final TimeZoneRules logTimestampTimezoneRules;
     private final int maxFileNameLength;
     private final long maxHttpQueryResponseRowLimit;
     private final double maxRequiredDelimiterStdDev;
@@ -534,7 +537,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int lineUdpBindIPV4Address;
     private int lineUdpDefaultPartitionBy;
     private int lineUdpPort;
-    private @Nullable String logTimezone;
     private MimeTypesCache mimeTypesCache;
     private long minIdleMsBeforeWriterRelease;
     private int netTestConnectionBufferSize;
@@ -644,21 +646,20 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.log = log;
         this.logSqlQueryProgressExe = getBoolean(properties, env, PropertyKey.LOG_SQL_QUERY_PROGRESS_EXE, true);
         this.logLevelVerbose = getBoolean(properties, env, PropertyKey.LOG_LEVEL_VERBOSE, false);
-        this.logTimezone = getString(properties, env, PropertyKey.LOG_TIMEZONE, null);
-
-        // validate timezone
-        if (this.logTimezone != null) {
-            if (Chars.equalsIgnoreCase(logTimezone, "SystemDefault")) {
-                this.logTimezone = ZoneId.systemDefault().getId();
-            } else {
-                try {
-                    final ZoneId ignore = ZoneId.of(this.logTimezone);
-                } catch (DateTimeException ex) {
-                    throw ServerConfigurationException.forInvalidKey(PropertyKey.LOG_TIMEZONE.getPropertyPath(), this.logTimezone);
-                }
-            }
+        this.logTimestampTimezone = getString(properties, env, PropertyKey.LOG_TIMESTAMP_TIMEZONE, "UTC");
+        final String logTimestampFormatStr = getString(properties, env, PropertyKey.LOG_TIMESTAMP_FORMAT, "yyyy-MM-ddTHH:mm:ss.SSSUUUz");
+        final String logTimestampLocaleStr = getString(properties, env, PropertyKey.LOG_TIMESTAMP_LOCALE, "en");
+        this.logTimestampLocale = DateLocaleFactory.INSTANCE.getLocale(logTimestampLocaleStr);
+        if (this.logTimestampLocale == null) {
+            throw new ServerConfigurationException("Invalid log locale: '" + logTimestampLocaleStr + "'");
         }
-
+        TimestampFormatCompiler formatCompiler = new TimestampFormatCompiler();
+        this.logTimestampFormat = formatCompiler.compile(logTimestampFormatStr);
+        try {
+            this.logTimestampTimezoneRules = Timestamps.getTimezoneRules(this.logTimestampLocale, logTimestampTimezone);
+        } catch (NumericException e) {
+            throw new ServerConfigurationException("Invalid log timezone: '" + logTimestampTimezone + "'");
+        }
         this.filesFacade = filesFacade;
         this.fpf = fpf;
         this.microsecondClock = microsecondClock;
@@ -2560,8 +2561,23 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public @Nullable String getLogTimezone() {
-            return logTimezone;
+        public DateFormat getLogTimestampFormat() {
+            return logTimestampFormat;
+        }
+
+        @Override
+        public @Nullable String getLogTimestampTimezone() {
+            return logTimestampTimezone;
+        }
+
+        @Override
+        public DateLocale getLogTimestampTimezoneLocale() {
+            return logTimestampLocale;
+        }
+
+        @Override
+        public TimeZoneRules getLogTimestampTimezoneRules() {
+            return logTimestampTimezoneRules;
         }
 
         @Override

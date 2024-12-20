@@ -37,6 +37,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import org.jetbrains.annotations.NotNull;
@@ -391,8 +392,23 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public String getLogTimezone() {
-        return getDelegate().getLogTimezone();
+    public DateFormat getLogTimestampFormat() {
+        return getDelegate().getLogTimestampFormat();
+    }
+
+    @Override
+    public String getLogTimestampTimezone() {
+        return getDelegate().getLogTimestampTimezone();
+    }
+
+    @Override
+    public DateLocale getLogTimestampTimezoneLocale() {
+        return getDelegate().getLogTimestampTimezoneLocale();
+    }
+
+    @Override
+    public TimeZoneRules getLogTimestampTimezoneRules() {
+        return getDelegate().getLogTimestampTimezoneRules();
     }
 
     @Override

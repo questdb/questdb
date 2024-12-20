@@ -212,13 +212,15 @@ public class Bootstrap {
                 config = configuration;
             }
             LogLevel.init(config.getCairoConfiguration());
-            if (LogLevel.TIMEZONE != null) {
-                log.infoW().$("changing logger timezone [from=`UTC`, to=`").$(LogLevel.TIMEZONE).$('`').I$();
+            if (LogLevel.TIMESTAMP_TIMEZONE != null) {
+                log.infoW().$("changing logger timezone [from=`UTC`, to=`").$(LogLevel.TIMESTAMP_TIMEZONE).$('`').I$();
             }
             reportValidateConfig();
             reportCrashFiles(config.getCairoConfiguration(), log);
         } catch (BootstrapException e) {
             throw e;
+        } catch (ServerConfigurationException e) {
+            throw new BootstrapException(e);
         } catch (Throwable e) {
             log.errorW().$(e).$();
             throw new BootstrapException(e);

@@ -44,6 +44,7 @@ import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.RostiAllocFacadeImpl;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -238,7 +239,13 @@ public interface CairoConfiguration {
 
     boolean getLogSqlQueryProgressExe();
 
-    String getLogTimezone();
+    DateFormat getLogTimestampFormat();
+
+    String getLogTimestampTimezone();
+
+    DateLocale getLogTimestampTimezoneLocale();
+
+    TimeZoneRules getLogTimestampTimezoneRules();
 
     int getMaxCrashFiles();
 

@@ -24,7 +24,6 @@
 
 package io.questdb.test.std.datetime.microtime;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -102,26 +101,6 @@ public class TimestampsTest {
         long micros = TimestampFormatUtils.parseTimestamp("1888-05-12T23:45:51.045Z");
         TimestampFormatUtils.appendDateTime(sink, Timestamps.addYears(micros, 10));
         TestUtils.assertEquals("1898-05-12T23:45:51.045Z", sink);
-    }
-
-    @Test
-    public void testAppendOffsetDateTime() throws Exception {
-        long micros = TimestampFormatUtils.parseTimestamp("1998-05-12T23:45:51.045Z");
-        TimestampFormatUtils.appendOffsetDateTime(sink, micros, "Antarctica/McMurdo");
-        Assert.assertTrue(sink.toString().contains("+12:00") || sink.toString().contains("+13:00"));
-        sink.clear();
-        TimestampFormatUtils.appendOffsetDateTime(sink, micros, "+05:00");
-        Assert.assertTrue(sink.toString().contains("+05:00"));
-        sink.clear();
-        TimestampFormatUtils.appendOffsetDateTime(sink, Long.MIN_VALUE, "+05:00");
-        Assert.assertEquals(0, sink.length());
-        sink.clear();
-        try {
-            TimestampFormatUtils.appendOffsetDateTime(sink, micros, "asdasd/asdadsa");
-            Assert.fail("invalid timezone, test should have failed");
-        } catch (CairoException ex) {
-            TestUtils.assertContains(ex.getMessage(), "could not convert");
-        }
     }
 
     @Test

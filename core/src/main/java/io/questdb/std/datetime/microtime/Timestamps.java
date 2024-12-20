@@ -31,6 +31,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.FixedTimeZoneRule;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.NotNull;
@@ -800,6 +801,26 @@ public final class Timestamps {
         }
     }
 
+    public static TimeZoneRules getTimezoneRules(@NotNull DateLocale locale, @NotNull CharSequence timezone) throws NumericException {
+        return getTimezoneRules(locale, timezone, 0, timezone.length());
+    }
+
+    public static TimeZoneRules getTimezoneRules(
+            DateLocale locale,
+            CharSequence timezone,
+            int lo,
+            int hi
+    ) throws NumericException {
+        long l = parseOffset(timezone, lo, hi);
+        if (l == Long.MIN_VALUE) {
+            return locale.getZoneRules(
+                    Numbers.decodeLowInt(locale.matchZone(timezone, lo, hi)),
+                    RESOLUTION_MICROS
+            );
+        }
+        return new FixedTimeZoneRule(Numbers.decodeLowInt(l) * MINUTE_MICROS);
+    }
+
     // https://en.wikipedia.org/wiki/ISO_week_date
     public static int getWeek(long micros) {
         int w = (10 + getDoy(micros) - getDayOfWeek(micros)) / 7;
@@ -1146,12 +1167,6 @@ public final class Timestamps {
     public static String toString(long micros) {
         Utf16Sink sink = Misc.getThreadLocalSink();
         TimestampFormatUtils.appendDateTime(sink, micros);
-        return sink.toString();
-    }
-
-    public static String toString(long micros, @NotNull CharSequence timezone) {
-        Utf16Sink sink = Misc.getThreadLocalSink();
-        TimestampFormatUtils.appendOffsetDateTime(sink, micros, timezone);
         return sink.toString();
     }
 
