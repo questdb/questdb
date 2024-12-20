@@ -27,14 +27,17 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
+import io.questdb.std.ndarr.NdArrayView;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 
-public class LineTcpParser {
+public class LineTcpParser implements QuietCloseable {
 
     public static final byte ENTITY_TYPE_BOOLEAN = 6;
     public static final byte ENTITY_TYPE_BYTE = 17;
@@ -50,6 +53,7 @@ public class LineTcpParser {
     public static final byte ENTITY_TYPE_INTEGER = 3;
     public static final byte ENTITY_TYPE_LONG = 14;
     public static final byte ENTITY_TYPE_LONG256 = 7;
+    public static final byte ENTITY_TYPE_ND_ARRAY = 22;
     public static final byte ENTITY_TYPE_NONE = (byte) 0xff; // visible for testing
     public static final byte ENTITY_TYPE_NULL = 0;
     public static final byte ENTITY_TYPE_SHORT = 16;
@@ -68,7 +72,7 @@ public class LineTcpParser {
     public static final byte ENTITY_UNIT_HOUR = ENTITY_UNIT_MINUTE + 1;
     public static final long NULL_TIMESTAMP = Numbers.LONG_NULL;
     public static final int N_ENTITY_TYPES = ENTITY_TYPE_TIMESTAMP + 1;
-    public static final int N_MAPPED_ENTITY_TYPES = ENTITY_TYPE_VARCHAR + 1;
+    public static final int N_MAPPED_ENTITY_TYPES = ENTITY_TYPE_ND_ARRAY + 1;
     private static final byte ENTITY_HANDLER_NAME = 1;
     private static final byte ENTITY_HANDLER_NEW_LINE = 4;
     private static final byte ENTITY_HANDLER_TABLE = 0;
@@ -98,6 +102,11 @@ public class LineTcpParser {
     private byte timestampUnit;
 
     public LineTcpParser() {
+    }
+
+    @Override
+    public void close() {
+        Misc.freeObjList(entityCache);
     }
 
     public long getBufferAddress() {
@@ -158,6 +167,7 @@ public class LineTcpParser {
     }
 
     public ParseResult parseMeasurement(long bufHi) {
+        final long lineStart = bufAt;
         assert bufAt != 0 && bufHi >= bufAt;
         // We can resume from random place of the line message
         // the class member variables should resume byte by byte parsing from the last place
@@ -179,7 +189,11 @@ public class LineTcpParser {
         }
 
         // Main parsing loop
+        int braceCount = 0;
         while (bufAt < bufHi) {
+            DirectUtf8String soFar = new DirectUtf8String();
+            soFar.of(lineStart, bufAt + 1);
+            // System.err.println("entityHandler=" + entityHandler + ", braceCount=" + braceCount + ", soFar=`" + soFar + "`");
             byte b = Unsafe.getUnsafe().getByte(bufAt);
 
             if (nEscapedChars == 0 && !controlBytes[b & 0xff]) {
@@ -193,14 +207,19 @@ public class LineTcpParser {
             asciiSegment &= b >= 0;
             boolean endOfLine = false;
             boolean appendByte = false;
-            // Important note: don't forget to update controlChars array when changing the following switch.
+
+            // Important note: don't forget to update controlBytes array when changing the following switch.
             switch (b) {
                 case '\n':
                 case '\r':
                     endOfLine = true;
                     b = '\n';
-                case '=':
                 case ',':
+                    if (braceCount > 0) {
+                        appendByte = true;
+                        break;
+                    }
+                case '=':
                 case ' ':
                     isQuotedFieldValue = false;
                     if (!completeEntity(b, bufHi)) {
@@ -272,6 +291,20 @@ public class LineTcpParser {
                         break;
                     } else if (isQuotedFieldValue) {
                         return getError(bufHi);
+                    }
+
+                case '{':
+                    if (tagsComplete && entityHandler == ENTITY_HANDLER_VALUE) {
+                        ++braceCount;
+                        appendByte = true;
+                        break;
+                    }
+
+                case '}':
+                    if (tagsComplete && entityHandler == ENTITY_HANDLER_VALUE) {
+                        --braceCount;
+                        appendByte = true;
+                        break;
                     }
 
                 default:
@@ -611,6 +644,33 @@ public class LineTcpParser {
         INVALID_COLUMN_NAME,
         MISSING_FIELD_VALUE,
         MISSING_TAG_VALUE,
+
+        /**
+         * Unexpected early end of input
+         */
+        ND_ARR_TOO_SHORT,
+
+        /**
+         * Unexpected token found
+         */
+        ND_ARR_UNEXPECTED,
+
+        /**
+         * Invalid array dimension nesting. E.g. {{1, 2}, {1, 2, 3}}
+         */
+        ND_ARR_UNALIGNED,
+
+        /**
+         * The array parsing completed, but the array state was invalid.
+         */
+        ND_ARR_MALFORMED,
+
+        /**
+         * Parsing of the array datatype failed.
+         */
+        ND_ARR_INVALID_TYPE,
+
+
         NONE
     }
 
@@ -618,14 +678,20 @@ public class LineTcpParser {
         MEASUREMENT_COMPLETE, BUFFER_UNDERFLOW, ERROR
     }
 
-    public class ProtoEntity {
+    public class ProtoEntity implements QuietCloseable {
         private final DirectUtf8String name = new DirectUtf8String();
+        private final NdArrayParser ndArrParser = new NdArrayParser();
         private final DirectUtf8String value = new DirectUtf8String();
         private boolean booleanValue;
         private double floatValue;
         private long longValue;
         private byte type = ENTITY_TYPE_NONE;
         private byte unit = ENTITY_UNIT_NONE;
+
+        @Override
+        public void close() {
+            Misc.free(ndArrParser);
+        }
 
         public boolean getBooleanValue() {
             return booleanValue;
@@ -641,6 +707,10 @@ public class LineTcpParser {
 
         public DirectUtf8Sequence getName() {
             return name;
+        }
+
+        public NdArrayView getNdArray() {
+            return ndArrParser.getView();
         }
 
         public byte getType() {
@@ -666,6 +736,7 @@ public class LineTcpParser {
         }
 
         private boolean parse(byte last, int valueLen) {
+            // System.err.println("LineTcpParser.ProtoEntity.parse :: " + ((char) last) + ", valueLen: " + valueLen);
             switch (last) {
                 case 'i':
                     if (valueLen > 1 && value.byteAt(1) != 'x') {
@@ -741,6 +812,12 @@ public class LineTcpParser {
                     type = ENTITY_TYPE_SYMBOL;
                     return false;
                 }
+                case '}': {
+                    // TODO(amunra): I have no idea if this is a decent way of handling errors
+                    errorCode = ndArrParser.parse(value);
+                    type = ENTITY_TYPE_ND_ARRAY;
+                    return errorCode == ErrorCode.NONE;
+                }
                 // fall through
                 default:
                     try {
@@ -798,7 +875,7 @@ public class LineTcpParser {
     }
 
     static {
-        char[] chars = new char[]{'\n', '\r', '=', ',', ' ', '\\', '"', '\0', '/'};
+        char[] chars = new char[]{'\n', '\r', '=', ',', ' ', '\\', '"', '\0', '/', '{', '}'};
         controlBytes = new boolean[256];
         for (char ch : chars) {
             controlBytes[ch] = true;
