@@ -7388,6 +7388,126 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPublicSchemaRemovaCreateTableAsSelect() throws SqlException {
+        assertModel(
+                "create batch 1000000 table tab as (select-choose x from (select [x] from src))",
+                "create table public.tab as (select * from public.src)",
+                ExecutionModel.CREATE_TABLE,
+                modelOf("src").col("x", ColumnType.INT)
+        );
+
+        assertModel(
+                "create batch 1000000 table tab as (select-choose x from (select [x] from src))",
+                "create table \"public\".tab as (select * from \"public\".src)",
+                ExecutionModel.CREATE_TABLE,
+                modelOf("src").col("x", ColumnType.INT)
+        );
+
+        assertModel(
+                "create batch 1000000 table tab as (select-choose x from (select [x] from src))",
+                "create table public.\"tab\" as (select * from public.\"src\")",
+                ExecutionModel.CREATE_TABLE,
+                modelOf("src").col("x", ColumnType.INT)
+        );
+
+        assertModel(
+                "create batch 1000000 table tab as (select-choose x from (select [x] from src))",
+                "create table \"public\".\"tab\" as (select * from \"public\".\"src\")",
+                ExecutionModel.CREATE_TABLE,
+                modelOf("src").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testPublicSchemaRemovalCreateTable() throws SqlException {
+        assertModel(
+                "create atomic table tab (a INT)",
+                "create table public.tab (a int)",
+                ExecutionModel.CREATE_TABLE
+        );
+
+        assertModel(
+                "create atomic table tab (a INT)",
+                "create table \"public\".tab (a int)",
+                ExecutionModel.CREATE_TABLE
+        );
+
+        assertModel(
+                "create atomic table tab (a INT)",
+                "create table \"public\".\"tab\" (a int)",
+                ExecutionModel.CREATE_TABLE
+        );
+
+        assertModel(
+                "create atomic table tab (a INT)",
+                "create table public.\"tab\" (a int)",
+                ExecutionModel.CREATE_TABLE
+        );
+    }
+
+    @Test
+    public void testPublicSchemaRemovalInsert() throws SqlException {
+        assertModel(
+                "insert into tab values (1)",
+                "insert into public.tab values (1)",
+                ExecutionModel.INSERT,
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+        );
+
+        assertModel(
+                "insert into tab values (1)",
+                "insert into \"public\".tab values (1)",
+                ExecutionModel.INSERT,
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+        );
+
+        assertModel(
+                "insert into tab values (1)",
+                "insert into \"public\".\"tab\" values (1)",
+                ExecutionModel.INSERT,
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+        );
+
+        assertModel(
+                "insert into tab values (1)",
+                "insert into public.\"tab\" values (1)",
+                ExecutionModel.INSERT,
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testPublicSchemaRemovalSelect() throws SqlException {
+        assertQuery(
+                "select-choose x from (select [x] from tab)",
+                "select x from public.tab",
+                modelOf("tab").col("x", ColumnType.INT)
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from tab)",
+                "select x from \"public\".tab",
+                modelOf("tab").col("x", ColumnType.INT)
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from tab)",
+                "select x from \"public\".\"tab\"",
+                modelOf("tab").col("x", ColumnType.INT)
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from tab)",
+                "select x from public.\"tab\"",
+                modelOf("tab").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testPushWhereThroughUnionAll() throws SqlException {
         assertQuery(
                 "select-choose sm from (select-group-by [sum(x) sm] sum(x) sm from (select-choose [x] x from (select [x] from t1) union all select-choose [x] x from (select [x] from t2)) where sm = 1)",
