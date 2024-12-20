@@ -203,18 +203,17 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     ff.close(dstKFd);
                     ff.close(dstVFd);
                 }
+
+                closeColumnIdle(
+                        columnCounter,
+                        timestampMergeIndexAddr,
+                        timestampMergeIndexSize,
+                        srcTimestampFd,
+                        srcTimestampAddr,
+                        srcTimestampSize,
+                        tableWriter
+                );
             }
-
-
-            closeColumnIdle(
-                    columnCounter,
-                    timestampMergeIndexAddr,
-                    timestampMergeIndexSize,
-                    srcTimestampFd,
-                    srcTimestampAddr,
-                    srcTimestampSize,
-                    tableWriter
-            );
 
             throw th;
         }
