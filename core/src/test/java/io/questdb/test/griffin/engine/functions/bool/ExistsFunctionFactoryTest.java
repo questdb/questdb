@@ -69,6 +69,15 @@ public class ExistsFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInWhereClause() throws Exception {
+        assertMemoryLeak(() -> {
+            assertSql("col\n", "select 1 as col from long_sequence(1) where exists(select * from long_sequence(0));");
+            assertSql("col\n" +
+                    "1\n", "select 1 as col from long_sequence(1) where exists(select * from long_sequence(1));");
+        });
+    }
+
+    @Test
     public void testInnerDoesNotExist() throws Exception {
         assertException("select exists(select * from x)", 28, "table does not exist [table=x]");
     }
