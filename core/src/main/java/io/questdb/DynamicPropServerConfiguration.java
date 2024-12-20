@@ -226,7 +226,11 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
                 }
 
                 if (reloadableProps.contains(config)) {
-                    log.info().$("loaded new value of ").$(key).$();
+                    log.info()
+                            .$("reloaded config option [update, key=").$(key)
+                            .$(", old=").$(oldVal)
+                            .$(", new=").$((String) entry.getValue())
+                            .I$();
                     oldProperties.setProperty(key, (String) entry.getValue());
                     changed = true;
                 } else {
@@ -245,7 +249,10 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
                     continue;
                 }
                 if (reloadableProps.contains(prop)) {
-                    log.info().$("removed property ").$(key).$();
+                    log.info()
+                            .$("reloaded config option [remove, key=").$(key)
+                            .$(", value=").$(oldProperties.getProperty((String) key))
+                            .$();
                     oldPropsIter.remove();
                     changed = true;
                 } else {
@@ -357,9 +364,10 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
 
                     if (updateSupportedProperties(properties, newProperties, reloadableProps, keyResolver, LOG)) {
                         reload0();
-                        LOG.info().$("QuestDB configuration reloaded, [file=").$(confPath).$(", modifiedAt=").$ts(newLastModified * 1000).I$();
+                        LOG.info().$("reloaded, [file=").$(confPath).$(", modifiedAt=").$ts(newLastModified * 1000).I$();
                         return true;
                     }
+                    LOG.info().$("nothing to reload [file=").$(confPath).$(", modifiedAt=").$ts(newLastModified * 1000).I$();
                 } else if (newLastModified == -1) {
                     LOG.critical().$("Server configuration file is inaccessible! This is dangerous as server will likely not boot on restart. Make sure the current user can access the configuration file [path=").$(confPath).I$();
                 }

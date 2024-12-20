@@ -308,9 +308,8 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     }
 
     protected void accept(long timestamp) {
-        final int activeConnectionLimit = configuration.getLimit();
         int tlConCount = connectionCount.get();
-        while (tlConCount < activeConnectionLimit) {
+        while (tlConCount < configuration.getLimit()) {
             // this 'accept' is greedy, rather than to rely on epoll (or similar) to
             // fire accept requests at us one at a time we will be actively accepting
             // until nothing left.
@@ -357,13 +356,11 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
             connectionCountGauge.inc();
         }
 
-        if (tlConCount >= activeConnectionLimit) {
-            if (connectionCount.get() >= activeConnectionLimit) {
-                unregisterListenerFd();
-                listening = false;
-                closeListenFdEpochMs = timestamp + queuedConnectionTimeoutMs;
-                LOG.advisory().$("max connection limit reached, unregistered listener [serverFd=").$(serverFd).I$();
-            }
+        if (tlConCount >= configuration.getLimit() && connectionCount.get() >= configuration.getLimit()) {
+            unregisterListenerFd();
+            listening = false;
+            closeListenFdEpochMs = timestamp + queuedConnectionTimeoutMs;
+            LOG.advisory().$("max connection limit reached, unregistered listener [serverFd=").$(serverFd).I$();
         }
     }
 
