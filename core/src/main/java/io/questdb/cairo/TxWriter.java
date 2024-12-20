@@ -26,7 +26,13 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 
 import java.io.Closeable;
@@ -39,9 +45,9 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     private TableWriter.ExtensionListener extensionListener;
     private int lastRecordBaseOffset = -1;
     private long lastRecordStructureVersion = -1;
-    private long prevPartitionTableVersion = -1;
     private long prevMaxTimestamp;
     private long prevMinTimestamp;
+    private long prevPartitionTableVersion = -1;
     private int prevRecordBaseOffset = -2;
     private long prevRecordStructureVersion = -2;
     private long prevTransientRowCount;
@@ -577,7 +583,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     private void finishABHeader(int areaOffset, int bytesSymbols, int bytesPartitions, int commitMode) {
-        boolean currentIsA = (baseVersion & 1L) == 0L;
+        boolean currentIsA = (baseVersion & 1) == 0;
 
         // When current is A, write to B
         long offsetOffset = currentIsA ? TX_BASE_OFFSET_B_32 : TX_BASE_OFFSET_A_32;

@@ -516,7 +516,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     return mem1.tryChangeSize(dataSize);
                 } else {
                     // dataSize can be 0 in case when it's varchar column and all the values are inlined
-                    // The data memory was not open but now we need to open it. Mark the partition as not reloaded by returning false
+                    // The data memory was not open, but now we need to open it. Mark the partition as not reloaded by returning false
                     return dataSize == 0;
                 }
             } else {
@@ -549,7 +549,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
 
         // txFile can also be reloaded in goPassive->checkSchedulePurgeO3Partitions
-        // if txFile txn doesn't much reader txn, reader has to be slow reloaded
+        // if txFile txn doesn't match reader txn, reader has to be slow reloaded
         if (txn == txFile.getTxn()) {
             // We have to be sure last txn is acquired in Scoreboard
             // otherwise writer can delete partition version files
@@ -589,6 +589,11 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
         int baseIndex = getPrimaryColumnIndex(columnBase, 0);
         int newBaseIndex = getPrimaryColumnIndex(getColumnBase(partitionIndex + 1), 0);
+        for (int i = baseIndex, n = newBaseIndex - 1; i < n; i++) {
+            // Close columns before deleting the objects.
+            // FD leak caught by failing fuzz tests.
+            Misc.free(columns.get(i));
+        }
         columns.remove(baseIndex, newBaseIndex - 1);
 
         int colTopStart = columnBase / 2;
@@ -625,7 +630,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         if (partitionSize > -1) {
             closePartitionResources(partitionIndex, offset);
             openPartitionCount--;
-
             LOG.debug().$("closed partition [path=").$substr(dbRootSize, path).$(", timestamp=").$ts(partitionTimestamp).I$();
         }
     }
@@ -942,7 +946,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                         if (parquetMem != null && parquetMem != NullMemoryCMR.INSTANCE) {
                             parquetMem.of(ff, path.$(), parquetSize, parquetSize, MemoryTag.MMAP_TABLE_READER);
                         } else {
-                            parquetMem = Vm.getCMRInstance(ff, path.$(), parquetSize, MemoryTag.MMAP_TABLE_READER);
+                            // Don't keep fd around to close/open reconciled parquet partitions instead of mremap'ping them.
+                            parquetMem = new MemoryCMRDetachedImpl(ff, path.$(), parquetSize, MemoryTag.MMAP_TABLE_READER, false);
                             parquetPartitions.setQuick(partitionIndex, parquetMem);
                         }
                         openPartitionCount++;
@@ -1100,15 +1105,21 @@ public class TableReader implements Closeable, SymbolTableSource {
                             final byte format = getPartitionFormat(partitionIndex);
                             assert format != -1;
                             if (format == PartitionFormat.NATIVE) {
-                                if (reloadPartitionFiles(partitionIndex, txPartitionSize, txPartitionNameTxn)) {
+                                if (reloadColumnFiles(partitionIndex, txPartitionSize)) {
                                     openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, txPartitionSize);
                                     LOG.debug().$("updated partition size [partition=").$(openPartitionInfo.getQuick(offset)).I$();
                                 } else {
                                     prepareForLazyOpen(partitionIndex);
                                 }
-                            } else { // else do nothing for Parquet
-                                openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, txPartitionSize);
-                                LOG.debug().$("updated partition size [partition=").$(openPartitionInfo.getQuick(offset)).I$();
+                            } else {
+                                // reload Parquet file
+                                final long parquetSize = txFile.getPartitionParquetFileSize(partitionIndex);
+                                if (reloadParquetFile(partitionIndex, parquetSize)) {
+                                    openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, txPartitionSize);
+                                    LOG.debug().$("updated parquet partition size [partition=").$(openPartitionInfo.getQuick(offset)).I$();
+                                } else {
+                                    prepareForLazyOpen(partitionIndex);
+                                }
                             }
                         } else {
                             prepareForLazyOpen(partitionIndex);
@@ -1148,7 +1159,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 partitionIndex++;
             } else {
                 // Refresh partition
-                final long newPartitionSize = txFile.getPartitionSize(txPartitionIndex);
+                final long txPartitionSize = txFile.getPartitionSize(txPartitionIndex);
                 final long txPartitionNameTxn = txFile.getPartitionNameTxn(partitionIndex);
                 final long openPartitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
                 final long openPartitionNameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);
@@ -1163,22 +1174,28 @@ public class TableReader implements Closeable, SymbolTableSource {
                             final byte format = getPartitionFormat(partitionIndex);
                             assert format != -1;
                             if (format == PartitionFormat.NATIVE) {
-                                if (reloadPartitionFiles(partitionIndex, newPartitionSize, txPartitionNameTxn)) {
-                                    openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, newPartitionSize);
+                                if (reloadColumnFiles(partitionIndex, txPartitionSize)) {
+                                    openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, txPartitionSize);
                                     LOG.debug().$("updated partition size [partition=").$(openPartitionTimestamp).I$();
                                 } else {
                                     prepareForLazyOpen(partitionIndex);
                                 }
-                            } else { // else do nothing for Parquet
-                                openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, newPartitionSize);
-                                LOG.debug().$("updated partition size [partition=").$(openPartitionTimestamp).I$();
+                            } else {
+                                // reload Parquet file
+                                final long parquetSize = txFile.getPartitionParquetFileSize(partitionIndex);
+                                if (reloadParquetFile(partitionIndex, parquetSize)) {
+                                    openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, txPartitionSize);
+                                    LOG.debug().$("updated parquet partition size [partition=").$(openPartitionInfo.getQuick(offset)).I$();
+                                } else {
+                                    prepareForLazyOpen(partitionIndex);
+                                }
                             }
                         }
                     } else {
                         prepareForLazyOpen(partitionIndex);
                     }
                     changed = true;
-                } else if (openPartitionSize > -1 && newPartitionSize > -1) { // Don't force re-open if not yet opened
+                } else if (openPartitionSize > -1 && txPartitionSize > -1) { // Don't force re-open if not yet opened
                     prepareForLazyOpen(partitionIndex);
                 }
                 txPartitionIndex++;
@@ -1337,6 +1354,32 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
+    /**
+     * Updates boundaries of all columns in partition.
+     *
+     * @param partitionIndex index of partition
+     * @param rowCount       number of rows in partition
+     */
+    private boolean reloadColumnFiles(int partitionIndex, long rowCount) {
+        int columnBase = getColumnBase(partitionIndex);
+        for (int i = 0; i < columnCount; i++) {
+            final int index = getPrimaryColumnIndex(columnBase, i);
+            MemoryCMR mem1 = columns.getQuick(index);
+
+            long columnFilesRowCount = rowCount - getColumnTop(columnBase, i);
+            if (columnFilesRowCount > 0 &&
+                    (mem1 == NullMemoryCMR.INSTANCE || !growColumn(
+                            (MemoryCMRDetachedImpl) mem1,
+                            (MemoryCMRDetachedImpl) columns.getQuick(index + 1),
+                            metadata.getColumnType(i),
+                            columnFilesRowCount
+                    ))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private boolean reloadColumnVersion(long columnVersion, long deadline) {
         if (columnVersionReader.getVersion() != columnVersion) {
             columnVersionReader.readSafe(clock, deadline);
@@ -1388,35 +1431,14 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    /**
-     * Updates boundaries of all columns in partition.
-     *
-     * @param partitionIndex index of partition
-     * @param rowCount       number of rows in partition
-     */
-    private boolean reloadPartitionFiles(int partitionIndex, long rowCount, long openPartitionNameTxn) {
-        Path path = pathGenNativePartition(partitionIndex, openPartitionNameTxn);
-        try {
-            int columnBase = getColumnBase(partitionIndex);
-            for (int i = 0; i < columnCount; i++) {
-                final int index = getPrimaryColumnIndex(columnBase, i);
-                MemoryCMR mem1 = columns.getQuick(index);
-
-                long columnFilesRowCount = rowCount - getColumnTop(columnBase, i);
-                if (columnFilesRowCount > 0 &&
-                        (mem1 == NullMemoryCMR.INSTANCE || !growColumn(
-                                (MemoryCMRDetachedImpl) mem1,
-                                (MemoryCMRDetachedImpl) columns.getQuick(index + 1),
-                                metadata.getColumnType(i),
-                                columnFilesRowCount
-                        ))) {
-                    return false;
-                }
-            }
-        } finally {
-            path.trimTo(rootLen);
+    private boolean reloadParquetFile(int partitionIndex, long parquetSize) {
+        MemoryCMR parquetMem = parquetPartitions.getQuick(partitionIndex);
+        if (parquetMem == null || parquetMem == NullMemoryCMR.INSTANCE) {
+            return false;
         }
-        return true;
+        // We don't keep fd around when mmap'ping parquet files, so the only case
+        // when the below call returns true is when the file size didn't change.
+        return ((MemoryCMRDetachedImpl) parquetMem).tryChangeSize(parquetSize);
     }
 
     private void reloadSlow(final boolean reshuffle) {

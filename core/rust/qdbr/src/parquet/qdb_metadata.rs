@@ -114,6 +114,7 @@ impl<'de> Deserialize<'de> for QdbMetaColFormat {
 #[derive(Debug, PartialEq, Serialize, Deserialize, Copy, Clone)]
 pub struct QdbMetaCol {
     pub column_type: ColumnType,
+    pub column_top: usize,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub format: Option<QdbMetaColFormat>,
@@ -176,10 +177,12 @@ mod tests {
             schema: vec![
                 QdbMetaCol {
                     column_type: ColumnTypeTag::Symbol.into_type(),
+                    column_top: 0,
                     format: Some(QdbMetaColFormat::LocalKeyIsGlobal),
                 },
                 QdbMetaCol {
                     column_type: ColumnTypeTag::Int.into_type(),
+                    column_top: 256,
                     format: None,
                 },
             ],
@@ -190,10 +193,12 @@ mod tests {
             "schema": [
                 {
                     "column_type": 12,
+                    "column_top": 0,
                     "format": 1
                 },
                 {
-                    "column_type": 5
+                    "column_type": 5,
+                    "column_top": 256
                 }
             ]
         });

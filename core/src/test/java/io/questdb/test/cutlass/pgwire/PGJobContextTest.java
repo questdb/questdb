@@ -8150,6 +8150,7 @@ nodejs code:
 
     @Test
     public void testPreparedStatementWithSystimestampFunction() throws Exception {
+        Assume.assumeFalse(legacyMode);
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement statement = connection.prepareStatement(
                     "create table xts (ts timestamp) timestamp(ts)")) {

@@ -137,11 +137,11 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                 5 + rnd.nextInt(10)
         );
 
-        assertMemoryLeak(() -> fuzzer.runFuzz(getTestName(), rnd));
+        assertMemoryLeak(fuzzer.getFileFacade(), () -> fuzzer.runFuzz(getTestName(), rnd));
     }
 
     protected void fullRandomFuzz(Rnd rnd, int tableCount) throws Exception {
-        assertMemoryLeak(() -> fuzzer.runFuzz(rnd, getTestName(), tableCount, true, true));
+        assertMemoryLeak(fuzzer.getFileFacade(), () -> fuzzer.runFuzz(rnd, getTestName(), tableCount, true, true));
     }
 
     protected String[] generateSymbols(Rnd rnd, int totalSymbols, int strLen, String baseSymbolTableName) {
@@ -180,11 +180,14 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     }
 
     protected String getTestName() {
-        return testName.getMethodName().replace('[', '_').replace(']', '_');
+        return testName.getMethodName()
+                .replace('[', '_')
+                .replace(']', '_')
+                .replace('=', '_');
     }
 
     protected void runFuzz(Rnd rnd) throws Exception {
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(fuzzer.getFileFacade(), () -> {
             try {
                 WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
                 sharedWorkerPool.start(LOG);
@@ -200,7 +203,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     }
 
     protected void runFuzz(Rnd rnd, String tableNameBase, int tableCount) throws Exception {
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(fuzzer.getFileFacade(), () -> {
             try {
                 WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
                 sharedWorkerPool.start(LOG);
