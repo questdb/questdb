@@ -3125,7 +3125,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         }
                     } catch (Throwable e) {
                         // rollback data when system error occurs
-                        writer.rollback();
+                        try {
+                            writer.rollback();
+                        } catch (Throwable e2) {
+                            // Writer is distressed, exception already logged, the pool will handle it when writer is returned
+                            LOG.error().$("could not rollback, writer must be distressed [table=").$(tableNameExpr).$(']').$();
+                        }
                         throw e;
                     }
                 }
