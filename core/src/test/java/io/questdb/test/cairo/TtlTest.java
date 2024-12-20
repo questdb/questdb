@@ -207,6 +207,16 @@ public class TtlTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testManyPartitions() throws Exception {
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 HOUR;");
+        execute("INSERT INTO tango SELECT (x*1_000_000*60*60)::TIMESTAMP ts FROM long_sequence(72);");
+        assertQuery("ts\n" +
+                        "1970-01-03T23:00:00.000000Z\n" +
+                        "1970-01-04T00:00:00.000000Z\n",
+                "tango", "ts", true, true);
+    }
+
+    @Test
     public void testMonthExactlyAtTtl() throws Exception {
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 MONTH");
         execute("INSERT INTO tango VALUES ('1970-02-01T04:20:00.0Z'), ('1970-02-10T04:20:00.0Z'), ('1970-03-01T04:59:59.999999Z')");
