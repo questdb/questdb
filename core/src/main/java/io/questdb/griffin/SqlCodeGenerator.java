@@ -635,12 +635,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private static int getOrderByDirectionOrDefault(QueryModel model, int index) {
-        IntList direction = model.getOrderByDirectionAdvice();
-        if (index >= direction.size()) {
-            return ORDER_DIRECTION_ASCENDING;
-        } else {
-            return direction.get(index);
-        }
+        final IntList direction = model.getOrderByDirectionAdvice();
+        return index >= direction.size() ? ORDER_DIRECTION_ASCENDING : direction.getQuick(index);
     }
 
     private static boolean isSingleColumnFunction(ExpressionNode ast, CharSequence name) {
@@ -5220,28 +5216,39 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         boolean shouldGenerateBackwardsScan = orderDescendingByDesignatedTimestampOnly
                 || isOrderByStartingWithDescDesignatedTimestampAndLimited(model);
 
-        if (withinExtracted != null) {
-            CharSequence preferredKeyColumn = null;
-            if (latestByColumnCount == 1) {
-                final int latestByIndex = listColumnFilterA.getColumnIndexFactored(0);
+        if (withinExtracted != null || executionContext.overrideIntrinsics(reader.getTableToken())) {
 
-                if (ColumnType.isSymbol(myMeta.getColumnType(latestByIndex))) {
-                    preferredKeyColumn = latestBy.getQuick(0).token;
+            final IntrinsicModel intrinsicModel;
+            if (withinExtracted != null) {
+                CharSequence preferredKeyColumn = null;
+
+                if (latestByColumnCount == 1) {
+                    final int latestByIndex = listColumnFilterA.getColumnIndexFactored(0);
+
+                    if (ColumnType.isSymbol(myMeta.getColumnType(latestByIndex))) {
+                        preferredKeyColumn = latestBy.getQuick(0).token;
+                    }
                 }
+
+                intrinsicModel = whereClauseParser.extract(
+                        model,
+                        withinExtracted,
+                        metadata,
+                        preferredKeyColumn,
+                        readerTimestampIndex,
+                        functionParser,
+                        myMeta,
+                        executionContext,
+                        latestByColumnCount > 1,
+                        reader
+                );
+            } else {
+                intrinsicModel = whereClauseParser.getEmpty();
             }
 
-            final IntrinsicModel intrinsicModel = whereClauseParser.extract(
-                    model,
-                    withinExtracted,
-                    metadata,
-                    preferredKeyColumn,
-                    readerTimestampIndex,
-                    functionParser,
-                    myMeta,
-                    executionContext,
-                    latestByColumnCount > 1,
-                    reader
-            );
+            // When we run materialized view refresh we want to restrict queries to the base table
+            // to the timestamp range that is updated by the previous transactions.
+            executionContext.overrideWhereIntrinsics(reader.getTableToken(), intrinsicModel);
 
             // intrinsic parser can collapse where clause when removing parts it can replace
             // need to make sure that filter is updated on the model in case it is processed up the call stack
@@ -5901,15 +5908,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private boolean isOrderByDesignatedTimestampOnly(QueryModel model) {
         return model.getOrderByAdvice().size() == 1
                 && model.getTimestamp() != null
-                && Chars.equalsIgnoreCase(model.getOrderByAdvice().getQuick(0).token,
-                model.getTimestamp().token);
+                && Chars.equalsIgnoreCase(model.getOrderByAdvice().getQuick(0).token, model.getTimestamp().token);
     }
 
     private boolean isOrderByStartingWithDescDesignatedTimestampAndLimited(QueryModel model) {
         return model.getOrderByAdvice().size() > 1
                 && model.getTimestamp() != null
-                && Chars.equalsIgnoreCase(model.getOrderByAdvice().getQuick(0).token,
-                model.getTimestamp().token)
+                && Chars.equalsIgnoreCase(
+                model.getOrderByAdvice().getQuick(0).token,
+                model.getTimestamp().token
+        )
                 && model.getLimitLo() != null && !Chars.equals(model.getLimitLo().token, '-');
     }
 
@@ -6309,9 +6317,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         public void toPlan(PlanSink sink) {
             sink.type(model.getTypeName());
 
-            CharSequence tableName = model.getTableName();
+            final CharSequence tableName = model.getTableName();
             if (tableName != null) {
-                sink.meta("table").val(tableName);
+                sink.meta(model.getModelType() == CREATE_MAT_VIEW ? "view" : "table").val(tableName);
             }
             if (factory != null) {
                 sink.child(factory);

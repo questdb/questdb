@@ -258,6 +258,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final Log log;
     private final boolean logLevelVerbose;
     private final boolean logSqlQueryProgressExe;
+    private final boolean matViewEnabled;
     private final int maxFileNameLength;
     private final long maxHttpQueryResponseRowLimit;
     private final double maxRequiredDelimiterStdDev;
@@ -582,7 +583,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long pgWorkerYieldThreshold;
     private boolean stringToCharCastAllowed;
     private long symbolCacheWaitBeforeReload;
-
 
     public PropServerConfiguration(
             String root,
@@ -1107,6 +1107,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.walApplyWorkerSleepThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_SLEEP_THRESHOLD, 10_000);
             this.walApplySleepTimeout = getMillis(properties, env, PropertyKey.WAL_APPLY_WORKER_SLEEP_TIMEOUT, 10);
             this.walApplyWorkerYieldThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_YIELD_THRESHOLD, 1000);
+
+            this.matViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ENABLED, false);
 
             this.commitMode = getCommitMode(properties, env, PropertyKey.CAIRO_COMMIT_MODE);
             this.createAsSelectRetryCount = getInt(properties, env, PropertyKey.CAIRO_CREATE_AS_SELECT_RETRY_COUNT, 5);
@@ -3263,6 +3265,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isIOURingEnabled() {
             return ioURingEnabled;
+        }
+
+        @Override
+        public boolean isMatViewEnabled() {
+            return matViewEnabled;
         }
 
         @Override

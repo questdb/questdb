@@ -151,7 +151,8 @@ public final class TestUtils {
             sink.put("ascii flag set to '").put(utf8Sequence == null || utf8Sequence.isAscii())
                     .put("' for value '").put(utf8Sequence).put("'. ");
             Assert.assertEquals(sink.toString(),
-                    Utf8s.isAscii(utf8Sequence), utf8Sequence == null || utf8Sequence.isAscii());
+                    Utf8s.isAscii(utf8Sequence), utf8Sequence == null || utf8Sequence.isAscii()
+            );
         }
     }
 
@@ -243,7 +244,8 @@ public final class TestUtils {
                 if (tsL != tsR) {
                     throw new AssertionError(String.format("Row %d column %s[%s] %s. Expected %s but found %s",
                             rowIndex, metadataActual.getColumnName(timestampIndex), ColumnType.TIMESTAMP,
-                            "timestamp mismatch", Timestamps.toUSecString(tsL), Timestamps.toUSecString(tsR)));
+                            "timestamp mismatch", Timestamps.toUSecString(tsL), Timestamps.toUSecString(tsR)
+                    ));
                 }
 
                 // compare accumulated records
@@ -329,8 +331,10 @@ public final class TestUtils {
                             offset += reada;
 
                             for (int i = 0; i < reada; i++) {
-                                Assert.assertEquals(Unsafe.getUnsafe().getByte(bufa + i),
-                                        Unsafe.getUnsafe().getByte(bufb + i));
+                                Assert.assertEquals(
+                                        Unsafe.getUnsafe().getByte(bufa + i),
+                                        Unsafe.getUnsafe().getByte(bufb + i)
+                                );
                             }
                         }
                     } finally {
@@ -998,8 +1002,10 @@ public final class TestUtils {
 
     public static SqlExecutionContext createSqlExecutionCtx(CairoEngine engine, BindVariableService bindVariableService) {
         SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1);
-        ctx.with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),
-                bindVariableService);
+        ctx.with(
+                engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                bindVariableService
+        );
         return ctx;
     }
 
@@ -1048,7 +1054,7 @@ public final class TestUtils {
             int tableId,
             CharSequence tableName
     ) {
-        TableToken token = engine.lockTableName(tableName, tableId, structure.isWalEnabled());
+        TableToken token = engine.lockTableName(tableName, tableId, structure.isMatView(), structure.isWalEnabled());
         if (token == null) {
             throw new RuntimeException("table already exists: " + tableName);
         }
@@ -1384,7 +1390,8 @@ public final class TestUtils {
     public static void messTxnUnallocated(FilesFacade ff, Path path, Rnd rnd, TableToken tableToken) {
         path.concat(tableToken).concat(TableUtils.TXN_FILE_NAME);
         try (MemoryMARW txFile = Vm.getCMARWInstance(ff, path.$(), Files.PAGE_SIZE, -1,
-                MemoryTag.NATIVE_MIG_MMAP, CairoConfiguration.O_NONE)
+                MemoryTag.NATIVE_MIG_MMAP, CairoConfiguration.O_NONE
+        )
         ) {
             long version = txFile.getLong(TableUtils.TX_BASE_OFFSET_VERSION_64);
             boolean isA = (version & 1L) == 0L;
@@ -1557,8 +1564,10 @@ public final class TestUtils {
         }
     }
 
-    public static String replaceSizeToMatchOS(String expected, String tableName,
-                                              CairoConfiguration configuration, CairoEngine engine, StringSink sink) {
+    public static String replaceSizeToMatchOS(
+            String expected, String tableName,
+            CairoConfiguration configuration, CairoEngine engine, StringSink sink
+    ) {
         return replaceSizeToMatchOS(expected, new Utf8String(configuration.getRoot()), tableName, engine, sink);
     }
 
@@ -1739,10 +1748,12 @@ public final class TestUtils {
                 String expected = recordToString(rr, metadataExpected, genericStringMatch);
                 String actual = recordToString(lr, metadataActual, genericStringMatch);
                 Assert.assertEquals(String.format(String.format("Row %d column %s[%s]",
-                        rowIndex, columnName, ColumnType.nameOf(columnType))), expected, actual);
+                        rowIndex, columnName, ColumnType.nameOf(columnType)
+                )), expected, actual);
                 // If above didn't fail because of types not included or double precision not enough, throw here anyway
                 throw new AssertionError(String.format("Row %d column %s[%s] %s", rowIndex, columnName,
-                        ColumnType.nameOf(columnType), e.getMessage()));
+                        ColumnType.nameOf(columnType), e.getMessage()
+                ));
             }
         }
     }
@@ -2024,7 +2035,8 @@ public final class TestUtils {
                         if (i != MemoryTag.NATIVE_SQL_COMPILER) {
                             Assert.assertEquals("Memory usage by tag: " + MemoryTag.nameOf(i)
                                             + ", difference: " + (actualMemByTag - memoryUsageByTag[i]),
-                                    memoryUsageByTag[i], actualMemByTag);
+                                    memoryUsageByTag[i], actualMemByTag
+                            );
                             Assert.assertTrue(actualMemByTag > -1);
                         } else {
                             // SqlCompiler memory is not released immediately as compilers are pooled
