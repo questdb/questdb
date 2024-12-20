@@ -224,7 +224,9 @@ public class LineHttpTudCache implements QuietCloseable {
             }
             tableToken = engine.createTable(securityContext, ddlMem, path, true, tsa, false);
         }
-        // TODO(eugene): check mat view
+        if (tableToken != null && tableToken.isMatView()) {
+            throw parseException.of("cannot modify materialized view", tableToken.getTableName());
+        }
         return tableToken;
     }
 

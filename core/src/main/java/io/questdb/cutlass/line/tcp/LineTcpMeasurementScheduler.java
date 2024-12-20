@@ -440,7 +440,6 @@ public class LineTcpMeasurementScheduler implements Closeable {
                         }
                         engine.createTable(securityContext, ddlMem, path, true, tsa, false);
                     }
-                    // TODO(eugene): check mat view
                     // by the time we get here, the table should exist on disk
                     // check the global idle cache - TUD can be there
                     final int idleTudKeyIndex = idleTableUpdateDetailsUtf16.keyIndex(tableNameUtf16);
@@ -470,6 +469,12 @@ public class LineTcpMeasurementScheduler implements Closeable {
                                         .put(']');
                             }
                             continue; // go for another spin
+                        }
+                        if (tableToken.isMatView()) {
+                            throw CairoException.nonCritical()
+                                    .put("cannot modify materialized view [view=")
+                                    .put(tableToken.getTableName())
+                                    .put(']');
                         }
                         TelemetryTask.store(telemetry, TelemetryOrigin.ILP_TCP, TelemetrySystemEvent.ILP_RESERVE_WRITER);
                         if (engine.isWalTable(tableToken)) {
