@@ -259,6 +259,34 @@ public class OrderByExpressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderByTwoColumnsInJoin() throws Exception {
+        assertQuery(
+                "id\ts1\ts2\n" +
+                        "42\tfoo1\tbar1\n" +
+                        "42\tfoo1\tbar2\n" +
+                        "42\tfoo1\tbar2\n" +
+                        "42\tfoo1\tbar2\n" +
+                        "42\tfoo2\tbar1\n" +
+                        "42\tfoo2\tbar2\n" +
+                        "42\tfoo2\tbar3\n" +
+                        "42\tfoo2\tbar3\n" +
+                        "42\tfoo3\tbar2\n" +
+                        "42\tfoo3\tbar3\n",
+                "select * " +
+                        "from (" +
+                        "  select b.*" +
+                        "  from (select 42 id) a " +
+                        "  left join (x union all (select 0 id, 'foo0' s1, 'bar0')) b on a.id = b.id" +
+                        ")" +
+                        "order by s1, s2",
+                "create table x as (select 42 id, rnd_str('foo1','foo2','foo3') s1, rnd_str('bar1','bar2','bar3') s2 from long_sequence(10))",
+                null,
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testOrderByTwoExpressions() throws Exception {
         assertQuery(
                 "x\n10\n9\n8\n7\n6\n",

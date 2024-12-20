@@ -30,16 +30,17 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.std.Chars;
+import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 
-public class NullIfStrFunctionFactory implements FunctionFactory {
+public class NullIfVarcharFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "nullif(SS)";
+        return "nullif(ØØ)";
     }
 
     @Override
@@ -53,18 +54,18 @@ public class NullIfStrFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class Func extends StrFunction implements BinaryFunction {
-        private final Function strFunc1;
-        private final Function strFunc2;
+    private static class Func extends VarcharFunction implements BinaryFunction {
+        private final Function varcharFunc1;
+        private final Function varcharFunc2;
 
-        public Func(Function strFunc1, Function strFunc2) {
-            this.strFunc1 = strFunc1;
-            this.strFunc2 = strFunc2;
+        public Func(Function varcharFunc1, Function varcharFunc2) {
+            this.varcharFunc1 = varcharFunc1;
+            this.varcharFunc2 = varcharFunc2;
         }
 
         @Override
         public Function getLeft() {
-            return strFunc1;
+            return varcharFunc1;
         }
 
         @Override
@@ -74,31 +75,31 @@ public class NullIfStrFunctionFactory implements FunctionFactory {
 
         @Override
         public Function getRight() {
-            return strFunc2;
+            return varcharFunc2;
         }
 
         @Override
-        public CharSequence getStrA(Record rec) {
-            CharSequence cs1 = strFunc1.getStrA(rec);
-            if (cs1 == null) {
+        public Utf8Sequence getVarcharA(Record rec) {
+            Utf8Sequence us1 = varcharFunc1.getVarcharA(rec);
+            if (us1 == null) {
                 return null;
             }
-            CharSequence cs2 = strFunc2.getStrA(rec);
-            if (cs2 == null || !Chars.equals(cs1, cs2)) {
-                return cs1;
+            Utf8Sequence us2 = varcharFunc2.getVarcharA(rec);
+            if (us2 == null || !Utf8s.equals(us1, us2)) {
+                return us1;
             }
             return null;
         }
 
         @Override
-        public CharSequence getStrB(Record rec) {
-            CharSequence cs1 = strFunc1.getStrB(rec);
-            if (cs1 == null) {
+        public Utf8Sequence getVarcharB(Record rec) {
+            Utf8Sequence us1 = varcharFunc1.getVarcharB(rec);
+            if (us1 == null) {
                 return null;
             }
-            CharSequence cs2 = strFunc2.getStrB(rec);
-            if (cs2 == null || !Chars.equals(cs1, cs2)) {
-                return cs1;
+            Utf8Sequence us2 = varcharFunc2.getVarcharB(rec);
+            if (us2 == null || !Utf8s.equals(us1, us2)) {
+                return us1;
             }
             return null;
         }

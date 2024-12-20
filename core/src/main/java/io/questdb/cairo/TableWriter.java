@@ -652,7 +652,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         );
 
         if (!Os.isWindows()) {
-            ff.fsyncAndClose(openRO(ff, path.$(), LOG));
+            try {
+                ff.fsyncAndClose(openRO(ff, path.$(), LOG));
+            } catch (CairoException e) {
+                LOG.error().$("could not fsync after column added, non-critical [path=").$(path)
+                        .$(", errno=").$(e.getErrno())
+                        .$(", error=").$(e.getFlyweightMessage()).$();
+            }
         }
 
         if (securityContext != null) {
@@ -991,85 +997,84 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // maintain sparse list of symbol writers
                 symbolMapWriters.extendAndSet(columnCount, NullMapWriter.INSTANCE);
             }
-            try {
-                convertOperator.convertColumn(columnName, existingColIndex, existingType, columnIndex, newType);
+            convertOperator.convertColumn(columnName, existingColIndex, existingType, columnIndex, newType);
 
-                // Column converted, add new one to _meta file and remove the existing column
-                addColumnToMeta(
-                        columnName,
-                        newType,
-                        symbolCapacity,
-                        symbolCacheFlag,
-                        isIndexed,
-                        indexValueBlockCapacity,
-                        isDedupKey,
-                        columnNameTxn,
-                        existingColIndex
-                );
+            // Column converted, add new one to _meta file and remove the existing column
+            addColumnToMeta(
+                    columnName,
+                    newType,
+                    symbolCapacity,
+                    symbolCacheFlag,
+                    isIndexed,
+                    indexValueBlockCapacity,
+                    isDedupKey,
+                    columnNameTxn,
+                    existingColIndex
+            );
 
-                // close old column files
-                freeColumnMemory(existingColIndex);
+            // close old column files
+            freeColumnMemory(existingColIndex);
 
-                // remove symbol map writer or entry for such
-                removeSymbolMapWriter(existingColIndex);
+            // remove symbol map writer or entry for such
+            removeSymbolMapWriter(existingColIndex);
 
-                // remove old column to in-memory metadata object and add new one
-                metadata.removeColumn(existingColIndex);
-                metadata.addColumn(
-                        columnName,
-                        newType, isIndexed,
-                        indexValueBlockCapacity,
-                        existingColIndex,
-                        symbolCapacity,
-                        isDedupKey,
-                        existingColIndex + 1,
-                        symbolCacheFlag
-                ); // by convention, replacingIndex is +1
+            // remove old column to in-memory metadata object and add new one
+            metadata.removeColumn(existingColIndex);
+            metadata.addColumn(
+                    columnName,
+                    newType, isIndexed,
+                    indexValueBlockCapacity,
+                    existingColIndex,
+                    symbolCapacity,
+                    isDedupKey,
+                    existingColIndex + 1,
+                    symbolCacheFlag
+            ); // by convention, replacingIndex is +1
 
-                // open new column files
-                if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {
-                    long partitionTimestamp = txWriter.getLastPartitionTimestamp();
-                    setStateForTimestamp(path, partitionTimestamp);
-                    openColumnFiles(columnName, columnNameTxn, columnIndex, path.size());
-                    setColumnAppendPosition(columnIndex, txWriter.getTransientRowCount(), false);
-                    path.trimTo(pathSize);
-                }
-
-                // write index if necessary or remove the old one
-                // index must be created before column is initialised because
-                // it uses primary column object as temporary tool
-                if (isIndexed) {
-                    SymbolColumnIndexer indexer = (SymbolColumnIndexer) indexers.get(columnIndex);
-                    writeIndex(columnName, indexValueBlockCapacity, columnIndex, indexer);
-                    // add / remove indexers
-                    indexers.extendAndSet(columnIndex, indexer);
-                    populateDenseIndexerList();
-                }
-
-                try {
-                    // open _meta file
-                    openMetaFile(ff, path, pathSize, metaMem);
-                    // remove _todo
-                    clearTodoLog();
-                } catch (CairoException e) {
-                    throwDistressException(e);
-                }
-
-                // commit transaction to _txn file
-                bumpMetadataAndColumnStructureVersion();
-
-                try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                    metadataRW.hydrateTable(metadata);
-                }
-            } finally {
-                // clear temp resources
-                convertOperator.finishColumnConversion();
+            // open new column files
+            if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {
+                long partitionTimestamp = txWriter.getLastPartitionTimestamp();
+                setStateForTimestamp(path, partitionTimestamp);
+                openColumnFiles(columnName, columnNameTxn, columnIndex, path.size());
+                setColumnAppendPosition(columnIndex, txWriter.getTransientRowCount(), false);
                 path.trimTo(pathSize);
             }
+
+            // write index if necessary or remove the old one
+            // index must be created before column is initialised because
+            // it uses primary column object as temporary tool
+            if (isIndexed) {
+                SymbolColumnIndexer indexer = (SymbolColumnIndexer) indexers.get(columnIndex);
+                writeIndex(columnName, indexValueBlockCapacity, columnIndex, indexer);
+                // add / remove indexers
+                indexers.extendAndSet(columnIndex, indexer);
+                populateDenseIndexerList();
+            }
+
+            try {
+                // open _meta file
+                openMetaFile(ff, path, pathSize, metaMem);
+                // remove _todo
+                clearTodoLog();
+            } catch (CairoException e) {
+                throwDistressException(e);
+            }
+
+            // commit transaction to _txn file
+            bumpMetadataAndColumnStructureVersion();
         } catch (Throwable th) {
-            LOG.error().$("could not change column type [table=").$(tableToken.getTableName()).$(", column=").utf8(columnName)
+            LOG.critical().$("could not change column type [table=").$(tableToken.getTableName()).$(", column=").utf8(columnName)
                     .$(", error=").$(th).I$();
+            distressed = true;
             throw th;
+        } finally {
+            // clear temp resources
+            convertOperator.finishColumnConversion();
+            path.trimTo(pathSize);
+        }
+
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.hydrateTable(metadata);
         }
     }
 
@@ -2253,6 +2258,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return tsIndex > -1 && metadata.isDedupKey(tsIndex);
     }
 
+    public boolean isDistressed() {
+        return distressed;
+    }
+
     public boolean isOpen() {
         return tempMem16b != 0;
     }
@@ -2918,7 +2927,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 partitionRemoveCandidates.clear();
                 o3CommitBatchTimestampMin = Long.MAX_VALUE;
                 if ((masterRef & 1) != 0) {
-                    masterRef++;
+                    // Potentially failed in row writing like putSym() call.
+                    // This can mean that the writer state is corrupt. Force re-open writer with next transaction
+                    LOG.critical().$("detected line append failure, writer marked as distressed [table=").$(tableToken).I$();
+                    distressed = true;
+                    checkDistressed();
                 }
                 freeColumns(false);
                 txWriter.unsafeLoadAll();
@@ -2931,14 +2944,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 o3InError = false;
                 // when we rolled transaction back, hasO3() has to be false
                 o3MasterRef = -1;
-                LOG.info().$("tx rollback complete [name=").utf8(tableToken.getTableName()).I$();
+                LOG.info().$("tx rollback complete [table=").$(tableToken).I$();
                 processCommandQueue(false);
                 metrics.tableWriter().incrementRollbacks();
             } catch (Throwable e) {
-                LOG.critical().$("could not perform rollback [name=").utf8(tableToken.getTableName()).$(", msg=").$(e).I$();
+                LOG.critical().$("could not perform rollback [table=").$(tableToken).$(", msg=").$(e).I$();
                 distressed = true;
             }
-            assert distressed || (!inTransaction() && !o3InError);
+            // If it's a manual rollback call, throw exception to indicate that the rollback was not successful
+            // and writer must be closed.
+            checkDistressed();
         }
     }
 
@@ -5992,6 +6007,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         primary.ofOffset(
                                 configuration.getFilesFacade(),
                                 fd,
+                                false,
                                 dfile,
                                 rowLo << sizeBitsPow2,
                                 rowHi << sizeBitsPow2,
@@ -6458,7 +6474,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (cursor > -1) {
                 O3CopyTask copyTask = copyQueue.get(cursor);
                 if (copyTask.getTableWriter() == this && o3ErrorCount.get() > 0) {
-                    O3CopyJob.copyIdle(
+                    O3CopyJob.unmapAndClose(
                             copyTask.getColumnCounter(),
                             copyTask.getPartCounter(),
                             copyTask.getTimestampMergeIndexAddr(),
@@ -7571,12 +7587,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void recoverOpenColumnFailure(CharSequence columnName) {
-        final int index = columnCount - 1;
         removeMetaFile();
-        removeLastColumn();
-        columnCount--;
         recoverFromSwapRenameFailure(columnName);
-        removeSymbolMapWriter(index);
+        // Some writer in-memory state will be still dirty, and it's not easy to roll back everything
+        // for all the failure points. It's safer to re-open the writer object after a column add failure.
+        distressed = true;
     }
 
     private void releaseIndexerWriters() {
@@ -7770,10 +7785,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         removeFileOrLog(ff, keyFileName(path.trimTo(plen), columnName, columnNameTxn));
         removeFileOrLog(ff, valueFileName(path.trimTo(plen), columnName, columnNameTxn));
         path.trimTo(pathSize);
-    }
-
-    private void removeLastColumn() {
-        freeColumnMemory(columnCount - 1);
     }
 
     private void removeMetaFile() {
@@ -9222,6 +9233,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         void putUuid(int columnIndex, CharSequence uuid);
 
+        // Used by bytecode assembler. DO NOT REMOVE!
         void putUuidUtf8(int columnIndex, Utf8Sequence uuid);
 
         void putVarchar(int columnIndex, char value);
