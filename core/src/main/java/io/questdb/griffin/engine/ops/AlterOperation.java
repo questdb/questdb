@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCR;
@@ -584,7 +585,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         int ttlHoursOrMonths = (int) extraInfo.get(0);
         try {
             svc.setMetaTtlHoursOrMonths(ttlHoursOrMonths);
-            // TODO: enforce the TTL right away
+            if (svc instanceof TableWriter) {
+                ((TableWriter) svc).enforceTtl();
+            }
         } catch (CairoException e) {
             e.position(tableNamePosition);
             throw e;

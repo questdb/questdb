@@ -1912,6 +1912,41 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    public void enforceTtl() {
+        int ttl = metadata.getTtlHoursOrMonths();
+        if (ttl == 0) {
+            return;
+        }
+        PartitionBy.PartitionFloorMethod floorFn = PartitionBy.getPartitionFloorMethod(metadata.getPartitionBy());
+        PartitionBy.PartitionCeilMethod ceilFn = PartitionBy.getPartitionCeilMethod(metadata.getPartitionBy());
+        if (floorFn == null || ceilFn == null) {
+            LOG.error().$("TTL set on a non-partitioned table. Ignoring");
+            return;
+        }
+        int partitionCount = getPartitionCount();
+        if (partitionCount < 2) {
+            return;
+        }
+        long maxTimestamp = getMaxTimestamp();
+        while (getPartitionCount() > 1) {
+            long partitionTimestamp = getPartitionTimestamp(0);
+            assert partitionTimestamp == floorFn.floor(partitionTimestamp) : "Partition 0 timestamp weirdness";
+            long partitionCeiling = ceilFn.ceil(partitionTimestamp);
+            // TTL < 0 means it's in months
+            boolean shouldEvict = ttl > 0
+                    ? maxTimestamp - partitionCeiling >= Timestamps.HOUR_MICROS * ttl
+                    : Timestamps.getMonthsBetween(partitionCeiling, maxTimestamp) >= -ttl;
+            if (shouldEvict) {
+                LOG.info().$("Partition's TTL expired, evicting. partitionTs=")
+                        .microTime(partitionTimestamp).$();
+                dropPartitionByExactTimestamp(partitionTimestamp);
+            } else {
+                // Partitions are sorted by timestamp, no need to check the rest
+                break;
+            }
+        }
+    }
+
     @Override
     public void forceRemovePartitions(LongList partitionTimestamps) {
         long minTimestamp = txWriter.getMinTimestamp(); // partition min timestamp
@@ -5343,41 +5378,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Call O3 methods to remove check TxnScoreboard and remove partition directly
         safeDeletePartitionDir(timestamp, partitionNameTxn);
         return true;
-    }
-
-    private void enforceTtl() {
-        int ttl = metadata.getTtlHoursOrMonths();
-        if (ttl == 0) {
-            return;
-        }
-        PartitionBy.PartitionFloorMethod floorFn = PartitionBy.getPartitionFloorMethod(metadata.getPartitionBy());
-        PartitionBy.PartitionCeilMethod ceilFn = PartitionBy.getPartitionCeilMethod(metadata.getPartitionBy());
-        if (floorFn == null || ceilFn == null) {
-            LOG.error().$("TTL set on a non-partitioned table. Ignoring");
-            return;
-        }
-        int partitionCount = getPartitionCount();
-        if (partitionCount < 2) {
-            return;
-        }
-        long maxTimestamp = getMaxTimestamp();
-        while (getPartitionCount() > 1) {
-            long partitionTimestamp = getPartitionTimestamp(0);
-            assert partitionTimestamp == floorFn.floor(partitionTimestamp) : "Partition 0 timestamp weirdness";
-            long partitionCeiling = ceilFn.ceil(partitionTimestamp);
-            // TTL < 0 means it's in months
-            boolean shouldEvict = ttl > 0
-                    ? maxTimestamp - partitionCeiling >= Timestamps.HOUR_MICROS * ttl
-                    : Timestamps.getMonthsBetween(partitionCeiling, maxTimestamp) >= -ttl;
-            if (shouldEvict) {
-                LOG.info().$("Partition's TTL expired, evicting. partitionTs=")
-                        .microTime(partitionTimestamp).$();
-                dropPartitionByExactTimestamp(partitionTimestamp);
-            } else {
-                // Partitions are sorted by timestamp, no need to check the rest
-                break;
-            }
-        }
     }
 
     private long findMinSplitPartitionTimestamp() {

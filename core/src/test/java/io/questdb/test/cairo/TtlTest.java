@@ -106,11 +106,9 @@ public class TtlTest extends AbstractCairoTest {
                         "1970-01-01T02:00:00.000001Z\n",
                 "tango", "ts", true, true);
         execute("ALTER TABLE tango SET TTL 1H");
-        execute("INSERT INTO tango VALUES (7_200_000_002)"); // insert something just to trigger commit
         assertQuery("ts\n" +
                         "1970-01-01T01:00:00.000000Z\n" +
-                        "1970-01-01T02:00:00.000001Z\n" +
-                        "1970-01-01T02:00:00.000002Z\n",
+                        "1970-01-01T02:00:00.000001Z\n",
                 "tango", "ts", true, true);
     }
 
