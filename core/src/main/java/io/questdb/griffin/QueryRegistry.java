@@ -133,6 +133,7 @@ public class QueryRegistry {
         e.registeredAtNs = clock.getTicks();
         e.changedAtNs = e.registeredAtNs;
         e.state = Entry.State.ACTIVE;
+        e.cancelled.set(false);
 
         if (executionContext.containsSecret()) {
             e.query.put("<SECRET>");
@@ -179,13 +180,12 @@ public class QueryRegistry {
 
         final Entry e = registry.remove(queryId);
         if (e != null) {
+            e.cancelled.set(true);
             tlQueryPool.get().push(e);
         } else {
             // this might happen if query was cancelled
             LOG.error().$("query to unregister not found [id=").$(queryId).I$();
         }
-
-        executionContext.setCancelledFlag(null);
     }
 
     public interface Listener {

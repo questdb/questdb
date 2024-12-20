@@ -99,6 +99,9 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
             AtomicBooleanCircuitBreaker cb = (AtomicBooleanCircuitBreaker) circuitBreaker;
             cancelledFlag = cb.cancelledFlag;
             throttle = cb.throttle;
+        } else if (circuitBreaker instanceof NetworkSqlExecutionCircuitBreaker) {
+            NetworkSqlExecutionCircuitBreaker cb = (NetworkSqlExecutionCircuitBreaker) circuitBreaker;
+            cancelledFlag = cb.getCancelledFlag();
         }
     }
 

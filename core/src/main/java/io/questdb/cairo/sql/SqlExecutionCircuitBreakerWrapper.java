@@ -101,8 +101,11 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
         init(wrapper.delegate);
     }
 
+    @Override
     public void init(SqlExecutionCircuitBreaker executionContextCircuitBreaker) {
         if (executionContextCircuitBreaker instanceof AtomicBooleanCircuitBreaker) {
+            // we want to copy the state of the circuit breaker, most importantly the cancelled flag
+            // since the flag instance can be different for a different queries
             atomicBooleanCircuitBreaker.init(executionContextCircuitBreaker);
             delegate = atomicBooleanCircuitBreaker;
         } else if (executionContextCircuitBreaker.isThreadsafe()) {

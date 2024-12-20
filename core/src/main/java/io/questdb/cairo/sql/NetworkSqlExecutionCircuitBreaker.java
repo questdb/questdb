@@ -107,6 +107,10 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         fd = -1;
     }
 
+    public AtomicBoolean getCancelledFlag() {
+        return cancelledFlag;
+    }
+
     @Override
     public SqlExecutionCircuitBreakerConfiguration getConfiguration() {
         return configuration;
@@ -149,6 +153,13 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     public void init(SqlExecutionCircuitBreaker circuitBreaker) {
         fd = circuitBreaker.getFd();
         timeout = circuitBreaker.getTimeout();
+        if (circuitBreaker instanceof NetworkSqlExecutionCircuitBreaker) {
+            NetworkSqlExecutionCircuitBreaker cb = (NetworkSqlExecutionCircuitBreaker) circuitBreaker;
+            cancelledFlag = cb.getCancelledFlag();
+        } else if (circuitBreaker instanceof AtomicBooleanCircuitBreaker) {
+            AtomicBooleanCircuitBreaker cb = (AtomicBooleanCircuitBreaker) circuitBreaker;
+            cancelledFlag = cb.cancelledFlag;
+        }
     }
 
     @Override
