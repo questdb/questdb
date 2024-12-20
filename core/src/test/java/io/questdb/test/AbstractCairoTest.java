@@ -33,7 +33,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
-import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
@@ -822,14 +821,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, writer.getTableToken(), 0);
         addColumnC.ofAddColumn(columnName, 1, columnType, 0, false, false, 0);
         writer.apply(addColumnC.build(), true);
-    }
-
-    protected static void assertCairoMetadata(String expected) {
-        try (MetadataCacheReader ro = engine.getMetadataCache().readLock()) {
-            sink.clear();
-            ro.toSink(sink);
-            TestUtils.assertEquals(expected, sink);
-        }
     }
 
     protected static void assertCursor(

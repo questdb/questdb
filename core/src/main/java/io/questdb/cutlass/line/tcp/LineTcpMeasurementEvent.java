@@ -261,8 +261,8 @@ class LineTcpMeasurementEvent implements Closeable {
             }
             row.append();
             tableUpdateDetails.commitIfMaxUncommittedRowsCountReached();
-        } catch (CommitFailedException commitFailedException) {
-            throw commitFailedException;
+        } catch (CommitFailedException | CairoError e) {
+            throw e;
         } catch (Throwable th) {
             LOG.error()
                     .$("could not write line protocol measurement [tableName=").$(tableUpdateDetails.getTableToken())

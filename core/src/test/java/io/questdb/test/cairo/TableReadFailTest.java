@@ -53,6 +53,7 @@ public class TableReadFailTest extends AbstractCairoTest {
     @Test
     public void testMetaFileCannotOpenConstructor() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
+        spinLockTimeout = 1;
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
@@ -68,6 +69,7 @@ public class TableReadFailTest extends AbstractCairoTest {
     @Test
     public void testMetaFileMissingConstructor() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
+        spinLockTimeout = 1;
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long openRO(LPSZ path) {
@@ -84,6 +86,7 @@ public class TableReadFailTest extends AbstractCairoTest {
     public void testReloadTimeout() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
+            spinLockTimeout = 1;
             String x = "x";
             TableModel model = new TableModel(configuration, x, PartitionBy.NONE)
                     .col("a", ColumnType.INT)

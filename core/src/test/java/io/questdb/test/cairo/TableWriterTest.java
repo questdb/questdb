@@ -478,11 +478,15 @@ public class TableWriterTest extends AbstractCairoTest {
             int counter = 2;
 
             @Override
-            public long openRO(LPSZ name) {
+            public long openRW(LPSZ name, long opts) {
+                if (Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME)) {
+                    counter = 1;
+                    return -1;
+                }
                 if (Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME) && --counter == 0) {
                     return -1;
                 }
-                return super.openRO(name);
+                return super.openRW(name, opts);
             }
         });
     }
@@ -523,11 +527,17 @@ public class TableWriterTest extends AbstractCairoTest {
             int counter = 2;
 
             @Override
-            public long openRO(LPSZ name) {
+            public long openRW(LPSZ name, long opts) {
+                // Cannot write to _meta.swp
+                if (Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME)) {
+                    counter = 1;
+                    return -1;
+                }
+                // And cannot open _meta file to re-read unmodified metadata once.
                 if (Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME) && --counter == 0) {
                     return -1;
                 }
-                return super.openRO(name);
+                return super.openRW(name, opts);
             }
 
             @Override
@@ -541,20 +551,20 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testAddColumnRepairFail2() throws Exception {
         class X extends FilesFacadeImpl {
-            int counter = 2;
-
-            @Override
-            public long openRO(LPSZ name) {
-                if (Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME) && --counter == 0) {
-                    return -1;
-                }
-                return super.openRO(name);
-            }
+            int counter = 1;
 
             @Override
             public int rename(LPSZ from, LPSZ to) {
-                return !Utf8s.endsWithAscii(from, TableUtils.META_PREV_FILE_NAME)
-                        && super.rename(from, to) == Files.FILES_RENAME_OK ? Files.FILES_RENAME_OK : Files.FILES_RENAME_ERR_OTHER;
+                // DDL fails because we can't rename _meta.swp to _meta
+                if (Utf8s.containsAscii(from, TableUtils.META_SWAP_FILE_NAME)) {
+                    return -1;
+                }
+                // Also we can't rename _meta.prev to _meta once so that writer become distressed
+                if (Utf8s.containsAscii(from, TableUtils.META_PREV_FILE_NAME) && --counter == 0) {
+                    return -1;
+                }
+                // But rollback from meta.prev to _meta is ok
+                return super.rename(from, to);
             }
         }
         testAddColumnErrorFollowedByRepairFail(new X());
@@ -1941,11 +1951,11 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testMetaFileDoesNotExist() throws Exception {
         testConstructor(new TestFilesFacadeImpl() {
             @Override
-            public long openRO(LPSZ name) {
+            public long openRW(LPSZ name, long opts) {
                 if (Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME)) {
                     return -1;
                 }
-                return super.openRO(name);
+                return super.openRW(name, opts);
             }
         });
     }
@@ -3648,11 +3658,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 }
             }
 
-            try {
-                newOffPoolWriter(configuration, PRODUCT, metrics).close();
-                Assert.fail();
-            } catch (CairoException ignore) {
-            }
+            newOffPoolWriter(configuration, PRODUCT, metrics).close();
 
             appendAndAssert10K(ts, rnd);
         });
