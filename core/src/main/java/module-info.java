@@ -205,6 +205,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.conditional.NullIfIntFunctionFactory,
             io.questdb.griffin.engine.functions.conditional.NullIfLongFunctionFactory,
             io.questdb.griffin.engine.functions.conditional.NullIfStrFunctionFactory,
+            io.questdb.griffin.engine.functions.conditional.NullIfVarcharFunctionFactory,
 
 //                   '<' operator
             io.questdb.griffin.engine.functions.lt.LtDoubleVVFunctionFactory,
