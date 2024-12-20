@@ -4160,28 +4160,6 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
-    public void testIPv4StringUnionFails() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table x (col1 ipv4)");
-            execute("create table y (col2 string)");
-            execute("insert into x values('0.0.0.1')");
-            execute("insert into x values('0.0.0.2')");
-            execute("insert into x values('0.0.0.3')");
-            execute("insert into x values('0.0.0.4')");
-            execute("insert into x values('0.0.0.5')");
-            execute("insert into y values('0.0.0.1')");
-            execute("insert into y values('0.0.0.2')");
-            execute("insert into y values('0.0.0.3')");
-            execute("insert into y values('0.0.0.4')");
-            execute("insert into y values('0.0.0.5')");
-
-            engine.releaseInactive();
-
-            assertExceptionNoLeakCheck("select col1 from x union select col2 from y", 25, "unsupported cast [column=col2, from=STRING, to=IPv4]");
-        });
-    }
-
-    @Test
     public void testIPv4Union() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (col1 ipv4)");

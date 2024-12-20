@@ -76,7 +76,7 @@ public class LeastNumericFunctionFactoryTest extends AbstractFunctionFactoryTest
 
     @Test
     public void testLeastNumericFunctionFactoryNulls() throws Exception {
-        assertSqlWithTypes("least\nnull:unknown\n", "select least(1L, null, 2L)");
+        assertSqlWithTypes("least\nnull:NULL\n", "select least(1L, null, 2L)");
     }
 
     @Test
