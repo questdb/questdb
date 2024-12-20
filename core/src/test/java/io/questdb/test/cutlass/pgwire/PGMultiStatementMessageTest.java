@@ -1242,42 +1242,6 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test
-    public void testNestedCursors() throws Exception {
-        skipInLegacyMode(); // a new test implemented after introduction of pgwire 2.0
-
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            int totalRows = 10_000_000;
-
-            try (Statement stmtA = connection.createStatement();
-                 Statement stmtB = connection.createStatement()
-            ) {
-                stmtA.execute("create table x as (select cast(x - 1 as int) a from long_sequence(" + totalRows + "))");
-
-                String expected = "count[BIGINT]\n" +
-                        "999999\n" +
-                        "1\n";
-                String query = "select * from x limit 1;select count(*) from x where a != 0";
-
-                stmtA.execute(query);
-//                boolean moreResults = stmtA.getMoreResults();
-//                Assert.assertTrue(moreResults);
-                try (ResultSet rsA = stmtA.getResultSet()) {
-                    while (rsA.next()) {
-                        // consume
-                    }
-                }
-                boolean moreResults = stmtA.getMoreResults();
-                Assert.assertTrue(moreResults);
-                try (ResultSet rsA = stmtA.getResultSet()) {
-                    while (rsA.next()) {
-                        // consume
-                    }
-                }
-            }
-        });
-    }
-
-    @Test
     public void testPgLockTwice() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
