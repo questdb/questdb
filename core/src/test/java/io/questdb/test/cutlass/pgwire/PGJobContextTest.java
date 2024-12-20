@@ -2621,6 +2621,30 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testByteBindingVariable() throws Exception {
+        skipOnWalRun();
+        skipInLegacyMode();
+
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            final PreparedStatement statement = connection.prepareStatement("create table x (a byte)");
+            statement.execute();
+
+            try (final PreparedStatement insert = connection.prepareStatement("insert into x values (?)")) {
+                // the parameter must be null so client does not know the type and parse message won't have types specified
+                // this makes the compiler to derive the type from the column type as BYTE
+                insert.setObject(1, null);
+                insert.execute();
+            }
+
+            try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
+                sink.clear();
+                assertResultSet("a[SMALLINT]\n" +
+                        "0\n", sink, resultSet);
+            }
+        });
+    }
+
+    @Test
     public void testCairoException() throws Exception {
         skipOnWalRun(); // non-partitioned
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
