@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -90,7 +91,7 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
         }
 
         @Override
-        public void setCancelledFlag(AtomicBoolean cancelledFlag) {
+        public void setCancelledFlag(@NotNull AtomicBoolean cancelledFlag) {
         }
 
         @Override
@@ -168,7 +169,7 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
 
     void resetTimer();
 
-    void setCancelledFlag(AtomicBoolean cancelled);
+    void setCancelledFlag(@NotNull AtomicBoolean cancelled);
 
     void setFd(long fd);
 

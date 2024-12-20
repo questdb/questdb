@@ -133,7 +133,7 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
     }
 
     @Override
-    public void setCancelledFlag(AtomicBoolean cancelled) {
+    public void setCancelledFlag(@NotNull AtomicBoolean cancelled) {
         delegate.setCancelledFlag(cancelled);
     }
 

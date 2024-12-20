@@ -25,12 +25,14 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.CairoException;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
 // Circuit breaker that doesn't check network connection status or timeout and only allows cancelling statement via CANCEL QUERY command .
 public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
+    @NotNull
     protected AtomicBoolean cancelledFlag;
     private long fd = -1;
     private int testCount = 0;
@@ -38,17 +40,15 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
 
     public AtomicBooleanCircuitBreaker() {
         this(0);
-        cancelledFlag = new AtomicBoolean(false);
     }
 
     public AtomicBooleanCircuitBreaker(int throttle) {
         this.throttle = throttle;
+        cancelledFlag = new AtomicBoolean(false);
     }
 
     public void cancel() {
-        if (cancelledFlag != null) {
-            cancelledFlag.set(true);
-        }
+        cancelledFlag.set(true);
     }
 
     @Override
@@ -116,9 +116,7 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     public void reset() {
-        if (cancelledFlag != null) {
-            cancelledFlag.set(false);
-        }
+        cancelledFlag.set(false);
     }
 
     @Override
@@ -127,7 +125,7 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     @Override
-    public void setCancelledFlag(AtomicBoolean cancelledFlag) {
+    public void setCancelledFlag(@NotNull AtomicBoolean cancelledFlag) {
         this.cancelledFlag = cancelledFlag;
     }
 
@@ -158,6 +156,6 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     private boolean isCancelled() {
-        return cancelledFlag == null || cancelledFlag.get();
+        return cancelledFlag.get();
     }
 }

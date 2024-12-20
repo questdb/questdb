@@ -43,6 +43,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     private final NetworkFacade nf;
     private final int throttle;
     private long buffer;
+    @NotNull
     private AtomicBoolean cancelledFlag;
     private long fd = -1;
     private volatile long powerUpTime = Long.MAX_VALUE;
@@ -67,14 +68,13 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
             this.timeout = Long.MAX_VALUE;
         }
         this.defaultMaxTime = this.timeout;
+        this.cancelledFlag = new AtomicBoolean(false);
     }
 
     @Override
     public void cancel() {
         powerUpTime = Long.MIN_VALUE;
-        if (cancelledFlag != null) {
-            cancelledFlag.set(true);
-        }
+        cancelledFlag.set(true);
     }
 
     @Override
@@ -87,7 +87,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         if (clock.getTicks() - timeout > millis) {
             return true;
         }
-        if (cancelledFlag != null && cancelledFlag.get()) {
+        if (cancelledFlag.get()) {
             return true;
         }
         return testConnection(fd);
@@ -135,7 +135,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         if (clock.getTicks() - timeout > millis) {
             return STATE_TIMEOUT;
         }
-        if (cancelledFlag != null && cancelledFlag.get()) {
+        if (cancelledFlag.get()) {
             return STATE_CANCELLED;
         }
         if (testConnection(fd)) {
@@ -189,7 +189,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
-    public void setCancelledFlag(AtomicBoolean cancelledFlag) {
+    public void setCancelledFlag(@NotNull AtomicBoolean cancelledFlag) {
         this.cancelledFlag = cancelledFlag;
     }
 
@@ -246,7 +246,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     private void testCancelled() {
-        if (cancelledFlag != null && cancelledFlag.get()) {
+        if (cancelledFlag.get()) {
             throw CairoException.queryCancelled(fd);
         }
     }

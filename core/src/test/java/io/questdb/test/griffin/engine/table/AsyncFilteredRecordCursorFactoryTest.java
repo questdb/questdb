@@ -1186,7 +1186,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public void setCancelledFlag(AtomicBoolean cancelled) {
+        public void setCancelledFlag(@NotNull AtomicBoolean cancelled) {
             sqlExecutionContext.setCancelledFlag(cancelled);
         }
 
