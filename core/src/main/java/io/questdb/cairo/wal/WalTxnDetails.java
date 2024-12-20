@@ -29,7 +29,6 @@ import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
-import io.questdb.std.LongHashSet;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
@@ -39,21 +38,24 @@ import static io.questdb.cairo.wal.WalTxnType.NONE;
 import static io.questdb.cairo.wal.WalUtils.*;
 
 public class WalTxnDetails {
+    private static final int FLAG_IS_LAST_SEGMENT_USAGE = 0x2;
+    private static final int FLAG_IS_OOO = 0x1;
+
     public static final long FORCE_FULL_COMMIT = Long.MAX_VALUE;
     public static final long LAST_ROW_COMMIT = Long.MAX_VALUE - 1;
     private static final int SEQ_TXN_OFFSET = 0;
     private static final int COMMIT_TO_TIMESTAMP_OFFSET = SEQ_TXN_OFFSET + 1;
-    private static final int WAL_TXN_MIN_TIMESTAMP_OFFSET = COMMIT_TO_TIMESTAMP_OFFSET + 1;
+    private static final int WAL_TXN_ID_WAL_ID_OFFSET = COMMIT_TO_TIMESTAMP_OFFSET + 1;
+    private static final int WAL_TXN_ID_SEG_ID_OFFSET = WAL_TXN_ID_WAL_ID_OFFSET + 1;
+    private static final int WAL_TXN_MIN_TIMESTAMP_OFFSET = WAL_TXN_ID_SEG_ID_OFFSET + 1;
     private static final int WAL_TXN_MAX_TIMESTAMP_OFFSET = WAL_TXN_MIN_TIMESTAMP_OFFSET + 1;
-    private static final int WAL_TXN_ID_SEG_ID_OFFSET = WAL_TXN_MAX_TIMESTAMP_OFFSET + 1;
-    private static final int WAL_TXN_ROW_LO_OFFSET = WAL_TXN_ID_SEG_ID_OFFSET + 1;
+    private static final int WAL_TXN_ROW_LO_OFFSET = WAL_TXN_MAX_TIMESTAMP_OFFSET + 1;
     private static final int WAL_TXN_ROW_HI_OFFSET = WAL_TXN_ROW_LO_OFFSET + 1;
     private static final int WAL_TXN_ROW_IN_ORDER_DATA_TYPE = WAL_TXN_ROW_HI_OFFSET + 1;
     private static final int WAL_TXN_SYMBOL_DIFF_OFFSET = WAL_TXN_ROW_IN_ORDER_DATA_TYPE + 1;
     public static final int TXN_METADATA_LONGS_SIZE = WAL_TXN_SYMBOL_DIFF_OFFSET + 1;
     private static final int TXN_DETAIL_RECORD_SIZE = 5;
     private final CharSequenceIntHashMap allSymbols = new CharSequenceIntHashMap();
-    private final LongHashSet futureWalSegments = new LongHashSet();
     private final int maxLookahead;
     private final int symbolIndexStartOffset = 0;
     private final IntList symbolIndexes = new IntList();
@@ -69,7 +71,22 @@ public class WalTxnDetails {
         symbolMapDiffCursor = new SymbolMapDiffCursorImpl(allSymbols, symbolIndexes);
     }
 
-    public int calculateInsertTransactionBlock(long seqTxn) {
+    public int calculateInsertTransactionBlock(long seqTxn, long maxBlockRecordCount) {
+        int blockSize = 1;
+        long lastSeqTxn = getLastSeqTxn();
+        long totalRowCount = 0;
+        for (long nextTxn = seqTxn; nextTxn < lastSeqTxn; nextTxn++) {
+            long txnRowCount = getSegmentRowHi(nextTxn) - getSegmentRowLo(nextTxn);
+            totalRowCount += txnRowCount;
+            blockSize++;
+
+            if (getCommitToTimestamp(nextTxn) == FORCE_FULL_COMMIT || totalRowCount > maxBlockRecordCount) {
+                break;
+            }
+        }
+
+        // TODO: support blocked transactions
+//        return blockSize;
         return 1;
     }
 
@@ -114,18 +131,15 @@ public class WalTxnDetails {
 
     public boolean getTxnInOrder(long seqTxn) {
         int isOutOfOrder = Numbers.decodeLowInt(transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ROW_IN_ORDER_DATA_TYPE)));
-        return isOutOfOrder == 0;
+        return (isOutOfOrder & FLAG_IS_OOO) == 0;
     }
 
     public int getWalId(long seqTxn) {
-        long value = transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ID_SEG_ID_OFFSET));
-        int walId = Numbers.decodeHighInt(value);
-        return Math.abs(walId);
+        return (int) transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ID_WAL_ID_OFFSET));
     }
 
     public int getWalSegmentId(long seqTxn) {
-        long value = transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ID_SEG_ID_OFFSET));
-        return Numbers.decodeLowInt(value);
+        return (int) transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ID_SEG_ID_OFFSET));
     }
 
     public SymbolMapDiffCursor getWalSymbolDiffCursor(long seqTxn) {
@@ -143,9 +157,8 @@ public class WalTxnDetails {
     }
 
     public boolean isLastSegmentUsage(long seqTxn) {
-        long value = transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ID_SEG_ID_OFFSET));
-        int walId = Numbers.decodeHighInt(value);
-        return walId < 0;
+        int isOutOfOrder = Numbers.decodeLowInt(transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ROW_IN_ORDER_DATA_TYPE)));
+        return (isOutOfOrder & FLAG_IS_LAST_SEGMENT_USAGE) != 0;
     }
 
     public void readObservableTxnMeta(
@@ -174,7 +187,6 @@ public class WalTxnDetails {
 
         // set commit to timestamp moving backwards
         long runningMinTimestamp = LAST_ROW_COMMIT;
-        futureWalSegments.clear();
         for (int i = transactionMeta.size() - TXN_METADATA_LONGS_SIZE; i > -1; i -= TXN_METADATA_LONGS_SIZE) {
 
             long commitToTimestamp = runningMinTimestamp;
@@ -183,18 +195,6 @@ public class WalTxnDetails {
             // Find out if the wal/segment is not used anymore for future transactions.
             // Since we're moving backwards, if this is the first time this combination occurs
             // it means that it's the last transaction from this wal/segment.
-            long currentWalSegment = transactionMeta.getQuick(i + WAL_TXN_ID_SEG_ID_OFFSET);
-            boolean isLastSegmentUsage = futureWalSegments.add(currentWalSegment);
-            if (isLastSegmentUsage) {
-                // Save a marker that this wal / segment combination will not be reused.
-                // This will help TableWriter to cache the segment files FDs.
-                int walId = Numbers.decodeHighInt(currentWalSegment);
-                if (walId > -1) {
-                    int segmentId = Numbers.decodeLowInt(currentWalSegment);
-                    long finalWalSegment = Numbers.encodeLowHighInts(segmentId, -walId);
-                    transactionMeta.set(i + WAL_TXN_ID_SEG_ID_OFFSET, finalWalSegment);
-                }
-            }
             runningMinTimestamp = Math.min(runningMinTimestamp, currentMinTimestamp);
 
             if (transactionMeta.get(i + COMMIT_TO_TIMESTAMP_OFFSET) != FORCE_FULL_COMMIT) {
@@ -215,6 +215,11 @@ public class WalTxnDetails {
             }
         }
 
+    }
+
+    public WalTxnDetailsSlice sortSliceBySegment(long startSeqTxn, int blockTransactionCount) {
+        // TODO: implement
+        return null;
     }
 
     private static WalEventCursor openWalEFile(Path tempPath, WalEventReader eventReader, int segmentTxn, long seqTxn) {
@@ -300,13 +305,26 @@ public class WalTxnDetails {
                         WalEventCursor.DataInfo commitInfo = walEventCursor.getDataInfo();
                         transactionMeta.add(seqTxn);
                         transactionMeta.add(-1); // commit to timestamp
+                        transactionMeta.add(walId);
+                        transactionMeta.add(segmentId);
                         transactionMeta.add(commitInfo.getMinTimestamp());
                         transactionMeta.add(commitInfo.getMaxTimestamp());
-                        transactionMeta.add(Numbers.encodeLowHighInts(segmentId, walId));
                         transactionMeta.add(commitInfo.getStartRowID());
                         transactionMeta.add(commitInfo.getEndRowID());
-                        transactionMeta.add(Numbers.encodeLowHighInts(commitInfo.isOutOfOrder() ? 1 : 0, walTxnType));
-                        transactionMeta.add(symbolIndexStartOffset + saveSymbols(commitInfo, seqTxn));
+                        int flags = commitInfo.isOutOfOrder() ? FLAG_IS_OOO : 0x0;
+                        // The records are sorted by WAL ID, segment ID.
+                        // If the next record is not from the same segment it means it's the last txn from the segment.
+                        if (i + 1 < size) {
+                            int nextWalId = txnDetails.get(TXN_DETAIL_RECORD_SIZE * (i + 1));
+                            int nextSegmentId = txnDetails.get(TXN_DETAIL_RECORD_SIZE * (i + 1) + 1);
+                            if (nextSegmentId != segmentId || nextWalId != walId) {
+                                flags |= FLAG_IS_LAST_SEGMENT_USAGE;
+                            }
+                        } else {
+                            flags |= FLAG_IS_LAST_SEGMENT_USAGE;
+                        }
+                        transactionMeta.add(Numbers.encodeLowHighInts(flags, walTxnType));
+                        transactionMeta.add(saveSymbols(symbolIndexStartOffset, commitInfo, seqTxn));
                         continue;
                     }
                 } else {
@@ -315,13 +333,14 @@ public class WalTxnDetails {
                 // If there is ALTER or UPDATE, we have to flush everything without keeping anything in the lag.
                 transactionMeta.add(seqTxn);
                 transactionMeta.add(FORCE_FULL_COMMIT); // commit to timestamp
+                transactionMeta.add(walId);
+                transactionMeta.add(segmentId);
                 transactionMeta.add(structureVersion); // min timestamp but used as structure version
                 transactionMeta.add(-1); // max timestamp
-                transactionMeta.add(Numbers.encodeLowHighInts(segmentId, walId));
-                transactionMeta.add(-1);
-                transactionMeta.add(-1);
+                transactionMeta.add(-1); // start row id
+                transactionMeta.add(-1); // end row id
                 transactionMeta.add(Numbers.encodeLowHighInts(0, walTxnType));
-                transactionMeta.add(-1);
+                transactionMeta.add(-1); // symbols diff offset
             }
 
             transactionMeta.sortGroups(TXN_METADATA_LONGS_SIZE, incrementalLoadStartIndex, transactionMeta.size());
@@ -330,7 +349,7 @@ public class WalTxnDetails {
         }
     }
 
-    private int saveSymbols(SymbolMapDiffCursor commitInfo, long seqTxn) {
+    private int saveSymbols(int symbolIndexStartOffset, SymbolMapDiffCursor commitInfo, long seqTxn) {
         SymbolMapDiff symbolMapDiff;
         int symbolCount = 0;
         int startOffset = symbolIndexes.size();
@@ -342,6 +361,7 @@ public class WalTxnDetails {
         symbolIndexes.add(Numbers.decodeLowInt(seqTxn));
         symbolIndexes.add(Numbers.decodeHighInt(seqTxn));
 
+        int totalSymbolsSaved = 0;
         while ((symbolMapDiff = commitInfo.nextSymbolMapDiff()) != null) {
             int cleanSymbolCount = symbolMapDiff.getCleanSymbolCount();
 
@@ -380,6 +400,13 @@ public class WalTxnDetails {
             assert allSymbols.keys().size() >= count;
             symbolIndexes.set(entryBegins, count);
             symbolCount++;
+            totalSymbolsSaved += count;
+        }
+
+        // Empty record, return -1, save space, don't serialize empty records.
+        if (symbolCount == 0 || totalSymbolsSaved == 0) {
+            symbolIndexes.setPos(startOffset);
+            return -1;
         }
 
         // Set the record length
@@ -387,7 +414,8 @@ public class WalTxnDetails {
         // Set the count of symbols
         symbolIndexes.set(startOffset + 1, symbolCount);
 
-        return startOffset;
+
+        return symbolIndexStartOffset + startOffset;
     }
 
     private static class SymbolMapDiffCursorImpl implements SymbolMapDiffCursor {
@@ -417,15 +445,19 @@ public class WalTxnDetails {
         }
 
         public void of(int startOffset) {
-            this.lo = startOffset;
-            int recordSize = symbolIndexes.get(startOffset);
-            assert recordSize >= 4;
-            this.hi = this.lo + recordSize;
-            this.symbolsCount = symbolIndexes.get(startOffset + 1);
-            this.seqTxn = Numbers.encodeLowHighInts(symbolIndexes.get(startOffset + 2), symbolIndexes.get(startOffset + 3));
-            assert this.symbolsCount > -1;
-            this.lo += 4;
-            symbolIndex = 0;
+            if (startOffset > -1) {
+                this.lo = startOffset;
+                int recordSize = symbolIndexes.get(startOffset);
+                assert recordSize >= 4;
+                this.hi = this.lo + recordSize;
+                this.symbolsCount = symbolIndexes.get(startOffset + 1);
+                this.seqTxn = Numbers.encodeLowHighInts(symbolIndexes.get(startOffset + 2), symbolIndexes.get(startOffset + 3));
+                assert this.symbolsCount > -1;
+                this.lo += 4;
+                symbolIndex = 0;
+            } else {
+                this.symbolsCount = 0;
+            }
         }
 
         private static class SymbolMapDiffColumnRecord implements SymbolMapDiff, SymbolMapDiffEntry {
@@ -501,5 +533,8 @@ public class WalTxnDetails {
                 this.offsetHi = lo + 4 + savedSymbolRecordCount * 2;
             }
         }
+    }
+
+    private class WalTxnDetailsSlice {
     }
 }

@@ -91,7 +91,11 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.FindVisitor;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
+import io.questdb.std.LongHashSet;
+import io.questdb.std.LongIntHashMap;
 import io.questdb.std.LongList;
+import io.questdb.std.LongLongHashMap;
+import io.questdb.std.LongLongHashSet;
 import io.questdb.std.LongObjHashMap;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.MemoryTag;
@@ -1144,7 +1148,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.beginPartitionSizeUpdate();
         long commitToTimestamp = walTxnDetails.getCommitToTimestamp(seqTxn);
 
-        int trasactionBlock = walTxnDetails.calculateInsertTransactionBlock(seqTxn);
+        int trasactionBlock = walTxnDetails.calculateInsertTransactionBlock(seqTxn, 1_000_000L);
 
         boolean committed;
         final long initialCommittedRowCount = txWriter.getRowCount();
@@ -1169,9 +1173,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             SymbolMapDiffCursor mapDiffCursor = walTxnDetails.getWalSymbolDiffCursor(seqTxn);
 
             try {
-                committed = processWalBlock(
+                committed = processWalCommit(
                         walPath,
-                        metadata.getTimestampIndex(),
                         inOrder,
                         rowLo,
                         rowHi,
@@ -1191,7 +1194,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 throw e;
             }
         } else {
-            throw new IllegalStateException();
+            committed = processWalCommitBlock(
+                    walPath,
+                    seqTxn,
+                    trasactionBlock,
+                    regulator
+            );
         }
 
         final long rowsAdded = txWriter.getRowCount() - initialCommittedRowCount;
@@ -2359,9 +2367,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     // returns true if the tx was committed into the table and can be made visible to readers
     // returns false if the tx was only copied to LAG and not committed - in this case the tx is not visible to readers
-    public boolean processWalBlock(
+    public boolean processWalCommit(
             @Transient Path walPath,
-            int timestampIndex,
             boolean ordered,
             long rowLo,
             long rowHi,
@@ -2373,6 +2380,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean isLastSegmentUsage,
             O3JobParallelismRegulator regulator
     ) {
+        int timestampIndex = metadata.getTimestampIndex();
         int walRootPathLen = walPath.size();
         long maxTimestamp = txWriter.getMaxTimestamp();
         if (isLastPartitionClosed()) {
@@ -2630,6 +2638,40 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             walPath.trimTo(walRootPathLen);
             closeWalColumns(isLastSegmentUsage || !success, walIdSegmentId);
         }
+    }
+
+    public boolean processWalCommitBlock(
+            @Transient Path walPath,
+            long startSeqTxn,
+            int blockTransactionCount,
+            O3JobParallelismRegulator regulator
+    ) {
+//        LongLongHashMap segmentCopyLo = new LongLongHashMap();
+//        LongLongHashMap segmentCopyHi = new LongLongHashMap();
+//
+//        for(long seqTxn = startSeqTxn, n = startSeqTxn + blockTransactionCount; seqTxn < n; seqTxn++) {
+//            int segmentId = walTxnDetails.getWalSegmentId(seqTxn);
+//            int walId = walTxnDetails.getWalId(seqTxn);
+//            long walSegId = Numbers.encodeLowHighInts(segmentId, walId);
+//
+//            long roLo = walTxnDetails.getSegmentRowLo(seqTxn);
+//            long roHi = walTxnDetails.getSegmentRowHi(seqTxn);
+//
+//            int keyIndex = segmentCopyLo.keyIndex(walSegId);
+//            if (keyIndex < 0) {
+//                long existingHi = segmentCopyHi.valueAt(keyIndex);
+//                segmentCopyHi.putAt(keyIndex, walSegId, roHi);
+//                // No need to update roLo, the first value is the minimum
+//            } else {
+//                segmentCopyLo.putAt(keyIndex, walSegId, roLo);
+//                segmentCopyHi.putAt(keyIndex, walSegId, roHi);
+//            }
+//        }
+//
+//
+//        DirectLongList indexTxnMap = new DirectLongList(blockTransactionCount, MemoryTag.NATIVE_O3);
+        walTxnDetails.sortSliceBySegment(startSeqTxn, blockTransactionCount);
+        throw new IllegalStateException("Not implemented");
     }
 
     public void publishAsyncWriterCommand(AsyncWriterCommand asyncWriterCommand) {
