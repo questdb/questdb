@@ -5361,20 +5361,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
         long maxTimestamp = getMaxTimestamp();
-        for (int i = 0; i < partitionCount - 1; i++) {
-            long partitionTimestamp = getPartitionTimestamp(i);
-            if (partitionTimestamp != floorFn.floor(partitionTimestamp)) {
-                // This is a high chunk of a split partition, don't mess with it
-                continue;
-            }
+        while (getPartitionCount() > 1) {
+            long partitionTimestamp = getPartitionTimestamp(0);
+            assert partitionTimestamp == floorFn.floor(partitionTimestamp) : "Partition 0 timestamp weirdness";
             long partitionCeiling = ceilFn.ceil(partitionTimestamp);
             // TTL < 0 means it's in months
             boolean shouldEvict = ttl > 0
                     ? maxTimestamp - partitionCeiling >= Timestamps.HOUR_MICROS * ttl
                     : Timestamps.getMonthsBetween(partitionCeiling, maxTimestamp) >= -ttl;
             if (shouldEvict) {
-                LOG.info().$("Evicting partition with expired TTL. timestampSeconds=")
-                        .$(partitionTimestamp / Timestamps.SECOND_MICROS).$();
+                LOG.info().$("Partition's TTL expired, evicting. partitionTs=")
+                        .microTime(partitionTimestamp).$();
                 dropPartitionByExactTimestamp(partitionTimestamp);
             } else {
                 // Partitions are sorted by timestamp, no need to check the rest
