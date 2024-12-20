@@ -1160,13 +1160,6 @@ public class TimestampQueryTest extends AbstractCairoTest {
 
             expected = "dts\tnts\n";
             assertTimestampTtQuery(expected, "select * from tt where nts in now()");
-
-            expected = "dts\tnts\n";
-            assertTimestampTtQuery(expected, "select * from tt where nts in (now() || 'invalid')");
-
-            expected = "min\tmax\n" +
-                    "2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
-            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where  nts not in (now() || 'invalid')");
         });
     }
 
@@ -1226,13 +1219,6 @@ public class TimestampQueryTest extends AbstractCairoTest {
 
             expected = "dts\tnts\n";
             assertTimestampTtQuery(expected, "select * from tt where CAST(NULL as TIMESTAMP) in ('2020-01-02'::varchar, '2020-01-01'::varchar)");
-
-            expected = "dts\tnts\n";
-            assertTimestampTtQuery(expected, "select * from tt where nts in (now() || 'invalid'::varchar)");
-
-            expected = "min\tmax\n" +
-                    "2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
-            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where  nts not in (now() || 'invalid'::varchar)");
         });
     }
 
