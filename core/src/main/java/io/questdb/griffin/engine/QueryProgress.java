@@ -47,6 +47,8 @@ import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.FlyweightMessageContainer;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 // Factory that adds query to registry on getCursor() and removes on cursor close().
 public class QueryProgress extends AbstractRecordCursorFactory {
     private static final Log LOG = LogFactory.getLog(QueryProgress.class);
@@ -56,6 +58,7 @@ public class QueryProgress extends AbstractRecordCursorFactory {
     private final QueryRegistry registry;
     private final String sqlText;
     private long beginNanos;
+    private AtomicBoolean cancellationFlag;
     private SqlExecutionContext executionContext;
     private boolean failed = false;
     private long sqlId;
@@ -189,6 +192,7 @@ public class QueryProgress extends AbstractRecordCursorFactory {
         if (!cursor.isOpen) {
             this.executionContext = executionContext;
             sqlId = registry.register(sqlText, executionContext);
+            cancellationFlag = executionContext.getCircuitBreaker().getCancelledFlag();
             beginNanos = executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks();
             logStart(sqlId, sqlText, executionContext, jit);
             try {
@@ -315,6 +319,7 @@ public class QueryProgress extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() throws DataUnavailableException {
+            executionContext.setCancelledFlag(cancellationFlag);
             try {
                 return base.hasNext();
             } catch (Throwable th) {

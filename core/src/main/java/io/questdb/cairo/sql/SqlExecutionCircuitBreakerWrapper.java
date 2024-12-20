@@ -68,6 +68,11 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
     }
 
     @Override
+    public AtomicBoolean getCancelledFlag() {
+        return delegate.getCancelledFlag();
+    }
+
+    @Override
     public @Nullable SqlExecutionCircuitBreakerConfiguration getConfiguration() {
         return delegate.getConfiguration();
     }

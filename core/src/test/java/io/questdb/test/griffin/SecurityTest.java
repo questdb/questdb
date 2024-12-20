@@ -120,6 +120,7 @@ public class SecurityTest extends AbstractCairoTest {
         };
         memoryRestrictedEngine = new CairoEngine(readOnlyConfiguration);
         SqlExecutionCircuitBreaker dummyCircuitBreaker = new SqlExecutionCircuitBreaker() {
+            private final AtomicBoolean CANCELLED_FLAG = new AtomicBoolean(false);
             private long deadline;
 
             @Override
@@ -134,6 +135,11 @@ public class SecurityTest extends AbstractCairoTest {
             @Override
             public boolean checkIfTripped(long millis, long fd) {
                 return false;
+            }
+
+            @Override
+            public AtomicBoolean getCancelledFlag() {
+                return CANCELLED_FLAG;
             }
 
             @Override
