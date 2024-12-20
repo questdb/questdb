@@ -632,13 +632,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         try {
             if (!Os.isWindows()) {
-                try {ff.fsyncAndClose(openRO(ff, path.$(), LOG));
-            }catch (CairoException e) {
-                LOG.error().$("could not fsync after column added, non-critical [path=").$(path)
-                        .$(", errno=").$(e.getErrno())
-                        .$(", error=").$(e.getFlyweightMessage()).$();
+                try {
+                    ff.fsyncAndClose(openRO(ff, path.$(), LOG));
+                } catch (CairoException e) {
+                    LOG.error().$("could not fsync after column added, non-critical [path=").$(path)
+                            .$(", errno=").$(e.getErrno())
+                            .$(", error=").$(e.getFlyweightMessage()).$();
+                }
             }
-        }
 
             if (securityContext != null) {
                 ddlListener.onColumnAdded(securityContext, tableToken, columnName);
@@ -991,24 +992,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Column converted, add new one to _meta file and remove the existing column
             metadata.removeColumn(existingColIndex);
 
-                // close old column files
-                freeColumnMemory(existingColIndex);
+            // close old column files
+            freeColumnMemory(existingColIndex);
 
-                // remove symbol map writer or entry for such
-                removeSymbolMapWriter(existingColIndex);
+            // remove symbol map writer or entry for such
+            removeSymbolMapWriter(existingColIndex);
 
-                addColumnToMeta(
-                        columnName,
-                        newType,
-                        symbolCapacity,
+            addColumnToMeta(
+                    columnName,
+                    newType,
+                    symbolCapacity,
                     symbolCacheFlag,
-                        isIndexed,
+                    isIndexed,
                     indexValueBlockCapacity,
                     isDedupKey,
                     columnNameTxn,
-                        existingColIndex,
+                    existingColIndex,
                     metadata
-                );
+            );
 
             // open new column files
             if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {
