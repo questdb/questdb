@@ -37,6 +37,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import org.jetbrains.annotations.NotNull;
@@ -391,6 +392,26 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public DateFormat getLogTimestampFormat() {
+        return getDelegate().getLogTimestampFormat();
+    }
+
+    @Override
+    public String getLogTimestampTimezone() {
+        return getDelegate().getLogTimestampTimezone();
+    }
+
+    @Override
+    public DateLocale getLogTimestampTimezoneLocale() {
+        return getDelegate().getLogTimestampTimezoneLocale();
+    }
+
+    @Override
+    public TimeZoneRules getLogTimestampTimezoneRules() {
+        return getDelegate().getLogTimestampTimezoneRules();
+    }
+
+    @Override
     public int getMaxCrashFiles() {
         return getDelegate().getMaxCrashFiles();
     }
@@ -548,11 +569,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getPartitionEncoderParquetVersion() {
         return getDelegate().getPartitionEncoderParquetVersion();
-    }
-
-    @Override
-    public boolean isPartitionO3OverwriteControlEnabled() {
-        return getDelegate().isPartitionO3OverwriteControlEnabled();
     }
 
     @Override
@@ -1143,6 +1159,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isPartitionEncoderParquetStatisticsEnabled() {
         return getDelegate().isPartitionEncoderParquetStatisticsEnabled();
+    }
+
+    @Override
+    public boolean isPartitionO3OverwriteControlEnabled() {
+        return getDelegate().isPartitionO3OverwriteControlEnabled();
     }
 
     @Override

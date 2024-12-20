@@ -48,9 +48,11 @@ import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.function.LongSupplier;
 
@@ -409,6 +411,26 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean getLogSqlQueryProgressExe() {
         return true;
+    }
+
+    @Override
+    public DateFormat getLogTimestampFormat() {
+        return null;
+    }
+
+    @Override
+    public @Nullable String getLogTimestampTimezone() {
+        return null;
+    }
+
+    @Override
+    public DateLocale getLogTimestampTimezoneLocale() {
+        return null;
+    }
+
+    @Override
+    public TimeZoneRules getLogTimestampTimezoneRules() {
+        return null;
     }
 
     @Override

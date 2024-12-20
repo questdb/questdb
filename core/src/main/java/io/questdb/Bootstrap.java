@@ -35,7 +35,18 @@ import io.questdb.log.LogLevel;
 import io.questdb.log.LogRecord;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.Net;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.Dates;
@@ -46,8 +57,18 @@ import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import sun.misc.Signal;
 
-import java.io.*;
-import java.net.*;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.Writer;
+import java.net.Inet4Address;
+import java.net.InetAddress;
+import java.net.NetworkInterface;
+import java.net.SocketException;
+import java.net.URL;
 import java.nio.file.Paths;
 import java.util.Enumeration;
 import java.util.Properties;
@@ -191,10 +212,15 @@ public class Bootstrap {
                 config = configuration;
             }
             LogLevel.init(config.getCairoConfiguration());
+            if (LogLevel.TIMESTAMP_TIMEZONE != null) {
+                log.infoW().$("changing logger timezone [from=`UTC`, to=`").$(LogLevel.TIMESTAMP_TIMEZONE).$('`').I$();
+            }
             reportValidateConfig();
             reportCrashFiles(config.getCairoConfiguration(), log);
         } catch (BootstrapException e) {
             throw e;
+        } catch (ServerConfigurationException e) {
+            throw new BootstrapException(e);
         } catch (Throwable e) {
             log.errorW().$(e).$();
             throw new BootstrapException(e);
