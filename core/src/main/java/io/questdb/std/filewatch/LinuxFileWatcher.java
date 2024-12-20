@@ -31,7 +31,11 @@ import io.questdb.log.LogFactory;
 import io.questdb.network.Epoll;
 import io.questdb.network.EpollAccessor;
 import io.questdb.network.EpollFacade;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
@@ -53,7 +57,12 @@ public final class LinuxFileWatcher extends FileWatcher {
     private final int wd;
     private final long writeEndFd;
 
-    public LinuxFileWatcher(LinuxAccessorFacade accessorFacade, EpollFacade epollFacade, Utf8Sequence filePath, FileEventCallback callback) {
+    public LinuxFileWatcher(
+            LinuxAccessorFacade accessorFacade,
+            EpollFacade epollFacade,
+            Utf8Sequence filePath,
+            FileEventCallback callback
+    ) {
         super(callback);
         this.accessorFacade = accessorFacade;
         this.epoll = new Epoll(epollFacade, 2);

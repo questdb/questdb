@@ -30,7 +30,6 @@ import io.questdb.metrics.MetricsRegistry;
 import org.jetbrains.annotations.TestOnly;
 
 public class JsonQueryMetrics {
-
     private final Counter cacheHitCounter;
     private final Counter cacheMissCounter;
     private final LongGauge cachedQueriesGauge;

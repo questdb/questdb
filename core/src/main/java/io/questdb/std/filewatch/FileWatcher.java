@@ -101,7 +101,7 @@ public abstract class FileWatcher implements QuietCloseable {
     public class DebouncingCallback implements FileEventCallback, QuietCloseable {
         private final long debouncePeriodNanos;
         private final FileEventCallback delegate;
-        private final Object mutex = new Object();
+        private final Object lock = new Object();
         private boolean closed = false;
         private long notifyAt;
 
@@ -112,24 +112,24 @@ public abstract class FileWatcher implements QuietCloseable {
 
         @Override
         public void close() {
-            synchronized (mutex) {
+            synchronized (lock) {
                 closed = true;
-                mutex.notifyAll();
+                lock.notifyAll();
             }
         }
 
         @Override
         public void onFileEvent() {
-            synchronized (mutex) {
+            synchronized (lock) {
                 notifyAt = System.nanoTime() + debouncePeriodNanos;
-                mutex.notifyAll();
+                lock.notifyAll();
             }
         }
 
         private void start() {
             notifyAt = Long.MAX_VALUE + System.nanoTime();
             Thread thread = new Thread(() -> {
-                synchronized (mutex) {
+                synchronized (lock) {
                     for (; ; ) {
                         if (closed) {
                             haltedLatch.countDown();
@@ -140,7 +140,7 @@ public abstract class FileWatcher implements QuietCloseable {
                         long waitMillis = waitNanos / 1_000_000;
                         try {
                             if (waitMillis > 0) {
-                                mutex.wait(waitMillis);
+                                lock.wait(waitMillis);
                             } else {
                                 delegate.onFileEvent();
                                 notifyAt = Long.MAX_VALUE + now;

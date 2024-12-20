@@ -27,8 +27,23 @@ package io.questdb.test.cutlass;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.metrics.NullLongGauge;
-import io.questdb.network.*;
-import io.questdb.std.*;
+import io.questdb.network.DefaultIODispatcherConfiguration;
+import io.questdb.network.IOContext;
+import io.questdb.network.IODispatcher;
+import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.network.IODispatchers;
+import io.questdb.network.IOOperation;
+import io.questdb.network.IORequestProcessor;
+import io.questdb.network.Net;
+import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.network.PlainSocketFactory;
+import io.questdb.network.SuspendEvent;
+import io.questdb.network.SuspendEventFactory;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -78,7 +93,8 @@ public class IODispatcherHeartbeatTest {
                     (fd, d) -> {
                         connected.incrementAndGet();
                         return new TestContext(fd, d, heartbeatInterval);
-                    }
+                    },
+                    NullLongGauge.INSTANCE
             )) {
                 IORequestProcessor<TestContext> processor = new TestProcessor(clock);
                 Rnd rnd = new Rnd();
@@ -157,7 +173,8 @@ public class IODispatcherHeartbeatTest {
                     (fd, d) -> {
                         connected.incrementAndGet();
                         return new TestContext(fd, d, heartbeatInterval);
-                    }
+                    },
+                    NullLongGauge.INSTANCE
             )) {
                 IORequestProcessor<TestContext> processor = new TestProcessor(clock);
                 long buf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
@@ -231,7 +248,8 @@ public class IODispatcherHeartbeatTest {
                     (fd, d) -> {
                         connected.incrementAndGet();
                         return new TestContext(fd, d, heartbeatInterval);
-                    }
+                    },
+                    NullLongGauge.INSTANCE
             )) {
                 SuspendEvent suspendEvent = SuspendEventFactory.newInstance(ioDispatcherConfig);
                 suspendEvent.setDeadline(suspendEventDeadline);
@@ -301,7 +319,8 @@ public class IODispatcherHeartbeatTest {
                     (fd, d) -> {
                         connected.incrementAndGet();
                         return new TestContext(fd, d, heartbeatInterval);
-                    }
+                    },
+                    NullLongGauge.INSTANCE
             )) {
                 SuspendEvent suspendEvent = SuspendEventFactory.newInstance(ioDispatcherConfig);
                 IORequestProcessor<TestContext> processor = new SuspendingTestProcessor(clock, suspendEvent);
@@ -382,7 +401,8 @@ public class IODispatcherHeartbeatTest {
                     (fd, d) -> {
                         connected.incrementAndGet();
                         return new TestContext(fd, d, heartbeatInterval);
-                    }
+                    },
+                    NullLongGauge.INSTANCE
             )) {
                 SuspendEvent suspendEvent = SuspendEventFactory.newInstance(ioDispatcherConfig);
                 IORequestProcessor<TestContext> processor = new SuspendingTestProcessor(clock, suspendEvent);
@@ -472,7 +492,7 @@ public class IODispatcherHeartbeatTest {
         SuspendEvent suspendEvent;
 
         public TestContext(long fd, IODispatcher<TestContext> dispatcher, long heartbeatInterval) {
-            super(PlainSocketFactory.INSTANCE, NetworkFacadeImpl.INSTANCE, LOG, NullLongGauge.INSTANCE);
+            super(PlainSocketFactory.INSTANCE, NetworkFacadeImpl.INSTANCE, LOG);
             socket.of(fd);
             this.dispatcher = dispatcher;
             this.heartbeatInterval = heartbeatInterval;

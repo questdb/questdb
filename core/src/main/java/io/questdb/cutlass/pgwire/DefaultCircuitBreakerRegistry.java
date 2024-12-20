@@ -46,7 +46,7 @@ public final class DefaultCircuitBreakerRegistry implements CircuitBreakerRegist
 
     public DefaultCircuitBreakerRegistry(PGWireConfiguration configuration, CairoConfiguration cairoConfig) {
         lock = new SimpleSpinLock();
-        int limit = configuration.getDispatcherConfiguration().getLimit();
+        int limit = configuration.getLimit();
         circuitBreakers = new ObjList<>(limit);
         freeIdx = new IntList(limit);
         if (configuration.getRandom() != null) {
