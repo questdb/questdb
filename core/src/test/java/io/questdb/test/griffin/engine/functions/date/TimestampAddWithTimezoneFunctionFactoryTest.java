@@ -32,7 +32,6 @@ import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 
 public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
-
     public static char[] units = {'y', 'M', 'w', 'd', 'h', 'm', 's', 'T', 'u'};
 
     @Test
@@ -79,34 +78,49 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
     @Test
     public void testStrideConstantPeriodVariableWithNulls() throws Exception {
         String timezone = "Europe/Bratislava"; // Dynamically set this at runtime
-        assertSqlWithTypes("dateadd\n:TIMESTAMP\n:TIMESTAMP\n", 
-            String.format("select dateadd('y', cast(x as int), null, '%s') from long_sequence(2)", timezone));
-        assertSqlWithTypes("dateadd\n2021-04-19T05:49:19.886758Z:TIMESTAMP\n:TIMESTAMP\n", 
-            String.format("select dateadd('y', case when x = 1 then cast(x as int) else null end, 1587275359886758L, '%s') from long_sequence(2)", timezone));
-        assertSqlWithTypes("dateadd\n:TIMESTAMP\n:TIMESTAMP\n", 
-            String.format("select dateadd('M', cast(x as int), null, '%s') from long_sequence(2)", timezone));
-        assertSqlWithTypes("dateadd\n2020-05-19T05:49:19.886758Z:TIMESTAMP\n:TIMESTAMP\n", 
-            String.format("select dateadd('M', case when x = 1 then cast(x as int) else null end, 1587275359886758L, '%s') from long_sequence(2)", timezone));
-        assertSqlWithTypes("dateadd\n:TIMESTAMP\n:TIMESTAMP\n", 
-            String.format("select dateadd('w', cast(x as int), null, '%s') from long_sequence(2)", timezone));
-        assertSqlWithTypes("dateadd\n2020-04-26T05:49:19.886758Z:TIMESTAMP\n:TIMESTAMP\n", 
-            String.format("select dateadd('w', case when x = 1 then cast(x as int) else null end, 1587275359886758L, '%s') from long_sequence(2)", timezone));
-        assertSqlWithTypes("dateadd\n:TIMESTAMP\n:TIMESTAMP\n", 
-            String.format("select dateadd('d', cast(x as int), null, '%s') from long_sequence(2)", timezone));
-        assertSqlWithTypes("dateadd\n2020-04-20T05:49:19.886758Z:TIMESTAMP\n:TIMESTAMP\n", 
-            String.format("select dateadd('d', case when x = 1 then cast(x as int) else null end, 1587275359886758L, '%s') from long_sequence(2)", timezone));
-        assertSqlWithTypes("dateadd\n:TIMESTAMP\n:TIMESTAMP\n", 
-            String.format("select dateadd('h', cast(x as int), null, '%s') from long_sequence(2)", timezone));
-        assertSqlWithTypes("dateadd\n2020-04-19T06:49:19.886758Z:TIMESTAMP\n:TIMESTAMP\n", 
-            String.format("select dateadd('h', case when x = 1 then cast(x as int) else null end, 1587275359886758L, '%s') from long_sequence(2)", timezone));
-        assertSqlWithTypes("dateadd\n:TIMESTAMP\n:TIMESTAMP\n", 
-            String.format("select dateadd('m', cast(x as int), null, '%s') from long_sequence(2)", timezone));
-        assertSqlWithTypes("dateadd\n2020-04-19T05:50:19.886758Z:TIMESTAMP\n:TIMESTAMP\n", 
-            String.format("select dateadd('m', case when x = 1 then cast(x as int) else null end, 1587275359886758L, '%s') from long_sequence(2)", timezone));
-        assertSqlWithTypes("dateadd\n:TIMESTAMP\n:TIMESTAMP\n", 
-            String.format("select dateadd('s', cast(x as int), null, '%s') from long_sequence(2)", timezone));
-        assertSqlWithTypes("dateadd\n2020-04-19T05:49:20.886758Z:TIMESTAMP\n:TIMESTAMP\n", 
-            String.format("select dateadd('s', case when x = 1 then cast(x as int) else null end, 1587275359886758L, '%s') from long_sequence(2)", timezone));
+        assertSqlWithTypes(
+                "dateadd\n:TIMESTAMP\n:TIMESTAMP\n",
+                String.format("select dateadd('y', cast(x as int), null, '%s') from long_sequence(2)",
+                        timezone));
+        assertSqlWithTypes("dateadd\n2021-04-19T05:49:19.886758Z:TIMESTAMP\n:TIMESTAMP\n",
+                String.format("select dateadd('y', case when x = 1 then cast(x as int) else null end, 1587275359886758L, '%s') from long_sequence(2)",
+                        timezone));
+        assertSqlWithTypes("dateadd\n:TIMESTAMP\n:TIMESTAMP\n",
+                String.format("select dateadd('M', cast(x as int), null, '%s') from long_sequence(2)",
+                        timezone));
+        assertSqlWithTypes("dateadd\n2020-05-19T05:49:19.886758Z:TIMESTAMP\n:TIMESTAMP\n",
+                String.format("select dateadd('M', case when x = 1 then cast(x as int) else null end, 1587275359886758L, '%s') from long_sequence(2)",
+                        timezone));
+        assertSqlWithTypes("dateadd\n:TIMESTAMP\n:TIMESTAMP\n",
+                String.format("select dateadd('w', cast(x as int), null, '%s') from long_sequence(2)",
+                        timezone));
+        assertSqlWithTypes("dateadd\n2020-04-26T05:49:19.886758Z:TIMESTAMP\n:TIMESTAMP\n",
+                String.format("select dateadd('w', case when x = 1 then cast(x as int) else null end, 1587275359886758L, '%s') from long_sequence(2)",
+                        timezone));
+        assertSqlWithTypes("dateadd\n:TIMESTAMP\n:TIMESTAMP\n",
+                String.format("select dateadd('d', cast(x as int), null, '%s') from long_sequence(2)",
+                        timezone));
+        assertSqlWithTypes("dateadd\n2020-04-20T05:49:19.886758Z:TIMESTAMP\n:TIMESTAMP\n",
+                String.format("select dateadd('d', case when x = 1 then cast(x as int) else null end, 1587275359886758L, '%s') from long_sequence(2)",
+                        timezone));
+        assertSqlWithTypes("dateadd\n:TIMESTAMP\n:TIMESTAMP\n",
+                String.format("select dateadd('h', cast(x as int), null, '%s') from long_sequence(2)",
+                        timezone));
+        assertSqlWithTypes("dateadd\n2020-04-19T06:49:19.886758Z:TIMESTAMP\n:TIMESTAMP\n",
+                String.format("select dateadd('h', case when x = 1 then cast(x as int) else null end, 1587275359886758L, '%s') from long_sequence(2)",
+                        timezone));
+        assertSqlWithTypes("dateadd\n:TIMESTAMP\n:TIMESTAMP\n",
+                String.format("select dateadd('m', cast(x as int), null, '%s') from long_sequence(2)",
+                        timezone));
+        assertSqlWithTypes("dateadd\n2020-04-19T05:50:19.886758Z:TIMESTAMP\n:TIMESTAMP\n",
+                String.format("select dateadd('m', case when x = 1 then cast(x as int) else null end, 1587275359886758L, '%s') from long_sequence(2)",
+                        timezone));
+        assertSqlWithTypes("dateadd\n:TIMESTAMP\n:TIMESTAMP\n",
+                String.format("select dateadd('s', cast(x as int), null, '%s') from long_sequence(2)",
+                        timezone));
+        assertSqlWithTypes("dateadd\n2020-04-19T05:49:20.886758Z:TIMESTAMP\n:TIMESTAMP\n",
+                String.format("select dateadd('s', case when x = 1 then cast(x as int) else null end, 1587275359886758L, '%s') from long_sequence(2)",
+                        timezone));
     }
 
     @Test
@@ -128,9 +142,9 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
 
         // Validate the two produce the same result
         assertQuery(
-            "direct\tvia_conversion\n" +
-            "2024-10-28T01:00:00.000000Z\t2024-10-28T01:00:00.000000Z\n",
-            String.format("select direct, via_conversion from (%s) cross join (%s)", directQuery, conversionQuery)
+                "direct\tvia_conversion\n" +
+                        "2024-10-28T01:00:00.000000Z\t2024-10-28T01:00:00.000000Z\n",
+                String.format("select direct, via_conversion from (%s) cross join (%s)", directQuery, conversionQuery)
         );
     }
 
@@ -142,7 +156,7 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
         // Validate the result accounts for DST transition correctly
         assertQuery(
             "utc_time\n" +
-            "2024-10-27T23:00:00.000000Z\n",
+                    "2024-10-27T23:00:00.000000Z\n",
             query
         );
     }
