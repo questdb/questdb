@@ -1327,6 +1327,77 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIPv4String() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "101.77.34.89\n" +
+                        "66.56.51.126\n" +
+                        "74.188.217.59\n" +
+                        "249.60.8.8\n" +
+                        "230.202.108.161\n" +
+                        "JWCPSWHYR\n" +
+                        "EHNRX\n" +
+                        "SXUXI\n" +
+                        "TGPGW\n" +
+                        "YUDEYYQEHB\n",
+                "create table x as (select rnd_ipv4() a from long_sequence(5))",
+                "create table y as (select rnd_str() b from long_sequence(5))",
+                true
+        );
+    }
+
+    @Test
+    public void testIPv4Symbol() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "199.122.166.85\n" +
+                        "79.15.250.138\n" +
+                        "35.86.82.23\n" +
+                        "111.98.117.250\n" +
+                        "205.123.179.216\n" +
+                        "aaa\n" +
+                        "aaa\n" +
+                        "bbb\n" +
+                        "bbb\n" +
+                        "bbb\n",
+                "create table x as (select rnd_ipv4() a from long_sequence(5))",
+                "create table y as (select rnd_symbol('aaa', 'bbb') a from long_sequence(5))",
+                false
+        );
+
+        testUnion(
+                "a\n" +
+                        "199.122.166.85\n" +
+                        "79.15.250.138\n" +
+                        "35.86.82.23\n" +
+                        "111.98.117.250\n" +
+                        "205.123.179.216\n" +
+                        "aaa\n" +
+                        "bbb\n"
+        );
+    }
+
+    @Test
+    public void testIPv4Varchar() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "49.254.54.230\n" +
+                        "89.207.251.208\n" +
+                        "66.9.11.179\n" +
+                        "50.89.42.43\n" +
+                        "219.41.127.7\n" +
+                        "&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\n" +
+                        "8#3TsZ\n" +
+                        "zV衞͛Ԉ龘и\uDA89\uDFA4~\n" +
+                        "ṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\n" +
+                        "\uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46OF\n",
+                "create table x as (select rnd_ipv4() a from long_sequence(5))",
+                "create table y as (select rnd_varchar() b from long_sequence(5))",
+                true
+        );
+    }
+
+    @Test
     public void testIntBool() throws Exception {
         // this is cast to STRING, both columns
         testUnionAll(
@@ -1994,6 +2065,26 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         "77\t\n",
                 "create table x as (select rnd_boolean() a, rnd_str(3,3,1) c from long_sequence(5))",
                 "create table y as (select rnd_byte() b, rnd_str(4,4,1) c from long_sequence(5))"
+        );
+    }
+
+    @Test
+    public void testStringIPv4() throws Exception {
+        testUnionAll(
+                "b\n" +
+                        "JWCPSWHYR\n" +
+                        "EHNRX\n" +
+                        "SXUXI\n" +
+                        "TGPGW\n" +
+                        "YUDEYYQEHB\n" +
+                        "101.77.34.89\n" +
+                        "66.56.51.126\n" +
+                        "74.188.217.59\n" +
+                        "249.60.8.8\n" +
+                        "230.202.108.161\n",
+                "create table y as (select rnd_ipv4() a from long_sequence(5))",
+                "create table x as (select rnd_str() b from long_sequence(5))",
+                true
         );
     }
 
