@@ -109,7 +109,8 @@ public class TableConverter {
                                 txWriter.resetLagValuesUnsafe();
 
                                 if (walEnabled) {
-                                    try (TableWriterMetadata metadata = new TableWriterMetadata(token, metaMem)) {
+                                    try (TableWriterMetadata metadata = new TableWriterMetadata(token)) {
+                                        metadata.reload(metaMem);
                                         tableSequencerAPI.registerTable(tableId, metadata, token);
                                     }
 
