@@ -58,9 +58,14 @@ import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.NanosecondClockImpl;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8String;
@@ -110,6 +115,7 @@ public class PropServerConfigurationTest {
         FilesFacade ff = configuration.getCairoConfiguration().getFilesFacade();
 
         Assert.assertFalse(configuration.getCairoConfiguration().getLogLevelVerbose());
+        Assert.assertEquals("UTC", configuration.getCairoConfiguration().getLogTimestampTimezone());
         Assert.assertEquals(4, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionPoolInitialCapacity());
         Assert.assertEquals(128, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionStringPoolCapacity());
         Assert.assertEquals(512, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getMultipartHeaderBufferSize());
@@ -633,6 +639,18 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testEmptyTimestampTimezone() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("log.timestamp.timezone", "");
+        try {
+            newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertEquals("Invalid log timezone: ''", e.getMessage());
+        }
+    }
+
+    @Test
     public void testEnvOverrides() throws Exception {
         final Properties properties = new Properties();
         final Map<String, String> env = new HashMap<>();
@@ -841,6 +859,30 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testInvalidTimestampLocale() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("log.timestamp.locale", "jp");
+        try {
+            newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertEquals("Invalid log locale: 'jp'", e.getMessage());
+        }
+    }
+
+    @Test
+    public void testInvalidTimestampTimezone() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("log.timestamp.timezone", "HKK");
+        try {
+            newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertEquals("Invalid log timezone: 'HKK'", e.getMessage());
+        }
+    }
+
+    @Test
     public void testInvalidValidationResult() {
         Properties properties = new Properties();
         properties.setProperty("invalid.key", "value");
@@ -849,6 +891,33 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(result.isError);
         Assert.assertNotEquals(-1, result.message.indexOf("Invalid settings"));
         Assert.assertNotEquals(-1, result.message.indexOf("* invalid.key"));
+    }
+
+    @Test
+    public void testJpTimestampTimezoneCustomUtcOffset() throws Exception {
+        assertTimestampTimezone(
+                "月, 11 3月 2024 06:11:40 UTC+08",
+                "UTC+08",
+                "ja",
+                "E, d MMM yyyy HH:mm:ss Z",
+                "2024-03-10T22:11:40.000000Z"
+        );
+
+        assertTimestampTimezone(
+                "lun, 11 mar 2024 00:11:40 CET",
+                "CET",
+                "it",
+                "E, d MMM yyyy HH:mm:ss Z",
+                "2024-03-10T23:11:40.000000Z"
+        );
+
+        assertTimestampTimezone(
+                "周日, 10 3月 2024 13:11:40.222555 -10:00",
+                "-10:00",
+                "zh",
+                "E, d MMM yyyy HH:mm:ss.SSSUUU Z",
+                "2024-03-10T23:11:40.222555Z"
+        );
     }
 
     @Test
@@ -1334,6 +1403,28 @@ public class PropServerConfigurationTest {
         } catch (ServerConfigurationException e) {
             TestUtils.assertContains(e.getMessage(), "cairo.sql.copy.work.root can't point to root, data, conf or snapshot dirs");
         }
+    }
+
+    private void assertTimestampTimezone(
+            String expected,
+            String timezone,
+            String locale,
+            String format,
+            String timestamp
+    ) throws NumericException, ServerConfigurationException, JsonException {
+        sink.clear();
+        Properties properties = new Properties();
+        properties.setProperty("log.timestamp.timezone", timezone);
+        properties.setProperty("log.timestamp.locale", locale);
+        properties.setProperty("log.timestamp.format", format);
+        long epoch = TimestampFormatUtils.parseTimestamp(timestamp);
+        PropServerConfiguration configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        DateFormat timestampFormat = configuration.getCairoConfiguration().getLogTimestampFormat();
+        DateLocale timestampLocale = configuration.getCairoConfiguration().getLogTimestampTimezoneLocale();
+        TimeZoneRules timestampTimezoneRules = configuration.getCairoConfiguration().getLogTimestampTimezoneRules();
+        String timestampTimezone = configuration.getCairoConfiguration().getLogTimestampTimezone();
+        timestampFormat.format(epoch + timestampTimezoneRules.getOffset(epoch), timestampLocale, timestampTimezone, sink);
+        TestUtils.assertEquals(expected, sink);
     }
 
     private String getRelativePath(String path) {
