@@ -27,9 +27,8 @@ package io.questdb.cutlass.http;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
-import io.questdb.mp.WorkerPoolConfiguration;
 
-public interface HttpServerConfiguration extends WorkerPoolConfiguration, HttpMinServerConfiguration {
+public interface HttpServerConfiguration extends HttpMinServerConfiguration {
     String DEFAULT_PROCESSOR_URL = "*";
     int MIN_SEND_BUFFER_SIZE = 128;
 

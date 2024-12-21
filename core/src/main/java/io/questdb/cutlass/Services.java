@@ -29,7 +29,13 @@ import io.questdb.ServerConfiguration;
 import io.questdb.WorkerPoolManager;
 import io.questdb.WorkerPoolManager.Requester;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cutlass.http.*;
+import io.questdb.cutlass.http.HttpCookieHandler;
+import io.questdb.cutlass.http.HttpHeaderParserFactory;
+import io.questdb.cutlass.http.HttpMinServerConfiguration;
+import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.cutlass.http.HttpRequestProcessorFactory;
+import io.questdb.cutlass.http.HttpServer;
+import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.http.processors.HealthCheckProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.LineHttpProcessor;
@@ -40,7 +46,11 @@ import io.questdb.cutlass.line.udp.AbstractLineProtoUdpReceiver;
 import io.questdb.cutlass.line.udp.LineUdpReceiver;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LinuxMMLineUdpReceiver;
-import io.questdb.cutlass.pgwire.*;
+import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
+import io.questdb.cutlass.pgwire.DefaultCircuitBreakerRegistry;
+import io.questdb.cutlass.pgwire.HexTestsCircuitBreakRegistry;
+import io.questdb.cutlass.pgwire.IPGWireServer;
+import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Os;
@@ -108,8 +118,8 @@ public class Services {
 
         HttpServer.HttpRequestProcessorBuilder ilpV2WriteProcessorBuilder = () -> new LineHttpProcessor(
                 cairoEngine,
-                httpServerConfiguration.getHttpContextConfiguration().getRecvBufferSize(),
-                httpServerConfiguration.getHttpContextConfiguration().getSendBufferSize(),
+                httpServerConfiguration.getRecvBufferSize(),
+                httpServerConfiguration.getSendBufferSize(),
                 httpServerConfiguration.getLineHttpProcessorConfiguration()
         );
 

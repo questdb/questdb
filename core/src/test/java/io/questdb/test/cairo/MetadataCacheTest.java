@@ -361,6 +361,16 @@ public class MetadataCacheTest extends AbstractCairoTest {
                     "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=0]\n" +
                     "\t\tCairoColumn [name=foo, position=1, type=VARCHAR, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=256, writerIndex=1]\n" +
                     "\t\tCairoColumn [name=bah, position=2, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=false, indexBlockCapacity=256, writerIndex=2]\n");
+
+            execute("ALTER TABLE y ALTER COLUMN foo TYPE STRING");
+            drainWalQueue();
+
+            assertCairoMetadata("MetadataCache [tableCount=1]\n" +
+                    "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, metadataVersion=3, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, walEnabled=true, columnCount=3]\n" +
+                    "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=0]\n" +
+                    "\t\tCairoColumn [name=foo, position=1, type=STRING, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=256, writerIndex=3]\n" +
+                    "\t\tCairoColumn [name=bah, position=2, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=false, indexBlockCapacity=256, writerIndex=2]\n");
+
         });
     }
 
@@ -461,7 +471,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
             assertCairoMetadata("MetadataCache [tableCount=1]\n" +
                     "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, metadataVersion=1, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, walEnabled=true, columnCount=2]\n" +
                     "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=0]\n" +
-                    "\t\tCairoColumn [name=foo, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=false, indexBlockCapacity=256, writerIndex=1]\n");
+                    "\t\tCairoColumn [name=foo, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=false, indexBlockCapacity=256, writerIndex=2]\n");
         });
     }
 
@@ -491,7 +501,6 @@ public class MetadataCacheTest extends AbstractCairoTest {
     @Test
     public void testAlterTableDedupEnable() throws Exception {
         assertMemoryLeak(() -> {
-
 
             createZ();
             drainWalQueue();
@@ -681,6 +690,22 @@ public class MetadataCacheTest extends AbstractCairoTest {
                     "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=0]\n" +
                     "\t\tCairoColumn [name=x, position=1, type=INT, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=1]\n");
         });
+    }
+
+    private static void assertCairoMetadata(String expected) {
+        try (MetadataCacheReader ro = engine.getMetadataCache().readLock()) {
+            sink.clear();
+            ro.toSink(sink);
+            TestUtils.assertEquals(expected, sink);
+        }
+
+        // Check that startup load reads the same metadata
+        engine.getMetadataCache().onStartupAsyncHydrator();
+        try (MetadataCacheReader ro = engine.getMetadataCache().readLock()) {
+            sink.clear();
+            ro.toSink(sink);
+            TestUtils.assertEquals(expected, sink);
+        }
     }
 
     private void createX() throws SqlException {

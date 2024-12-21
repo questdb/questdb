@@ -302,6 +302,7 @@ public class CairoEngineTest extends AbstractCairoTest {
     public void testRemoveExisting() throws Exception {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
+            spinLockTimeout = 1;
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 TableToken x = createX(engine);
                 assertReader(engine, x);
