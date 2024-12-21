@@ -25,7 +25,6 @@
 package io.questdb.std.datetime.microtime;
 
 import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Os;
@@ -215,19 +214,7 @@ public class TimestampFormatUtils {
     }
 
     public static int assertString(@NotNull CharSequence delimiter, int len, @NotNull CharSequence in, int pos, int hi) throws NumericException {
-        if (delimiter.charAt(0) == '\'' && delimiter.charAt(len - 1) == '\'') {
-            assertRemaining(pos + len - 3, hi);
-            if (!Chars.equals(delimiter, 1, len - 1, in, pos, pos + len - 2)) {
-                throw NumericException.INSTANCE;
-            }
-            return pos + len - 2;
-        } else {
-            assertRemaining(pos + len - 1, hi);
-            if (!Chars.equals(delimiter, in, pos, pos + len)) {
-                throw NumericException.INSTANCE;
-            }
-            return pos + len;
-        }
+        return DateFormatUtils.assertString(delimiter, len, in, pos, hi);
     }
 
     public static long compute(
@@ -441,7 +428,7 @@ public class TimestampFormatUtils {
                 DAY_PATTERN,                       // yyyy-MM-dd
                 WEEK_PATTERN,                      // YYYY-Www
                 MONTH_PATTERN,                     // yyyy-MM
-                YEAR_PATTERN                      // yyyy
+                YEAR_PATTERN                       // yyyy
         };
         FORMATS = new DateFormat[patterns.length];
         CharSequenceObjHashMap<DateFormat> dateFormats = new CharSequenceObjHashMap<>();
