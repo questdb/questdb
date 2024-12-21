@@ -236,7 +236,7 @@ public class SqlParser {
     }
 
     private void assertNotDot(GenericLexer lexer, CharSequence tok) throws SqlException {
-        if (Chars.indexOf(tok, '.') != -1) {
+        if (Chars.indexOfUnquoted(tok, '.') != -1) {
             throw SqlException.$(lexer.lastTokenPosition(), "'.' is not allowed here");
         }
     }
@@ -255,7 +255,7 @@ public class SqlParser {
         return SqlUtil.createColumnAlias(
                 characterStore,
                 unquote(node.token),
-                Chars.indexOf(node.token, '.'),
+                Chars.indexOfUnquoted(node.token, '.'),
                 aliasToColumnMap,
                 node.type != ExpressionNode.LITERAL
         );
@@ -2420,7 +2420,7 @@ public class SqlParser {
                         throw err(lexer, null, "'from' expected");
                     }
                     CharSequence alias;
-                    if (qc.getAst().type == ExpressionNode.CONSTANT && Chars.indexOf(token, '.') != -1) {
+                    if (qc.getAst().type == ExpressionNode.CONSTANT && Chars.indexOfUnquoted(token, '.') != -1) {
                         alias = createConstColumnAlias(aliasMap);
                     } else {
                         alias = createColumnAlias(qc.getAst(), aliasMap);
@@ -2456,7 +2456,7 @@ public class SqlParser {
                     model.setNestedModel(parseWith(lexer, withClause, sqlParserCallback));
                     model.setAlias(literal(tableName, expr.position));
                 } else {
-                    int dot = Chars.indexOf(tableName, '.');
+                    int dot = Chars.indexOfUnquoted(tableName, '.');
                     if (dot == -1) {
                         model.setTableNameExpr(literal(tableName, expr.position));
                     } else {
