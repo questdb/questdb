@@ -191,39 +191,6 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
             int columnIndex,
             int symbolCapacity,
             boolean isDedupKey,
-            boolean isSymbolCached
-    ) {
-        String str = name.toString();
-        columnNameIndexMap.put(str, columnMetadata.size());
-        columnMetadata.add(
-                new WriterTableColumnMetadata(
-                        str,
-                        type,
-                        indexFlag,
-                        indexValueBlockCapacity,
-                        true,
-                        null,
-                        columnIndex,
-                        symbolCapacity,
-                        isDedupKey,
-                        0,
-                        isSymbolCached
-                )
-        );
-        columnCount++;
-        if (ColumnType.isSymbol(type)) {
-            symbolMapCount++;
-        }
-    }
-
-    void addColumn(
-            CharSequence name,
-            int type,
-            boolean indexFlag,
-            int indexValueBlockCapacity,
-            int columnIndex,
-            int symbolCapacity,
-            boolean isDedupKey,
             int replacingIndex,
             boolean isSymbolCached
     ) {

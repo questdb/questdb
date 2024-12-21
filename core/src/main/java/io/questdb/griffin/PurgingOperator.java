@@ -60,7 +60,15 @@ public final class PurgingOperator {
         this.ff = configuration.getFilesFacade();
     }
 
-    public void add(int columnIndex, String columnName, int columnType, boolean isIndexed, long columnVersion, long partitionTimestamp, long partitionNameTxn) {
+    public void add(
+            int columnIndex,
+            String columnName,
+            int columnType,
+            boolean isIndexed,
+            long columnVersion,
+            long partitionTimestamp,
+            long partitionNameTxn
+    ) {
         updateColumnIndexes.add(columnIndex);
         updateColumnIndexes.add(columnType);
         updateColumnIndexes.add(isIndexed ? 1 : 0);
