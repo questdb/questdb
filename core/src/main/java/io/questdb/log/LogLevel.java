@@ -44,10 +44,11 @@ public final class LogLevel {
     public static String INFO_HEADER = " I ";
     public static int MAX = Numbers.msb(LogLevel.ADVISORY) + 1;
     public static int MASK = ~(-1 << (MAX));
-    public static String TIMESTAMP_TIMEZONE;
-    public static TimeZoneRules TIMESTAMP_TIMEZONE_RULES;
-    public static DateLocale TIMESTAMP_TIMEZONE_LOCALE;
     public static DateFormat TIMESTAMP_FORMAT;
+    public static String TIMESTAMP_TIMEZONE;
+    public static DateLocale TIMESTAMP_TIMEZONE_LOCALE;
+    public static TimeZoneRules TIMESTAMP_TIMEZONE_RULES;
+
     private LogLevel() {
     }
 
