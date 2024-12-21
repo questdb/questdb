@@ -22,9 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.test;
+package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -33,12 +34,11 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
-import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class TestNPEFactory implements FunctionFactory {
-    public static final String SIGNATURE = "npe()";
+public class ReloadConfigFunctionFactory implements FunctionFactory {
+    private static final String SIGNATURE = "reload_config()";
 
     @Override
     public String getSignature() {
@@ -53,18 +53,19 @@ public class TestNPEFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        if (configuration.isDevModeEnabled()) {
-            return NPEFunction.INSTANCE;
-        }
-        return BooleanConstant.FALSE;
+        return new Func(sqlExecutionContext.getCairoEngine());
     }
 
-    private static class NPEFunction extends BooleanFunction {
-        private static final NPEFunction INSTANCE = new NPEFunction();
+    private static class Func extends BooleanFunction {
+        private final CairoEngine engine;
+
+        public Func(CairoEngine engine) {
+            this.engine = engine;
+        }
 
         @Override
         public boolean getBool(Record rec) {
-            throw new NullPointerException();
+            return engine.getConfigReloader().reload();
         }
 
         @Override

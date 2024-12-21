@@ -681,7 +681,7 @@ public class Bootstrap {
                 sb.append("ILP Client Connection String");
             }
             sb.append("\n\n");
-            final IODispatcherConfiguration httpConf = config.getHttpServerConfiguration().getDispatcherConfiguration();
+            final IODispatcherConfiguration httpConf = config.getHttpServerConfiguration();
             final int bindIP = httpConf.getBindIPv4Address();
             final int bindPort = httpConf.getBindPort();
             if (bindIP == 0) {

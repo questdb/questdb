@@ -34,6 +34,7 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 
 public class DefaultHttpContextConfiguration implements HttpContextConfiguration {
+
     @Override
     public boolean allowDeflateBeforeSend() {
         return false;
@@ -106,18 +107,8 @@ public class DefaultHttpContextConfiguration implements HttpContextConfiguration
     }
 
     @Override
-    public int getRecvBufferSize() {
-        return 1024 * 1024;
-    }
-
-    @Override
     public int getRequestHeaderBufferSize() {
         return 4096;
-    }
-
-    @Override
-    public int getSendBufferSize() {
-        return 1024 * 1024;
     }
 
     @Override

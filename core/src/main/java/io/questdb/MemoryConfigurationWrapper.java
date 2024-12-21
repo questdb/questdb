@@ -22,43 +22,36 @@
  *
  ******************************************************************************/
 
-package io.questdb.metrics;
+package io.questdb;
 
-import io.questdb.std.str.BorrowableUtf8Sink;
-import org.jetbrains.annotations.NotNull;
+public class MemoryConfigurationWrapper implements MemoryConfiguration {
+    private final MemoryConfiguration delegate;
 
-public class NullCounter implements Counter, CounterWithOneLabel, CounterWithTwoLabels {
-    public static final NullCounter INSTANCE = new NullCounter();
-
-    private NullCounter() {
+    protected MemoryConfigurationWrapper() {
+        delegate = null;
     }
 
     @Override
-    public void add(long value) {
+    public long getRamUsageLimitBytes() {
+        return getDelegate().getRamUsageLimitBytes();
     }
 
     @Override
-    public long getValue() {
-        return 0;
+    public long getRamUsageLimitPercent() {
+        return getDelegate().getRamUsageLimitPercent();
     }
 
     @Override
-    public void inc() {
+    public long getResolvedRamUsageLimitBytes() {
+        return getDelegate().getResolvedRamUsageLimitBytes();
     }
 
     @Override
-    public void inc(short label0) {
+    public long getTotalSystemMemory() {
+        return getDelegate().getTotalSystemMemory();
     }
 
-    @Override
-    public void inc(short label0, short label1) {
-    }
-
-    @Override
-    public void reset() {
-    }
-
-    @Override
-    public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
+    protected MemoryConfiguration getDelegate() {
+        return delegate;
     }
 }

@@ -443,8 +443,8 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
                 logFileNameSink.put(logFileName);
                 int endOffset = logFileNameSink.length();
                 // It will be sorted as 128 bits hence
-                // set 2 longs for an entry, [packedOffsets, last_modification_ts]
-                // and it will sort it by last_modification_ts first and then by packedOffsets
+                // set 2 longs for an entry, [packed_offsets, last_modification_ts]
+                // and it will sort it by last_modification_ts first and then by packed_offsets
                 long packedOffsets = Numbers.encodeLowHighInts(startOffset, endOffset);
                 logFileList.add(packedOffsets);
                 logFileList.add(ff.getLastModified(path.$()));
