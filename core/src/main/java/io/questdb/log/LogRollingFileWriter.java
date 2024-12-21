@@ -24,6 +24,7 @@
 
 package io.questdb.log;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.mp.QueueConsumer;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
@@ -75,7 +76,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private long idleSpinCount = 0;
     private String lifeDuration;
     private long lim;
-    // can be set via reflection
+    // can be set via reflection in LogFactory.createWriter
     private String location;
     private String logDir;
     // used in size limit based auto-deletion; contains [last_modification_ts, packed_file_name_offsets] pairs
@@ -125,6 +126,9 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
 
     @Override
     public void bindProperties(LogFactory factory) {
+        if (location == null) {
+            throw CairoException.nonCritical().put("rolling log file location not set [location=null]");
+        }
         locationParser.parseEnv(location, clock.getTicks());
         if (bufferSize != null) {
             try {
@@ -204,7 +208,11 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         buf = _wptr = Unsafe.malloc(nBufferSize, MemoryTag.NATIVE_LOGGER);
         lim = buf + nBufferSize;
         openFile();
-        logFileTemplate = location.substring(path.toString().lastIndexOf(Files.SEPARATOR) + 1, location.indexOf('$'));
+        // handles when $ is omitted from the log file location
+        if (location.indexOf('$') < 0) {
+            throw CairoException.nonCritical().put("rolling log file location does not contain `$` character [location=").put(location).put(']');
+        }
+        logFileTemplate = location.substring(path.toString().lastIndexOf(Files.SEPARATOR) + 1, location.lastIndexOf('$'));
         logDir = location.substring(0, location.indexOf(logFileTemplate) - 1);
     }
 
