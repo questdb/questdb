@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.griffin.engine.functions.window.FirstValueDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.RankFunctionFactory;
 import io.questdb.griffin.engine.functions.window.RowNumberFunctionFactory;
 import io.questdb.std.Chars;
@@ -207,6 +208,14 @@ public final class WindowColumn extends QueryColumn {
     }
 
     public boolean stopOrderByPropagate(ObjList<ExpressionNode> orderByAdvice, IntList orderByDirectionAdvice) {
+        CharSequence token = getAst().token;
+
+        // If this is an 'order' sensitive window function and there is no ORDER BY, it may depend on its child's ORDER BY clause.
+        // todo, need add first_not_null_value/last_value/last_not_null_value after merged
+        if (Chars.equalsIgnoreCase(token, FirstValueDoubleWindowFunctionFactory.NAME) && orderBy.size() == 0) {
+            return true;
+        }
+
         // Range frames work correctly depending on the ORDER BY clause of the subquery, which cannot be removed by the optimizer.
         boolean stopOrderBy = framingMode == FRAMING_RANGE && !Chars.equalsIgnoreCase(getAst().token, RowNumberFunctionFactory.NAME)
                 && !Chars.equalsIgnoreCase(getAst().token, RankFunctionFactory.NAME) &&
@@ -215,10 +224,10 @@ public final class WindowColumn extends QueryColumn {
         // Heuristic. If current recordCursor has orderBy column exactly same as orderBy of window frame, we continue to push the order.
         if (stopOrderBy) {
             boolean sameOrder = true;
-            if (orderByAdvice.size() != orderBy.size()) {
+            if (orderByAdvice.size() < orderBy.size()) {
                 sameOrder = false;
             } else {
-                for (int i = 0, max = orderByAdvice.size(); i < max; i++) {
+                for (int i = 0, max = orderBy.size(); i < max; i++) {
                     if (!Chars.equalsIgnoreCase(orderByAdvice.getQuick(i).token, orderBy.getQuick(i).token) ||
                             orderByDirectionAdvice.getQuick(i) != orderByDirection.getQuick(i)) {
                         sameOrder = false;
