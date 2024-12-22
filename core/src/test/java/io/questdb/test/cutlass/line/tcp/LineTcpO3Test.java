@@ -45,7 +45,12 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.After;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
@@ -195,7 +200,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
             long clientFd = Net.socketTcp(true);
             Assert.assertTrue(clientFd >= 0);
 
-            long ilpSockAddr = Net.sockaddr(Net.parseIPv4("127.0.0.1"), lineConfiguration.getDispatcherConfiguration().getBindPort());
+            long ilpSockAddr = Net.sockaddr(Net.parseIPv4("127.0.0.1"), lineConfiguration.getBindPort());
             WorkerPool sharedWorkerPool = new WorkerPool(sharedWorkerPoolConfiguration, metrics);
             try (
                     LineTcpReceiver ignored = new LineTcpReceiver(lineConfiguration, engine, sharedWorkerPool, sharedWorkerPool);
