@@ -207,12 +207,12 @@ public final class WindowColumn extends QueryColumn {
                 framingMode == FRAMING_GROUPS;
     }
 
-    public boolean stopOrderByPropagate(ObjList<ExpressionNode> orderByAdvice, IntList orderByDirectionAdvice) {
+    public boolean stopOrderByPropagate(ObjList<ExpressionNode> modelOrder, ObjList<ExpressionNode> orderByAdvice, IntList orderByDirectionAdvice) {
         CharSequence token = getAst().token;
 
         // If this is an 'order' sensitive window function and there is no ORDER BY, it may depend on its child's ORDER BY clause.
         // todo, need add first_not_null_value/last_value/last_not_null_value after merged
-        if (Chars.equalsIgnoreCase(token, FirstValueDoubleWindowFunctionFactory.NAME) && orderBy.size() == 0) {
+        if (Chars.equalsIgnoreCase(token, FirstValueDoubleWindowFunctionFactory.NAME) && orderBy.size() == 0 && modelOrder.size() == 0) {
             return true;
         }
 
