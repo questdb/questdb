@@ -3558,11 +3558,12 @@ public class SqlOptimiser implements Mutable {
         if (model == null) {
             return;
         }
-        // don't propagate though group by, sample by, distinct or some window functions.
+        // don't propagate though group by, sample by, distinct or some window functions
         if (model.getGroupBy().size() != 0
                 || model.getSampleBy() != null
                 || model.getSelectModelType() == QueryModel.SELECT_MODEL_DISTINCT
                 || model.windowStopPropagate(orderByAdvice, orderByDirectionAdvice)) {
+            model.setAllowPropagationOfOrderByAdvice(false);
             return;
         }
         // placeholder for prefix-stripped advice
@@ -3581,7 +3582,7 @@ public class SqlOptimiser implements Mutable {
         // if order by advice has no table prefixes, we preserve original behaviour and pass it on.
         if (!orderByAdviceHasDot) {
             if (allAdviceIsForThisTable(jm1, orderByAdvice)) {
-                setAndCopyAdvice(jm1, orderByAdvice, orderByMnemonic, orderByDirectionAdvice);
+                orderByMnemonic = setAndCopyAdvice(jm1, orderByAdvice, orderByMnemonic, orderByDirectionAdvice);
             }
             optimiseOrderBy(jm1, orderByMnemonic);
             return;
@@ -3610,14 +3611,14 @@ public class SqlOptimiser implements Mutable {
                 if (qc != null
                         && qc.getColumnType() == ColumnType.TIMESTAMP
                         && Chars.equalsIgnoreCase(jm1.getTimestamp().token, qc.getAst().token)) {
-                    setAndCopyAdvice(jm1, advice, orderByMnemonic, orderByDirectionAdvice);
+                    orderByMnemonic = setAndCopyAdvice(jm1, advice, orderByMnemonic, orderByDirectionAdvice);
                 }
             } else {
-                setAndCopyAdvice(jm1, advice, orderByMnemonic, orderByDirectionAdvice);
+                orderByMnemonic = setAndCopyAdvice(jm1, advice, orderByMnemonic, orderByDirectionAdvice);
             }
         } else {
             // fallback to copy the advice to primary
-            setAndCopyAdvice(jm1, advice, orderByMnemonic, orderByDirectionAdvice);
+            orderByMnemonic = setAndCopyAdvice(jm1, advice, orderByMnemonic, orderByDirectionAdvice);
         }
         // recursive call
         optimiseOrderBy(jm1, orderByMnemonic);
@@ -6025,13 +6026,16 @@ public class SqlOptimiser implements Mutable {
      * @param advice                 The order by advice to copy
      * @param orderByMnemonic        The advice 'strength'
      * @param orderByDirectionAdvice The advice direction
+     * @return boolean Don't pass through orderByMnemonic if `allowPropagationOfOrderByAdvice = false`
      */
-    private void setAndCopyAdvice(QueryModel model, ObjList<ExpressionNode> advice, int orderByMnemonic, IntList orderByDirectionAdvice) {
+    private int setAndCopyAdvice(QueryModel model, ObjList<ExpressionNode> advice, int orderByMnemonic, IntList orderByDirectionAdvice) {
         if (model.getAllowPropagationOfOrderByAdvice()) {
             model.setOrderByAdviceMnemonic(orderByMnemonic);
             model.copyOrderByAdvice(advice);
             model.copyOrderByDirectionAdvice(orderByDirectionAdvice);
+            return orderByMnemonic;
         }
+        return  OrderByMnemonic.ORDER_BY_UNKNOWN;
     }
 
     private CharSequence setAndGetModelAlias(QueryModel model) {
