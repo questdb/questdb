@@ -2111,14 +2111,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         final long offset = utf8Sink.skipInt();
         final int n = outParameterTypeDescriptionTypes.size();
         utf8Sink.putNetworkShort((short) n);
-        if (n > 0) {
-            // todo: where there is this n > 0 guard at all?
-
-            for (int i = 0; i < n; i++) {
-                int pgType = Numbers.decodeHighInt(outParameterTypeDescriptionTypes.getQuick(i));
-                // todo: do we need toParamType here?
-                utf8Sink.putIntDirect(toParamType(pgType));
-            }
+        for (int i = 0; i < n; i++) {
+            int pgType = Numbers.decodeHighInt(outParameterTypeDescriptionTypes.getQuick(i));
+            utf8Sink.putIntDirect(pgType);
         }
         utf8Sink.putLen(offset);
     }
