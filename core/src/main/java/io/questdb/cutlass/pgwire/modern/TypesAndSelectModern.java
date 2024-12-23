@@ -49,7 +49,7 @@ public class TypesAndSelectModern implements QuietCloseable, TypeContainer {
     //
     // pgParameterTypes and bindVariableTypes are related. Before we compile the SQL,
     // we define BindVariableService indexed entries from the pgParameterTypes. So there is
-    // one-to-one map between them. The pgParameterTypes uses PostgresSQL type identifiers
+    // one-to-one map between them. The pgParameterTypes uses PostgreSQL type identifiers
     // and bindVariableTypes uses ours. bindVariableTypes may have more values, in case
     // the client did not define types any times or did not define enough.
     // The QuestDB bind variable types (see ColumnType) as derived by the SQL Compiler

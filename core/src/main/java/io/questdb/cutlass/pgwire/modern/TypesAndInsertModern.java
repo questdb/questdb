@@ -34,7 +34,7 @@ import io.questdb.std.WeakSelfReturningObjectPool;
 public class TypesAndInsertModern extends AbstractSelfReturningObject<TypesAndInsertModern> implements TypeContainer {
     // Parameter types as received via "P" message. The client is liable to send
     // arbitrary number of parameters, which does not have to match the number of actual
-    // bind variable used in the INSERT SQL. These are PostgresSQL OIDs in BigEndian.
+    // bind variable used in the INSERT SQL. These are PostgreSQL OIDs in BigEndian.
     private final IntList pgInParameterTypeOIDs = new IntList();
     private final LongList pgOutParameterTypes = new LongList();
     private boolean closing;

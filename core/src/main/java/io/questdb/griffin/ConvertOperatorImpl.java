@@ -109,10 +109,10 @@ public class ConvertOperatorImpl implements Closeable {
     public void close() {
     }
 
-    public void convertColumn(@NotNull CharSequence columnName, int existingColIndex, int existingType, int columnIndex, int newType) {
+    public void convertColumn(@NotNull String columnName, int existingColIndex, int existingType, boolean existingIndexed, int columnIndex, int newType) {
         clear();
         partitionUpdated = 0;
-        convertColumn0(columnName, existingColIndex, existingType, columnIndex, newType);
+        convertColumn0(columnName, existingColIndex, existingType, existingIndexed, columnIndex, newType);
     }
 
     public void finishColumnConversion() {
@@ -123,7 +123,6 @@ public class ConvertOperatorImpl implements Closeable {
                     tableWriter.getTableToken(),
                     tableWriter.getPartitionBy(),
                     tableWriter.checkScoreboardHasReadersBeforeLastCommittedTxn(),
-                    tableWriter.getMetadata(),
                     tableWriter.getTruncateVersion(),
                     tableWriter.getTxn()
             );
@@ -164,7 +163,7 @@ public class ConvertOperatorImpl implements Closeable {
         }
     }
 
-    private void convertColumn0(@NotNull CharSequence columnName, int existingColIndex, int existingType, int columnIndex, int newType) {
+    private void convertColumn0(@NotNull String columnName, int existingColIndex, int existingType, boolean existingIndexed, int columnIndex, int newType) {
         try {
             this.columnName = columnName;
             if (ColumnType.isSymbol(newType)) {
@@ -233,7 +232,7 @@ public class ConvertOperatorImpl implements Closeable {
                             }
 
                             long existingColTxnVer = tableWriter.getColumnNameTxn(partitionTimestamp, existingColIndex);
-                            purgingOperator.add(existingColIndex, existingColTxnVer, partitionTimestamp, partitionNameTxn);
+                            purgingOperator.add(existingColIndex, columnName, existingType, existingIndexed, existingColTxnVer, partitionTimestamp, partitionNameTxn);
                             partitionUpdated++;
                         }
                         if (columnTop != tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1)) {
