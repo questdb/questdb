@@ -2391,17 +2391,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         utf8Sink.resetToBookmark(messageLengthAddress - Byte.BYTES);
     }
 
-    private void setBindVariableAsByte(
-            int variableIndex,
-            long valueAddr,
-            int valueSize,
-            BindVariableService bindVariableService
-    ) throws BadProtocolException, SqlException {
-        // pgwire does not have a byte type, so we use short instead
-        ensureValueLength(variableIndex, Short.BYTES, valueSize);
-        bindVariableService.setByte(variableIndex, SqlUtil.implicitCastShortAsByte(getShortUnsafe(valueAddr)));
-    }
-
     private void setBindVariableAsChar(
             int variableIndex,
             long valueAddr,
