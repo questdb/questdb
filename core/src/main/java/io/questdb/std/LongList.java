@@ -125,6 +125,13 @@ public class LongList implements Mutable, LongVec, Sinkable {
         data[index] = element;
     }
 
+    public void addAll(LongList that) {
+        int p = pos;
+        int s = that.size();
+        setPos(p + s);
+        System.arraycopy(that.data, 0, this.data, p, s);
+    }
+
     public void arrayCopy(int srcPos, int dstPos, int length) {
         System.arraycopy(data, srcPos, data, dstPos, length);
     }

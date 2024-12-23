@@ -35,3 +35,5 @@ core/rust/qdbr/parquet2/target
 core/rust/qdbr/target
 compat/src/test/rust/scenarios/target/
 compat/src/test/rust/scenarios/Cargo.lock
+compat/src/test/python/__pycache__/
+venv/
