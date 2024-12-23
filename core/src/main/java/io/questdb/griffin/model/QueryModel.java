@@ -715,7 +715,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
         for (int i = 0, size = getColumns().size(); i < size; i++) {
             QueryColumn column = getColumns().getQuick(i);
-            if (column.isWindowColumn() && ((WindowColumn) column).stopOrderByPropagate(getOrderBy(), orderByAdvice, orderByDirectionAdvice)) {
+            if (column.isWindowColumn() && ((WindowColumn) column).stopOrderByPropagate(getOrderBy(), getOrderByDirection())) {
                 return true;
             }
         }

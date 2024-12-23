@@ -4505,6 +4505,41 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                 "1970-01-01T00:00:00.000003Z\tB\t3.0\t3.0\n" +
                 "1970-01-01T00:00:00.000002Z\tA\t2.0\t1.0\n" +
                 "1970-01-01T00:00:00.000001Z\tA\t1.0\t1.0\n", q4);
+
+        String q5 = "SELECT * from " +
+                "( " +
+                "SELECT ts2, hostname, usage_system, " +
+                "max(usage_system) OVER ( partition by hostname ORDER BY ts2 ASC RANGE BETWEEN 3 seconds preceding and current row ) AS max_usage_system " +
+                "from ( " +
+                "select * FROM cpu_ts WHERE ts2 >= '1970-01-01T00:00:00.000001Z' ORDER BY ts2)" +
+                ") order by ts2, hostname LIMIT 40;";
+
+        assertPlanNoLeakCheck(
+                q5,
+                "Limit lo: 40\n" +
+                        "    Sort\n" +
+                        "      keys: [ts2, hostname]\n" +
+                        "        Window\n" +
+                        "          functions: [max(usage_system) over (partition by [hostname] range between 3000000 preceding and current row)]\n" +
+                        "            Radix sort light\n" +
+                        "              keys: [ts2]\n" +
+                        "                Async Filter workers: 1\n" +
+                        "                  filter: ts2>=1\n" +
+                        "                    PageFrame\n" +
+                        "                        Row forward scan\n" +
+                        "                        Frame forward scan on: cpu_ts\n"
+        );
+        assertSql("ts2\thostname\tusage_system\tmax_usage_system\n" +
+                "1970-01-01T00:00:06.000001Z\tA\t1.0\t1.0\n" +
+                "1970-01-01T00:00:06.000002Z\tA\t2.0\t2.0\n" +
+                "1970-01-01T00:00:06.000003Z\tB\t3.0\t3.0\n" +
+                "1970-01-01T00:00:06.000004Z\tC\t4.0\t4.0\n" +
+                "1970-01-01T00:00:06.000005Z\tC\t5.0\t5.0\n" +
+                "1970-01-01T00:00:06.000006Z\tC\t6.0\t6.0\n" +
+                "1970-01-01T00:00:06.000007Z\tC\t7.0\t7.0\n" +
+                "1970-01-01T00:00:06.000008Z\tB\t8.0\t8.0\n" +
+                "1970-01-01T00:00:06.000009Z\tA\t9.0\t9.0\n" +
+                "1970-01-01T00:00:06.000010Z\tB\t10.0\t10.0\n", q5);
     }
 
     protected QueryModel compileModel(String query) throws SqlException {
