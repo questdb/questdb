@@ -44,6 +44,7 @@ import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -119,6 +120,7 @@ public class SecurityTest extends AbstractCairoTest {
         };
         memoryRestrictedEngine = new CairoEngine(readOnlyConfiguration);
         SqlExecutionCircuitBreaker dummyCircuitBreaker = new SqlExecutionCircuitBreaker() {
+            private final AtomicBoolean CANCELLED_FLAG = new AtomicBoolean(false);
             private long deadline;
 
             @Override
@@ -133,6 +135,11 @@ public class SecurityTest extends AbstractCairoTest {
             @Override
             public boolean checkIfTripped(long millis, long fd) {
                 return false;
+            }
+
+            @Override
+            public AtomicBoolean getCancelledFlag() {
+                return CANCELLED_FLAG;
             }
 
             @Override
@@ -180,7 +187,7 @@ public class SecurityTest extends AbstractCairoTest {
             }
 
             @Override
-            public void setCancelledFlag(AtomicBoolean cancelledFlag) {
+            public void setCancelledFlag(@NotNull AtomicBoolean cancelledFlag) {
 
             }
 

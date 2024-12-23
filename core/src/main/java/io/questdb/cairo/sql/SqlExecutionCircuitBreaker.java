@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -32,6 +33,8 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
 
     int STATE_OK = 0;
     SqlExecutionCircuitBreaker NOOP_CIRCUIT_BREAKER = new SqlExecutionCircuitBreaker() {
+        private final AtomicBoolean CANCELLED_FLAG = new AtomicBoolean(false);
+
         @Override
         public void cancel() {
         }
@@ -44,6 +47,12 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
         @Override
         public boolean checkIfTripped(long millis, long fd) {
             return false;
+        }
+
+        @Override
+        @NotNull
+        public AtomicBoolean getCancelledFlag() {
+            return CANCELLED_FLAG;
         }
 
         @Override
@@ -90,7 +99,7 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
         }
 
         @Override
-        public void setCancelledFlag(AtomicBoolean cancelledFlag) {
+        public void setCancelledFlag(@NotNull AtomicBoolean cancelledFlag) {
         }
 
         @Override
@@ -122,6 +131,8 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
     void cancel();
 
     boolean checkIfTripped(long millis, long fd);
+
+    AtomicBoolean getCancelledFlag();
 
     @Nullable
     SqlExecutionCircuitBreakerConfiguration getConfiguration();
@@ -168,7 +179,7 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
 
     void resetTimer();
 
-    void setCancelledFlag(AtomicBoolean cancelled);
+    void setCancelledFlag(@NotNull AtomicBoolean cancelled);
 
     void setFd(long fd);
 
