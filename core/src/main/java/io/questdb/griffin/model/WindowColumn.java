@@ -207,7 +207,7 @@ public final class WindowColumn extends QueryColumn {
                 framingMode == FRAMING_GROUPS;
     }
 
-    public boolean stopOrderByPropagate(ObjList<ExpressionNode> modelOrder, ObjList<ExpressionNode> orderByAdvice, IntList orderByDirectionAdvice) {
+    public boolean stopOrderByPropagate(ObjList<ExpressionNode> modelOrder, IntList modelOrderDirection) {
         CharSequence token = getAst().token;
 
         // If this is an 'order' sensitive window function and there is no ORDER BY, it may depend on its child's ORDER BY clause.
@@ -224,12 +224,12 @@ public final class WindowColumn extends QueryColumn {
         // Heuristic. If current recordCursor has orderBy column exactly same as orderBy of window frame, we continue to push the order.
         if (stopOrderBy) {
             boolean sameOrder = true;
-            if (orderByAdvice.size() < orderBy.size()) {
+            if (modelOrder.size() < orderBy.size()) {
                 sameOrder = false;
             } else {
                 for (int i = 0, max = orderBy.size(); i < max; i++) {
-                    if (!Chars.equalsIgnoreCase(orderByAdvice.getQuick(i).token, orderBy.getQuick(i).token) ||
-                            orderByDirectionAdvice.getQuick(i) != orderByDirection.getQuick(i)) {
+                    if (!Chars.equalsIgnoreCase(modelOrder.getQuick(i).token, orderBy.getQuick(i).token) ||
+                            modelOrderDirection.getQuick(i) != orderByDirection.getQuick(i)) {
                         sameOrder = false;
                         break;
                     }
