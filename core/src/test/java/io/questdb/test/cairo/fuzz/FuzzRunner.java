@@ -104,7 +104,6 @@ public class FuzzRunner {
     private double rollbackProb;
     private long s0;
     private long s1;
-    private double setTtlProb;
     private SqlExecutionContext sqlExecutionContext;
     private int strLen;
     private int symbolCountMax;
@@ -454,10 +453,10 @@ public class FuzzRunner {
                 partitionDropProb,
                 dataAddProb,
                 equalTsRowsProb,
-                tableDropProb,
                 strLen,
                 generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableName),
-                (int) sequencerMetadata.getMetadataVersion()
+                (int) sequencerMetadata.getMetadataVersion(),
+                tableDropProb
         );
     }
 
@@ -524,11 +523,10 @@ public class FuzzRunner {
             double colRenameProb,
             double colTypeChangeProb,
             double dataAddProb,
-            double equalTsRowsProb,
             double partitionDropProb,
             double truncateProb,
             double tableDropProb,
-            double setTtlProb
+            double equalTsRowsProb
     ) {
         this.cancelRowsProb = cancelRowsProb;
         this.notSetProb = notSetProb;
@@ -539,11 +537,10 @@ public class FuzzRunner {
         this.colRenameProb = colRenameProb;
         this.colTypeChangeProb = colTypeChangeProb;
         this.dataAddProb = dataAddProb;
-        this.equalTsRowsProb = equalTsRowsProb;
         this.partitionDropProb = partitionDropProb;
         this.truncateProb = truncateProb;
         this.tableDropProb = tableDropProb;
-        this.setTtlProb = setTtlProb;
+        this.equalTsRowsProb = equalTsRowsProb;
     }
 
     public void withDb(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
@@ -965,11 +962,11 @@ public class FuzzRunner {
                         rnd.nextDouble(),
                         rnd.nextDouble(),
                         rnd.nextDouble(),
-                        0.01,
                         0.0,
                         0.1 * rnd.nextDouble(),
                         rnd.nextDouble(),
-                        0);
+                        0.01
+                );
             }
             if (randomiseCounts) {
                 setFuzzCounts(
