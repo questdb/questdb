@@ -6035,7 +6035,7 @@ public class SqlOptimiser implements Mutable {
             model.copyOrderByDirectionAdvice(orderByDirectionAdvice);
             return orderByMnemonic;
         }
-        return  OrderByMnemonic.ORDER_BY_UNKNOWN;
+        return OrderByMnemonic.ORDER_BY_UNKNOWN;
     }
 
     private CharSequence setAndGetModelAlias(QueryModel model) {
