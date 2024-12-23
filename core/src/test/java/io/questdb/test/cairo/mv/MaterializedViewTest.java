@@ -33,12 +33,21 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import static io.questdb.griffin.model.IntervalUtils.parseFloorPartialTimestamp;
 
 
 public class MaterializedViewTest extends AbstractCairoTest {
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        // override default to test copy
+        inputRoot = TestUtils.getCsvRoot();
+        inputWorkRoot = TestUtils.unchecked(() -> temp.newFolder("imports" + System.nanoTime()).getAbsolutePath());
+        AbstractCairoTest.setUpStatic();
+    }
+
     @Before
     public void setUp() {
         super.setUp();
@@ -107,6 +116,36 @@ public class MaterializedViewTest extends AbstractCairoTest {
             );
         });
 
+    }
+
+    @Test
+    public void testCheckMatViewModification() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base_price (" +
+                    "sym varchar, price double, ts timestamp" +
+                    ") timestamp(ts) partition by DAY WAL"
+            );
+
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+            // copy
+            assertCannotModifyMatView("copy price_1h from 'test-numeric-headers.csv' with header true");
+            // rename table
+            assertCannotModifyMatView("rename table price_1h to price_1h_bak");
+            // update
+            assertCannotModifyMatView("update price_1h set price = 1.1");
+            // insert
+            assertCannotModifyMatView("insert into base_price values('gbpusd', 1.319, '2024-09-10T12:05')");
+            // insert as select
+            assertCannotModifyMatView("insert into price_1h select sym, last(price) as price, ts from base_price sample by 1h");
+            // alter
+            assertCannotModifyMatView("alter table price_1h add column x int");
+            // reindex
+            assertCannotModifyMatView("reindex table price_1h");
+            // truncate
+            assertCannotModifyMatView("truncate table price_1h");
+            // vacuum
+            assertCannotModifyMatView("vacuum table price_1h");
+        });
     }
 
     @Test
@@ -226,6 +265,14 @@ public class MaterializedViewTest extends AbstractCairoTest {
             assertSql(expected, "price_1h order by ts, sym");
         });
 
+    }
+
+    private static void assertCannotModifyMatView(String updateSql) {
+        try {
+            execute(updateSql);
+        } catch (SqlException e) {
+            Assert.assertTrue(e.getMessage().contains("cannot modify materialized view"));
+        }
     }
 
     private static void assertViewMatchesSqlOverBaseTable(String viewSql) throws SqlException {
