@@ -151,6 +151,10 @@ public class CairoTable implements Sinkable {
         return null;
     }
 
+    /**
+     * Returns the time-to-live (TTL) of the data in this table: if positive,
+     * it's in hours; if negative, it's in months (and the actual value is positive)
+     */
     public int getTtlHoursOrMonths() {
         return ttlHoursOrMonths;
     }

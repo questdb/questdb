@@ -157,6 +157,11 @@ public interface MetadataService {
 
     void setMetaO3MaxLag(long o3MaxLagUs);
 
+    /**
+     * Sets the time-to-live (TTL) of the data in this table: if positive,
+     * it's in hours; if negative, it's in months (and the actual value is positive).
+     * Zero means "no TTL".
+     */
     void setMetaTtlHoursOrMonths(int metaTtlHoursOrMonths);
 
     void squashPartitions();
