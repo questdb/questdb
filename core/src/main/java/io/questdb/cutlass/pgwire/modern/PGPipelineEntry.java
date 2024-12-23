@@ -130,8 +130,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // types are sent to us via "parse" message
     private final IntList msgParseParameterTypeOIDs;
 
-    // Encoded bind variable types. Each list entry uses lower 32 bits for QuestDB native types and upper 32 bits
-    // contains OID types.
+    // List with encoded bind variable types. It combines types client sent to us in PARSE message and types
+    // inferred by the SQL compiler. Each entry uses lower 32 bits for QuestDB native type and upper 32 bits
+    // contains PGWire OID type. If a client sent us a type, then the high 32 bits (=OID type) is set to the same value.
     // Q: Why do we have to store each variable type in both native and pgwire encoding?
     //    Cannot we just maintain a single list and convert when needed?
     // A: Some QuestDB natives do not have native equivalents. For example BYTE or GEOHASH
