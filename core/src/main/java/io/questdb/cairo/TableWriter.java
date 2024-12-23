@@ -7811,10 +7811,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private int rewriteMetadata(TableWriterMetadata metadata) {
-        int index;
         try {
             int columnCount = metadata.getColumnCount();
-            index = openMetaSwapFile(ff, ddlMem, path, pathSize, configuration.getMaxSwapFileCount());
+            int index = openMetaSwapFile(ff, ddlMem, path, pathSize, configuration.getMaxSwapFileCount());
 
             ddlMem.putInt(metadata.getColumnCount());
             ddlMem.putInt(metadata.getPartitionBy());
@@ -7868,6 +7867,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             ddlMem.sync(false);
+            return index;
         } catch (Throwable th) {
             LOG.critical().$("could not write to metadata file, rolling back DDL [path=").$(path).$(']').$();
             try {
@@ -7883,7 +7883,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Metadata updates are written to a new file and then swapped by renaming.
             ddlMem.close(true, Vm.TRUNCATE_TO_POINTER);
         }
-        return index;
     }
 
     private void rollbackIndexes() {
