@@ -1742,12 +1742,7 @@ public final class TableUtils {
         }
     }
 
-    public static void writeMetadata(
-            TableStructure tableStruct,
-            int tableVersion,
-            int tableId,
-            MemoryA mem
-    ) {
+    public static void writeMetadata(TableStructure tableStruct, int tableVersion, int tableId, MemoryA mem) {
         int count = tableStruct.getColumnCount();
         mem.putInt(count);
         mem.putInt(tableStruct.getPartitionBy());
