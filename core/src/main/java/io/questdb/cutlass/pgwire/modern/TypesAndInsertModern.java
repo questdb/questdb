@@ -36,6 +36,10 @@ public class TypesAndInsertModern extends AbstractSelfReturningObject<TypesAndIn
     // arbitrary number of parameters, which does not have to match the number of actual
     // bind variable used in the INSERT SQL. These are PostgreSQL OIDs in BigEndian.
     private final IntList pgInParameterTypeOIDs = new IntList();
+    // Bind variable types. Each entry combines:
+    // 1. Lower 32 bits: QuestDB native types scrapped from BindingService after the SQL text is parsed.
+    // 2. Upper 32 bits: PostgreSQL OIDs in BigEndian. This combines types a client sent us in a PARSE message with the
+    //                   types SQL Compiled derived from the SQL. Type from the PARSE message have a priority.
     private final LongList pgOutParameterTypes = new LongList();
     private boolean closing;
     private boolean hasBindVariables;

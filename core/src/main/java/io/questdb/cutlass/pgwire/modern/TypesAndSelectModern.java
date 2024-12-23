@@ -44,15 +44,10 @@ public class TypesAndSelectModern implements QuietCloseable, TypeContainer {
     // recompile the SQL for the new parameter type, which we will do after
     // reconciling these types.
     private final IntList inPgParameterTypeOIDs = new IntList();
-    // The QuestDB bind variable types (see ColumnType) as scraped from the
-    // BindVariableService after SQL compilation.
-    //
-    // pgParameterTypes and bindVariableTypes are related. Before we compile the SQL,
-    // we define BindVariableService indexed entries from the pgParameterTypes. So there is
-    // one-to-one map between them. The pgParameterTypes uses PostgreSQL type identifiers
-    // and bindVariableTypes uses ours. bindVariableTypes may have more values, in case
-    // the client did not define types any times or did not define enough.
-    // The QuestDB bind variable types (see ColumnType) as derived by the SQL Compiler
+    // Bind variable types. Each entry combines:
+    // 1. Lower 32 bits: QuestDB native types scrapped from BindingService after the SQL text is parsed.
+    // 2. Upper 32 bits: PostgreSQL OIDs in BigEndian. This combines types a client sent us in a PARSE message with the
+    //                   types SQL Compiled derived from the SQL. Type from the PARSE message have a priority.
     private final LongList outPgParameterTypes = new LongList();
     // sqlTag is the value we will be returning back to the client
     private final String sqlTag;
