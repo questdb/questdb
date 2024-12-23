@@ -150,7 +150,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
             int type = TableUtils.getColumnType(metaMem, i);
             String nameStr = Chars.toString(name);
             columnMetadata.add(
-                    new TableColumnMetadata(
+                    new WriterTableColumnMetadata(
                             nameStr,
                             type,
                             TableUtils.isColumnIndexed(metaMem, i),
@@ -158,10 +158,10 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                             true,
                             null,
                             i,
+                            TableUtils.getSymbolCapacity(metaMem, i),
                             TableUtils.isColumnDedupKey(metaMem, i),
                             TableUtils.getReplacingColumnIndex(metaMem, i),
-                            TableUtils.isSymbolCached(metaMem, i),
-                            TableUtils.getSymbolCapacity(metaMem, i)
+                            TableUtils.isSymbolCached(metaMem, i)
                     )
             );
             if (type > -1) {
@@ -208,7 +208,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         String str = name.toString();
         columnNameIndexMap.put(str, columnMetadata.size());
         columnMetadata.add(
-                new TableColumnMetadata(
+                new WriterTableColumnMetadata(
                         str,
                         type,
                         indexFlag,
@@ -216,10 +216,10 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                         true,
                         null,
                         columnIndex,
+                        symbolCapacity,
                         isDedupKey,
                         replacingIndex,
-                        isSymbolCached,
-                        symbolCapacity
+                        isSymbolCached
                 )
         );
         columnCount++;
