@@ -1757,8 +1757,8 @@ public final class TableUtils {
         mem.putLong(tableStruct.getO3MaxLag());
         mem.putLong(0); // Structure version.
         mem.putBool(tableStruct.isWalEnabled());
-        mem.putInt(tableStruct.getTtlHoursOrMonths());
         mem.putInt(TableUtils.calculateMetadataMinorFormatVersion(count));
+        mem.putInt(tableStruct.getTtlHoursOrMonths());
         mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
         assert count > 0;
