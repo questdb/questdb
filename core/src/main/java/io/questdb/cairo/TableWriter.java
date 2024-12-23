@@ -3931,7 +3931,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (noop) {
                     // Bookmark masterRef to track how many rows is in uncommitted state
                     this.committedMasterRef = masterRef;
-                    getTxn();
                     return;
                 } else if (o3MaxLag > 0) {
                     // It is possible that O3 commit will create partition just before
