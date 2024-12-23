@@ -1623,6 +1623,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
         String query = "update " + tableName + " set x = 1111";
         Overrides overrides = node1.getConfigurationOverrides();
         overrides.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
+        spinLockTimeout = 1;
         runCheckTableSuspended(tableName, query, new TestFilesFacadeImpl() {
             private int attempt = 0;
 

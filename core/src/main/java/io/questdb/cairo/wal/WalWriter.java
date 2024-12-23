@@ -320,7 +320,7 @@ public class WalWriter implements TableWriterAPI {
                         .$(", minTs=").$ts(txnMinTimestamp).$(", maxTs=").$ts(txnMaxTimestamp).I$();
                 resetDataTxnProperties();
                 mayRollSegmentOnNextRow();
-                metrics.walMetrics().addRowsWritten(rowsToCommit);
+                metrics.wal().addRowsWritten(rowsToCommit);
             }
         } catch (CairoException ex) {
             distressed = true;

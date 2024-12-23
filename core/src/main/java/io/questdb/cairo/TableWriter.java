@@ -82,7 +82,6 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.std.BinarySequence;
-import io.questdb.std.Chars;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Files;
@@ -209,7 +208,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // To indicate ownership, the message bus owned by the writer will be assigned to `ownMessageBus`. This reference
     // will be released by the writer
     private final MessageBus messageBus;
-    private final MemoryMR metaMem;
     private final TableWriterMetadata metadata;
     private final Metrics metrics;
     private final boolean mixedIOFlag;
@@ -316,7 +314,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long tempMem16b = Unsafe.malloc(16, MemoryTag.NATIVE_TABLE_WRITER);
     private LongConsumer timestampSetter;
     private long todoTxn;
-    private final FragileCode RECOVER_FROM_SYMBOL_MAP_WRITER_FAILURE = this::recoverFromSymbolMapWriterFailure;
     private final FragileCode RECOVER_FROM_SWAP_RENAME_FAILURE = this::recoverFromSwapRenameFailure;
     private final FragileCode RECOVER_FROM_COLUMN_OPEN_FAILURE = this::recoverOpenColumnFailure;
     private UpdateOperatorImpl updateOperatorImpl;
@@ -370,10 +367,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (todo == TODO_RESTORE_META) {
                 repairMetaRename((int) todoMem.getLong(48));
             }
-            this.ddlMem = Vm.getMARInstance(configuration);
-            this.metaMem = Vm.getCMRInstance();
-            openMetaFile(ff, path, pathSize, metaMem);
-            this.metadata = new TableWriterMetadata(this.tableToken, metaMem);
+            this.ddlMem = Vm.getCMARWInstance();
+            this.metadata = new TableWriterMetadata(this.tableToken);
+            openMetaFile(ff, path, pathSize, ddlMem, metadata);
             this.partitionBy = metadata.getPartitionBy();
             this.txWriter = new TxWriter(ff, configuration).ofRW(path.concat(TXN_FILE_NAME).$(), partitionBy);
             this.txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(pathSize));
@@ -588,7 +584,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         checkDistressed();
         checkColumnName(columnName);
 
-        if (getColumnIndexQuiet(metaMem, columnName, columnCount) != -1) {
+        if (metadata.getColumnIndexQuiet(columnName) != -1) {
             throw CairoException.duplicateColumn(columnName);
         }
 
@@ -610,8 +606,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 indexValueBlockCapacity,
                 isDedupKey,
                 columnNameTxn,
-                -1
+                -1,
+                metadata
         );
+
 
         // extend columnTop list to make sure row cancel can work
         // need for setting correct top is hard to test without being able to read from table
@@ -625,48 +623,34 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try {
                 openNewColumnFiles(columnName, columnType, isIndexed, indexValueBlockCapacity);
             } catch (CairoException e) {
-                runFragile(RECOVER_FROM_COLUMN_OPEN_FAILURE, columnName, e);
+                runFragile(RECOVER_FROM_COLUMN_OPEN_FAILURE, e);
             }
         }
+
+        clearTodoAndCommitMetaStructureVersion();
 
         try {
-            // open _meta file
-            openMetaFile(ff, path, pathSize, metaMem);
-            // remove _todo
-            clearTodoLog();
-        } catch (CairoException e) {
-            throwDistressException(e);
-        }
-
-        bumpMetadataAndColumnStructureVersion();
-
-        metadata.addColumn(
-                columnName,
-                columnType,
-                isIndexed,
-                indexValueBlockCapacity,
-                columnIndex,
-                symbolCapacity,
-                isDedupKey,
-                symbolCacheFlag
-        );
-
-        if (!Os.isWindows()) {
-            try {
-                ff.fsyncAndClose(openRO(ff, path.$(), LOG));
-            } catch (CairoException e) {
-                LOG.error().$("could not fsync after column added, non-critical [path=").$(path)
-                        .$(", errno=").$(e.getErrno())
-                        .$(", error=").$(e.getFlyweightMessage()).$();
+            if (!Os.isWindows()) {
+                try {
+                    ff.fsyncAndClose(openRO(ff, path.$(), LOG));
+                } catch (CairoException e) {
+                    LOG.error().$("could not fsync after column added, non-critical [path=").$(path)
+                            .$(", errno=").$(e.getErrno())
+                            .$(", error=").$(e.getFlyweightMessage()).$();
+                }
             }
-        }
 
-        if (securityContext != null) {
-            ddlListener.onColumnAdded(securityContext, tableToken, columnName);
-        }
+            if (securityContext != null) {
+                ddlListener.onColumnAdded(securityContext, tableToken, columnName);
+            }
 
-        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-            metadataRW.hydrateTable(metadata);
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.hydrateTable(metadata);
+            }
+        } catch (CairoError err) {
+            throw err;
+        } catch (Throwable th) {
+            throwDistressException(th);
         }
     }
 
@@ -676,19 +660,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         checkDistressed();
 
-        final int columnIndex = getColumnIndexQuiet(metaMem, columnName, columnCount);
+        final int columnIndex = metadata.getColumnIndexQuiet(columnName);
 
         if (columnIndex == -1) {
             throw CairoException.invalidMetadataRecoverable("column does not exist", columnName);
         }
 
+        TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
+
         commit();
 
-        if (isColumnIndexed(metaMem, columnIndex)) {
+        if (columnMetadata.isSymbolIndexFlag()) {
             throw CairoException.invalidMetadataRecoverable("column is already indexed", columnName);
         }
 
-        final int existingType = getColumnType(metaMem, columnIndex);
+        final int existingType = columnMetadata.getColumnType();
         LOG.info().$("adding index to '").utf8(columnName).$("' [").$(ColumnType.nameOf(existingType)).$(", path=").$substr(pathRootSize, path).I$();
 
         if (!ColumnType.isSymbol(existingType)) {
@@ -698,17 +684,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         final SymbolColumnIndexer indexer = new SymbolColumnIndexer(configuration);
         writeIndex(columnName, indexValueBlockSize, columnIndex, indexer);
-        // set index flag in metadata and create new _meta.swp
-        metaSwapIndex = copyMetadataAndSetIndexAttrs(columnIndex, true, indexValueBlockSize);
 
-        swapMetaFile(columnName);
+        columnMetadata.setSymbolIndexFlag(true);
+        columnMetadata.setIndexValueBlockCapacity(indexValueBlockSize);
+
+        // set index flag in metadata and create new _meta.swp
+        rewriteAndSwapMetadata(metadata);
+        clearTodoAndCommitMeta();
 
         indexers.extendAndSet(columnIndex, indexer);
         populateDenseIndexerList();
-
-        TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
-        columnMetadata.setSymbolIndexFlag(true);
-        columnMetadata.setIndexValueBlockCapacity(indexValueBlockSize);
 
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.hydrateTable(metadata);
@@ -931,8 +916,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             symbolMapWriter.updateCacheFlag(cache);
             TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
             columnMetadata.setSymbolCacheFlag(cache);
-            updateMetaStructureVersion();
-            txWriter.bumpTruncateVersion();
+
+            rewriteAndSwapMetadata(metadata);
+            clearTodoAndCommitMeta();
+
             try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
                 metadataRW.hydrateTable(metadata);
             }
@@ -941,7 +928,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public void changeColumnType(
-            CharSequence columnName,
+            CharSequence name,
             int newType,
             int symbolCapacity,
             boolean symbolCacheFlag,
@@ -951,11 +938,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             SecurityContext securityContext
     ) {
 
-        int existingColIndex = metadata.getColumnIndexQuiet(columnName);
+        int existingColIndex = metadata.getColumnIndexQuiet(name);
         if (existingColIndex < 0) {
-            throw CairoException.nonCritical().put("cannot change column type, column does not exists [table=")
-                    .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
+            throw CairoException.nonCritical().put("cannot change column type, column does not exist [table=")
+                    .put(tableToken.getTableName()).put(", column=").put(name).put(']');
         }
+        String columnName = metadata.getColumnName(existingColIndex);
 
         if (existingColIndex == metadata.getTimestampIndex()) {
             throw CairoException.nonCritical().put("cannot change column type, column is the designated timestamp [table=")
@@ -997,9 +985,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // maintain sparse list of symbol writers
                 symbolMapWriters.extendAndSet(columnCount, NullMapWriter.INSTANCE);
             }
-            convertOperator.convertColumn(columnName, existingColIndex, existingType, columnIndex, newType);
+            boolean existingIsIndexed = metadata.isColumnIndexed(existingColIndex) && existingType == ColumnType.SYMBOL;
+            convertOperator.convertColumn(columnName, existingColIndex, existingType, existingIsIndexed, columnIndex, newType);
 
             // Column converted, add new one to _meta file and remove the existing column
+            metadata.removeColumn(existingColIndex);
+
+            // close old column files
+            freeColumnMemory(existingColIndex);
+
+            // remove symbol map writer or entry for such
+            removeSymbolMapWriter(existingColIndex);
+
             addColumnToMeta(
                     columnName,
                     newType,
@@ -1009,27 +1006,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     indexValueBlockCapacity,
                     isDedupKey,
                     columnNameTxn,
-                    existingColIndex
-            );
-
-            // close old column files
-            freeColumnMemory(existingColIndex);
-
-            // remove symbol map writer or entry for such
-            removeSymbolMapWriter(existingColIndex);
-
-            // remove old column to in-memory metadata object and add new one
-            metadata.removeColumn(existingColIndex);
-            metadata.addColumn(
-                    columnName,
-                    newType, isIndexed,
-                    indexValueBlockCapacity,
                     existingColIndex,
-                    symbolCapacity,
-                    isDedupKey,
-                    existingColIndex + 1,
-                    symbolCacheFlag
-            ); // by convention, replacingIndex is +1
+                    metadata
+            );
 
             // open new column files
             if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {
@@ -1051,17 +1030,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 populateDenseIndexerList();
             }
 
-            try {
-                // open _meta file
-                openMetaFile(ff, path, pathSize, metaMem);
-                // remove _todo
-                clearTodoLog();
-            } catch (CairoException e) {
-                throwDistressException(e);
-            }
-
-            // commit transaction to _txn file
-            bumpMetadataAndColumnStructureVersion();
+            clearTodoAndCommitMetaStructureVersion();
         } catch (Throwable th) {
             LOG.critical().$("could not change column type [table=").$(tableToken.getTableName()).$(", column=").utf8(columnName)
                     .$(", error=").$(th).I$();
@@ -1808,21 +1777,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         assert txWriter.getLagRowCount() == 0;
         checkDistressed();
         LOG.info().$("disabling row deduplication [table=").utf8(tableToken.getTableName()).I$();
-        updateMetadataWithDeduplicationUpsertKeys(false, null);
+        for (int i = 0; i < columnCount; i++) {
+            metadata.getColumnMetadata(i).setDedupKeyFlag(false);
+        }
+        rewriteAndSwapMetadata(metadata);
+        clearTodoAndCommitMetaStructureVersion();
+        if (dedupColumnCommitAddresses != null) {
+            dedupColumnCommitAddresses.setDedupColumnCount(0);
+        }
+
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.hydrateTable(metadata);
         }
     }
 
     @Override
-    public void dropIndex(@NotNull CharSequence columnName) {
+    public void dropIndex(@NotNull CharSequence name) {
         checkDistressed();
 
-        final int columnIndex = getColumnIndexQuiet(metaMem, columnName, columnCount);
+        final int columnIndex = metadata.getColumnIndexQuiet(name);
         if (columnIndex == -1) {
-            throw CairoException.invalidMetadataRecoverable("column does not exist", columnName);
+            throw CairoException.invalidMetadataRecoverable("column does not exist", name);
         }
-        if (!isColumnIndexed(metaMem, columnIndex)) {
+        String columnName = metadata.getColumnName(columnIndex);
+
+        TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
+        if (!columnMetadata.isSymbolIndexFlag()) {
             // if a column is indexed, it is also of type SYMBOL
             throw CairoException.invalidMetadataRecoverable("column is not indexed", columnName);
         }
@@ -1849,12 +1829,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             dropIndexOperator.executeDropIndex(columnName, columnIndex); // upserts column version in partitions
             // swap meta commit
-            metaSwapIndex = copyMetadataAndSetIndexAttrs(columnIndex, false, defaultIndexValueBlockSize);
-            swapMetaFile(columnName); // bumps structure version, this is in effect a commit
+
             // refresh metadata
-            TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
             columnMetadata.setSymbolIndexFlag(false);
             columnMetadata.setIndexValueBlockCapacity(defaultIndexValueBlockSize);
+            rewriteAndSwapMetadata(metadata);
+            clearTodoAndCommitMeta();
+
             // remove indexer
             ColumnIndexer columnIndexer = indexers.getQuick(columnIndex);
             if (columnIndexer != null) {
@@ -1862,6 +1843,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 Misc.free(columnIndexer);
                 populateDenseIndexerList();
             }
+
             // purge old column versions
             finishColumnPurge();
             LOG.info().$("REMOVED index [txn=").$(txWriter.getTxn()).I$();
@@ -1911,7 +1893,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             logRec.I$();
         }
-        updateMetadataWithDeduplicationUpsertKeys(true, columnsIndexes);
+
+        columnsIndexes.sort();
+        for (int i = 0, j = 0; i < columnCount && j < columnsIndexes.size(); i++) {
+            if (i == columnsIndexes.getQuick(j)) {
+                // Set dedup key flag for the column
+                metadata.getColumnMetadata(i).setDedupKeyFlag(true);
+                // Go to the next dedup column index
+                j++;
+            }
+        }
+        rewriteAndSwapMetadata(metadata);
+        clearTodoAndCommitMetaStructureVersion();
+
+        if (dedupColumnCommitAddresses == null) {
+            dedupColumnCommitAddresses = new DedupColumnCommitAddresses();
+        } else {
+            dedupColumnCommitAddresses.clear();
+        }
+        dedupColumnCommitAddresses.setDedupColumnCount(columnsIndexes.size() - 1);
+
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.hydrateTable(metadata);
         }
@@ -2743,11 +2744,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         final int index = getColumnIndex(name);
         final int type = metadata.getColumnType(index);
+        final boolean isIndexed = metadata.isIndexed(index);
+        String columnName = metadata.getColumnName(index);
 
         LOG.info().$("removing [column=").utf8(name).$(", path=").$substr(pathRootSize, path).I$();
 
         // check if we are moving timestamp from a partitioned table
-        final int timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
+        final int timestampIndex = metadata.getTimestampIndex();
         boolean timestamp = (index == timestampIndex);
 
         if (timestamp && PartitionBy.isPartitioned(partitionBy)) {
@@ -2756,60 +2759,41 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         commit();
 
-        metaSwapIndex = removeColumnFromMeta(index);
-
-        // close _meta so we can rename it
-        metaMem.close();
-
-        // rename _meta to _meta.prev
-        renameMetaToMetaPrev(name);
-
-        // after we moved _meta to _meta.prev
-        // we have to have _todo to restore _meta should anything go wrong
-        writeRestoreMetaTodo(name);
-
-        // rename _meta.swp to _meta
-        renameSwapMetaToMeta(name);
-
-        // remove column objects
-        freeColumnMemory(index);
-
-        // remove symbol map writer or entry for such
-        removeSymbolMapWriter(index);
-
-        // reset timestamp limits
-        if (timestamp) {
-            txWriter.resetTimestamp();
-            timestampSetter = value -> {
-            };
-        }
-
-        try {
-            // open _meta file
-            openMetaFile(ff, path, pathSize, metaMem);
-
-            // remove _todo
-            clearTodoLog();
-
-            // remove column files has to be done after _todo is removed
-            removeColumnFiles(index, type);
-        } catch (CairoException e) {
-            throwDistressException(e);
-        }
-
-        bumpMetadataAndColumnStructureVersion();
-
         metadata.removeColumn(index);
         if (timestamp) {
             metadata.clearTimestampIndex();
         }
+        rewriteAndSwapMetadata(metadata);
 
-        finishColumnPurge();
+        try {
+            // remove column objects
+            freeColumnMemory(index);
 
-        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-            metadataRW.hydrateTable(metadata);
+            // remove symbol map writer or entry for such
+            removeSymbolMapWriter(index);
+
+            // reset timestamp limits
+            if (timestamp) {
+                txWriter.resetTimestamp();
+                timestampSetter = value -> {
+                };
+            }
+
+            // remove column files
+            removeColumnFiles(index, columnName, type, isIndexed);
+            clearTodoAndCommitMetaStructureVersion();
+
+            finishColumnPurge();
+
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.hydrateTable(metadata);
+            }
+            LOG.info().$("REMOVED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("]' from ").$substr(pathRootSize, path).$();
+        } catch (CairoError err) {
+            throw err;
+        } catch (Throwable th) {
+            throwDistressException(th);
         }
-        LOG.info().$("REMOVED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("]' from ").$substr(pathRootSize, path).$();
     }
 
     @Override
@@ -2841,44 +2825,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public void renameColumn(
-            @NotNull CharSequence currentName,
+            @NotNull CharSequence name,
             @NotNull CharSequence newName,
             SecurityContext securityContext
     ) {
         checkDistressed();
         checkColumnName(newName);
 
-        final int index = getColumnIndex(currentName);
+        final int index = getColumnIndex(name);
         final int type = metadata.getColumnType(index);
+        final boolean isIndexed = metadata.isIndexed(index);
+        String columnName = metadata.getColumnName(index);
 
-        LOG.info().$("renaming column '").utf8(currentName).$('[').$(ColumnType.nameOf(type)).$("]' to '").utf8(newName).$("' in ").$substr(pathRootSize, path).$();
+        LOG.info().$("renaming column '").utf8(columnName).$('[').$(ColumnType.nameOf(type)).$("]' to '").utf8(newName).$("' in ").$substr(pathRootSize, path).$();
 
         commit();
 
-        this.metaSwapIndex = renameColumnFromMeta(index, newName);
-
-        // close _meta so we can rename it
-        metaMem.close();
-
-        // rename _meta to _meta.prev
-        renameMetaToMetaPrev(currentName);
-
-        // after we moved _meta to _meta.prev
-        // we have to have _todo to restore _meta should anything go wrong
-        writeRestoreMetaTodo(currentName);
-
-        // rename _meta.swp to _meta
-        renameSwapMetaToMeta(currentName);
+        metadata.renameColumn(columnName, newName);
+        String newColumnName = metadata.getColumnName(index);
+        rewriteAndSwapMetadata(metadata);
 
         try {
-            // open _meta file
-            openMetaFile(ff, path, pathSize, metaMem);
-
             // remove _todo
             clearTodoLog();
 
             // rename column files has to be done after _todo is removed
-            hardLinkAndPurgeColumnFiles(currentName, index, newName, type);
+            hardLinkAndPurgeColumnFiles(columnName, index, isIndexed, newColumnName, type);
         } catch (CairoException e) {
             throwDistressException(e);
         }
@@ -2887,21 +2859,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // Call finish purge to remove old column files before renaming them in metadata
         finishColumnPurge();
-        metadata.renameColumn(currentName, newName);
 
         if (index == metadata.getTimestampIndex()) {
-            designatedTimestampColumnName = Chars.toString(newName);
+            designatedTimestampColumnName = newColumnName;
         }
 
         if (securityContext != null) {
-            ddlListener.onColumnRenamed(securityContext, tableToken, currentName, newName);
+            ddlListener.onColumnRenamed(securityContext, tableToken, columnName, newColumnName);
         }
 
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.hydrateTable(metadata);
         }
 
-        LOG.info().$("RENAMED column '").utf8(currentName).$("' to '").utf8(newName).$("' from ").$substr(pathRootSize, path).$();
+        LOG.info().$("RENAMED column '").utf8(columnName).$("' to '").utf8(newColumnName).$("' from ").$substr(pathRootSize, path).$();
     }
 
     @Override
@@ -2967,78 +2938,38 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public void setMetaMaxUncommittedRows(int maxUncommittedRows) {
-        try {
-            commit();
-            long metaSize = copyMetadataAndUpdateVersion();
-            openMetaSwapFileByIndex(ff, ddlMem, path, pathSize, this.metaSwapIndex);
-            try {
-                ddlMem.jumpTo(META_OFFSET_MAX_UNCOMMITTED_ROWS);
-                ddlMem.putInt(maxUncommittedRows);
-                ddlMem.jumpTo(metaSize);
-            } finally {
-                ddlMem.close();
-            }
+        commit();
 
-            finishMetaSwapUpdate();
-            metadata.setMaxUncommittedRows(maxUncommittedRows);
+        metadata.setMaxUncommittedRows(maxUncommittedRows);
+        rewriteAndSwapMetadata(metadata);
+        clearTodoAndCommitMeta();
 
-            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                metadataRW.hydrateTable(metadata);
-            }
-
-        } finally {
-            ddlMem.close();
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.hydrateTable(metadata);
         }
     }
 
     @Override
     public void setMetaO3MaxLag(long o3MaxLagUs) {
-        try {
-            commit();
-            long metaSize = copyMetadataAndUpdateVersion();
-            openMetaSwapFileByIndex(ff, ddlMem, path, pathSize, this.metaSwapIndex);
-            try {
-                ddlMem.jumpTo(META_OFFSET_O3_MAX_LAG);
-                ddlMem.putLong(o3MaxLagUs);
-                ddlMem.jumpTo(metaSize);
-            } finally {
-                ddlMem.close();
-            }
+        commit();
+        metadata.setO3MaxLag(o3MaxLagUs);
+        rewriteAndSwapMetadata(metadata);
+        clearTodoAndCommitMeta();
 
-            finishMetaSwapUpdate();
-            metadata.setO3MaxLag(o3MaxLagUs);
-
-            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                metadataRW.hydrateTable(metadata);
-            }
-        } finally {
-            ddlMem.close();
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.hydrateTable(metadata);
         }
     }
 
     @Override
     public void setMetaTtlHoursOrMonths(int metaTtlHoursOrMonths) {
-        try {
-            commit();
-            long metaSize = copyMetadataAndUpdateVersion();
-            openMetaSwapFileByIndex(ff, ddlMem, path, pathSize, this.metaSwapIndex);
-            try {
-                ddlMem.jumpTo(META_OFFSET_TTL_HOURS_OR_MONTHS);
-                ddlMem.putInt(metaTtlHoursOrMonths);
-                ddlMem.jumpTo(metaSize);
-            } finally {
-                ddlMem.close();
-            }
+        commit();
+        metadata.setTtlHoursOrMonths(metaTtlHoursOrMonths);
+        rewriteAndSwapMetadata(metadata);
+        clearTodoAndCommitMeta();
 
-            finishMetaSwapUpdate();
-            metadata.setTtlHoursOrMonths(metaTtlHoursOrMonths);
-
-            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                metadataRW.hydrateTable(metadata);
-            }
-
-        } finally {
-            ddlMem.close();
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.hydrateTable(metadata);
         }
     }
 
@@ -3216,27 +3147,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    /**
-     * This an O(n) method to find if column by the same name already exists. The benefit of poor performance
-     * is that we don't keep column name strings on heap. We only use this method when adding new column, where
-     * high performance of name check does not matter much.
-     *
-     * @param name to check
-     * @return 0 based column index.
-     */
-    private static int getColumnIndexQuiet(MemoryMR metaMem, CharSequence name, int columnCount) {
-        long nameOffset = getColumnNameOffset(columnCount);
-        for (int i = 0; i < columnCount; i++) {
-            CharSequence col = metaMem.getStrA(nameOffset);
-            int columnType = getColumnType(metaMem, i); // Negative means deleted column
-            if (columnType > 0 && Chars.equalsIgnoreCase(col, name)) {
-                return i;
-            }
-            nameOffset += Vm.getStorageLength(col);
-        }
-        return -1;
-    }
-
     private static void linkFile(FilesFacade ff, LPSZ from, LPSZ to) {
         if (ff.exists(from)) {
             if (ff.hardLink(from, to) == FILES_RENAME_OK) {
@@ -3274,10 +3184,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private static void openMetaFile(FilesFacade ff, Path path, int rootLen, MemoryMR metaMem) {
+    private static void openMetaFile(FilesFacade ff, Path path, int rootLen, MemoryMR ddlMem, TableWriterMetadata metadata) {
         path.concat(META_FILE_NAME);
-        try {
-            metaMem.smallFile(ff, path.$(), MemoryTag.MMAP_TABLE_WRITER);
+        try (ddlMem) {
+            ddlMem.smallFile(ff, path.$(), MemoryTag.MMAP_TABLE_WRITER);
+            metadata.reload(ddlMem);
         } finally {
             path.trimTo(rootLen);
         }
@@ -3301,26 +3212,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int indexValueBlockCapacity,
             boolean isDedupKey,
             long columnNameTxn,
-            int replaceColumnIndex
+            int replaceColumnIndex,
+            TableWriterMetadata metadata
     ) {
-        // create new _meta.swp
-        this.metaSwapIndex = addColumnToMeta0(columnName, columnType, isIndexed, indexValueBlockCapacity, isDedupKey, replaceColumnIndex);
+        // If this is a column type change, find the index of the very first column this one replaces
+        int prevReplaceColumnIndex = replaceColumnIndex;
+        while (prevReplaceColumnIndex > -1) {
+            replaceColumnIndex = prevReplaceColumnIndex;
+            prevReplaceColumnIndex = metadata.getReplacingColumnIndex(replaceColumnIndex);
+        }
 
-        // close _meta so we can rename it
-        metaMem.close();
+        metadata.addColumn(
+                columnName,
+                columnType,
+                isIndexed,
+                indexValueBlockCapacity,
+                metadata.getColumnCount(),
+                symbolCapacity,
+                isDedupKey,
+                replaceColumnIndex,
+                symbolCacheFlag
+        );
 
-        // validate new meta
-        validateSwapMeta(columnName);
-
-        // rename _meta to _meta.prev
-        renameMetaToMetaPrev(columnName);
-
-        // after we moved _meta to _meta.prev
-        // we have to have _todo to restore _meta should anything go wrong
-        writeRestoreMetaTodo(columnName);
-
-        // rename _meta.swp to _meta
-        renameSwapMetaToMeta(columnName);
+        rewriteAndSwapMetadata(metadata);
 
         // don't create symbol writer when column conversion happens, it should be created before the conversion
         if (replaceColumnIndex < 0) {
@@ -3328,7 +3242,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 try {
                     createSymbolMapWriter(columnName, columnNameTxn, symbolCapacity, symbolCacheFlag);
                 } catch (CairoException e) {
-                    runFragile(RECOVER_FROM_SYMBOL_MAP_WRITER_FAILURE, columnName, e);
+                    try {
+                        recoverFromSymbolMapWriterFailure(columnName);
+                    } catch (CairoException e2) {
+                        LOG.error().$("DOUBLE ERROR: 1st: {").$((Sinkable) e).$('}').$();
+                        throwDistressException(e2);
+                    }
+                    throw e;
                 }
             } else {
                 // maintain sparse list of symbol writers
@@ -3344,71 +3264,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // increment column count
         columnCount++;
-    }
-
-    private int addColumnToMeta0(
-            CharSequence name,
-            int type,
-            boolean indexFlag,
-            int indexValueBlockCapacity,
-            boolean dedupKeyFlag,
-            int replaceColumnIndex
-    ) {
-        int index;
-        try {
-            index = openMetaSwapFile(ff, ddlMem, path, pathSize, configuration.getMaxSwapFileCount());
-            int columnCount = metaMem.getInt(META_OFFSET_COUNT);
-
-            ddlMem.putInt(columnCount + 1);
-            ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
-            ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
-            copyVersionAndLagValues();
-            ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
-            for (int i = 0; i < columnCount; i++) {
-                writeColumnEntry(i, i == replaceColumnIndex);
-            }
-
-            // add new column metadata to bottom of list
-            ddlMem.putInt(type);
-            long flags = 0;
-            if (indexFlag) {
-                flags |= META_FLAG_BIT_INDEXED;
-            }
-
-            if (dedupKeyFlag) {
-                flags |= META_FLAG_BIT_DEDUP_KEY;
-            }
-
-            ddlMem.putLong(flags);
-            ddlMem.putInt(indexValueBlockCapacity);
-            ddlMem.putLong(configuration.getRandom().nextLong());
-
-            // Write place where to put this column when reading the metadata.
-            // The column can be replaced multiple times, find the very original index of the column
-            if (replaceColumnIndex > -1) {
-                int originColumnIndex = getReplacingColumnIndex(metaMem, replaceColumnIndex);
-                if (originColumnIndex > -1) {
-                    replaceColumnIndex = originColumnIndex;
-                }
-            }
-
-            ddlMem.putInt(replaceColumnIndex > -1 ? replaceColumnIndex + 1 : 0);
-            ddlMem.skip(4);
-
-            long nameOffset = getColumnNameOffset(columnCount);
-            for (int i = 0; i < columnCount; i++) {
-                CharSequence columnName = metaMem.getStrA(nameOffset);
-                ddlMem.putStr(columnName);
-                nameOffset += Vm.getStorageLength(columnName);
-            }
-            ddlMem.putStr(name);
-            ddlMem.sync(false);
-        } finally {
-            // truncate _meta file exactly, the file size never changes.
-            // Metadata updates are written to a new file and then swapped by renaming.
-            ddlMem.close(true, Vm.TRUNCATE_TO_POINTER);
-        }
-        return index;
     }
 
     private void appendBuffer(long fd, long address, long len) {
@@ -3727,12 +3582,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             if (attachMetadata == null) {
                 attachMetaMem = Vm.getCMRInstance();
-                attachMetaMem.smallFile(ff, detachedPath.$(), MemoryTag.MMAP_TABLE_WRITER);
-                attachMetadata = new TableWriterMetadata(tableToken, attachMetaMem);
-            } else {
-                attachMetaMem.smallFile(ff, detachedPath.$(), MemoryTag.MMAP_TABLE_WRITER);
-                attachMetadata.reload(attachMetaMem);
+                attachMetadata = new TableWriterMetadata(tableToken);
             }
+            attachMetaMem.smallFile(ff, detachedPath.$(), MemoryTag.MMAP_TABLE_WRITER);
+            attachMetadata.reload(attachMetaMem);
 
             if (metadata.getTableId() != attachMetadata.getTableId()) {
                 // very same table, attaching foreign partitions is not allowed
@@ -3945,6 +3798,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // transaction log is either not required or pending
         activeColumns = columns;
         activeNullSetters = nullSetters;
+    }
+
+    private void clearTodoAndCommitMeta() {
+        try {
+            // remove _todo
+            clearTodoLog();
+        } catch (CairoException e) {
+            throwDistressException(e);
+        }
+        bumpMetadataVersion();
+    }
+
+    private void clearTodoAndCommitMetaStructureVersion() {
+        try {
+            // remove _todo
+            clearTodoLog();
+        } catch (CairoException e) {
+            throwDistressException(e);
+        }
+        bumpMetadataAndColumnStructureVersion();
     }
 
     private void clearTodoLog() {
@@ -4238,71 +4111,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         checkO3Errors();
     }
 
-    private int copyMetadataAndSetIndexAttrs(int columnIndex, boolean indexedFlag, int indexValueBlockSize) {
-        try {
-            int index = openMetaSwapFile(ff, ddlMem, path, pathSize, configuration.getMaxSwapFileCount());
-            int columnCount = metaMem.getInt(META_OFFSET_COUNT);
-            ddlMem.putInt(columnCount);
-            ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
-            ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
-            copyVersionAndLagValues();
-            ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
-            for (int i = 0; i < columnCount; i++) {
-                if (i != columnIndex) {
-                    writeColumnEntry(i, false);
-                } else {
-                    ddlMem.putInt(getColumnType(metaMem, i));
-                    long flags = getColumnFlags(metaMem, columnIndex);
-                    if (indexedFlag) {
-                        flags |= META_FLAG_BIT_INDEXED;
-                    } else {
-                        flags &= ~META_FLAG_BIT_INDEXED;
-                    }
-                    ddlMem.putLong(flags);
-                    ddlMem.putInt(indexValueBlockSize);
-                    ddlMem.skip(16);
-                }
-            }
-
-            long nameOffset = getColumnNameOffset(columnCount);
-            for (int i = 0; i < columnCount; i++) {
-                CharSequence columnName = metaMem.getStrA(nameOffset);
-                ddlMem.putStr(columnName);
-                nameOffset += Vm.getStorageLength(columnName);
-            }
-            return index;
-        } finally {
-            ddlMem.close();
-        }
-    }
-
-    private long copyMetadataAndUpdateVersion() {
-        try {
-            int index = openMetaSwapFile(ff, ddlMem, path, pathSize, configuration.getMaxSwapFileCount());
-            int columnCount = metaMem.getInt(META_OFFSET_COUNT);
-
-            ddlMem.putInt(columnCount);
-            ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
-            ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
-            copyVersionAndLagValues();
-            ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
-            for (int i = 0; i < columnCount; i++) {
-                writeColumnEntry(i, false);
-            }
-
-            long nameOffset = getColumnNameOffset(columnCount);
-            for (int i = 0; i < columnCount; i++) {
-                CharSequence columnName = metaMem.getStrA(nameOffset);
-                ddlMem.putStr(columnName);
-                nameOffset += Vm.getStorageLength(columnName);
-            }
-            this.metaSwapIndex = index;
-            return nameOffset;
-        } finally {
-            ddlMem.close();
-        }
-    }
-
     private int copyOverwrite(Path to) {
         int res = ff.copy(other.$(), to.$());
         if (Os.isWindows() && res == -1 && ff.errno() == Files.WINDOWS_ERROR_FILE_EXISTS) {
@@ -4368,16 +4176,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             path.trimTo(pathSize);
             other.trimTo(pathSize);
         }
-    }
-
-    private void copyVersionAndLagValues() {
-        ddlMem.putInt(ColumnType.VERSION);
-        ddlMem.putInt(metaMem.getInt(META_OFFSET_TABLE_ID));
-        ddlMem.putInt(metaMem.getInt(META_OFFSET_MAX_UNCOMMITTED_ROWS));
-        ddlMem.putLong(metaMem.getLong(META_OFFSET_O3_MAX_LAG));
-        ddlMem.putLong(txWriter.getMetadataVersion() + 1);
-        ddlMem.putBool(metaMem.getBool(META_OFFSET_WAL_ENABLED));
-        metadata.setMetadataVersion(txWriter.getMetadataVersion() + 1);
     }
 
     /**
@@ -5158,6 +4956,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                             if (lagRows > 0) {
                                 long roLo = txWriter.getTransientRowCount() - getColumnTop(i);
+
                                 long lagAuxOffset = driver.getAuxVectorOffset(roLo);
                                 long lagAuxSize = driver.getAuxVectorSize(lagRows);
                                 long lagAuxKeyAddrRaw = mapAppendColumnBuffer(columns.get(getSecondaryColumnIndex(i)), lagAuxOffset, lagAuxSize, false);
@@ -5267,7 +5066,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.freeObjList(indexers);
         denseIndexers.clear();
         Misc.free(txWriter);
-        Misc.free(metaMem);
         Misc.free(ddlMem);
         Misc.free(other);
         Misc.free(todoMem);
@@ -5415,50 +5213,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 tableToken,
                 partitionBy,
                 asyncOnly,
-                metadata,
                 getTruncateVersion(),
                 getTxn()
         );
         purgingOperator.clear();
-    }
-
-    private void finishMetaSwapUpdate() {
-        finishMetadataSwap();
-        bumpMetadataVersion();
-        clearTodoLog();
-    }
-
-    private void finishMetaSwapUpdateStructural() {
-        // rename _meta to _meta.prev
-        finishMetadataSwap();
-
-        bumpMetadataAndColumnStructureVersion();
-        clearTodoLog();
-    }
-
-    private void finishMetadataSwap() {
-        // rename _meta to _meta.prev
-        this.metaPrevIndex = rename(fileOperationRetryCount);
-        writeRestoreMetaTodo();
-
-        try {
-            // rename _meta.swp to -_meta
-            restoreMetaFrom(META_SWAP_FILE_NAME, metaSwapIndex);
-        } catch (CairoException e) {
-            try {
-                recoverFromTodoWriteFailure(null);
-            } catch (CairoException e2) {
-                throwDistressException(e2);
-            }
-            throw e;
-        }
-
-        try {
-            // open _meta file
-            openMetaFile(ff, path, pathSize, metaMem);
-        } catch (CairoException e) {
-            throwDistressException(e);
-        }
     }
 
     private void finishO3Append(long o3LagRowCount) {
@@ -5664,7 +5422,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void hardLinkAndPurgeColumnFiles(CharSequence columnName, int columnIndex, CharSequence newName, int columnType) {
+    private void hardLinkAndPurgeColumnFiles(String columnName, int columnIndex, boolean isIndexed, CharSequence newName, int columnType) {
         try {
             PurgingOperator purgingOperator = getPurgingOperator();
             long newColumnNameTxn = getTxn();
@@ -5675,7 +5433,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
                     long partitionNameTxn = txWriter.getPartitionNameTxn(i);
                     long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
-                    hardLinkAndPurgeColumnFiles(columnName, columnIndex, columnType, newName, partitionTimestamp, partitionNameTxn, newColumnNameTxn, columnNameTxn);
+                    hardLinkAndPurgeColumnFiles(columnName, columnIndex, columnType, isIndexed, newName, partitionTimestamp, partitionNameTxn, newColumnNameTxn, columnNameTxn);
                     if (columnVersionWriter.getRecordIndex(partitionTimestamp, columnIndex) > -1L) {
                         long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
                         columnVersionWriter.upsert(partitionTimestamp, columnIndex, newColumnNameTxn, columnTop);
@@ -5683,7 +5441,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             } else {
                 long columnNameTxn = columnVersionWriter.getColumnNameTxn(txWriter.getLastPartitionTimestamp(), columnIndex);
-                hardLinkAndPurgeColumnFiles(columnName, columnIndex, columnType, newName, txWriter.getLastPartitionTimestamp(), -1L, newColumnNameTxn, columnNameTxn);
+                hardLinkAndPurgeColumnFiles(columnName, columnIndex, columnType, isIndexed, newName, txWriter.getLastPartitionTimestamp(), -1L, newColumnNameTxn, columnNameTxn);
                 long columnTop = columnVersionWriter.getColumnTop(txWriter.getLastPartitionTimestamp(), columnIndex);
                 columnVersionWriter.upsert(txWriter.getLastPartitionTimestamp(), columnIndex, newColumnNameTxn, columnTop);
             }
@@ -5694,7 +5452,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 linkFile(ff, charFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), charFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
                 linkFile(ff, keyFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), keyFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
                 linkFile(ff, valueFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), valueFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
-                purgingOperator.add(columnIndex, defaultColumnNameTxn, PurgingOperator.TABLE_ROOT_PARTITION, -1L);
+                purgingOperator.add(columnIndex, columnName, columnType, isIndexed, defaultColumnNameTxn, PurgingOperator.TABLE_ROOT_PARTITION, -1L);
             }
             long columnAddedPartition = columnVersionWriter.getColumnTopPartitionTimestamp(columnIndex);
             columnVersionWriter.upsertDefaultTxnName(columnIndex, newColumnNameTxn, columnAddedPartition);
@@ -5704,20 +5462,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void hardLinkAndPurgeColumnFiles(CharSequence columnName, int columnIndex, int columnType, CharSequence newName, long partitionTimestamp, long partitionNameTxn, long newColumnNameTxn, long columnNameTxn) {
+    private void hardLinkAndPurgeColumnFiles(String columnName, int columnIndex, int columnType, boolean isIndexed, CharSequence newName, long partitionTimestamp, long partitionNameTxn, long newColumnNameTxn, long columnNameTxn) {
         setPathForNativePartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
         setPathForNativePartition(other, partitionBy, partitionTimestamp, partitionNameTxn);
         int plen = path.size();
         linkFile(ff, dFile(path.trimTo(plen), columnName, columnNameTxn), dFile(other.trimTo(plen), newName, newColumnNameTxn));
         if (ColumnType.isVarSize(columnType)) {
             linkFile(ff, iFile(path.trimTo(plen), columnName, columnNameTxn), iFile(other.trimTo(plen), newName, newColumnNameTxn));
-        } else if (ColumnType.isSymbol(columnType) && metadata.isColumnIndexed(columnIndex)) {
+        } else if (ColumnType.isSymbol(columnType) && isIndexed) {
             linkFile(ff, keyFileName(path.trimTo(plen), columnName, columnNameTxn), keyFileName(other.trimTo(plen), newName, newColumnNameTxn));
             linkFile(ff, valueFileName(path.trimTo(plen), columnName, columnNameTxn), valueFileName(other.trimTo(plen), newName, newColumnNameTxn));
         }
         path.trimTo(pathSize);
         other.trimTo(pathSize);
-        purgingOperator.add(columnIndex, columnNameTxn, partitionTimestamp, partitionNameTxn);
+        purgingOperator.add(columnIndex, columnName, columnType, isIndexed, columnNameTxn, partitionTimestamp, partitionNameTxn);
     }
 
     private void indexHistoricPartitions(SymbolColumnIndexer indexer, CharSequence columnName, int indexValueBlockSize, int columnIndex) {
@@ -7566,29 +7324,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return false;
     }
 
-    private void recoverFromMetaRenameFailure(CharSequence columnName) {
-        openMetaFile(ff, path, pathSize, metaMem);
+    private void recoverFromMetaRenameFailure() {
+        openMetaFile(ff, path, pathSize, ddlMem, metadata);
     }
 
-    private void recoverFromSwapRenameFailure(CharSequence columnName) {
-        recoverFromTodoWriteFailure(columnName);
+    private void recoverFromSwapRenameFailure() {
+        recoverFromTodoWriteFailure();
         clearTodoLog();
     }
 
     private void recoverFromSymbolMapWriterFailure(CharSequence columnName) {
         removeSymbolMapFilesQuiet(columnName, getTxn());
         removeMetaFile();
-        recoverFromSwapRenameFailure(columnName);
+        recoverFromSwapRenameFailure();
     }
 
-    private void recoverFromTodoWriteFailure(CharSequence columnName) {
+    private void recoverFromTodoWriteFailure() {
         restoreMetaFrom(META_PREV_FILE_NAME, metaPrevIndex);
-        openMetaFile(ff, path, pathSize, metaMem);
+        openMetaFile(ff, path, pathSize, ddlMem, metadata);
+        columnCount = metadata.getColumnCount();
     }
 
-    private void recoverOpenColumnFailure(CharSequence columnName) {
+    private void recoverOpenColumnFailure() {
         removeMetaFile();
-        recoverFromSwapRenameFailure(columnName);
+        recoverFromSwapRenameFailure();
         // Some writer in-memory state will be still dirty, and it's not easy to roll back everything
         // for all the failure points. It's safer to re-open the writer object after a column add failure.
         distressed = true;
@@ -7692,7 +7451,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return o3ColumnOverrides;
     }
 
-    private void removeColumnFiles(int columnIndex, int columnType) {
+    private void removeColumnFiles(int columnIndex, String columnName, int columnType, boolean isIndexed) {
         PurgingOperator purgingOperator = getPurgingOperator();
         long defaultNameTxn = columnVersionWriter.getDefaultColumnNameTxn(columnIndex);
         if (PartitionBy.isPartitioned(partitionBy)) {
@@ -7701,14 +7460,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (!txWriter.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp)) {
                     long partitionNameTxn = txWriter.getPartitionNameTxn(i);
                     long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
-                    purgingOperator.add(columnIndex, columnNameTxn, partitionTimestamp, partitionNameTxn);
+                    purgingOperator.add(columnIndex, columnName, columnType, isIndexed, columnNameTxn, partitionTimestamp, partitionNameTxn);
                 }
             }
         } else {
-            purgingOperator.add(columnIndex, defaultNameTxn, txWriter.getLastPartitionTimestamp(), -1);
+            purgingOperator.add(columnIndex, columnName, columnType, isIndexed, defaultNameTxn, txWriter.getLastPartitionTimestamp(), -1);
         }
         if (ColumnType.isSymbol(columnType)) {
-            purgingOperator.add(columnIndex, defaultNameTxn, PurgingOperator.TABLE_ROOT_PARTITION, -1);
+            purgingOperator.add(columnIndex, columnName, columnType, isIndexed, defaultNameTxn, PurgingOperator.TABLE_ROOT_PARTITION, -1);
         }
     }
 
@@ -7728,53 +7487,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", column=").utf8(columnName)
                     .$(", timestamp=").$ts(partitionTimestamp)
                     .$();
-        }
-    }
-
-    private int removeColumnFromMeta(int index) {
-        try {
-            int metaSwapIndex = openMetaSwapFile(ff, ddlMem, path, pathSize, fileOperationRetryCount);
-            int timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
-            ddlMem.putInt(columnCount);
-            ddlMem.putInt(partitionBy);
-
-            if (timestampIndex == index) {
-                ddlMem.putInt(-1);
-            } else {
-                ddlMem.putInt(timestampIndex);
-            }
-            copyVersionAndLagValues();
-            ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
-
-            for (int i = 0; i < columnCount; i++) {
-                writeColumnEntry(i, i == index);
-            }
-
-            long nameOffset = getColumnNameOffset(columnCount);
-            for (int i = 0; i < columnCount; i++) {
-                CharSequence columnName = metaMem.getStrA(nameOffset);
-                ddlMem.putStr(columnName);
-                nameOffset += Vm.getStorageLength(columnName);
-            }
-
-            return metaSwapIndex;
-        } finally {
-            ddlMem.close();
-        }
-    }
-
-    private void removeIndexFiles(CharSequence columnName, int columnIndex) {
-        try {
-            for (int i = txWriter.getPartitionCount() - 1; i > -1L; i--) {
-                long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
-                long partitionNameTxn = txWriter.getPartitionNameTxn(i);
-                removeIndexFilesInPartition(columnName, columnIndex, partitionTimestamp, partitionNameTxn);
-            }
-            if (!PartitionBy.isPartitioned(partitionBy)) {
-                removeColumnFilesInPartition(columnName, columnIndex, txWriter.getLastPartitionTimestamp());
-            }
-        } finally {
-            path.trimTo(pathSize);
         }
     }
 
@@ -7916,51 +7628,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private int renameColumnFromMeta(int index, CharSequence newName) {
-        try {
-            int metaSwapIndex = openMetaSwapFile(ff, ddlMem, path, pathSize, fileOperationRetryCount);
-            int timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
-            ddlMem.putInt(columnCount);
-            ddlMem.putInt(partitionBy);
-            ddlMem.putInt(timestampIndex);
-            copyVersionAndLagValues();
-            ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
-
-            for (int i = 0; i < columnCount; i++) {
-                writeColumnEntry(i, false);
-            }
-
-            long nameOffset = getColumnNameOffset(columnCount);
-            for (int i = 0; i < columnCount; i++) {
-                CharSequence columnName = metaMem.getStrA(nameOffset);
-                nameOffset += Vm.getStorageLength(columnName);
-
-                if (i == index && getColumnType(metaMem, i) > 0) {
-                    columnName = newName;
-                }
-                ddlMem.putStr(columnName);
-            }
-
-            return metaSwapIndex;
-        } finally {
-            ddlMem.close();
-        }
-    }
-
-    private void renameMetaToMetaPrev(CharSequence columnName) {
+    private void renameMetaToMetaPrev() {
         try {
             this.metaPrevIndex = rename(fileOperationRetryCount);
         } catch (CairoException e) {
-            runFragile(RECOVER_FROM_META_RENAME_FAILURE, columnName, e);
+            runFragile(RECOVER_FROM_META_RENAME_FAILURE, e);
         }
     }
 
-    private void renameSwapMetaToMeta(CharSequence columnName) {
+    private void renameSwapMetaToMeta() {
         // rename _meta.swp to _meta
         try {
             restoreMetaFrom(META_SWAP_FILE_NAME, metaSwapIndex);
         } catch (CairoException e) {
-            runFragile(RECOVER_FROM_SWAP_RENAME_FAILURE, columnName, e);
+            runFragile(RECOVER_FROM_SWAP_RENAME_FAILURE, e);
         }
     }
 
@@ -8112,6 +7793,100 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void rewriteAndSwapMetadata(TableWriterMetadata metadata) {
+        // create new _meta.swp
+        this.metaSwapIndex = rewriteMetadata(metadata);
+
+        // validate new meta
+        validateSwapMeta();
+
+        // rename _meta to _meta.prev
+        renameMetaToMetaPrev();
+
+        // after we moved _meta to _meta.prev
+        // we have to have _todo to restore _meta should anything go wrong
+        writeRestoreMetaTodo();
+
+        // rename _meta.swp to _meta
+        renameSwapMetaToMeta();
+    }
+
+    private int rewriteMetadata(TableWriterMetadata metadata) {
+        int index;
+        try {
+            int columnCount = metadata.getColumnCount();
+            index = openMetaSwapFile(ff, ddlMem, path, pathSize, configuration.getMaxSwapFileCount());
+
+            ddlMem.putInt(metadata.getColumnCount());
+            ddlMem.putInt(metadata.getPartitionBy());
+            ddlMem.putInt(metadata.getTimestampIndex());
+            ddlMem.putInt(ColumnType.VERSION);
+            ddlMem.putInt(metadata.getTableId());
+            ddlMem.putInt(metadata.getMaxUncommittedRows());
+            ddlMem.putLong(metadata.getO3MaxLag());
+
+            int version = txWriter.getMetadataVersion() + 1;
+            metadata.setMetadataVersion(version);
+            ddlMem.putLong(metadata.getMetadataVersion());
+            ddlMem.putBool(metadata.isWalEnabled());
+            ddlMem.putInt(TableUtils.calculateMetadataMinorFormatVersion(version + columnCount));
+            ddlMem.putInt(metadata.getTtlHoursOrMonths());
+
+            ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
+            for (int i = 0; i < columnCount; i++) {
+                int columnType = metadata.getColumnType(i);
+                ddlMem.putInt(columnType);
+
+                long flags = 0;
+                if (metadata.isIndexed(i)) {
+                    flags |= META_FLAG_BIT_INDEXED;
+                }
+
+                if (metadata.isDedupKey(i)) {
+                    flags |= META_FLAG_BIT_DEDUP_KEY;
+                }
+
+                if (metadata.getSymbolCacheFlag(i)) {
+                    flags |= META_FLAG_BIT_SYMBOL_CACHE;
+                }
+
+                ddlMem.putLong(flags);
+
+                ddlMem.putInt(metadata.getIndexBlockCapacity(i));
+                ddlMem.putInt(metadata.getSymbolCapacity(i));
+                ddlMem.skip(4);
+                int replaceColumnIndex = metadata.getReplacingColumnIndex(i);
+                ddlMem.putInt(replaceColumnIndex > -1 ? replaceColumnIndex + 1 : 0);
+                ddlMem.skip(4);
+            }
+
+            long nameOffset = getColumnNameOffset(columnCount);
+            ddlMem.jumpTo(nameOffset);
+            for (int i = 0; i < columnCount; i++) {
+                CharSequence columnName = metadata.getColumnName(i);
+                ddlMem.putStr(columnName);
+                nameOffset += Vm.getStorageLength(columnName);
+            }
+
+            ddlMem.sync(false);
+        } catch (Throwable th) {
+            LOG.critical().$("could not write to metadata file, rolling back DDL [path=").$(path).$(']').$();
+            try {
+                // Revert metadata
+                openMetaFile(ff, path, pathSize, ddlMem, metadata);
+            } catch (Throwable th2) {
+                LOG.critical().$("could not revert metadata, writer distressed [path=").$(path).$(']').$();
+                throwDistressException(th2);
+            }
+            throw th;
+        } finally {
+            // truncate _meta file exactly, the file size never changes.
+            // Metadata updates are written to a new file and then swapped by renaming.
+            ddlMem.close(true, Vm.TRUNCATE_TO_POINTER);
+        }
+        return index;
+    }
+
     private void rollbackIndexes() {
         final long maxRow = txWriter.getTransientRowCount() - 1;
         for (int i = 0, n = denseIndexers.size(); i < n; i++) {
@@ -8121,6 +7896,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 LOG.info().$("recovering index [fd=").$(fd).I$();
                 indexer.rollback(maxRow);
             }
+        }
+    }
+
+    private void rollbackRemoveIndexFiles(CharSequence columnName, int columnIndex) {
+        try {
+            for (int i = txWriter.getPartitionCount() - 1; i > -1L; i--) {
+                long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
+                long partitionNameTxn = txWriter.getPartitionNameTxn(i);
+                removeIndexFilesInPartition(columnName, columnIndex, partitionTimestamp, partitionNameTxn);
+            }
+            if (!PartitionBy.isPartitioned(partitionBy)) {
+                removeColumnFilesInPartition(columnName, columnIndex, txWriter.getLastPartitionTimestamp());
+            }
+        } finally {
+            path.trimTo(pathSize);
         }
     }
 
@@ -8142,9 +7932,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void runFragile(FragileCode fragile, CharSequence columnName, CairoException e) {
+    private void runFragile(FragileCode fragile, CairoException e) {
         try {
-            fragile.run(columnName);
+            fragile.run();
         } catch (CairoException e2) {
             LOG.error().$("DOUBLE ERROR: 1st: {").$((Sinkable) e).$('}').$();
             throwDistressException(e2);
@@ -8476,29 +8266,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         processPartitionRemoveCandidates();
     }
 
-    private void swapMetaFile(CharSequence columnName) {
-        // close _meta so we can rename it
-        metaMem.close();
-        // validate new meta
-        validateSwapMeta(columnName);
-        // rename _meta to _meta.prev
-        renameMetaToMetaPrev(columnName);
-        // after we moved _meta to _meta.prev
-        // we have to have _todo to restore _meta should anything go wrong
-        writeRestoreMetaTodo(columnName);
-        // rename _meta.swp to -_meta
-        renameSwapMetaToMeta(columnName);
-        try {
-            // open _meta file
-            openMetaFile(ff, path, pathSize, metaMem);
-            // remove _todo
-            clearTodoLog();
-        } catch (CairoException e) {
-            throwDistressException(e);
-        }
-        bumpMetadataVersion();
-    }
-
     private void swapO3ColumnsExcept(int timestampIndex) {
         ObjList<MemoryCARW> temp = o3MemColumns1;
         o3MemColumns1 = o3MemColumns2;
@@ -8553,7 +8320,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void throwDistressException(CairoException cause) {
+    private void throwDistressException(Throwable cause) {
         LOG.critical().$("writer error [table=").utf8(tableToken.getTableName()).$(", e=").$((Sinkable) cause).I$();
         distressed = true;
         throw new CairoError(cause);
@@ -8751,60 +8518,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         this.timestampSetter.accept(timestamp);
     }
 
-    private void updateMetaStructureVersion() {
-        try {
-            copyMetadataAndUpdateVersion();
-            finishMetaSwapUpdate();
-        } finally {
-            ddlMem.close();
-        }
-    }
-
-    private void updateMetadataWithDeduplicationUpsertKeys(boolean enable, LongList columnsIndexes) {
-        try {
-            int index = openMetaSwapFile(ff, ddlMem, path, pathSize, configuration.getMaxSwapFileCount());
-            int columnCount = metaMem.getInt(META_OFFSET_COUNT);
-
-            ddlMem.putInt(columnCount);
-            ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
-            ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
-            copyVersionAndLagValues();
-            ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
-            for (int i = 0; i < columnCount; i++) {
-                writeColumnEntryWithDedupFlag(i, enable && columnsIndexes.indexOf(i) >= 0);
-            }
-
-            long nameOffset = getColumnNameOffset(columnCount);
-            for (int i = 0; i < columnCount; i++) {
-                CharSequence columnName = metaMem.getStrA(nameOffset);
-                ddlMem.putStr(columnName);
-                nameOffset += Vm.getStorageLength(columnName);
-            }
-            this.metaSwapIndex = index;
-        } finally {
-            ddlMem.close();
-        }
-
-        finishMetaSwapUpdateStructural();
-
-        for (int i = 0; i < columnCount; i++) {
-            metadata.getColumnMetadata(i).setDedupKeyFlag(enable && columnsIndexes.indexOf(i) >= 0);
-        }
-
-        if (enable) {
-            if (dedupColumnCommitAddresses == null) {
-                dedupColumnCommitAddresses = new DedupColumnCommitAddresses();
-            } else {
-                dedupColumnCommitAddresses.clear();
-            }
-            dedupColumnCommitAddresses.setDedupColumnCount(columnsIndexes.size() - 1);
-        } else {
-            if (dedupColumnCommitAddresses != null) {
-                dedupColumnCommitAddresses.setDedupColumnCount(0);
-            }
-        }
-    }
-
     private void updateO3ColumnTops() {
         int columnCount = metadata.getColumnCount();
         long blockIndex = -1;
@@ -8840,53 +8553,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void validateSwapMeta(CharSequence columnName) {
+    private void validateSwapMeta() {
         try {
             try {
                 path.concat(META_SWAP_FILE_NAME);
                 if (metaSwapIndex > 0) {
                     path.put('.').put(metaSwapIndex);
                 }
-                metaMem.smallFile(ff, path.$(), MemoryTag.MMAP_TABLE_WRITER);
+                ddlMem.smallFile(ff, path.$(), MemoryTag.MMAP_TABLE_WRITER);
                 validationMap.clear();
-                validateMeta(metaMem, validationMap, ColumnType.VERSION);
+                validateMeta(ddlMem, validationMap, ColumnType.VERSION);
             } finally {
-                metaMem.close();
+                ddlMem.close();
                 path.trimTo(pathSize);
             }
         } catch (CairoException e) {
-            runFragile(RECOVER_FROM_META_RENAME_FAILURE, columnName, e);
+            runFragile(RECOVER_FROM_META_RENAME_FAILURE, e);
         }
-    }
-
-    private void writeColumnEntry(int i, boolean changeToDeleted) {
-        int columnType = getColumnType(metaMem, i);
-        // When column is deleted it's written to metadata with negative type
-        if (changeToDeleted) {
-            columnType = -Math.abs(columnType);
-        }
-        ddlMem.putInt(columnType);
-        long flags = getColumnFlags(metaMem, i);
-        ddlMem.putLong(flags);
-        ddlMem.putInt(getIndexBlockCapacity(metaMem, i));
-        ddlMem.skip(8);
-        ddlMem.putInt(getReplacingColumnIndexRaw(metaMem, i));
-        ddlMem.skip(4);
-    }
-
-    private void writeColumnEntryWithDedupFlag(int i, boolean changeToDedup) {
-        int columnType = getColumnType(metaMem, i);
-        // When column is deleted it's written to metadata with negative type
-        ddlMem.putInt(columnType);
-        long flags = getColumnFlags(metaMem, i);
-        if (changeToDedup) {
-            flags |= META_FLAG_BIT_DEDUP_KEY;
-        } else {
-            flags &= ~META_FLAG_BIT_DEDUP_KEY;
-        }
-        ddlMem.putLong(flags);
-        ddlMem.putInt(getIndexBlockCapacity(metaMem, i));
-        ddlMem.skip(16);
     }
 
     private void writeIndex(@NotNull CharSequence columnName, int indexValueBlockSize, int columnIndex, SymbolColumnIndexer indexer) {
@@ -8921,32 +8604,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } catch (Throwable th) {
             Misc.free(indexer);
             LOG.error().$("rolling back index created so far [path=").$substr(pathRootSize, path).I$();
-            removeIndexFiles(columnName, columnIndex);
+            rollbackRemoveIndexFiles(columnName, columnIndex);
             throw th;
         }
     }
 
-    private void writeRestoreMetaTodo(CharSequence columnName) {
-        try {
-            writeRestoreMetaTodo();
-        } catch (CairoException e) {
-            runFragile(RECOVER_FROM_TODO_WRITE_FAILURE, columnName, e);
-        }
-    }
-
     private void writeRestoreMetaTodo() {
-        todoMem.putLong(0, ++todoTxn); // write txn, reader will first read txn at offset 24 and then at offset 0
-        Unsafe.getUnsafe().storeFence(); // make sure we do not write hash before writing txn (view from another thread)
-        todoMem.putLong(8, configuration.getDatabaseIdLo()); // write out our instance hashes
-        todoMem.putLong(16, configuration.getDatabaseIdHi());
-        Unsafe.getUnsafe().storeFence();
-        todoMem.putLong(32, 1);
-        todoMem.putLong(40, TODO_RESTORE_META);
-        todoMem.putLong(48, metaPrevIndex);
-        Unsafe.getUnsafe().storeFence();
-        todoMem.putLong(24, todoTxn);
-        todoMem.jumpTo(56);
-        todoMem.sync(false);
+        try {
+            todoMem.putLong(0, ++todoTxn); // write txn, reader will first read txn at offset 24 and then at offset 0
+            Unsafe.getUnsafe().storeFence(); // make sure we do not write hash before writing txn (view from another thread)
+            todoMem.putLong(8, configuration.getDatabaseIdLo()); // write out our instance hashes
+            todoMem.putLong(16, configuration.getDatabaseIdHi());
+            Unsafe.getUnsafe().storeFence();
+            todoMem.putLong(32, 1);
+            todoMem.putLong(40, TODO_RESTORE_META);
+            todoMem.putLong(48, metaPrevIndex);
+            Unsafe.getUnsafe().storeFence();
+            todoMem.putLong(24, todoTxn);
+            todoMem.jumpTo(56);
+            todoMem.sync(false);
+        } catch (CairoException e) {
+            runFragile(RECOVER_FROM_TODO_WRITE_FAILURE, e);
+        }
     }
 
     static void indexAndCountDown(ColumnIndexer indexer, long lo, long hi, SOCountDownLatch latch) {
@@ -9149,7 +8828,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @FunctionalInterface
     private interface FragileCode {
-        void run(CharSequence columnName);
+        void run();
     }
 
     public interface Row {
@@ -9233,7 +8912,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         void putUuid(int columnIndex, CharSequence uuid);
 
-        // Used by bytecode assembler. DO NOT REMOVE!
+        @SuppressWarnings("unused")
+            // Used by assembler
         void putUuidUtf8(int columnIndex, Utf8Sequence uuid);
 
         void putVarchar(int columnIndex, char value);

@@ -28,7 +28,6 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 
 public class DefaultIODispatcherConfiguration implements IODispatcherConfiguration {
-
     public static final IODispatcherConfiguration INSTANCE = new DefaultIODispatcherConfiguration();
 
     @Override
@@ -54,7 +53,7 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     @Override
     public long getHeartbeatInterval() {
         // don't send heartbeat messages by default
-        return -1L;
+        return -1;
     }
 
     @Override
@@ -68,6 +67,16 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     }
 
     @Override
+    public int getNetRecvBufferSize() {
+        return -1; // use system default
+    }
+
+    @Override
+    public int getNetSendBufferSize() {
+        return -1; // use system default
+    }
+
+    @Override
     public NetworkFacade getNetworkFacade() {
         return NetworkFacadeImpl.INSTANCE;
     }
@@ -78,8 +87,8 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     }
 
     @Override
-    public int getRcvBufSize() {
-        return -1; // use system default
+    public int getRecvBufferSize() {
+        return 131072;
     }
 
     @Override
@@ -88,8 +97,8 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     }
 
     @Override
-    public int getSndBufSize() {
-        return -1; // use system default
+    public int getSendBufferSize() {
+        return 131072;
     }
 
     @Override

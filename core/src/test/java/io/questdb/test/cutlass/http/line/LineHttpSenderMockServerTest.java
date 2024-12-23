@@ -27,7 +27,11 @@ package io.questdb.test.cutlass.http.line;
 import io.questdb.BuildInformationHolder;
 import io.questdb.Metrics;
 import io.questdb.client.Sender;
-import io.questdb.cutlass.http.*;
+import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
+import io.questdb.cutlass.http.HttpConstants;
+import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.cutlass.http.HttpRequestProcessorFactory;
+import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.mp.WorkerPool;
@@ -537,7 +541,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 });
                 workerPool.start(LOG);
                 try {
-                    int port = httpConfiguration.getDispatcherConfiguration().getBindPort();
+                    int port = httpConfiguration.getBindPort();
                     try (Sender sender = senderBuilderFactory.apply(port).build()) {
                         senderConsumer.accept(sender);
                         if (verifyBeforeClose) {

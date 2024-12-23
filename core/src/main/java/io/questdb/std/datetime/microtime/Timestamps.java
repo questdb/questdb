@@ -32,8 +32,10 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.FixedTimeZoneRule;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.str.Utf16Sink;
+import org.jetbrains.annotations.NotNull;
 
 import java.time.Duration;
 import java.time.temporal.ChronoUnit;
@@ -349,6 +351,7 @@ public final class Timestamps {
         return yearMicros(y = getYear(micros), l = isLeapYear(y)) + monthOfYearMicros(getMonthOfYear(micros, y, l), l);
     }
 
+    @SuppressWarnings("unused")
     public static long floorMM(long micros, long offset) {
         return floorMM(micros, 1, offset);
     }
@@ -468,6 +471,7 @@ public final class Timestamps {
         return yearMicros(y, isLeapYear(y));
     }
 
+    @SuppressWarnings("unused")
     public static long floorYYYY(long micros, long offset) {
         return floorYYYY(micros, 1, offset);
     }
@@ -800,6 +804,26 @@ public final class Timestamps {
             default:
                 throw SqlException.position(-1).put("Invalid unit: ").put(unit);
         }
+    }
+
+    public static TimeZoneRules getTimezoneRules(@NotNull DateLocale locale, @NotNull CharSequence timezone) throws NumericException {
+        return getTimezoneRules(locale, timezone, 0, timezone.length());
+    }
+
+    public static TimeZoneRules getTimezoneRules(
+            DateLocale locale,
+            CharSequence timezone,
+            int lo,
+            int hi
+    ) throws NumericException {
+        long l = parseOffset(timezone, lo, hi);
+        if (l == Long.MIN_VALUE) {
+            return locale.getZoneRules(
+                    Numbers.decodeLowInt(locale.matchZone(timezone, lo, hi)),
+                    RESOLUTION_MICROS
+            );
+        }
+        return new FixedTimeZoneRule(Numbers.decodeLowInt(l) * MINUTE_MICROS);
     }
 
     // https://en.wikipedia.org/wiki/ISO_week_date

@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
@@ -42,9 +43,8 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     private int ttlHoursOrMonths;
     private boolean walEnabled;
 
-    public TableWriterMetadata(TableToken tableToken, MemoryMR metaMem) {
+    public TableWriterMetadata(TableToken tableToken) {
         this.tableToken = tableToken;
-        reload(metaMem);
     }
 
     @Override
@@ -75,6 +75,11 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     @Override
     public int getPartitionBy() {
         return partitionBy;
+    }
+
+    public int getReplacingColumnIndex(int columnIndex) {
+        WriterTableColumnMetadata columnMeta = (WriterTableColumnMetadata) columnMetadata.get(columnIndex);
+        return columnMeta.getReplacingIndex();
     }
 
     @Override
@@ -197,39 +202,6 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
             int columnIndex,
             int symbolCapacity,
             boolean isDedupKey,
-            boolean isSymbolCached
-    ) {
-        String str = name.toString();
-        columnNameIndexMap.put(str, columnMetadata.size());
-        columnMetadata.add(
-                new TableColumnMetadata(
-                        str,
-                        type,
-                        indexFlag,
-                        indexValueBlockCapacity,
-                        true,
-                        null,
-                        columnIndex,
-                        isDedupKey,
-                        0,
-                        isSymbolCached,
-                        symbolCapacity
-                )
-        );
-        columnCount++;
-        if (ColumnType.isSymbol(type)) {
-            symbolMapCount++;
-        }
-    }
-
-    void addColumn(
-            CharSequence name,
-            int type,
-            boolean indexFlag,
-            int indexValueBlockCapacity,
-            int columnIndex,
-            int symbolCapacity,
-            boolean isDedupKey,
             int replacingIndex,
             boolean isSymbolCached
     ) {
@@ -276,5 +248,36 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
 
         TableColumnMetadata oldColumnMetadata = columnMetadata.get(columnIndex);
         oldColumnMetadata.rename(newNameStr);
+    }
+
+    protected static class WriterTableColumnMetadata extends TableColumnMetadata {
+
+        public WriterTableColumnMetadata(
+                String nameStr,
+                int type,
+                boolean columnIndexed,
+                int indexBlockCapacity,
+                boolean symbolTableStatic,
+                RecordMetadata parent,
+                int i,
+                int symbolCapacity,
+                boolean isDedupKey,
+                int replacingIndex,
+                boolean symbolCached
+        ) {
+            super(
+                    nameStr,
+                    type,
+                    columnIndexed,
+                    indexBlockCapacity,
+                    symbolTableStatic,
+                    parent,
+                    i,
+                    isDedupKey,
+                    replacingIndex,
+                    symbolCached,
+                    symbolCapacity
+            );
+        }
     }
 }
