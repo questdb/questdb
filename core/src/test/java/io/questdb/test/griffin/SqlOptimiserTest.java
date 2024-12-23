@@ -4401,7 +4401,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                         "          functions: [max(usage_system) over (partition by [hostname] range between 3000000 preceding and current row)]\n" +
                         "            Radix sort light\n" +
                         "              keys: [ts2]\n" +
-                        "                Async Filter workers: 1\n" +
+                        "                Async JIT Filter workers: 1\n" +
                         "                  filter: ts2>=1\n" +
                         "                    PageFrame\n" +
                         "                        Row forward scan\n" +
@@ -4429,7 +4429,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                         "  functions: [max(usage_system) over (partition by [hostname] range between 3000000 preceding and current row)]\n" +
                         "    Radix sort light\n" +
                         "      keys: [ts2]\n" +
-                        "        Async Filter workers: 1\n" +
+                        "        Async JIT Filter workers: 1\n" +
                         "          filter: ts2>=1\n" +
                         "            PageFrame\n" +
                         "                Row forward scan\n" +
@@ -4523,7 +4523,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                         "          functions: [max(usage_system) over (partition by [hostname] range between 3000000 preceding and current row)]\n" +
                         "            Radix sort light\n" +
                         "              keys: [ts2]\n" +
-                        "                Async Filter workers: 1\n" +
+                        "                Async JIT Filter workers: 1\n" +
                         "                  filter: ts2>=1\n" +
                         "                    PageFrame\n" +
                         "                        Row forward scan\n" +
