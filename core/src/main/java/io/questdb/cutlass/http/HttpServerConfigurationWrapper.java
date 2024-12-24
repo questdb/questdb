@@ -25,6 +25,7 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.FactoryProvider;
+import io.questdb.Metrics;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
@@ -34,11 +35,15 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.SelectFacade;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
-public class HttpServerConfigurationWrapper implements HttpServerConfiguration {
-    private final HttpServerConfiguration delegate;
+import java.util.concurrent.atomic.AtomicReference;
 
-    protected HttpServerConfigurationWrapper() {
-        delegate = null;
+public class HttpServerConfigurationWrapper implements HttpServerConfiguration {
+    private final AtomicReference<HttpServerConfiguration> delegate = new AtomicReference<>();
+    private final Metrics metrics;
+
+    public HttpServerConfigurationWrapper(Metrics metrics) {
+        this.metrics = metrics;
+        delegate.set(null);
     }
 
     @Override
@@ -129,6 +134,11 @@ public class HttpServerConfigurationWrapper implements HttpServerConfiguration {
     @Override
     public int getListenBacklog() {
         return getDelegate().getListenBacklog();
+    }
+
+    @Override
+    public Metrics getMetrics() {
+        return metrics;
     }
 
     @Override
@@ -281,12 +291,16 @@ public class HttpServerConfigurationWrapper implements HttpServerConfiguration {
         return getDelegate().preAllocateBuffers();
     }
 
+    public void setDelegate(HttpServerConfiguration delegate) {
+        this.delegate.set(delegate);
+    }
+
     @Override
     public int workerPoolPriority() {
         return getDelegate().workerPoolPriority();
     }
 
     protected HttpServerConfiguration getDelegate() {
-        return delegate;
+        return delegate.get();
     }
 }

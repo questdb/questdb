@@ -25,6 +25,7 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.FactoryProvider;
+import io.questdb.Metrics;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.network.EpollFacade;
 import io.questdb.network.KqueueFacade;
@@ -34,11 +35,15 @@ import io.questdb.std.Rnd;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
-public class PGWireConfigurationWrapper implements PGWireConfiguration {
-    private final PGWireConfiguration delegate;
+import java.util.concurrent.atomic.AtomicReference;
 
-    protected PGWireConfigurationWrapper() {
-        delegate = null;
+public class PGWireConfigurationWrapper implements PGWireConfiguration {
+    private final AtomicReference<PGWireConfiguration> delegate = new AtomicReference<>();
+    private final Metrics metrics;
+
+    public PGWireConfigurationWrapper(Metrics metrics) {
+        this.metrics = metrics;
+        delegate.set(null);
     }
 
     @Override
@@ -184,6 +189,11 @@ public class PGWireConfigurationWrapper implements PGWireConfiguration {
     @Override
     public int getMaxBlobSizeOnQuery() {
         return getDelegate().getMaxBlobSizeOnQuery();
+    }
+
+    @Override
+    public Metrics getMetrics() {
+        return metrics;
     }
 
     @Override
@@ -376,12 +386,16 @@ public class PGWireConfigurationWrapper implements PGWireConfiguration {
         return getDelegate().readOnlySecurityContext();
     }
 
+    public void setDelegate(PGWireConfiguration delegate) {
+        this.delegate.set(delegate);
+    }
+
     @Override
     public int workerPoolPriority() {
         return getDelegate().workerPoolPriority();
     }
 
     protected PGWireConfiguration getDelegate() {
-        return delegate;
+        return delegate.get();
     }
 }

@@ -7816,7 +7816,7 @@ nodejs code:
                 }
             };
 
-            final WorkerPool workerPool = new TestWorkerPool(4, metrics);
+            final WorkerPool workerPool = new TestWorkerPool(4, conf.getMetrics());
             try (final IPGWireServer server = createPGWireServer(
                     conf,
                     engine,
@@ -8442,26 +8442,26 @@ nodejs code:
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             execute("create table x as (select x id from long_sequence(10))");
             // table
-            metrics.pgWire().resetQueryCounters();
+            configuration.getMetrics().pgWire().resetQueryCounters();
             try (
                     PreparedStatement stmt = connection.prepareStatement("select count() from x;");
                     ResultSet rs = stmt.executeQuery()
             ) {
                 rs.next();
                 Assert.assertEquals(10, rs.getLong(1));
-                Assert.assertEquals(1, metrics.pgWire().startedQueriesCount());
-                Assert.assertEquals(1, metrics.pgWire().completedQueriesCount());
+                Assert.assertEquals(1, configuration.getMetrics().pgWire().startedQueriesCount());
+                Assert.assertEquals(1, configuration.getMetrics().pgWire().completedQueriesCount());
             }
             // virtual
-            metrics.pgWire().resetQueryCounters();
+            configuration.getMetrics().pgWire().resetQueryCounters();
             try (
                     PreparedStatement stmt = connection.prepareStatement("select 1;");
                     ResultSet rs = stmt.executeQuery()
             ) {
                 rs.next();
                 Assert.assertEquals(1, rs.getLong(1));
-                Assert.assertEquals(1, metrics.pgWire().startedQueriesCount());
-                Assert.assertEquals(1, metrics.pgWire().completedQueriesCount());
+                Assert.assertEquals(1, configuration.getMetrics().pgWire().startedQueriesCount());
+                Assert.assertEquals(1, configuration.getMetrics().pgWire().completedQueriesCount());
             }
         });
     }
@@ -11930,7 +11930,7 @@ create table tab as (
             }
         };
 
-        WorkerPool workerPool = new TestWorkerPool(2, metrics);
+        WorkerPool workerPool = new TestWorkerPool(2, conf.getMetrics());
         DefaultCircuitBreakerRegistry registry = new DefaultCircuitBreakerRegistry(conf, engine.getConfiguration());
         try {
             return createPGWireServer(
@@ -12040,7 +12040,7 @@ create table tab as (
 
         try (
                 DefaultCircuitBreakerRegistry registry = new DefaultCircuitBreakerRegistry(conf, engine.getConfiguration());
-                WorkerPool pool = new WorkerPool(conf, metrics)
+                WorkerPool pool = new WorkerPool(conf)
         ) {
             pool.assign(engine.getEngineMaintenanceJob());
             try (

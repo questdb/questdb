@@ -43,6 +43,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Rnd;
@@ -89,11 +90,6 @@ public class AbstractO3Test extends AbstractTest {
     }
 
     @Before
-    public void clearRecordToRowCopier() {
-        copier = null;
-    }
-
-    @Before
     public void setUp() {
         SharedRandom.RANDOM.set(new Rnd());
         // instantiate these paths so that they are not included in memory leak test
@@ -102,6 +98,8 @@ public class AbstractO3Test extends AbstractTest {
         super.setUp();
         mixedIOEnabledFFDefault = TestFilesFacadeImpl.INSTANCE.allowMixedIO(root);
         mixedIOEnabled = mixedIOEnabledFFDefault;
+        copier = null;
+        Metrics.ENABLED.clear();
     }
 
     @After
@@ -284,7 +282,7 @@ public class AbstractO3Test extends AbstractTest {
     }
 
     protected static void executeVanillaWithMetrics(CustomisableRunnable code) throws Exception {
-        executeVanilla(() -> TestUtils.execute(null, code, new DefaultTestCairoConfiguration(root), Metrics.enabled(), LOG));
+        executeVanilla(() -> TestUtils.execute(null, code, new DefaultTestCairoConfiguration(root), LOG));
     }
 
     protected static void executeWithPool(
@@ -305,8 +303,6 @@ public class AbstractO3Test extends AbstractTest {
     ) throws Exception {
         executeVanilla(() -> {
             if (workerCount > 0) {
-                WorkerPool pool = new WorkerPool(() -> workerCount);
-
                 final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                     @Override
                     public boolean disableColumnPurgeJob() {
@@ -363,7 +359,17 @@ public class AbstractO3Test extends AbstractTest {
                         return mixedIOEnabledFFDefault && mixedIOEnabled;
                     }
                 };
+                WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
+                    @Override
+                    public Metrics getMetrics() {
+                        return configuration.getMetrics();
+                    }
 
+                    @Override
+                    public int getWorkerCount() {
+                        return workerCount;
+                    }
+                });
                 TestUtils.execute(pool, runnable, configuration, LOG);
             } else {
                 // we need to create entire engine

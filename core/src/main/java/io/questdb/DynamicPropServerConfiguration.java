@@ -87,20 +87,21 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             PropertyKey.LINE_TCP_NET_CONNECTION_LIMIT
     ));
     private final BuildInformation buildInformation;
-    private final CairoConfigurationImpl cairoConfig;
+    private final CairoConfigurationWrapper cairoConfig;
     private final java.nio.file.Path confPath;
     private final boolean configReloadEnabled;
     private final @Nullable Map<String, String> env;
     private final FilesFacade filesFacade;
     private final FactoryProviderFactory fpf;
-    private final HttpServerConfigurationImpl httpServerConfig;
-    private final LineTcpReceiverConfigurationImpl lineTcpConfig;
+    private final HttpServerConfigurationWrapper httpServerConfig;
+    private final LineTcpReceiverConfigurationWrapper lineTcpConfig;
     private final boolean loadAdditionalConfigurations;
     private final Log log;
     private final MemoryConfigurationImpl memoryConfig;
+    private final Metrics metrics;
     private final MicrosecondClock microsecondClock;
-    private final HttpMinServerConfigurationImpl minHttpServerConfig;
-    private final PGWireConfigurationImpl pgWireConfig;
+    private final HttpMinServerConfigurationWrapper minHttpServerConfig;
+    private final PGWireConfigurationWrapper pgWireConfig;
     private final Properties properties;
     private final Object reloadLock = new Object();
     private final String root;
@@ -139,13 +140,14 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
                 fpf,
                 loadAdditionalConfigurations
         );
+        this.metrics = serverConfig.getMetrics();
         this.serverConfig = new AtomicReference<>(serverConfig);
-        this.cairoConfig = new CairoConfigurationImpl();
-        this.minHttpServerConfig = new HttpMinServerConfigurationImpl();
-        this.httpServerConfig = new HttpServerConfigurationImpl();
-        this.lineTcpConfig = new LineTcpReceiverConfigurationImpl();
+        this.cairoConfig = new CairoConfigurationWrapper(this.metrics);
+        this.minHttpServerConfig = new HttpMinServerConfigurationWrapper(this.metrics);
+        this.httpServerConfig = new HttpServerConfigurationWrapper(this.metrics);
+        this.lineTcpConfig = new LineTcpReceiverConfigurationWrapper(this.metrics);
         this.memoryConfig = new MemoryConfigurationImpl();
-        this.pgWireConfig = new PGWireConfigurationImpl();
+        this.pgWireConfig = new PGWireConfigurationWrapper(this.metrics);
         reloadNestedConfigurations(serverConfig);
         this.version = 0;
         this.confPath = Paths.get(getCairoConfiguration().getConfRoot().toString(), Bootstrap.CONFIG_FILE);
@@ -300,6 +302,11 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     }
 
     @Override
+    public Metrics getMetrics() {
+        return metrics;
+    }
+
+    @Override
     public MetricsConfiguration getMetricsConfiguration() {
         // nested object is kept non-reloadable
         return serverConfig.get().getMetricsConfiguration();
@@ -412,58 +419,6 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
         pgWireConfig.setDelegate(serverConfig.getPGWireConfiguration());
     }
 
-    private static class CairoConfigurationImpl extends CairoConfigurationWrapper {
-        private final AtomicReference<CairoConfiguration> delegate = new AtomicReference<>();
-
-        @Override
-        public CairoConfiguration getDelegate() {
-            return delegate.get();
-        }
-
-        public void setDelegate(CairoConfiguration delegate) {
-            this.delegate.set(delegate);
-        }
-    }
-
-    private static class HttpMinServerConfigurationImpl extends HttpMinServerConfigurationWrapper {
-        private final AtomicReference<HttpMinServerConfiguration> delegate = new AtomicReference<>();
-
-        @Override
-        public HttpMinServerConfiguration getDelegate() {
-            return delegate.get();
-        }
-
-        public void setDelegate(HttpMinServerConfiguration delegate) {
-            this.delegate.set(delegate);
-        }
-    }
-
-    private static class HttpServerConfigurationImpl extends HttpServerConfigurationWrapper {
-        private final AtomicReference<HttpServerConfiguration> delegate = new AtomicReference<>();
-
-        @Override
-        public HttpServerConfiguration getDelegate() {
-            return delegate.get();
-        }
-
-        public void setDelegate(HttpServerConfiguration delegate) {
-            this.delegate.set(delegate);
-        }
-    }
-
-    private static class LineTcpReceiverConfigurationImpl extends LineTcpReceiverConfigurationWrapper {
-        private final AtomicReference<LineTcpReceiverConfiguration> delegate = new AtomicReference<>();
-
-        @Override
-        public LineTcpReceiverConfiguration getDelegate() {
-            return delegate.get();
-        }
-
-        public void setDelegate(LineTcpReceiverConfiguration delegate) {
-            this.delegate.set(delegate);
-        }
-    }
-
     private static class MemoryConfigurationImpl extends MemoryConfigurationWrapper {
         private final AtomicReference<MemoryConfiguration> delegate = new AtomicReference<>();
 
@@ -473,19 +428,6 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
         }
 
         public void setDelegate(MemoryConfiguration delegate) {
-            this.delegate.set(delegate);
-        }
-    }
-
-    private static class PGWireConfigurationImpl extends PGWireConfigurationWrapper {
-        private final AtomicReference<PGWireConfiguration> delegate = new AtomicReference<>();
-
-        @Override
-        public PGWireConfiguration getDelegate() {
-            return delegate.get();
-        }
-
-        public void setDelegate(PGWireConfiguration delegate) {
             this.delegate.set(delegate);
         }
     }

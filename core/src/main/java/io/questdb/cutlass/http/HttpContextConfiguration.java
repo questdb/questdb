@@ -25,6 +25,7 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.FactoryProvider;
+import io.questdb.Metrics;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.NanosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -64,4 +65,6 @@ public interface HttpContextConfiguration {
     boolean getServerKeepAlive();
 
     boolean readOnlySecurityContext();
+
+    Metrics getMetrics();
 }

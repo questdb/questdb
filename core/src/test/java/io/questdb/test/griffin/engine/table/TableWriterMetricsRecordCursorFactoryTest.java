@@ -64,9 +64,10 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractCairoTest
 
     @Test
     public void testDisabled() throws Exception {
+        Metrics.ENABLED.disable();
         assertMemoryLeak(() -> {
             try (
-                    CairoEngine localEngine = new CairoEngine(configuration, Metrics.disabled());
+                    CairoEngine localEngine = new CairoEngine(configuration);
                     SqlCompiler localCompiler = localEngine.getSqlCompiler();
                     SqlExecutionContext localSqlExecutionContext = TestUtils.createSqlExecutionCtx(localEngine)
             ) {
@@ -114,7 +115,6 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractCairoTest
     @Test
     public void testSanity() {
         // we want to make sure metrics in tests are enabled by default
-        assertTrue(metrics.isEnabled());
         assertTrue(engine.getMetrics().isEnabled());
 
         MetricsSnapshot metricsSnapshot = snapshotMetrics();

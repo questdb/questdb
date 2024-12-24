@@ -51,7 +51,7 @@ public class LineTcpReceiver implements Closeable {
             this.scheduler = null;
             this.metrics = engine.getMetrics();
             ObjectFactory<LineTcpConnectionContext> factory;
-            factory = () -> new LineTcpConnectionContext(configuration, scheduler, metrics);
+            factory = () -> new LineTcpConnectionContext(configuration, scheduler);
 
             IOContextFactoryImpl<LineTcpConnectionContext> contextFactory = new IOContextFactoryImpl<>(
                     factory,

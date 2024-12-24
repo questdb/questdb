@@ -132,6 +132,11 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
     }
 
     @Override
+    public Metrics getMetrics() {
+        return serverConfiguration.getMetrics();
+    }
+
+    @Override
     public MillisecondClock getMillisecondClock() {
         return httpFrozenClock ? StationaryMillisClock.INSTANCE : MillisecondClockImpl.INSTANCE;
     }

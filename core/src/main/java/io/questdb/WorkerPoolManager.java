@@ -45,13 +45,13 @@ public abstract class WorkerPoolManager implements Scrapable {
     private final CharSequenceObjHashMap<WorkerPool> dedicatedPools = new CharSequenceObjHashMap<>(4);
     private final AtomicBoolean running = new AtomicBoolean();
 
-    public WorkerPoolManager(ServerConfiguration config, Metrics metrics) {
-        sharedPool = new WorkerPool(config.getWorkerPoolConfiguration(), metrics);
+    public WorkerPoolManager(ServerConfiguration config) {
+        sharedPool = new WorkerPool(config.getWorkerPoolConfiguration());
         configureSharedPool(sharedPool); // abstract method giving callers the chance to assign jobs
-        metrics.addScrapable(this);
+        config.getMetrics().addScrapable(this);
     }
 
-    public WorkerPool getInstance(@NotNull WorkerPoolConfiguration config, @NotNull Metrics metrics, @NotNull Requester requester) {
+    public WorkerPool getInstance(@NotNull WorkerPoolConfiguration config, @NotNull Requester requester) {
         if (running.get() || closed.get()) {
             throw new IllegalStateException("can only get instance before start");
         }
@@ -66,7 +66,7 @@ public abstract class WorkerPoolManager implements Scrapable {
         String poolName = config.getPoolName();
         WorkerPool pool = dedicatedPools.get(poolName);
         if (pool == null) {
-            pool = new WorkerPool(config, metrics);
+            pool = new WorkerPool(config);
             dedicatedPools.put(poolName, pool);
         }
         LOG.info().$("new DEDICATED pool [name=").$(poolName)

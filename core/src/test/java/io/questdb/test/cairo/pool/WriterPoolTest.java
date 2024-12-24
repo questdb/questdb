@@ -24,7 +24,15 @@
 
 package io.questdb.test.cairo.pool;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.DefaultLifecycleManager;
+import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.pool.ex.EntryLockedException;
@@ -195,7 +203,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
             // check that we can't create standalone writer either
             try {
-                newOffPoolWriter(configuration, "z", metrics).close();
+                newOffPoolWriter(configuration, "z").close();
                 Assert.fail();
             } catch (CairoException ignored) {
             }
@@ -203,7 +211,7 @@ public class WriterPoolTest extends AbstractCairoTest {
             pool.unlock(zTableToken);
 
             // check if we can create standalone writer after pool unlocked it
-            writer = newOffPoolWriter(configuration, "z", metrics);
+            writer = newOffPoolWriter(configuration, "z");
             Assert.assertNotNull(writer);
             writer.close();
 
@@ -847,7 +855,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
             pool.close();
 
-            TableWriter writer = newOffPoolWriter(configuration, "z", metrics);
+            TableWriter writer = newOffPoolWriter(configuration, "z");
             Assert.assertNotNull(writer);
             writer.close();
         });

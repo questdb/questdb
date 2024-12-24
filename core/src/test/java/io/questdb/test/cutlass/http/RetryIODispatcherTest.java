@@ -484,6 +484,7 @@ public class RetryIODispatcherTest extends AbstractTest {
             assertInsertsIsPerformedWhenWriterLockedAndDisconnected();
             TestUtils.removeTestPath(root);
             TestUtils.createTestPath(root);
+            Metrics.ENABLED.clear();
         }
     }
 
@@ -577,7 +578,7 @@ public class RetryIODispatcherTest extends AbstractTest {
                     assertNRowsInserted(validRequestRecordCount);
 
                     for (long fd : fds) {
-                        Assert.assertNotEquals(fd, -1);
+                        Assert.assertNotEquals(-1, fd);
                         NetworkFacadeImpl.INSTANCE.close(fd);
                     }
 
@@ -730,12 +731,10 @@ public class RetryIODispatcherTest extends AbstractTest {
 
     private void assertInsertsIsPerformedWhenWriterLockedAndDisconnected() throws Exception {
         final int parallelCount = 4;
-        final Metrics metrics = Metrics.enabled();
         new HttpQueryTestBuilder()
                 .withTempFolder(root)
                 .withWorkerCount(parallelCount)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .withMetrics(metrics)
                 .withTelemetry(false)
                 .run((engine, sqlExecutionContext) -> {
                     long nonInsertQueries = 0;
@@ -790,6 +789,7 @@ public class RetryIODispatcherTest extends AbstractTest {
                     final int maxWaitTimeMillis = 3000;
                     final int sleepMillis = 10;
 
+                    final Metrics metrics = engine.getMetrics();
                     // wait for all insert queries to be initially handled
                     long startedInserts;
                     for (int i = 0; i < maxWaitTimeMillis / sleepMillis; i++) {
@@ -806,7 +806,7 @@ public class RetryIODispatcherTest extends AbstractTest {
                     );
 
                     for (int n = 0; n < fds.length; n++) {
-                        Assert.assertNotEquals(fds[n], -1);
+                        Assert.assertNotEquals(-1, fds[n]);
                         NetworkFacadeImpl.INSTANCE.close(fds[n]);
                     }
 

@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.RecordCursor;
@@ -35,6 +36,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
@@ -195,11 +197,20 @@ public class ParallelLatestByTest extends AbstractTest {
     ) throws Exception {
         executeVanilla(() -> {
             if (workerCount > 0) {
-                WorkerPool pool = new WorkerPool(() -> workerCount);
-
                 final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 };
 
+                WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
+                    @Override
+                    public Metrics getMetrics() {
+                        return configuration.getMetrics();
+                    }
+
+                    @Override
+                    public int getWorkerCount() {
+                        return workerCount;
+                    }
+                });
                 execute(pool, runnable, configuration);
             } else {
                 // we need to create entire engine

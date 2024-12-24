@@ -79,7 +79,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     private long nextCheckIdleTime;
     private long nextCommitTime;
 
-    public LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler, Metrics metrics) {
+    public LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler) {
         super(
                 configuration.getFactoryProvider().getLineSocketFactory(),
                 configuration.getNetworkFacade(),
@@ -92,7 +92,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
             this.disconnectOnError = configuration.getDisconnectOnError();
             this.logMessageOnError = configuration.logMessageOnError();
             this.scheduler = scheduler;
-            this.metrics = metrics;
+            this.metrics = configuration.getMetrics();
             this.milliClock = configuration.getMillisecondClock();
             parser = new LineTcpParser();
             this.authenticator = configuration.getFactoryProvider().getLineAuthenticatorFactory().getLineTCPAuthenticator();

@@ -456,7 +456,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
         if (configuration.isLegacyModeEnabled() != legacyMode) {
             ((Port0PGWireConfiguration) configuration).isLegacyMode = legacyMode;
         }
-        TestWorkerPool workerPool = new TestWorkerPool(configuration.getWorkerCount(), metrics);
+        TestWorkerPool workerPool = new TestWorkerPool(configuration);
         copyRequestJob = new CopyRequestJob(engine, configuration.getWorkerCount());
 
         workerPool.assign(copyRequestJob);

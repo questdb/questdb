@@ -24,7 +24,6 @@
 
 package io.questdb.test.cutlass.http;
 
-import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.security.AllowAllSecurityContext;
@@ -72,8 +71,8 @@ public class HttpMinTestBuilder {
             CairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(baseDir);
 
             try (
-                    CairoEngine engine = new CairoEngine(cairoConfiguration, Metrics.disabled());
-                    HttpServer httpServer = new HttpServer(httpConfiguration, Metrics.disabled(), workerPool, PlainSocketFactory.INSTANCE);
+                    CairoEngine engine = new CairoEngine(cairoConfiguration);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE);
                     SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
             ) {
                 final PrometheusMetricsProcessor.RequestStatePool requestStatePool = prometheusRequestStatePool != null

@@ -115,12 +115,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     @TestOnly
     public HttpConnectionContext(
             HttpMinServerConfiguration configuration,
-            Metrics metrics,
             SocketFactory socketFactory
     ) {
         this(
                 configuration,
-                metrics,
                 socketFactory,
                 DefaultHttpCookieHandler.INSTANCE,
                 DefaultHttpHeaderParserFactory.INSTANCE,
@@ -130,7 +128,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     public HttpConnectionContext(
             HttpMinServerConfiguration configuration,
-            Metrics metrics,
             SocketFactory socketFactory,
             HttpCookieHandler cookieHandler,
             HttpHeaderParserFactory headerParserFactory,
@@ -160,7 +157,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.dumpNetworkTraffic = contextConfiguration.getDumpNetworkTraffic();
         // This is default behaviour until the security context is overridden with correct principal.
         this.securityContext = DenyAllSecurityContext.INSTANCE;
-        this.metrics = metrics;
+        this.metrics = contextConfiguration.getMetrics();
         this.authenticator = contextConfiguration.getFactoryProvider().getHttpAuthenticatorFactory().getHttpAuthenticator();
         this.rejectProcessor = contextConfiguration.getFactoryProvider().getRejectProcessorFactory().getRejectProcessor(this);
         this.forceFragmentationReceiveChunkSize = contextConfiguration.getForceRecvFragmentationChunkSize();

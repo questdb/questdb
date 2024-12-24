@@ -25,6 +25,7 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.FactoryProvider;
+import io.questdb.Metrics;
 import io.questdb.cutlass.line.LineTcpTimestampAdapter;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.EpollFacade;
@@ -35,11 +36,15 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
-public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfiguration {
-    private final LineTcpReceiverConfiguration delegate;
+import java.util.concurrent.atomic.AtomicReference;
 
-    protected LineTcpReceiverConfigurationWrapper() {
-        delegate = null;
+public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfiguration {
+    private final AtomicReference<LineTcpReceiverConfiguration> delegate = new AtomicReference<>();
+    private final Metrics metrics;
+
+    public LineTcpReceiverConfigurationWrapper(Metrics metrics) {
+        this.metrics = metrics;
+        delegate.set(null);
     }
 
     @Override
@@ -198,6 +203,11 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     }
 
     @Override
+    public Metrics getMetrics() {
+        return metrics;
+    }
+
+    @Override
     public MicrosecondClock getMicrosecondClock() {
         return getDelegate().getMicrosecondClock();
     }
@@ -302,7 +312,11 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
         return getDelegate().logMessageOnError();
     }
 
+    public void setDelegate(LineTcpReceiverConfiguration delegate) {
+        this.delegate.set(delegate);
+    }
+
     protected LineTcpReceiverConfiguration getDelegate() {
-        return delegate;
+        return delegate.get();
     }
 }

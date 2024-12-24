@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.text;
 
+import io.questdb.Metrics;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
@@ -50,6 +51,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
@@ -3220,8 +3222,6 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         // we need to create entire engine
         assertMemoryLeak(() -> {
             if (workerCount > 0) {
-                WorkerPool pool = new WorkerPool(() -> workerCount);
-
                 final CairoConfiguration configuration1 = new DefaultTestCairoConfiguration(root) {
                     @Override
                     public @NotNull FilesFacade getFilesFacade() {
@@ -3253,7 +3253,17 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                         return queueCapacity;
                     }
                 };
+                WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
+                    @Override
+                    public Metrics getMetrics() {
+                        return configuration1.getMetrics();
+                    }
 
+                    @Override
+                    public int getWorkerCount() {
+                        return workerCount;
+                    }
+                });
                 execute(pool, runnable, configuration1);
             } else {
                 // we need to create entire engine

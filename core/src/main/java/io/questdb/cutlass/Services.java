@@ -66,8 +66,7 @@ public class Services {
     public HttpServer createHttpServer(
             ServerConfiguration serverConfiguration,
             CairoEngine cairoEngine,
-            WorkerPoolManager workerPoolManager,
-            Metrics metrics
+            WorkerPoolManager workerPoolManager
     ) {
         HttpServerConfiguration httpServerConfiguration = serverConfiguration.getHttpServerConfiguration();
         if (!httpServerConfiguration.isEnabled()) {
@@ -80,9 +79,8 @@ public class Services {
         return createHttpServer(
                 serverConfiguration,
                 cairoEngine,
-                workerPoolManager.getInstance(httpServerConfiguration, metrics, Requester.HTTP_SERVER),
-                workerPoolManager.getSharedWorkerCount(),
-                metrics
+                workerPoolManager.getInstance(httpServerConfiguration, Requester.HTTP_SERVER),
+                workerPoolManager.getSharedWorkerCount()
         );
     }
 
@@ -91,8 +89,7 @@ public class Services {
             ServerConfiguration serverConfiguration,
             CairoEngine cairoEngine,
             WorkerPool workerPool,
-            int sharedWorkerCount,
-            Metrics metrics
+            int sharedWorkerCount
     ) {
         final HttpServerConfiguration httpServerConfiguration = serverConfiguration.getHttpServerConfiguration();
         if (!httpServerConfiguration.isEnabled()) {
@@ -103,7 +100,6 @@ public class Services {
         final HttpHeaderParserFactory headerParserFactory = serverConfiguration.getFactoryProvider().getHttpHeaderParserFactory();
         final HttpServer server = new HttpServer(
                 httpServerConfiguration,
-                metrics,
                 workerPool,
                 serverConfiguration.getFactoryProvider().getHttpSocketFactory(),
                 cookieHandler,
@@ -139,8 +135,7 @@ public class Services {
     public LineTcpReceiver createLineTcpReceiver(
             LineTcpReceiverConfiguration config,
             CairoEngine cairoEngine,
-            WorkerPoolManager workerPoolManager,
-            Metrics metrics
+            WorkerPoolManager workerPoolManager
     ) {
         if (!config.isEnabled()) {
             return null;
@@ -159,12 +154,10 @@ public class Services {
 
         final WorkerPool ioPool = workerPoolManager.getInstance(
                 config.getIOWorkerPoolConfiguration(),
-                metrics,
                 Requester.LINE_TCP_IO
         );
         final WorkerPool writerPool = workerPoolManager.getInstance(
                 config.getWriterWorkerPoolConfiguration(),
-                metrics,
                 Requester.LINE_TCP_WRITER
         );
         return new LineTcpReceiver(config, cairoEngine, ioPool, writerPool);
@@ -190,8 +183,7 @@ public class Services {
     @Nullable
     public HttpServer createMinHttpServer(
             HttpMinServerConfiguration configuration,
-            WorkerPoolManager workerPoolManager,
-            Metrics metrics
+            WorkerPoolManager workerPoolManager
     ) {
         if (!configuration.isEnabled()) {
             return null;
@@ -202,19 +194,19 @@ public class Services {
         // - DEDICATED (1 worker) otherwise
         final WorkerPool workerPool = workerPoolManager.getInstance(
                 configuration,
-                metrics,
                 Requester.HTTP_MIN_SERVER
         );
-        return createMinHttpServer(configuration, workerPool, metrics);
+        return createMinHttpServer(configuration, workerPool);
     }
 
     @Nullable
-    public HttpServer createMinHttpServer(HttpMinServerConfiguration configuration, WorkerPool workerPool, Metrics metrics) {
+    public HttpServer createMinHttpServer(HttpMinServerConfiguration configuration, WorkerPool workerPool) {
         if (!configuration.isEnabled()) {
             return null;
         }
 
-        final HttpServer server = new HttpServer(configuration, metrics, workerPool, configuration.getFactoryProvider().getHttpMinSocketFactory());
+        final HttpServer server = new HttpServer(configuration, workerPool, configuration.getFactoryProvider().getHttpMinSocketFactory());
+        Metrics metrics = configuration.getHttpContextConfiguration().getMetrics();
         server.bind(new HttpRequestProcessorFactory() {
             @Override
             public String getUrl() {
@@ -250,8 +242,7 @@ public class Services {
     public IPGWireServer createPGWireServer(
             PGWireConfiguration configuration,
             CairoEngine cairoEngine,
-            WorkerPoolManager workerPoolManager,
-            Metrics metrics
+            WorkerPoolManager workerPoolManager
     ) {
         if (!configuration.isEnabled()) {
             return null;
@@ -262,7 +253,6 @@ public class Services {
         // - SHARED otherwise
         final WorkerPool workerPool = workerPoolManager.getInstance(
                 configuration,
-                metrics,
                 Requester.PG_WIRE_SERVER
         );
 

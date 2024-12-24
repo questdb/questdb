@@ -27,9 +27,10 @@ package io.questdb.cutlass.http.processors;
 import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.MetricsRegistry;
+import io.questdb.std.Mutable;
 import org.jetbrains.annotations.TestOnly;
 
-public class JsonQueryMetrics {
+public class JsonQueryMetrics implements Mutable {
     private final Counter cacheHitCounter;
     private final Counter cacheMissCounter;
     private final LongGauge cachedQueriesGauge;
@@ -44,6 +45,17 @@ public class JsonQueryMetrics {
         this.cachedQueriesGauge = metricsRegistry.newLongGauge("json_queries_cached");
         this.cacheHitCounter = metricsRegistry.newCounter("json_queries_cache_hits");
         this.cacheMissCounter = metricsRegistry.newCounter("json_queries_cache_misses");
+    }
+
+    @Override
+    public void clear() {
+        cacheHitCounter.reset();
+        cacheHitCounter.reset();
+        cacheMissCounter.reset();
+        cachedQueriesGauge.setValue(0);
+        completedQueriesCounter.reset();
+        connectionCountGauge.setValue(0);
+        startedQueriesCounter.reset();
     }
 
     public Counter cacheHitCounter() {

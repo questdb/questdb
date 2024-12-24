@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine;
 
+import io.questdb.Metrics;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
@@ -32,7 +33,12 @@ import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
-import io.questdb.griffin.*;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolUtils;
@@ -584,18 +590,6 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
     ) throws Exception {
         assertMemoryLeak(() -> {
             if (workerCount > 0) {
-                WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
-                    @Override
-                    public long getSleepTimeout() {
-                        return 1;
-                    }
-
-                    @Override
-                    public int getWorkerCount() {
-                        return workerCount - 1;
-                    }
-                });
-
                 final CairoConfiguration configuration1 = new DefaultTestCairoConfiguration(root) {
                     @Override
                     public int getGroupByMergeShardQueueCapacity() {
@@ -623,6 +617,22 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
                     }
                 };
 
+                WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
+                    @Override
+                    public Metrics getMetrics() {
+                        return configuration1.getMetrics();
+                    }
+
+                    @Override
+                    public long getSleepTimeout() {
+                        return 1;
+                    }
+
+                    @Override
+                    public int getWorkerCount() {
+                        return workerCount - 1;
+                    }
+                });
                 execute(pool, runnable, configuration1);
             } else {
                 final CairoConfiguration configuration1 = new DefaultTestCairoConfiguration(root);

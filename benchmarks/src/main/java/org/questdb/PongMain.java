@@ -24,10 +24,12 @@
 
 package org.questdb;
 
+import io.questdb.Metrics;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.metrics.NullLongGauge;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IOContext;
 import io.questdb.network.IOContextFactoryImpl;
@@ -59,7 +61,17 @@ public class PongMain {
         // configuration defines bind address and port
         final IODispatcherConfiguration dispatcherConf = new DefaultIODispatcherConfiguration();
         // worker pool, which would handle jobs
-        final WorkerPool workerPool = new WorkerPool(() -> 1);
+        final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
+            @Override
+            public Metrics getMetrics() {
+                return Metrics.DISABLED;
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return 1;
+            }
+        });
         // event loop that accepts connections and publishes network events to event queue
         final IODispatcher<PongConnectionContext> dispatcher = IODispatchers.create(
                 dispatcherConf,

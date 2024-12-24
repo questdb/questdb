@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.Metrics;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
@@ -1992,18 +1993,6 @@ public class AggregateTest extends AbstractCairoTest {
         // we need to create entire engine
         assertMemoryLeak(() -> {
             if (workerCount > 0) {
-                WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
-                    @Override
-                    public long getSleepTimeout() {
-                        return 1;
-                    }
-
-                    @Override
-                    public int getWorkerCount() {
-                        return workerCount - 1;
-                    }
-                });
-
                 final CairoConfiguration configuration1 = new DefaultTestCairoConfiguration(root) {
                     @Override
                     public @NotNull RostiAllocFacade getRostiAllocFacade() {
@@ -2020,6 +2009,23 @@ public class AggregateTest extends AbstractCairoTest {
                         return queueSize;
                     }
                 };
+
+                WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
+                    @Override
+                    public Metrics getMetrics() {
+                        return configuration1.getMetrics();
+                    }
+
+                    @Override
+                    public long getSleepTimeout() {
+                        return 1;
+                    }
+
+                    @Override
+                    public int getWorkerCount() {
+                        return workerCount - 1;
+                    }
+                });
 
                 execute(pool, runnable, configuration1);
             } else {

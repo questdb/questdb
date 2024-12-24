@@ -129,7 +129,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             // 4kb prefix split threshold
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 * (1 << 10));
             node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
-            int rowCount = (int) metrics.tableWriter().getPhysicallyWrittenRows();
+            int rowCount = (int) node1.getMetrics().tableWriter().getPhysicallyWrittenRows();
 
             execute(
                     "create table x as (" +
@@ -238,7 +238,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             Overrides overrides = node1.getConfigurationOverrides();
             overrides.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 1);
 
-            int rowCount = (int) metrics.tableWriter().getPhysicallyWrittenRows();
+            int rowCount = (int) node1.getMetrics().tableWriter().getPhysicallyWrittenRows();
             execute(
                     "create table x as (" +
                             "select" +
@@ -756,7 +756,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     private int assertRowCount(int delta, int rowCount) {
         Assert.assertEquals(delta, getPhysicalRowsSinceLastCommit());
         rowCount += delta;
-        Assert.assertEquals(rowCount, metrics.tableWriter().getPhysicallyWrittenRows());
+        Assert.assertEquals(rowCount, node1.getMetrics().tableWriter().getPhysicallyWrittenRows());
         return rowCount;
     }
 

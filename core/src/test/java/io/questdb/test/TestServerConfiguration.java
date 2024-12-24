@@ -26,6 +26,7 @@ package io.questdb.test;
 
 import io.questdb.DefaultServerConfiguration;
 import io.questdb.FactoryProvider;
+import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
@@ -67,14 +68,36 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
             return false;
         }
     };
-
+    private final WorkerPoolConfiguration confLineTcpIOPool;
+    private final WorkerPoolConfiguration confLineTcpWriterPool;
     private final LineUdpReceiverConfiguration confLineUdp = new DefaultLineUdpReceiverConfiguration() {
         @Override
         public boolean isEnabled() {
             return false;
         }
     };
-    private final WorkerPoolConfiguration confWalApplyPool = () -> 0;
+    private final LineTcpReceiverConfiguration confLineTcp = new DefaultLineTcpReceiverConfiguration() {
+        @Override
+        public FactoryProvider getFactoryProvider() {
+            return factoryProvider;
+        }
+
+        @Override
+        public WorkerPoolConfiguration getIOWorkerPoolConfiguration() {
+            return confLineTcpIOPool;
+        }
+
+        @Override
+        public WorkerPoolConfiguration getWriterWorkerPoolConfiguration() {
+            return confLineTcpWriterPool;
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return enableLineTcp;
+        }
+    };
+    private final WorkerPoolConfiguration confSharedPool;
     private final boolean enableHttp;
     private final boolean enableLineTcp;
     private final boolean enablePgWire;
@@ -90,6 +113,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
             return enablePgWire;
         }
     };
+    private final WorkerPoolConfiguration confWalApplyPool;
     private final int workerCountHttp;
     private final HttpServerConfiguration confHttp = new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
         @Override
@@ -127,43 +151,6 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
             return enableHttp;
         }
     };
-    private final int workerCountLineTcpIO;
-    private final WorkerPoolConfiguration confLineTcpIOPool = new WorkerPoolConfiguration() {
-        @Override
-        public int getWorkerCount() {
-            return workerCountLineTcpIO;
-        }
-    };
-    private final int workerCountLineTcpWriter;
-    private final WorkerPoolConfiguration confLineTcpWriterPool = new WorkerPoolConfiguration() {
-        @Override
-        public int getWorkerCount() {
-            return workerCountLineTcpWriter;
-        }
-    };
-    private final LineTcpReceiverConfiguration confLineTcp = new DefaultLineTcpReceiverConfiguration() {
-        @Override
-        public FactoryProvider getFactoryProvider() {
-            return factoryProvider;
-        }
-
-        @Override
-        public WorkerPoolConfiguration getIOWorkerPoolConfiguration() {
-            return confLineTcpIOPool;
-        }
-
-        @Override
-        public WorkerPoolConfiguration getWriterWorkerPoolConfiguration() {
-            return confLineTcpWriterPool;
-        }
-
-        @Override
-        public boolean isEnabled() {
-            return enableLineTcp;
-        }
-    };
-    private int workerCountShared;
-    private final WorkerPoolConfiguration confSharedPool = () -> workerCountShared;
 
     public TestServerConfiguration(
             CharSequence root,
@@ -179,12 +166,9 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
         super(root);
         // something we can override in test
         this.workerCountHttp = workerCountHttp;
-        this.workerCountShared = workerCountShared;
         this.enableHttp = enableHttp;
         this.enableLineTcp = enableLineTcp;
         this.enablePgWire = enablePgWire;
-        this.workerCountLineTcpIO = workerCountLineTcpIO;
-        this.workerCountLineTcpWriter = workerCountLineTcpWriter;
         this.factoryProvider = factoryProvider;
         final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
             // do not check connection for SQLs executed via embedded API
@@ -208,6 +192,52 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
             @Override
             public CharSequence getSqlCopyInputRoot() {
                 return TestUtils.getCsvRoot();
+            }
+        };
+        this.confWalApplyPool = new WorkerPoolConfiguration() {
+            @Override
+            public Metrics getMetrics() {
+                return cairoConfiguration.getMetrics();
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return 0;
+            }
+        };
+        this.confSharedPool = new WorkerPoolConfiguration() {
+            @Override
+            public Metrics getMetrics() {
+                return cairoConfiguration.getMetrics();
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return workerCountShared;
+            }
+        };
+
+        this.confLineTcpIOPool = new WorkerPoolConfiguration() {
+            @Override
+            public Metrics getMetrics() {
+                return cairoConfiguration.getMetrics();
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return workerCountLineTcpIO;
+            }
+        };
+
+        this.confLineTcpWriterPool = new WorkerPoolConfiguration() {
+            @Override
+            public Metrics getMetrics() {
+                return cairoConfiguration.getMetrics();
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return workerCountLineTcpWriter;
             }
         };
     }

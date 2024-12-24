@@ -91,6 +91,11 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     }
 
     @Override
+    public Metrics getMetrics() {
+        return Metrics.ENABLED;
+    }
+
+    @Override
     public MetricsConfiguration getMetricsConfiguration() {
         return metricsConfiguration;
     }

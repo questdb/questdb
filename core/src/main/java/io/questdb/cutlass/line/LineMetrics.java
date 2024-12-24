@@ -26,12 +26,13 @@ package io.questdb.cutlass.line;
 
 import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.MetricsRegistry;
+import io.questdb.std.Mutable;
 
-public class LineMetrics {
+public class LineMetrics implements Mutable {
 
     private final LongGauge connectionCountGauge;
-    private final LongGauge totalIlpTcpBytesGauge;
     private final LongGauge totalIlpHttpBytesGauge;
+    private final LongGauge totalIlpTcpBytesGauge;
 
     public LineMetrics(MetricsRegistry metricsRegistry) {
         this.connectionCountGauge = metricsRegistry.newLongGauge("line_tcp_connections");
@@ -39,15 +40,22 @@ public class LineMetrics {
         this.totalIlpHttpBytesGauge = metricsRegistry.newLongGauge("line_http_recv_bytes");
     }
 
+    @Override
+    public void clear() {
+        connectionCountGauge.setValue(0);
+        totalIlpTcpBytesGauge.setValue(0);
+        totalIlpHttpBytesGauge.setValue(0);
+    }
+
     public LongGauge connectionCountGauge() {
         return connectionCountGauge;
     }
 
-    public LongGauge totalIlpTcpBytesGauge() {
-        return totalIlpTcpBytesGauge;
-    }
-
     public LongGauge totalIlpHttpBytesGauge() {
         return totalIlpHttpBytesGauge;
+    }
+
+    public LongGauge totalIlpTcpBytesGauge() {
+        return totalIlpTcpBytesGauge;
     }
 }

@@ -269,6 +269,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int maxUncommittedRows;
     private final MemoryConfiguration memoryConfiguration;
     private final int metadataStringPoolCapacity;
+    private final Metrics metrics;
     private final MetricsConfiguration metricsConfiguration = new PropMetricsConfiguration();
     private final boolean metricsEnabled;
     private final MicrosecondClock microsecondClock;
@@ -641,6 +642,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             boolean loadAdditionalConfigurations
     ) throws ServerConfigurationException, JsonException {
         this.log = log;
+        this.metricsEnabled = getBoolean(properties, env, PropertyKey.METRICS_ENABLED, false);
+        if (metricsEnabled) {
+            this.metrics = Metrics.enabled();
+        } else {
+            this.metrics = Metrics.DISABLED;
+        }
         this.logSqlQueryProgressExe = getBoolean(properties, env, PropertyKey.LOG_SQL_QUERY_PROGRESS_EXE, true);
         this.logLevelVerbose = getBoolean(properties, env, PropertyKey.LOG_LEVEL_VERBOSE, false);
         this.logTimestampTimezone = getString(properties, env, PropertyKey.LOG_TIMESTAMP_TIMEZONE, "UTC");
@@ -756,6 +763,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.cairoSqlCopyRoot = null;
             this.cairoSqlCopyWorkRoot = null;
         }
+
 
         this.cairoAttachPartitionSuffix = getString(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX, TableUtils.ATTACHABLE_DIR_MARKER);
         this.cairoAttachPartitionCopy = getBoolean(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_COPY, false);
@@ -1490,7 +1498,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlParquetFrameCacheCapacity = Math.max(getInt(properties, env, PropertyKey.CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY, 3), 3);
             this.sqlOrderBySortEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, true);
             this.sqlOrderByRadixSortThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_ORDER_BY_RADIX_SORT_THRESHOLD, 600);
-            this.metricsEnabled = getBoolean(properties, env, PropertyKey.METRICS_ENABLED, false);
             this.writerAsyncCommandBusyWaitTimeout = getMillis(properties, env, PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 500);
             this.writerAsyncCommandMaxWaitTimeout = getMillis(properties, env, PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT, 30_000);
             this.writerTickRowsCountMod = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_WRITER_TICK_ROWS_COUNT, 1024)) - 1;
@@ -1576,6 +1583,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     @Override
     public MemoryConfiguration getMemoryConfiguration() {
         return memoryConfiguration;
+    }
+
+    @Override
+    public Metrics getMetrics() {
+        return metrics;
     }
 
     @Override
@@ -2625,6 +2637,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public Metrics getMetrics() {
+            return metrics;
+        }
+
+        @Override
         public @NotNull MicrosecondClock getMicrosecondClock() {
             return microsecondClock;
         }
@@ -3406,7 +3423,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     public class PropHttpMinServerConfiguration implements HttpMinServerConfiguration {
-
         @Override
         public int getBindIPv4Address() {
             return httpMinBindIPv4Address;
@@ -3460,6 +3476,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getLimit() {
             return httpMinNetConnectionLimit;
+        }
+
+        @Override
+        public Metrics getMetrics() {
+            return metrics;
         }
 
         @Override
@@ -3579,7 +3600,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     public class PropHttpServerConfiguration implements HttpServerConfiguration {
-
         @Override
         public int getBindIPv4Address() {
             return httpNetBindIPv4Address;
@@ -3643,6 +3663,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public LineHttpProcessorConfiguration getLineHttpProcessorConfiguration() {
             return lineHttpProcessorConfiguration;
+        }
+
+        @Override
+        public Metrics getMetrics() {
+            return metrics;
         }
 
         @Override
@@ -3905,6 +3930,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     private class PropLineTcpIOWorkerPoolConfiguration implements WorkerPoolConfiguration {
 
         @Override
+        public Metrics getMetrics() {
+            return metrics;
+        }
+
+        @Override
         public long getNapThreshold() {
             return lineTcpIOWorkerNapThreshold;
         }
@@ -3941,7 +3971,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropLineTcpReceiverConfiguration implements LineTcpReceiverConfiguration {
-
         @Override
         public String getAuthDB() {
             return lineTcpAuthDB;
@@ -4076,6 +4105,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public Metrics getMetrics() {
+            return metrics;
+        }
+
+        @Override
         public MicrosecondClock getMicrosecondClock() {
             return MicrosecondClockImpl.INSTANCE;
         }
@@ -4177,6 +4211,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropLineTcpWriterWorkerPoolConfiguration implements WorkerPoolConfiguration {
+        @Override
+        public Metrics getMetrics() {
+            return metrics;
+        }
+
         @Override
         public long getNapThreshold() {
             return lineTcpWriterWorkerNapThreshold;
@@ -4443,6 +4482,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getMaxBlobSizeOnQuery() {
             return pgMaxBlobSizeOnQuery;
+        }
+
+        @Override
+        public Metrics getMetrics() {
+            return metrics;
         }
 
         @Override
@@ -4847,6 +4891,11 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     private class PropWalApplyPoolConfiguration implements WorkerPoolConfiguration {
         @Override
+        public Metrics getMetrics() {
+            return metrics;
+        }
+
+        @Override
         public long getNapThreshold() {
             return walApplyWorkerNapThreshold;
         }
@@ -4893,6 +4942,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropWorkerPoolConfiguration implements WorkerPoolConfiguration {
+        @Override
+        public Metrics getMetrics() {
+            return metrics;
+        }
+
         @Override
         public long getNapThreshold() {
             return sharedWorkerNapThreshold;

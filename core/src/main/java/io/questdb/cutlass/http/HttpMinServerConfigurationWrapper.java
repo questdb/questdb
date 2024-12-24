@@ -25,17 +25,22 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.FactoryProvider;
+import io.questdb.Metrics;
 import io.questdb.network.EpollFacade;
 import io.questdb.network.KqueueFacade;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.SelectFacade;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
-public class HttpMinServerConfigurationWrapper implements HttpMinServerConfiguration {
-    private final HttpMinServerConfiguration delegate;
+import java.util.concurrent.atomic.AtomicReference;
 
-    protected HttpMinServerConfigurationWrapper() {
-        delegate = null;
+public class HttpMinServerConfigurationWrapper implements HttpMinServerConfiguration {
+    private final AtomicReference<HttpMinServerConfiguration> delegate = new AtomicReference<>();
+    private final Metrics metrics;
+
+    public HttpMinServerConfigurationWrapper(Metrics metrics) {
+        this.metrics = metrics;
+        delegate.set(null);
     }
 
     @Override
@@ -116,6 +121,11 @@ public class HttpMinServerConfigurationWrapper implements HttpMinServerConfigura
     @Override
     public int getListenBacklog() {
         return getDelegate().getListenBacklog();
+    }
+
+    @Override
+    public Metrics getMetrics() {
+        return metrics;
     }
 
     @Override
@@ -238,12 +248,16 @@ public class HttpMinServerConfigurationWrapper implements HttpMinServerConfigura
         return getDelegate().preAllocateBuffers();
     }
 
+    public void setDelegate(HttpMinServerConfiguration delegate) {
+        this.delegate.set(delegate);
+    }
+
     @Override
     public int workerPoolPriority() {
         return getDelegate().workerPoolPriority();
     }
 
     protected HttpMinServerConfiguration getDelegate() {
-        return delegate;
+        return delegate.get();
     }
 }

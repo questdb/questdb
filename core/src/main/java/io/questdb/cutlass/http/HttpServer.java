@@ -73,13 +73,11 @@ public class HttpServer implements Closeable {
     // used for min http server only
     public HttpServer(
             HttpMinServerConfiguration configuration,
-            Metrics metrics,
             WorkerPool pool,
             SocketFactory socketFactory
     ) {
         this(
                 configuration,
-                metrics,
                 pool,
                 socketFactory,
                 DefaultHttpCookieHandler.INSTANCE,
@@ -89,7 +87,6 @@ public class HttpServer implements Closeable {
 
     public HttpServer(
             HttpMinServerConfiguration configuration,
-            Metrics metrics,
             WorkerPool pool,
             SocketFactory socketFactory,
             HttpCookieHandler cookieHandler,
@@ -104,6 +101,7 @@ public class HttpServer implements Closeable {
 
         if (configuration instanceof HttpServerConfiguration) {
             final HttpServerConfiguration serverConfiguration = (HttpServerConfiguration) configuration;
+            Metrics metrics = serverConfiguration.getHttpContextConfiguration().getMetrics();
             if (serverConfiguration.isQueryCacheEnabled()) {
                 this.selectCache = new ConcurrentAssociativeCache<>(
                         serverConfiguration.getQueryCacheBlockCount(),
@@ -120,8 +118,12 @@ public class HttpServer implements Closeable {
             this.selectCache = NO_OP_CACHE;
         }
 
-        this.httpContextFactory = new HttpContextFactory(configuration, metrics, socketFactory, cookieHandler, headerParserFactory, selectCache);
-        this.dispatcher = IODispatchers.create(configuration, httpContextFactory, metrics.jsonQuery().connectionCountGauge());
+        this.httpContextFactory = new HttpContextFactory(configuration, socketFactory, cookieHandler, headerParserFactory, selectCache);
+        this.dispatcher = IODispatchers.create(
+                configuration,
+                httpContextFactory,
+                configuration.getHttpContextConfiguration().getMetrics().jsonQuery().connectionCountGauge()
+        );
         pool.assign(dispatcher);
         this.rescheduleContext = new WaitProcessor(configuration.getWaitProcessorConfiguration(), dispatcher);
         pool.assign(rescheduleContext);
@@ -361,13 +363,13 @@ public class HttpServer implements Closeable {
 
         public HttpContextFactory(
                 HttpMinServerConfiguration configuration,
-                Metrics metrics, SocketFactory socketFactory,
+                SocketFactory socketFactory,
                 HttpCookieHandler cookieHandler,
                 HttpHeaderParserFactory headerParserFactory,
                 AssociativeCache<RecordCursorFactory> selectCache
         ) {
             super(
-                    () -> new HttpConnectionContext(configuration, metrics, socketFactory, cookieHandler, headerParserFactory, selectCache),
+                    () -> new HttpConnectionContext(configuration, socketFactory, cookieHandler, headerParserFactory, selectCache),
                     configuration.getHttpContextConfiguration().getConnectionPoolInitialCapacity()
             );
         }

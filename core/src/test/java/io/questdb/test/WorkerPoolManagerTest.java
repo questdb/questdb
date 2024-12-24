@@ -75,6 +75,11 @@ public class WorkerPoolManagerTest {
         final WorkerPoolManager workerPoolManager = createWorkerPoolManager(workerCount);
         WorkerPool workerPool = workerPoolManager.getInstance(new WorkerPoolConfiguration() {
             @Override
+            public Metrics getMetrics() {
+                return METRICS;
+            }
+
+            @Override
             public String getPoolName() {
                 return poolName;
             }
@@ -83,7 +88,7 @@ public class WorkerPoolManagerTest {
             public int getWorkerCount() {
                 return workerCount;
             }
-        }, METRICS, WorkerPoolManager.Requester.OTHER);
+        }, WorkerPoolManager.Requester.OTHER);
         Assert.assertNotSame(workerPoolManager.getSharedPool(), workerPool);
         Assert.assertEquals(workerCount, workerPool.getWorkerCount());
         Assert.assertEquals(poolName, workerPool.getPoolName());
@@ -96,6 +101,11 @@ public class WorkerPoolManagerTest {
         final WorkerPoolManager workerPoolManager = createWorkerPoolManager(workerCount);
         final WorkerPoolConfiguration workerPoolConfiguration = new WorkerPoolConfiguration() {
             @Override
+            public Metrics getMetrics() {
+                return METRICS;
+            }
+
+            @Override
             public String getPoolName() {
                 return poolName;
             }
@@ -105,9 +115,9 @@ public class WorkerPoolManagerTest {
                 return workerCount;
             }
         };
-        WorkerPool workerPool0 = workerPoolManager.getInstance(workerPoolConfiguration, METRICS, WorkerPoolManager.Requester.OTHER);
+        WorkerPool workerPool0 = workerPoolManager.getInstance(workerPoolConfiguration, WorkerPoolManager.Requester.OTHER);
         Assert.assertNotSame(workerPoolManager.getSharedPool(), workerPool0);
-        WorkerPool workerPool1 = workerPoolManager.getInstance(workerPoolConfiguration, METRICS, WorkerPoolManager.Requester.OTHER);
+        WorkerPool workerPool1 = workerPoolManager.getInstance(workerPoolConfiguration, WorkerPoolManager.Requester.OTHER);
         Assert.assertSame(workerPool0, workerPool1);
         Assert.assertEquals(workerCount, workerPool0.getWorkerCount());
         Assert.assertEquals(poolName, workerPool0.getPoolName());
@@ -121,6 +131,11 @@ public class WorkerPoolManagerTest {
         final WorkerPoolManager workerPoolManager = createWorkerPoolManager(workerCount);
         WorkerPool workerPool = workerPoolManager.getInstance(new WorkerPoolConfiguration() {
             @Override
+            public Metrics getMetrics() {
+                return METRICS;
+            }
+
+            @Override
             public String getPoolName() {
                 return "pool";
             }
@@ -129,7 +144,7 @@ public class WorkerPoolManagerTest {
             public int getWorkerCount() {
                 return 0; // No workers, will result in returning the shared pool
             }
-        }, METRICS, WorkerPoolManager.Requester.OTHER);
+        }, WorkerPoolManager.Requester.OTHER);
         Assert.assertSame(workerPoolManager.getSharedPool(), workerPool);
         Assert.assertEquals(workerCount, workerPool.getWorkerCount());
         Assert.assertEquals("worker", workerPool.getPoolName());
@@ -142,6 +157,11 @@ public class WorkerPoolManagerTest {
         try {
             workerPoolManager.getInstance(new WorkerPoolConfiguration() {
                 @Override
+                public Metrics getMetrics() {
+                    return METRICS;
+                }
+
+                @Override
                 public String getPoolName() {
                     return null;
                 }
@@ -150,7 +170,7 @@ public class WorkerPoolManagerTest {
                 public int getWorkerCount() {
                     return 0;
                 }
-            }, METRICS, WorkerPoolManager.Requester.OTHER);
+            }, WorkerPoolManager.Requester.OTHER);
             Assert.fail();
         } catch (IllegalStateException err) {
             TestUtils.assertContains("can only get instance before start", err.getMessage());
@@ -167,7 +187,7 @@ public class WorkerPoolManagerTest {
         AtomicReference<DirectUtf8Sink> sink = new AtomicReference<>(new DirectUtf8Sink(32));
 
         final ServerConfiguration config = createServerConfig(1); // shared pool
-        final WorkerPoolManager workerPoolManager = new WorkerPoolManager(config, METRICS) {
+        final WorkerPoolManager workerPoolManager = new WorkerPoolManager(config) {
             @Override
             protected void configureSharedPool(WorkerPool sharedPool) {
                 sharedPool.assign(scrapeIntoPrometheusJob(sink));
@@ -175,12 +195,10 @@ public class WorkerPoolManagerTest {
         };
         WorkerPool p0 = workerPoolManager.getInstance(
                 workerPoolConfiguration("UP", 30L),
-                METRICS,
                 WorkerPoolManager.Requester.OTHER
         );
         WorkerPool p1 = workerPoolManager.getInstance(
                 workerPoolConfiguration("DOWN", 10L),
-                METRICS,
                 WorkerPoolManager.Requester.OTHER
         );
         p0.assign(slowCountUpJob(count));
@@ -249,6 +267,11 @@ public class WorkerPoolManagerTest {
             }
 
             @Override
+            public Metrics getMetrics() {
+                return METRICS;
+            }
+
+            @Override
             public MetricsConfiguration getMetricsConfiguration() {
                 return null;
             }
@@ -270,13 +293,23 @@ public class WorkerPoolManagerTest {
 
             @Override
             public WorkerPoolConfiguration getWorkerPoolConfiguration() {
-                return () -> workerCount;
+                return new WorkerPoolConfiguration() {
+                    @Override
+                    public Metrics getMetrics() {
+                        return METRICS;
+                    }
+
+                    @Override
+                    public int getWorkerCount() {
+                        return workerCount;
+                    }
+                };
             }
         };
     }
 
     private static WorkerPoolManager createWorkerPoolManager(int workerCount, Consumer<WorkerPool> call) {
-        return new WorkerPoolManager(createServerConfig(workerCount), METRICS) {
+        return new WorkerPoolManager(createServerConfig(workerCount)) {
             @Override
             protected void configureSharedPool(WorkerPool sharedPool) {
                 if (call != null) {
@@ -318,6 +351,11 @@ public class WorkerPoolManagerTest {
 
     private static WorkerPoolConfiguration workerPoolConfiguration(String poolName, long sleepMillis) {
         return new WorkerPoolConfiguration() {
+            @Override
+            public Metrics getMetrics() {
+                return METRICS;
+            }
+
             @Override
             public String getPoolName() {
                 return poolName;

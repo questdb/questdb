@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.o3;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
@@ -41,6 +42,7 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -3287,7 +3289,17 @@ public class O3FailureTest extends AbstractO3Test {
             final AtomicInteger errorCount = new AtomicInteger();
 
             // we have two pairs of tables (x,y) and (x1,y1)
-            try (WorkerPool pool1 = new WorkerPool(() -> 1)) {
+            try (WorkerPool pool1 = new WorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public Metrics getMetrics() {
+                    return engine.getMetrics();
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 1;
+                }
+            })) {
                 pool1.assign(new Job() {
                     private boolean toRun = true;
 

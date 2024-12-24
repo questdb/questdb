@@ -38,13 +38,15 @@ import io.questdb.metrics.Scrapable;
 import io.questdb.metrics.VirtualLongGauge;
 import io.questdb.metrics.WorkerMetrics;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Mutable;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.BorrowableUtf8Sink;
 import org.jetbrains.annotations.NotNull;
 
-public class Metrics implements Scrapable {
-    private final boolean enabled;
+public class Metrics implements Scrapable, Mutable {
+    public static final Metrics DISABLED = Metrics.disabled();
+    public static final Metrics ENABLED = Metrics.enabled();
     private final GCMetrics gcMetrics;
     private final HealthMetricsImpl healthCheck;
     private final JsonQueryMetrics jsonQuery;
@@ -58,6 +60,7 @@ public class Metrics implements Scrapable {
     private final TableWriterMetrics tableWriter;
     private final WalMetrics walMetrics;
     private final WorkerMetrics workerMetrics;
+    private boolean enabled;
 
     public Metrics(boolean enabled, MetricsRegistry metricsRegistry) {
         this.enabled = enabled;
@@ -79,6 +82,23 @@ public class Metrics implements Scrapable {
 
     public static Metrics enabled() {
         return new Metrics(true, new MetricsRegistryImpl());
+    }
+
+    @Override
+    public void clear() {
+        gcMetrics.clear();
+        jsonQuery.clear();
+        pgWire.clear();
+        line.clear();
+        healthCheck.clear();
+        tableWriter.clear();
+        walMetrics.clear();
+        workerMetrics.clear();
+        enabled = true;
+    }
+
+    public void disable() {
+        enabled = false;
     }
 
     public MetricsRegistry getRegistry() {
