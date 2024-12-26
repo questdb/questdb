@@ -2550,12 +2550,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
     }
     
-     @Test
+    @Test
     public void testCreateTableValidSynonymColumnType() throws Exception {
         assertCreateTable( 
                 "create atomic table tab (a INT, b INT)", 
                 "create table tab (a int, b integer)"
-        ); 
+        );
     }
 
     @Test
