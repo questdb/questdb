@@ -1997,14 +1997,22 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableCastUnsupportedType() throws Exception {
         assertSyntaxError(
-                "create table x as (tab), cast(b as integer)",
+                "create table x as (tab), cast(b as invalidType)",
                 35,
                 "unsupported column type",
                 modelOf("tab")
-                        .col("a", ColumnType.INT)
                         .col("b", ColumnType.LONG)
-                        .col("c", ColumnType.STRING)
         );
+    }
+    
+    @Test
+    public void testCreateTableSupportedSynonymType() throws Exception {
+        assertCreateTable( 
+                "create batch 1000000 table x as (select-choose b from (select [b] from tab)), cast(b as INT:35)", 
+                "create table x as (tab), cast(b as integer)",
+                modelOf("tab")
+                        .col("b", ColumnType.INT)
+        ); 
     }
 
     @Test
@@ -2536,10 +2544,18 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableInvalidColumnType() throws Exception {
         assertSyntaxError(
-                "create table tab (a int, b integer)",
+                "create table tab (a int, b invalidType)",
                 27,
                 "unsupported column type"
         );
+    }
+    
+     @Test
+    public void testCreateTableValidSynonymColumnType() throws Exception {
+        assertCreateTable( 
+                "create atomic table tab (a INT, b INT)", 
+                "create table tab (a int, b integer)"
+        ); 
     }
 
     @Test
