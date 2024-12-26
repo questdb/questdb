@@ -2004,7 +2004,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("b", ColumnType.LONG)
         );
     }
-    
+
     @Test
     public void testCreateTableSupportedSynonymType() throws Exception {
         assertCreateTable( 
@@ -2549,7 +2549,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "unsupported column type"
         );
     }
-    
+
     @Test
     public void testCreateTableValidSynonymColumnType() throws Exception {
         assertCreateTable( 
