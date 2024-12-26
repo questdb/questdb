@@ -29,7 +29,9 @@ import org.jetbrains.annotations.TestOnly;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
+
 import static io.questdb.griffin.FunctionFactoryDescriptor.replaceSignatureNameAndSwapArgs;
+
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;

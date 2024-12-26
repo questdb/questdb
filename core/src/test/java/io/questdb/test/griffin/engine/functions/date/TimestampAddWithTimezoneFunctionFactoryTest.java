@@ -155,21 +155,21 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
 
         // Validate the result accounts for DST transition correctly
         assertQuery(
-            "utc_time\n" +
-                    "2024-10-27T23:00:00.000000Z\n",
-            query
+                "utc_time\n" +
+                        "2024-10-27T23:00:00.000000Z\n",
+                query
         );
     }
 
     @Test
     public void testDateAddWithTimezonePlan() throws Exception {
         assertMemoryLeak(() -> assertPlanNoLeakCheck(
-            // Input query testing DATEADD behavior
-            "select dateadd('w', 1, '2024-10-21', 'Europe/Bratislava')",
-            // Updated expected plan
-            "VirtualRecord\n" +
-            "  functions: [1730077200000000]\n" +
-            "    long_sequence count: 1\n"
+                // Input query testing DATEADD behavior
+                "select dateadd('w', 1, '2024-10-21', 'Europe/Bratislava')",
+                // Updated expected plan
+                "VirtualRecord\n" +
+                        "  functions: [1730077200000000]\n" +
+                        "    long_sequence count: 1\n"
         ));
     }
 

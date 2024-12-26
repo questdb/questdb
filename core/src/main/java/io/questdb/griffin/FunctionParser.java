@@ -37,9 +37,11 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.ScalarFunction;
+
 import static io.questdb.griffin.SqlKeywords.isNanKeyword;
 import static io.questdb.griffin.SqlKeywords.isNullKeyword;
 import static io.questdb.griffin.SqlKeywords.startsWithGeoHashKeyword;
+
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;

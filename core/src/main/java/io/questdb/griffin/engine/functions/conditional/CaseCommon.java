@@ -28,6 +28,7 @@ import org.jetbrains.annotations.NotNull;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+
 import static io.questdb.cairo.ColumnType.BINARY;
 import static io.questdb.cairo.ColumnType.BOOLEAN;
 import static io.questdb.cairo.ColumnType.BYTE;
@@ -56,6 +57,7 @@ import static io.questdb.cairo.ColumnType.isNull;
 import static io.questdb.cairo.ColumnType.isUndefined;
 import static io.questdb.cairo.ColumnType.nameOf;
 import static io.questdb.cairo.ColumnType.tagOf;
+
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
