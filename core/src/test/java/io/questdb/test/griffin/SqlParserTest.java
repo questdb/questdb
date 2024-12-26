@@ -2007,12 +2007,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testCreateTableSupportedSynonymType() throws Exception {
-        assertCreateTable( 
-                "create batch 1000000 table x as (select-choose b from (select [b] from tab)), cast(b as INT:35)", 
+        assertCreateTable(
+                "create batch 1000000 table x as (select-choose b from (select [b] from tab)), cast(b as INT:35)",
                 "create table x as (tab), cast(b as integer)",
                 modelOf("tab")
                         .col("b", ColumnType.INT)
-        ); 
+        );
     }
 
     @Test
@@ -2552,8 +2552,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testCreateTableValidSynonymColumnType() throws Exception {
-        assertCreateTable( 
-                "create atomic table tab (a INT, b INT)", 
+        assertCreateTable(
+                "create atomic table tab (a INT, b INT)",
                 "create table tab (a int, b integer)"
         );
     }
