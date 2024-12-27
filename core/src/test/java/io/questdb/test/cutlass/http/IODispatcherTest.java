@@ -681,7 +681,7 @@ public class IODispatcherTest extends AbstractTest {
                             "}",
                     "select simulate_crash('A') from long_sequence(5)"
             );
-            Assert.assertEquals(0, engine.getMetrics().health().unhandledErrorsCount());
+            Assert.assertEquals(0, engine.getMetrics().healthMetrics().unhandledErrorsCount());
         });
     }
 
@@ -8027,7 +8027,7 @@ public class IODispatcherTest extends AbstractTest {
                             "}",
                     "select simulate_crash('E')"
             );
-            Assert.assertEquals(1, engine.getMetrics().health().unhandledErrorsCount());
+            Assert.assertEquals(1, engine.getMetrics().healthMetrics().unhandledErrorsCount());
         });
     }
 
@@ -8045,7 +8045,7 @@ public class IODispatcherTest extends AbstractTest {
                             "}",
                     "select simulate_crash('0')"
             );
-            Assert.assertEquals(0, engine.getMetrics().health().unhandledErrorsCount());
+            Assert.assertEquals(0, engine.getMetrics().healthMetrics().unhandledErrorsCount());
         });
     }
 
@@ -8063,7 +8063,7 @@ public class IODispatcherTest extends AbstractTest {
                             "}",
                     "select npe()"
             );
-            Assert.assertEquals(1, engine.getMetrics().health().unhandledErrorsCount());
+            Assert.assertEquals(1, engine.getMetrics().healthMetrics().unhandledErrorsCount());
         });
     }
 
@@ -9183,7 +9183,7 @@ public class IODispatcherTest extends AbstractTest {
                             "}",
                     "select simulate_crash('" + numOfRows + "') from long_sequence(5)"
             );
-            Assert.assertEquals(0, engine.getMetrics().health().unhandledErrorsCount());
+            Assert.assertEquals(0, engine.getMetrics().healthMetrics().unhandledErrorsCount());
         });
     }
 

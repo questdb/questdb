@@ -128,7 +128,8 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                     w.write("http.net.connection.limit=10\n");
                 }
 
-                TestUtils.assertEventually(() -> Assert.assertEquals(0, metrics.jsonQuery().connectionCountGauge().getValue()));
+                TestUtils.assertEventually(() -> Assert.assertEquals(0, metrics.httpMetrics().connectionCountGauge().getValue()));
+                TestUtils.assertEventually(() -> Assert.assertEquals(2, metrics.httpMetrics().belowMaxConnectionCountCounter().getValue()));
 
                 assertReloadConfig(true);
 
@@ -295,7 +296,8 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                     w.write("pg.net.connection.limit=10\n");
                 }
 
-                TestUtils.assertEventually(() -> Assert.assertEquals(0, metrics.pgWire().connectionCountGauge().getValue()));
+                TestUtils.assertEventually(() -> Assert.assertEquals(0, metrics.pgWireMetrics().connectionCountGauge().getValue()));
+                TestUtils.assertEventually(() -> Assert.assertEquals(2, metrics.pgWireMetrics().getBelowMaxConnectionCountCounter().getValue()));
 
                 // call the reload method directly instead of using the reload_config() SQL function
                 // to avoid opening a PGWire connection;

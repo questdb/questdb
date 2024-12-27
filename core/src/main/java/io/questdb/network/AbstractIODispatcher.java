@@ -27,6 +27,7 @@ package io.questdb.network;
 import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
 import io.questdb.mp.EagerThreadSetup;
 import io.questdb.mp.MCSequence;
@@ -86,6 +87,8 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     private final IODispatcherConfiguration configuration;
     private final AtomicInteger connectionCount = new AtomicInteger();
     private final LongGauge connectionCountGauge;
+    private final Counter aboveMaxConnectionCountCounter;
+    private final Counter belowMaxConnectionCountCounter;
     private final boolean peerNoLinger;
     private final long queuedConnectionTimeoutMs;
     private final int testConnectionBufSize;
@@ -105,6 +108,8 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         this.LOG = LogFactory.getLog(configuration.getDispatcherLogName());
         this.configuration = configuration;
         this.connectionCountGauge = configuration.getConnectionCountGauge();
+        this.belowMaxConnectionCountCounter = configuration.getBelowMaxConnectionCountCounter();
+        this.aboveMaxConnectionCountCounter = configuration.getAboveMaxConnectionCountCounter();
         this.nf = configuration.getNetworkFacade();
 
         this.testConnectionBufSize = configuration.getTestConnectionBufferSize();
@@ -360,6 +365,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
             listening = false;
             closeListenFdEpochMs = timestamp + queuedConnectionTimeoutMs;
             LOG.advisory().$("max connection limit reached, unregistered listener [serverFd=").$(serverFd).I$();
+            aboveMaxConnectionCountCounter.inc();
         }
     }
 
@@ -389,6 +395,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
                 registerListenerFd();
                 listening = true;
                 LOG.advisory().$("below maximum connection limit, registered listener [serverFd=").$(serverFd).I$();
+                belowMaxConnectionCountCounter.inc();
             }
         }
         connectionCountGauge.dec();

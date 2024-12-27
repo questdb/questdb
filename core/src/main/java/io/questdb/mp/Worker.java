@@ -153,7 +153,7 @@ public class Worker extends Thread {
                         } catch (Throwable e) {
                             if (metrics.isEnabled()) {
                                 try {
-                                    metrics.health().incrementUnhandledErrors();
+                                    metrics.healthMetrics().incrementUnhandledErrors();
                                 } catch (Throwable t) {
                                     stdErrCritical(t);
                                 }

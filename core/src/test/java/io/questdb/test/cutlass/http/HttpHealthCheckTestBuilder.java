@@ -77,7 +77,7 @@ public class HttpHealthCheckTestBuilder {
                 final Metrics metrics = cairoConfiguration.getMetrics();
                 if (injectUnhandledError && metrics.isEnabled()) {
                     for (int i = 0; i < 40; i++) {
-                        if (metrics.health().unhandledErrorsCount() > 0) {
+                        if (metrics.healthMetrics().unhandledErrorsCount() > 0) {
                             break;
                         }
                         Os.sleep(50);

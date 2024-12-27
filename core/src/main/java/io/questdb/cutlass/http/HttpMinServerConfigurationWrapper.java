@@ -26,6 +26,7 @@ package io.questdb.cutlass.http;
 
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
+import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
 import io.questdb.network.EpollFacade;
 import io.questdb.network.KqueueFacade;
@@ -45,6 +46,16 @@ public class HttpMinServerConfigurationWrapper implements HttpServerConfiguratio
     }
 
     @Override
+    public Counter getAboveMaxConnectionCountCounter() {
+        return getDelegate().getAboveMaxConnectionCountCounter();
+    }
+
+    @Override
+    public Counter getBelowMaxConnectionCountCounter() {
+        return getDelegate().getBelowMaxConnectionCountCounter();
+    }
+
+    @Override
     public int getBindIPv4Address() {
         return getDelegate().getBindIPv4Address();
     }
@@ -61,7 +72,7 @@ public class HttpMinServerConfigurationWrapper implements HttpServerConfiguratio
 
     @Override
     public LongGauge getConnectionCountGauge() {
-        return metrics.jsonQuery().connectionCountGauge();
+        return metrics.httpMetrics().connectionCountGauge();
     }
 
     @Override

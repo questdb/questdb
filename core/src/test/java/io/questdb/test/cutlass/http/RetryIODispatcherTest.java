@@ -793,13 +793,13 @@ public class RetryIODispatcherTest extends AbstractTest {
                     // wait for all insert queries to be initially handled
                     long startedInserts;
                     for (int i = 0; i < maxWaitTimeMillis / sleepMillis; i++) {
-                        startedInserts = metrics.jsonQuery().startedQueriesCount() - nonInsertQueries;
+                        startedInserts = metrics.jsonQueryMetrics().startedQueriesCount() - nonInsertQueries;
                         if (startedInserts >= parallelCount) {
                             break;
                         }
                         Os.sleep(sleepMillis);
                     }
-                    startedInserts = metrics.jsonQuery().startedQueriesCount() - nonInsertQueries;
+                    startedInserts = metrics.jsonQueryMetrics().startedQueriesCount() - nonInsertQueries;
                     Assert.assertTrue(
                             "expected at least " + parallelCount + "insert attempts, but got: " + startedInserts,
                             startedInserts >= parallelCount
@@ -815,13 +815,13 @@ public class RetryIODispatcherTest extends AbstractTest {
                     // wait for all insert queries to be executed
                     long completeInserts;
                     for (int i = 0; i < maxWaitTimeMillis / sleepMillis; i++) {
-                        completeInserts = metrics.jsonQuery().completedQueriesCount() - nonInsertQueries;
+                        completeInserts = metrics.jsonQueryMetrics().completedQueriesCount() - nonInsertQueries;
                         if (completeInserts == parallelCount) {
                             break;
                         }
                         Os.sleep(sleepMillis);
                     }
-                    completeInserts = metrics.jsonQuery().completedQueriesCount() - nonInsertQueries;
+                    completeInserts = metrics.jsonQueryMetrics().completedQueriesCount() - nonInsertQueries;
                     Assert.assertEquals("expected all inserts to succeed", parallelCount, completeInserts);
 
                     // check that we have all the records inserted

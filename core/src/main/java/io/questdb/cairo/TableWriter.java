@@ -703,7 +703,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public void addPhysicallyWrittenRows(long rows) {
         physicallyWrittenRowsSinceLastCommit.addAndGet(rows);
-        metrics.tableWriter().addPhysicallyWrittenRows(rows);
+        metrics.tableWriterMetrics().addPhysicallyWrittenRows(rows);
     }
 
     public long apply(AbstractOperation operation, long seqTxn) {
@@ -1095,7 +1095,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public void commitSeqTxn() {
         if (txWriter.inTransaction()) {
-            metrics.tableWriter().incrementCommits();
+            metrics.tableWriterMetrics().incrementCommits();
             syncColumns();
         }
         txWriter.commit(denseSymbolMapWriters);
@@ -1179,7 +1179,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             committedMasterRef = masterRef;
             processPartitionRemoveCandidates();
 
-            metrics.tableWriter().incrementCommits();
+            metrics.tableWriterMetrics().incrementCommits();
 
             shrinkO3Mem();
         }
@@ -1188,7 +1188,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Sometimes data from LAG made visible to the table using fast commit that increment transient row count.
         // Keep in memory last committed seq txn, but do not write it to _txn file.
         assert txWriter.getLagTxnCount() == (seqTxn - txWriter.getSeqTxn());
-        metrics.tableWriter().addCommittedRows(rowsAdded);
+        metrics.tableWriterMetrics().addCommittedRows(rowsAdded);
         return rowsAdded;
     }
 
@@ -2881,7 +2881,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 o3MasterRef = -1;
                 LOG.info().$("tx rollback complete [table=").$(tableToken).I$();
                 processCommandQueue(false);
-                metrics.tableWriter().incrementRollbacks();
+                metrics.tableWriterMetrics().incrementRollbacks();
             } catch (Throwable e) {
                 LOG.critical().$("could not perform rollback [table=").$(tableToken).$(", msg=").$(e).I$();
                 distressed = true;
@@ -3922,8 +3922,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             this.committedMasterRef = masterRef;
             processPartitionRemoveCandidates();
 
-            metrics.tableWriter().incrementCommits();
-            metrics.tableWriter().addCommittedRows(rowsAdded);
+            metrics.tableWriterMetrics().incrementCommits();
+            metrics.tableWriterMetrics().addCommittedRows(rowsAdded);
             if (!o3) {
                 // If `o3`, the metric is tracked inside `o3Commit`, possibly async.
                 addPhysicallyWrittenRows(rowsAdded);
@@ -5213,7 +5213,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw e;
         }
 
-        metrics.tableWriter().incrementO3Commits();
+        metrics.tableWriterMetrics().incrementO3Commits();
     }
 
     private Utf8Sequence formatPartitionForTimestamp(long partitionTimestamp, long nameTxn) {
@@ -7011,7 +7011,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final boolean isParquet = txWriter.isPartitionParquet(1);
         try {
             setStateForTimestamp(other, timestamp);
-            return isParquet ? readMinTimestampParquet(other, 1) : readMinTimestampNative(other, timestamp);
+            return isParquet ? readMinTimestampParquet(other) : readMinTimestampNative(other, timestamp);
         } finally {
             other.trimTo(pathSize);
         }
@@ -7032,11 +7032,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private long readMinTimestampParquet(Path partitionPath, int partitionIndex) {
+    private long readMinTimestampParquet(Path partitionPath) {
         long parquetAddr = 0;
         long parquetSize = 0;
         try {
-            parquetSize = txWriter.getPartitionParquetFileSize(partitionIndex);
+            parquetSize = txWriter.getPartitionParquetFileSize(1);
             parquetAddr = mapRO(ff, partitionPath.concat(PARQUET_PARTITION_NAME).$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             parquetDecoder.of(parquetAddr, parquetSize, MemoryTag.NATIVE_TABLE_WRITER);
             final int timestampIndex = metadata.getTimestampIndex();

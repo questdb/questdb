@@ -183,7 +183,7 @@ pub fn append_varchar(
         append_offset(aux_mem, data_mem.len())
     } else {
         assert!(value_size <= LENGTH_LIMIT_BYTES);
-        let header = (value_size as u32) << HEADER_FLAGS_WIDTH | is_ascii(value);
+        let header = ((value_size as u32) << HEADER_FLAGS_WIDTH) | is_ascii(value);
         aux_mem.extend_from_slice(&header.to_le_bytes())?;
         aux_mem.extend_from_slice(&value[0..VARCHAR_INLINED_PREFIX_BYTES])?;
         data_mem.extend_from_slice(value)?;

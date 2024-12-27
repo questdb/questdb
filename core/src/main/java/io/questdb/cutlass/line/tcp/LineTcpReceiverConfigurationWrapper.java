@@ -27,6 +27,7 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.cutlass.line.LineTcpTimestampAdapter;
+import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.EpollFacade;
@@ -49,6 +50,11 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     }
 
     @Override
+    public Counter getAboveMaxConnectionCountCounter() {
+        return getDelegate().getAboveMaxConnectionCountCounter();
+    }
+
+    @Override
     public String getAuthDB() {
         return getDelegate().getAuthDB();
     }
@@ -61,6 +67,11 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     @Override
     public boolean getAutoCreateNewTables() {
         return getDelegate().getAutoCreateNewTables();
+    }
+
+    @Override
+    public Counter getBelowMaxConnectionCountCounter() {
+        return getDelegate().getBelowMaxConnectionCountCounter();
     }
 
     @Override
@@ -95,7 +106,7 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
 
     @Override
     public LongGauge getConnectionCountGauge() {
-        return metrics.line().connectionCountGauge();
+        return metrics.lineMetrics().connectionCountGauge();
     }
 
     @Override

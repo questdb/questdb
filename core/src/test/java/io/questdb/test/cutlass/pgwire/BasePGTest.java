@@ -501,12 +501,17 @@ public abstract class BasePGTest extends AbstractCairoTest {
                 return selectCacheBlockCount == -1 ? super.getBlocks() : selectCacheBlockCount;
             }
         };
-        
+
         final PGWireConfiguration conf = new Port0PGWireConfiguration(-1, legacyMode) {
 
             @Override
             public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
                 return circuitBreakerConfiguration;
+            }
+
+            @Override
+            public ConcurrentCacheConfiguration getConcurrentCacheConfiguration() {
+                return concurrentCacheConfiguration;
             }
 
             @Override
@@ -522,11 +527,6 @@ public abstract class BasePGTest extends AbstractCairoTest {
             @Override
             public int getRecvBufferSize() {
                 return recvBufferSize;
-            }
-
-            @Override
-            public ConcurrentCacheConfiguration getConcurrentCacheConfiguration() {
-                return concurrentCacheConfiguration;
             }
 
             @Override

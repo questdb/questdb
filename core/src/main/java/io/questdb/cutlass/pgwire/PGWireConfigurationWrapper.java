@@ -27,6 +27,7 @@ package io.questdb.cutlass.pgwire;
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
 import io.questdb.network.EpollFacade;
 import io.questdb.network.KqueueFacade;
@@ -46,6 +47,16 @@ public class PGWireConfigurationWrapper implements PGWireConfiguration {
     public PGWireConfigurationWrapper(Metrics metrics) {
         this.metrics = metrics;
         delegate.set(null);
+    }
+
+    @Override
+    public Counter getAboveMaxConnectionCountCounter() {
+        return getDelegate().getAboveMaxConnectionCountCounter();
+    }
+
+    @Override
+    public Counter getBelowMaxConnectionCountCounter() {
+        return getDelegate().getBelowMaxConnectionCountCounter();
     }
 
     @Override
@@ -90,7 +101,7 @@ public class PGWireConfigurationWrapper implements PGWireConfiguration {
 
     @Override
     public LongGauge getConnectionCountGauge() {
-        return metrics.pgWire().connectionCountGauge();
+        return metrics.pgWireMetrics().connectionCountGauge();
     }
 
     @Override

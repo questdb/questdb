@@ -8442,26 +8442,26 @@ nodejs code:
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             execute("create table x as (select x id from long_sequence(10))");
             // table
-            configuration.getMetrics().pgWire().resetQueryCounters();
+            configuration.getMetrics().pgWireMetrics().resetQueryCounters();
             try (
                     PreparedStatement stmt = connection.prepareStatement("select count() from x;");
                     ResultSet rs = stmt.executeQuery()
             ) {
                 rs.next();
                 Assert.assertEquals(10, rs.getLong(1));
-                Assert.assertEquals(1, configuration.getMetrics().pgWire().startedQueriesCount());
-                Assert.assertEquals(1, configuration.getMetrics().pgWire().completedQueriesCount());
+                Assert.assertEquals(1, configuration.getMetrics().pgWireMetrics().startedQueriesCount());
+                Assert.assertEquals(1, configuration.getMetrics().pgWireMetrics().completedQueriesCount());
             }
             // virtual
-            configuration.getMetrics().pgWire().resetQueryCounters();
+            configuration.getMetrics().pgWireMetrics().resetQueryCounters();
             try (
                     PreparedStatement stmt = connection.prepareStatement("select 1;");
                     ResultSet rs = stmt.executeQuery()
             ) {
                 rs.next();
                 Assert.assertEquals(1, rs.getLong(1));
-                Assert.assertEquals(1, configuration.getMetrics().pgWire().startedQueriesCount());
-                Assert.assertEquals(1, configuration.getMetrics().pgWire().completedQueriesCount());
+                Assert.assertEquals(1, configuration.getMetrics().pgWireMetrics().startedQueriesCount());
+                Assert.assertEquals(1, configuration.getMetrics().pgWireMetrics().completedQueriesCount());
             }
         });
     }

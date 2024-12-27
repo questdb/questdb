@@ -127,7 +127,7 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractCairoTest
     }
 
     private static MetricsSnapshot snapshotMetrics() {
-        TableWriterMetrics writerMetrics = engine.getMetrics().tableWriter();
+        TableWriterMetrics writerMetrics = engine.getMetrics().tableWriterMetrics();
         return new MetricsSnapshot(writerMetrics.getCommitCount(),
                 writerMetrics.getCommittedRows(),
                 writerMetrics.getO3CommitCount(),

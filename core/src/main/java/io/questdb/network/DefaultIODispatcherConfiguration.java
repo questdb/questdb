@@ -25,12 +25,23 @@
 package io.questdb.network;
 
 import io.questdb.Metrics;
+import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 
 public class DefaultIODispatcherConfiguration implements IODispatcherConfiguration {
     public static final IODispatcherConfiguration INSTANCE = new DefaultIODispatcherConfiguration();
+
+    @Override
+    public Counter getAboveMaxConnectionCountCounter() {
+        return Metrics.DISABLED.httpMetrics().aboveMaxConnectionCountCounter();
+    }
+
+    @Override
+    public Counter getBelowMaxConnectionCountCounter() {
+        return Metrics.DISABLED.httpMetrics().belowMaxConnectionCountCounter();
+    }
 
     @Override
     public int getBindIPv4Address() {
@@ -49,7 +60,7 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
 
     @Override
     public LongGauge getConnectionCountGauge() {
-        return Metrics.DISABLED.jsonQuery().connectionCountGauge();
+        return Metrics.DISABLED.httpMetrics().connectionCountGauge();
     }
 
     @Override

@@ -432,7 +432,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                         .$(", ex=").$(ex)
                         .I$();
                 // This is a critical error, so we treat it as an unhandled one.
-                metrics.health().incrementUnhandledErrors();
+                metrics.healthMetrics().incrementUnhandledErrors();
                 return IOContextResult.NEEDS_DISCONNECT;
             }
         }
@@ -443,7 +443,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         final int orig = bufferRemaining;
         if (bufferRemaining > 0 && !peerDisconnected) {
             int bytesRead = socket.recv(recvBufPos, bufferRemaining);
-            metrics.line().totalIlpTcpBytesGauge().add(bytesRead);
+            metrics.lineMetrics().totalIlpTcpBytesGauge().add(bytesRead);
             if (bytesRead > 0) {
                 recvBufPos += bytesRead;
                 bufferRemaining -= bytesRead;

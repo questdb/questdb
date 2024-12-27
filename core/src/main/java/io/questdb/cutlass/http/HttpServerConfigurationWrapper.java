@@ -29,6 +29,7 @@ import io.questdb.Metrics;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
+import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
 import io.questdb.network.EpollFacade;
 import io.questdb.network.KqueueFacade;
@@ -46,6 +47,16 @@ public class HttpServerConfigurationWrapper implements HttpFullFatServerConfigur
     public HttpServerConfigurationWrapper(Metrics metrics) {
         this.metrics = metrics;
         delegate.set(null);
+    }
+
+    @Override
+    public Counter getAboveMaxConnectionCountCounter() {
+        return getDelegate().getAboveMaxConnectionCountCounter();
+    }
+
+    @Override
+    public Counter getBelowMaxConnectionCountCounter() {
+        return getDelegate().getBelowMaxConnectionCountCounter();
     }
 
     @Override
@@ -70,7 +81,7 @@ public class HttpServerConfigurationWrapper implements HttpFullFatServerConfigur
 
     @Override
     public LongGauge getConnectionCountGauge() {
-        return metrics.jsonQuery().connectionCountGauge();
+        return metrics.httpMetrics().connectionCountGauge();
     }
 
     @Override

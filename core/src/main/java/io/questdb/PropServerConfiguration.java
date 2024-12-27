@@ -3431,17 +3431,17 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public LongGauge getCachedGauge() {
-            return metrics.jsonQuery().cachedQueriesGauge();
+            return metrics.jsonQueryMetrics().cachedQueriesGauge();
         }
 
         @Override
         public Counter getHiCounter() {
-            return metrics.jsonQuery().cacheHitCounter();
+            return metrics.jsonQueryMetrics().cacheHitCounter();
         }
 
         @Override
         public Counter getMissCounter() {
-            return metrics.jsonQuery().cacheMissCounter();
+            return metrics.jsonQueryMetrics().cacheMissCounter();
         }
 
         @Override
@@ -3451,6 +3451,16 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     public class PropHttpMinServerConfiguration implements HttpServerConfiguration {
+        @Override
+        public Counter getAboveMaxConnectionCountCounter() {
+            return metrics.httpMetrics().aboveMaxConnectionCountCounter();
+        }
+
+        @Override
+        public Counter getBelowMaxConnectionCountCounter() {
+            return metrics.httpMetrics().belowMaxConnectionCountCounter();
+        }
+
         @Override
         public int getBindIPv4Address() {
             return httpMinBindIPv4Address;
@@ -3468,7 +3478,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public LongGauge getConnectionCountGauge() {
-            return metrics.jsonQuery().connectionCountGauge();
+            return metrics.httpMetrics().connectionCountGauge();
         }
 
         @Override
@@ -3633,6 +3643,15 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     public class PropHttpServerConfiguration implements HttpFullFatServerConfiguration {
+        @Override
+        public Counter getAboveMaxConnectionCountCounter() {
+            return metrics.httpMetrics().aboveMaxConnectionCountCounter();
+        }
+
+        @Override
+        public Counter getBelowMaxConnectionCountCounter() {
+            return metrics.httpMetrics().belowMaxConnectionCountCounter();
+        }
 
         @Override
         public int getBindIPv4Address() {
@@ -3656,7 +3675,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public LongGauge getConnectionCountGauge() {
-            return metrics.jsonQuery().connectionCountGauge();
+            return metrics.httpMetrics().connectionCountGauge();
         }
 
         @Override
@@ -4006,6 +4025,11 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     private class PropLineTcpReceiverConfiguration implements LineTcpReceiverConfiguration {
         @Override
+        public Counter getAboveMaxConnectionCountCounter() {
+            return metrics.lineMetrics().aboveMaxConnectionCountCounter();
+        }
+
+        @Override
         public String getAuthDB() {
             return lineTcpAuthDB;
         }
@@ -4018,6 +4042,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean getAutoCreateNewTables() {
             return ilpAutoCreateNewTables;
+        }
+
+        @Override
+        public Counter getBelowMaxConnectionCountCounter() {
+            return metrics.lineMetrics().belowMaxConnectionCountCounter();
         }
 
         @Override
@@ -4055,7 +4084,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public LongGauge getConnectionCountGauge() {
-            return metrics.line().connectionCountGauge();
+            return metrics.lineMetrics().connectionCountGauge();
         }
 
         @Override
@@ -4414,17 +4443,17 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public LongGauge getCachedGauge() {
-            return metrics.pgWire().cachedSelectsGauge();
+            return metrics.pgWireMetrics().cachedSelectsGauge();
         }
 
         @Override
         public Counter getHiCounter() {
-            return metrics.pgWire().selectCacheHitCounter();
+            return metrics.pgWireMetrics().selectCacheHitCounter();
         }
 
         @Override
         public Counter getMissCounter() {
-            return metrics.pgWire().selectCacheMissCounter();
+            return metrics.pgWireMetrics().selectCacheMissCounter();
         }
 
         @Override
@@ -4434,6 +4463,16 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropPGWireConfiguration implements PGWireConfiguration {
+        @Override
+        public Counter getAboveMaxConnectionCountCounter() {
+            return metrics.pgWireMetrics().getAboveMaxConnectionCountCounter();
+        }
+
+        @Override
+        public Counter getBelowMaxConnectionCountCounter() {
+            return metrics.pgWireMetrics().getBelowMaxConnectionCountCounter();
+        }
+
         @Override
         public int getBinParamCountCapacity() {
             return pgBinaryParamsCapacity;
@@ -4476,7 +4515,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public LongGauge getConnectionCountGauge() {
-            return metrics.pgWire().connectionCountGauge();
+            return metrics.pgWireMetrics().connectionCountGauge();
         }
 
         @Override

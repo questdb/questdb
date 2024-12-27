@@ -199,7 +199,7 @@ public class WorkerPool implements Closeable {
     }
 
     public void updateWorkerMetrics(long now) {
-        WorkerMetrics workerMetrics = metrics.worker();
+        WorkerMetrics workerMetrics = metrics.workerMetrics();
         long min = workerMetrics.getMinElapsedMicros();
         long max = workerMetrics.getMaxElapsedMicros();
         for (int i = 0, n = workers.size(); i < n; i++) {

@@ -35,27 +35,14 @@ public class JsonQueryMetrics implements Mutable {
     private final Counter cacheMissCounter;
     private final LongGauge cachedQueriesGauge;
     private final Counter completedQueriesCounter;
-    private final LongGauge connectionCountGauge;
     private final Counter startedQueriesCounter;
 
     public JsonQueryMetrics(MetricsRegistry metricsRegistry) {
-        this.connectionCountGauge = metricsRegistry.newLongGauge("http_connections");
         this.startedQueriesCounter = metricsRegistry.newCounter("json_queries");
         this.completedQueriesCounter = metricsRegistry.newCounter("json_queries_completed");
         this.cachedQueriesGauge = metricsRegistry.newLongGauge("json_queries_cached");
         this.cacheHitCounter = metricsRegistry.newCounter("json_queries_cache_hits");
         this.cacheMissCounter = metricsRegistry.newCounter("json_queries_cache_misses");
-    }
-
-    @Override
-    public void clear() {
-        cacheHitCounter.reset();
-        cacheHitCounter.reset();
-        cacheMissCounter.reset();
-        cachedQueriesGauge.setValue(0);
-        completedQueriesCounter.reset();
-        connectionCountGauge.setValue(0);
-        startedQueriesCounter.reset();
     }
 
     public Counter cacheHitCounter() {
@@ -70,13 +57,19 @@ public class JsonQueryMetrics implements Mutable {
         return cachedQueriesGauge;
     }
 
+    @Override
+    public void clear() {
+        cacheHitCounter.reset();
+        cacheHitCounter.reset();
+        cacheMissCounter.reset();
+        cachedQueriesGauge.setValue(0);
+        completedQueriesCounter.reset();
+        startedQueriesCounter.reset();
+    }
+
     @TestOnly
     public long completedQueriesCount() {
         return completedQueriesCounter.getValue();
-    }
-
-    public LongGauge connectionCountGauge() {
-        return connectionCountGauge;
     }
 
     public void markComplete() {

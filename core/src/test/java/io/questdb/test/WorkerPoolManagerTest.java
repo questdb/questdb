@@ -195,7 +195,7 @@ public class WorkerPoolManagerTest {
         workerPoolManager.halt();
 
         Assert.assertEquals(0, endLatch.getCount());
-        WorkerMetrics metrics = Metrics.ENABLED.worker();
+        WorkerMetrics metrics = Metrics.ENABLED.workerMetrics();
         long min = metrics.getMinElapsedMicros();
         long max = metrics.getMaxElapsedMicros();
         Assert.assertTrue(min > 0L);

@@ -26,6 +26,7 @@ package io.questdb;
 
 import io.questdb.cairo.TableWriterMetrics;
 import io.questdb.cairo.wal.WalMetrics;
+import io.questdb.cutlass.http.processors.HttpMetrics;
 import io.questdb.cutlass.http.processors.JsonQueryMetrics;
 import io.questdb.cutlass.line.LineMetrics;
 import io.questdb.cutlass.pgwire.PGWireMetrics;
@@ -49,10 +50,11 @@ public class Metrics implements Scrapable, Mutable {
     public static final Metrics ENABLED = new Metrics(true, new MetricsRegistryImpl());
     private final GCMetrics gcMetrics;
     private final HealthMetricsImpl healthCheck;
-    private final JsonQueryMetrics jsonQuery;
-    private final LineMetrics line;
+    private final HttpMetrics httpMetrics;
+    private final JsonQueryMetrics jsonQueryMetrics;
+    private final LineMetrics lineMetrics;
     private final MetricsRegistry metricsRegistry;
-    private final PGWireMetrics pgWire;
+    private final PGWireMetrics pgWireMetrics;
     private final Runtime runtime = Runtime.getRuntime();
     private final VirtualLongGauge.StatProvider jvmFreeMemRef = runtime::freeMemory;
     private final VirtualLongGauge.StatProvider jvmMaxMemRef = runtime::maxMemory;
@@ -65,9 +67,10 @@ public class Metrics implements Scrapable, Mutable {
     public Metrics(boolean enabled, MetricsRegistry metricsRegistry) {
         this.enabled = enabled;
         this.gcMetrics = new GCMetrics();
-        this.jsonQuery = new JsonQueryMetrics(metricsRegistry);
-        this.pgWire = new PGWireMetrics(metricsRegistry);
-        this.line = new LineMetrics(metricsRegistry);
+        this.jsonQueryMetrics = new JsonQueryMetrics(metricsRegistry);
+        this.httpMetrics = new HttpMetrics(metricsRegistry);
+        this.pgWireMetrics = new PGWireMetrics(metricsRegistry);
+        this.lineMetrics = new LineMetrics(metricsRegistry);
         this.healthCheck = new HealthMetricsImpl(metricsRegistry);
         this.tableWriter = new TableWriterMetrics(metricsRegistry);
         this.walMetrics = new WalMetrics(metricsRegistry);
@@ -79,13 +82,14 @@ public class Metrics implements Scrapable, Mutable {
     @Override
     public void clear() {
         gcMetrics.clear();
-        jsonQuery.clear();
-        pgWire.clear();
-        line.clear();
+        jsonQueryMetrics.clear();
+        pgWireMetrics.clear();
+        lineMetrics.clear();
         healthCheck.clear();
         tableWriter.clear();
         walMetrics.clear();
         workerMetrics.clear();
+        httpMetrics.clear();
         enabled = true;
     }
 
@@ -97,24 +101,28 @@ public class Metrics implements Scrapable, Mutable {
         return metricsRegistry;
     }
 
-    public HealthMetricsImpl health() {
+    public HealthMetricsImpl healthMetrics() {
         return healthCheck;
+    }
+
+    public HttpMetrics httpMetrics() {
+        return httpMetrics;
     }
 
     public boolean isEnabled() {
         return enabled;
     }
 
-    public JsonQueryMetrics jsonQuery() {
-        return jsonQuery;
+    public JsonQueryMetrics jsonQueryMetrics() {
+        return jsonQueryMetrics;
     }
 
-    public LineMetrics line() {
-        return line;
+    public LineMetrics lineMetrics() {
+        return lineMetrics;
     }
 
-    public PGWireMetrics pgWire() {
-        return pgWire;
+    public PGWireMetrics pgWireMetrics() {
+        return pgWireMetrics;
     }
 
     @Override
@@ -125,15 +133,15 @@ public class Metrics implements Scrapable, Mutable {
         }
     }
 
-    public TableWriterMetrics tableWriter() {
+    public TableWriterMetrics tableWriterMetrics() {
         return tableWriter;
     }
 
-    public WalMetrics wal() {
+    public WalMetrics walMetrics() {
         return walMetrics;
     }
 
-    public WorkerMetrics worker() {
+    public WorkerMetrics workerMetrics() {
         return workerMetrics;
     }
 

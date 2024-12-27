@@ -52,7 +52,7 @@ public class HealthCheckProcessor implements HttpRequestProcessor {
         HttpChunkedResponse response = context.getChunkedResponse();
 
         if (pessimisticMode) {
-            final HealthMetricsImpl metrics = context.getMetrics().health();
+            final HealthMetricsImpl metrics = context.getMetrics().healthMetrics();
             final long unhandledErrors = metrics.unhandledErrorsCount();
             if (unhandledErrors > 0) {
                 response.status(500, "text/plain");

@@ -24,6 +24,7 @@
 
 package io.questdb.network;
 
+import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
 import io.questdb.std.Numbers;
 import io.questdb.std.Os;
@@ -33,11 +34,17 @@ public interface IODispatcherConfiguration {
     int BIAS_READ = 1;
     int BIAS_WRITE = 2;
 
+    Counter getAboveMaxConnectionCountCounter();
+
+    Counter getBelowMaxConnectionCountCounter();
+
     int getBindIPv4Address();
 
     int getBindPort();
 
     MillisecondClock getClock();
+
+    LongGauge getConnectionCountGauge();
 
     default String getDispatcherLogName() {
         return "IODispatcher";
@@ -107,6 +114,4 @@ public interface IODispatcherConfiguration {
     int getTestConnectionBufferSize();
 
     long getTimeout();
-
-    LongGauge getConnectionCountGauge();
 }

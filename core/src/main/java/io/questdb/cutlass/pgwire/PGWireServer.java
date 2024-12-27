@@ -120,7 +120,7 @@ public class PGWireServer implements IPGWireServer {
                     } catch (Throwable e) { // must remain last in catch list!
                         LOG.critical().$("internal error [ex=").$(e).$(']').$();
                         // This is a critical error, so we treat it as an unhandled one.
-                        metrics.health().incrementUnhandledErrors();
+                        metrics.healthMetrics().incrementUnhandledErrors();
                         dispatcher.disconnect(context, DISCONNECT_REASON_SERVER_ERROR);
                     }
                     return false;

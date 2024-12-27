@@ -63,7 +63,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             long start = TimestampFormatUtils.parseTimestamp("2020-02-03");
 
             Metrics metrics = engine.getMetrics();
-            int rowCount = (int) metrics.tableWriter().getPhysicallyWrittenRows();
+            int rowCount = (int) metrics.tableWriterMetrics().getPhysicallyWrittenRows();
 
             // create table with 800 points at 2020-02-03 sharp
             // and 200 points in at 2020-02-03T01
@@ -129,7 +129,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             // 4kb prefix split threshold
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 * (1 << 10));
             node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
-            int rowCount = (int) node1.getMetrics().tableWriter().getPhysicallyWrittenRows();
+            int rowCount = (int) node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
 
             execute(
                     "create table x as (" +
@@ -238,7 +238,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             Overrides overrides = node1.getConfigurationOverrides();
             overrides.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 1);
 
-            int rowCount = (int) node1.getMetrics().tableWriter().getPhysicallyWrittenRows();
+            int rowCount = (int) node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
             execute(
                     "create table x as (" +
                             "select" +
@@ -756,7 +756,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     private int assertRowCount(int delta, int rowCount) {
         Assert.assertEquals(delta, getPhysicalRowsSinceLastCommit());
         rowCount += delta;
-        Assert.assertEquals(rowCount, node1.getMetrics().tableWriter().getPhysicallyWrittenRows());
+        Assert.assertEquals(rowCount, node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows());
         return rowCount;
     }
 
