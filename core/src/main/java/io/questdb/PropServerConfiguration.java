@@ -62,6 +62,7 @@ import io.questdb.cutlass.text.types.InputFormatConfiguration;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetVersion;
 import io.questdb.log.Log;
+import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.EpollFacade;
@@ -3435,6 +3436,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public LongGauge getConnectionCountGauge() {
+            return metrics.jsonQuery().connectionCountGauge();
+        }
+
+        @Override
         public String getDispatcherLogName() {
             return "http-min-server";
         }
@@ -3596,6 +3602,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     public class PropHttpServerConfiguration implements HttpFullFatServerConfiguration {
+
         @Override
         public int getBindIPv4Address() {
             return httpNetBindIPv4Address;
@@ -3609,6 +3616,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public MillisecondClock getClock() {
             return MillisecondClockImpl.INSTANCE;
+        }
+
+        @Override
+        public LongGauge getConnectionCountGauge() {
+            return metrics.jsonQuery().connectionCountGauge();
         }
 
         @Override
@@ -4016,6 +4028,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public LongGauge getConnectionCountGauge() {
+            return metrics.line().connectionCountGauge();
+        }
+
+        @Override
         public int getConnectionPoolInitialCapacity() {
             return lineTcpConnectionPoolInitialCapacity;
         }
@@ -4364,7 +4381,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropPGWireConfiguration implements PGWireConfiguration {
-
         @Override
         public int getBinParamCountCapacity() {
             return pgBinaryParamsCapacity;
@@ -4398,6 +4414,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public MillisecondClock getClock() {
             return MillisecondClockImpl.INSTANCE;
+        }
+
+        @Override
+        public LongGauge getConnectionCountGauge() {
+            return metrics.pgWire().connectionCountGauge();
         }
 
         @Override

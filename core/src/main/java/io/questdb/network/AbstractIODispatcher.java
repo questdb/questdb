@@ -100,12 +100,11 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
 
     public AbstractIODispatcher(
             IODispatcherConfiguration configuration,
-            IOContextFactory<C> ioContextFactory,
-            LongGauge connectionCountGauge
+            IOContextFactory<C> ioContextFactory
     ) {
         this.LOG = LogFactory.getLog(configuration.getDispatcherLogName());
         this.configuration = configuration;
-        this.connectionCountGauge = connectionCountGauge;
+        this.connectionCountGauge = configuration.getConnectionCountGauge();
         this.nf = configuration.getNetworkFacade();
 
         this.testConnectionBufSize = configuration.getTestConnectionBufferSize();

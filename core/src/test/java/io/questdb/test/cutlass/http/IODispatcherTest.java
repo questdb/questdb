@@ -74,7 +74,6 @@ import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactor
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.metrics.NullLongGauge;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
@@ -270,8 +269,7 @@ public class IODispatcherTest extends AbstractTest {
                     (fd, dispatcher1) -> {
                         connectLatch.countDown();
                         return new HelloContext(fd, contextClosedLatch, dispatcher1);
-                    },
-                    NullLongGauge.INSTANCE
+                    }
             )) {
                 AtomicBoolean serverRunning = new AtomicBoolean(true);
                 SOCountDownLatch serverHaltLatch = new SOCountDownLatch(1);
@@ -389,8 +387,7 @@ public class IODispatcherTest extends AbstractTest {
                             return nf;
                         }
                     },
-                    (fd, dispatcher1) -> new HttpConnectionContext(serverConfiguration, PlainSocketFactory.INSTANCE).of(fd, dispatcher1),
-                    NullLongGauge.INSTANCE
+                    (fd, dispatcher1) -> new HttpConnectionContext(serverConfiguration, PlainSocketFactory.INSTANCE).of(fd, dispatcher1)
             )) {
                 // spin up dispatcher thread
                 AtomicBoolean dispatcherRunning = new AtomicBoolean(true);
@@ -474,8 +471,7 @@ public class IODispatcherTest extends AbstractTest {
                                 }
                             }.of(fd, dispatcher1);
                         }
-                    },
-                    NullLongGauge.INSTANCE
+                    }
             )) {
                 HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
                     @Override
@@ -5813,8 +5809,7 @@ public class IODispatcherTest extends AbstractTest {
                                 }
                             }.of(fd, dispatcher1);
                         }
-                    },
-                    NullLongGauge.INSTANCE
+                    }
             )) {
                 try (HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
                     @Override
@@ -6706,8 +6701,7 @@ public class IODispatcherTest extends AbstractTest {
                                 }
                             }.of(fd, dispatcher1);
                         }
-                    },
-                    NullLongGauge.INSTANCE
+                    }
             )) {
                 StringSink sink = new StringSink();
 
@@ -6879,8 +6873,7 @@ public class IODispatcherTest extends AbstractTest {
                                 }
                             }.of(fd, dispatcher1);
                         }
-                    },
-                    NullLongGauge.INSTANCE
+                    }
             )) {
                 StringSink sink = new StringSink();
 
@@ -7040,8 +7033,7 @@ public class IODispatcherTest extends AbstractTest {
                                 }
                             }.of(fd, dispatcher1);
                         }
-                    },
-                    NullLongGauge.INSTANCE
+                    }
             )) {
                 StringSink sink = new StringSink();
 
@@ -8121,8 +8113,7 @@ public class IODispatcherTest extends AbstractTest {
                                     return true;
                                 }
                             },
-                            (fd, dispatcher1) -> new HttpConnectionContext(httpServerConfiguration, PlainSocketFactory.INSTANCE).of(fd, dispatcher1),
-                            NullLongGauge.INSTANCE
+                            (fd, dispatcher1) -> new HttpConnectionContext(httpServerConfiguration, PlainSocketFactory.INSTANCE).of(fd, dispatcher1)
                     );
                     final RingQueue<Status> queue = new RingQueue<>(Status::new, 1024)
             ) {
@@ -9636,7 +9627,7 @@ public class IODispatcherTest extends AbstractTest {
             Thread serverThread;
             long sockAddr = 0;
             final CountDownLatch serverLatch = new CountDownLatch(1);
-            try (IODispatcher<TestIOContext> dispatcher = IODispatchers.create(configuration, contextFactory, NullLongGauge.INSTANCE)) {
+            try (IODispatcher<TestIOContext> dispatcher = IODispatchers.create(configuration, contextFactory)) {
                 final int resolvedPort = dispatcher.getPort();
                 sockAddr = Net.sockaddr("127.0.0.1", resolvedPort);
                 serverThread = new Thread("test-io-dispatcher") {

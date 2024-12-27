@@ -26,7 +26,6 @@ package io.questdb.test.cutlass;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.metrics.NullLongGauge;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IOContext;
 import io.questdb.network.IODispatcher;
@@ -93,8 +92,7 @@ public class IODispatcherHeartbeatTest {
                     (fd, d) -> {
                         connected.incrementAndGet();
                         return new TestContext(fd, d, heartbeatInterval);
-                    },
-                    NullLongGauge.INSTANCE
+                    }
             )) {
                 IORequestProcessor<TestContext> processor = new TestProcessor(clock);
                 Rnd rnd = new Rnd();
@@ -126,7 +124,7 @@ public class IODispatcherHeartbeatTest {
                             Assert.assertEquals(1, Net.send(fds[idx], buf, 1));
                         }
                         dispatcher.run(0);
-                        while (dispatcher.processIOQueue(processor)) ;
+                        dispatcher.drainIOQueue(processor);
                     }
                 } finally {
                     Unsafe.free(buf, 1, MemoryTag.NATIVE_DEFAULT);
@@ -173,8 +171,7 @@ public class IODispatcherHeartbeatTest {
                     (fd, d) -> {
                         connected.incrementAndGet();
                         return new TestContext(fd, d, heartbeatInterval);
-                    },
-                    NullLongGauge.INSTANCE
+                    }
             )) {
                 IORequestProcessor<TestContext> processor = new TestProcessor(clock);
                 long buf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
@@ -199,7 +196,7 @@ public class IODispatcherHeartbeatTest {
                     for (int i = 0; i < tickCount; i++) {
                         clock.setCurrent(i);
                         dispatcher.run(0);
-                        while (dispatcher.processIOQueue(processor)) ;
+                        dispatcher.drainIOQueue(processor);
                     }
 
                     TestUtils.assertEventually(() -> {
@@ -248,8 +245,7 @@ public class IODispatcherHeartbeatTest {
                     (fd, d) -> {
                         connected.incrementAndGet();
                         return new TestContext(fd, d, heartbeatInterval);
-                    },
-                    NullLongGauge.INSTANCE
+                    }
             )) {
                 SuspendEvent suspendEvent = SuspendEventFactory.newInstance(ioDispatcherConfig);
                 suspendEvent.setDeadline(suspendEventDeadline);
@@ -276,7 +272,7 @@ public class IODispatcherHeartbeatTest {
                     for (int i = 0; i < tickCount; i++) {
                         clock.setCurrent(i);
                         dispatcher.run(0);
-                        while (dispatcher.processIOQueue(processor)) ;
+                        dispatcher.drainIOQueue(processor);
                     }
 
                     TestUtils.assertEventually(() -> {
@@ -319,8 +315,7 @@ public class IODispatcherHeartbeatTest {
                     (fd, d) -> {
                         connected.incrementAndGet();
                         return new TestContext(fd, d, heartbeatInterval);
-                    },
-                    NullLongGauge.INSTANCE
+                    }
             )) {
                 SuspendEvent suspendEvent = SuspendEventFactory.newInstance(ioDispatcherConfig);
                 IORequestProcessor<TestContext> processor = new SuspendingTestProcessor(clock, suspendEvent);
@@ -347,7 +342,7 @@ public class IODispatcherHeartbeatTest {
                     for (; tick.get() < tickCount; tick.incrementAndGet()) {
                         clock.setCurrent(tick.get());
                         dispatcher.run(0);
-                        while (dispatcher.processIOQueue(processor)) ;
+                        dispatcher.drainIOQueue(processor);
                     }
 
                     // Trigger the event and wait until the dispatcher handles it.
@@ -355,7 +350,7 @@ public class IODispatcherHeartbeatTest {
                     TestUtils.assertEventually(() -> {
                         clock.setCurrent(tick.incrementAndGet());
                         dispatcher.run(0);
-                        while (dispatcher.processIOQueue(processor)) ;
+                        dispatcher.drainIOQueue(processor);
                         Assert.assertTrue(suspendEvent.isClosedByAtLeastOneSide());
                     }, 10);
                 } finally {
@@ -401,8 +396,7 @@ public class IODispatcherHeartbeatTest {
                     (fd, d) -> {
                         connected.incrementAndGet();
                         return new TestContext(fd, d, heartbeatInterval);
-                    },
-                    NullLongGauge.INSTANCE
+                    }
             )) {
                 SuspendEvent suspendEvent = SuspendEventFactory.newInstance(ioDispatcherConfig);
                 IORequestProcessor<TestContext> processor = new SuspendingTestProcessor(clock, suspendEvent);
@@ -428,7 +422,7 @@ public class IODispatcherHeartbeatTest {
                     for (int i = 0; i < tickCount; i++) {
                         clock.setCurrent(i);
                         dispatcher.run(0);
-                        while (dispatcher.processIOQueue(processor)) ;
+                        dispatcher.drainIOQueue(processor);
                     }
 
                     TestUtils.assertEventually(() -> {

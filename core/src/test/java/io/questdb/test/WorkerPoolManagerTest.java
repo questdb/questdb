@@ -46,6 +46,7 @@ import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.util.concurrent.TimeUnit;
@@ -57,6 +58,11 @@ public class WorkerPoolManagerTest {
 
     private static final String END_MESSAGE = "run is over";
     private static final Metrics METRICS = Metrics.ENABLED;
+
+    @Before
+    public void setUp() throws Exception {
+        METRICS.clear();
+    }
 
     @Test
     public void testConstructor() {

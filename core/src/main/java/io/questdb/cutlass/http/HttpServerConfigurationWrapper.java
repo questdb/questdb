@@ -29,6 +29,7 @@ import io.questdb.Metrics;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
+import io.questdb.metrics.LongGauge;
 import io.questdb.network.EpollFacade;
 import io.questdb.network.KqueueFacade;
 import io.questdb.network.NetworkFacade;
@@ -59,6 +60,11 @@ public class HttpServerConfigurationWrapper implements HttpFullFatServerConfigur
     @Override
     public MillisecondClock getClock() {
         return getDelegate().getClock();
+    }
+
+    @Override
+    public LongGauge getConnectionCountGauge() {
+        return metrics.jsonQuery().connectionCountGauge();
     }
 
     @Override

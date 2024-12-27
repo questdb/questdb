@@ -27,6 +27,7 @@ package io.questdb.cutlass.pgwire;
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.metrics.LongGauge;
 import io.questdb.network.EpollFacade;
 import io.questdb.network.KqueueFacade;
 import io.questdb.network.NetworkFacade;
@@ -79,6 +80,11 @@ public class PGWireConfigurationWrapper implements PGWireConfiguration {
     @Override
     public MillisecondClock getClock() {
         return getDelegate().getClock();
+    }
+
+    @Override
+    public LongGauge getConnectionCountGauge() {
+        return metrics.pgWire().connectionCountGauge();
     }
 
     @Override

@@ -24,6 +24,7 @@
 
 package io.questdb.network;
 
+import io.questdb.metrics.LongGauge;
 import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -106,4 +107,6 @@ public interface IODispatcherConfiguration {
     int getTestConnectionBufferSize();
 
     long getTimeout();
+
+    LongGauge getConnectionCountGauge();
 }

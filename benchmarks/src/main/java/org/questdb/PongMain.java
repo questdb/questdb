@@ -27,7 +27,6 @@ package org.questdb;
 import io.questdb.Metrics;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.metrics.NullLongGauge;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
@@ -75,8 +74,7 @@ public class PongMain {
         // event loop that accepts connections and publishes network events to event queue
         final IODispatcher<PongConnectionContext> dispatcher = IODispatchers.create(
                 dispatcherConf,
-                new IOContextFactoryImpl<>(() -> new PongConnectionContext(PlainSocketFactory.INSTANCE, dispatcherConf.getNetworkFacade(), LOG), 8),
-                NullLongGauge.INSTANCE
+                new IOContextFactoryImpl<>(() -> new PongConnectionContext(PlainSocketFactory.INSTANCE, dispatcherConf.getNetworkFacade(), LOG), 8)
         );
         // event queue processor
         final PongRequestProcessor processor = new PongRequestProcessor();

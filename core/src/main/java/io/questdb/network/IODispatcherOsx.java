@@ -25,7 +25,6 @@
 package io.questdb.network;
 
 import io.questdb.KqueueAccessor;
-import io.questdb.metrics.LongGauge;
 import io.questdb.std.LongHashSet;
 import io.questdb.std.LongMatrix;
 import io.questdb.std.Misc;
@@ -46,10 +45,9 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
 
     public IODispatcherOsx(
             IODispatcherConfiguration configuration,
-            IOContextFactory<C> ioContextFactory,
-            LongGauge connectionCountGauge
+            IOContextFactory<C> ioContextFactory
     ) {
-        super(configuration, ioContextFactory, connectionCountGauge);
+        super(configuration, ioContextFactory);
         this.capacity = configuration.getEventCapacity();
         // bind socket
         try {

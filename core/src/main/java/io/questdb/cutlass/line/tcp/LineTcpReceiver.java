@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.IOContextFactoryImpl;
@@ -38,7 +37,6 @@ import java.io.Closeable;
 
 public class LineTcpReceiver implements Closeable {
     private final IODispatcher<LineTcpConnectionContext> dispatcher;
-    private final Metrics metrics;
     private LineTcpMeasurementScheduler scheduler;
 
     public LineTcpReceiver(
@@ -49,7 +47,6 @@ public class LineTcpReceiver implements Closeable {
     ) {
         try {
             this.scheduler = null;
-            this.metrics = engine.getMetrics();
             ObjectFactory<LineTcpConnectionContext> factory;
             factory = () -> new LineTcpConnectionContext(configuration, scheduler);
 
@@ -57,7 +54,7 @@ public class LineTcpReceiver implements Closeable {
                     factory,
                     configuration.getConnectionPoolInitialCapacity()
             );
-            this.dispatcher = IODispatchers.create(configuration, contextFactory, metrics.line().connectionCountGauge());
+            this.dispatcher = IODispatchers.create(configuration, contextFactory);
             ioWorkerPool.assign(dispatcher);
             this.scheduler = new LineTcpMeasurementScheduler(configuration, engine, ioWorkerPool, dispatcher, writerWorkerPool);
 

@@ -27,6 +27,7 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.cutlass.line.LineTcpTimestampAdapter;
+import io.questdb.metrics.LongGauge;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.EpollFacade;
 import io.questdb.network.KqueueFacade;
@@ -90,6 +91,11 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     @Override
     public double getCommitIntervalFraction() {
         return getDelegate().getCommitIntervalFraction();
+    }
+
+    @Override
+    public LongGauge getConnectionCountGauge() {
+        return metrics.line().connectionCountGauge();
     }
 
     @Override

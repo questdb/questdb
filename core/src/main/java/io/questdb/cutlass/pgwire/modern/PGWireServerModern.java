@@ -94,11 +94,7 @@ public class PGWireServerModern implements IPGWireServer {
                 executionContextObjectFactory,
                 typesAndSelectCache
         );
-        this.dispatcher = IODispatchers.create(
-                configuration,
-                contextFactory,
-                metrics.pgWire().connectionCountGauge()
-        );
+        this.dispatcher = IODispatchers.create(configuration, contextFactory);
         this.workerPool = workerPool;
         this.registry = registry;
 
