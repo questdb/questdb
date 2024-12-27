@@ -197,6 +197,9 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
 
                 assertReloadConfig(true);
 
+                // second reload should not reload (no changes)
+                assertReloadConfig(false);
+
                 try (TestHttpClient testHttpClient = new TestHttpClient()) {
                     testHttpClient.assertGet(
                             "/exec",
@@ -303,6 +306,9 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 // to avoid opening a PGWire connection;
                 // there is no reliable way to wait until the server listener is re-registered
                 serverMain.getEngine().getConfigReloader().reload();
+
+                // while configuration was reloaded, metrics must not be reset
+                Assert.assertEquals(2, metrics.pgWireMetrics().getBelowMaxConnectionCountCounter().getValue());
 
                 // we should be able to open two connections eventually
                 TestUtils.assertEventually(() -> {
