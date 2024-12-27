@@ -284,16 +284,6 @@ public class PGWireConfigurationWrapper implements PGWireConfiguration {
     }
 
     @Override
-    public int getSelectCacheBlockCount() {
-        return getDelegate().getSelectCacheBlockCount();
-    }
-
-    @Override
-    public int getSelectCacheRowCount() {
-        return getDelegate().getSelectCacheRowCount();
-    }
-
-    @Override
     public SelectFacade getSelectFacade() {
         return getDelegate().getSelectFacade();
     }

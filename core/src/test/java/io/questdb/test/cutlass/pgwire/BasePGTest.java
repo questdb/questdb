@@ -41,6 +41,8 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.ConcurrentCacheConfiguration;
+import io.questdb.std.DefaultConcurrentCacheConfiguration;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjectFactory;
@@ -493,6 +495,13 @@ public abstract class BasePGTest extends AbstractCairoTest {
             }
         };
 
+        final ConcurrentCacheConfiguration concurrentCacheConfiguration = new DefaultConcurrentCacheConfiguration() {
+            @Override
+            public int getBlocks() {
+                return selectCacheBlockCount == -1 ? super.getBlocks() : selectCacheBlockCount;
+            }
+        };
+        
         final PGWireConfiguration conf = new Port0PGWireConfiguration(-1, legacyMode) {
 
             @Override
@@ -516,8 +525,8 @@ public abstract class BasePGTest extends AbstractCairoTest {
             }
 
             @Override
-            public int getSelectCacheBlockCount() {
-                return selectCacheBlockCount == -1 ? super.getSelectCacheBlockCount() : selectCacheBlockCount;
+            public ConcurrentCacheConfiguration getConcurrentCacheConfiguration() {
+                return concurrentCacheConfiguration;
             }
 
             @Override

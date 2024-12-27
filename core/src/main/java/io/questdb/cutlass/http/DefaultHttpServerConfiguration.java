@@ -132,16 +132,6 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
     }
 
     @Override
-    public int getQueryCacheBlockCount() {
-        return 2;
-    }
-
-    @Override
-    public int getQueryCacheRowCount() {
-        return 8;
-    }
-
-    @Override
     public byte getRequiredAuthType() {
         return SecurityContext.AUTH_TYPE_NONE;
     }

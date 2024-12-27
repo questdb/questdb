@@ -189,16 +189,6 @@ public class HttpServerConfigurationWrapper implements HttpFullFatServerConfigur
     }
 
     @Override
-    public int getQueryCacheBlockCount() {
-        return getDelegate().getQueryCacheBlockCount();
-    }
-
-    @Override
-    public int getQueryCacheRowCount() {
-        return getDelegate().getQueryCacheRowCount();
-    }
-
-    @Override
     public long getQueueTimeout() {
         return getDelegate().getQueueTimeout();
     }

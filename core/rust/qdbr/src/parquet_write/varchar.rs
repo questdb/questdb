@@ -78,7 +78,7 @@ pub fn varchar_to_page(
                 let entry: &AuxEntrySplit = unsafe { mem::transmute(entry) };
                 let header = entry.header;
                 let size = (header >> HEADER_FLAGS_WIDTH) as usize;
-                let offset = entry.offset_lo as usize | (entry.offset_hi as usize) << 16;
+                let offset = entry.offset_lo as usize | ((entry.offset_hi as usize) << 16);
                 assert!(
                     offset + size <= data.len(),
                     "Data corruption in VARCHAR column"

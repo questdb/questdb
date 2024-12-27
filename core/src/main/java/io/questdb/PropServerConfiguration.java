@@ -3745,16 +3745,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getQueryCacheBlockCount() {
-            return httpSqlCacheBlockCount;
-        }
-
-        @Override
-        public int getQueryCacheRowCount() {
-            return httpSqlCacheRowCount;
-        }
-
-        @Override
         public long getQueueTimeout() {
             return httpNetConnectionQueueTimeout;
         }
@@ -4637,16 +4627,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getRecvBufferSize() {
             return pgRecvBufferSize;
-        }
-
-        @Override
-        public int getSelectCacheBlockCount() {
-            return pgSelectCacheBlockCount;
-        }
-
-        @Override
-        public int getSelectCacheRowCount() {
-            return pgSelectCacheRowCount;
         }
 
         @Override

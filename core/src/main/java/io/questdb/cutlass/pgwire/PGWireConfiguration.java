@@ -83,10 +83,6 @@ public interface PGWireConfiguration extends IODispatcherConfiguration, WorkerPo
 
     String getReadOnlyUsername();
 
-    int getSelectCacheBlockCount();
-
-    int getSelectCacheRowCount();
-
     String getServerVersion();
 
     int getUpdateCacheBlockCount();

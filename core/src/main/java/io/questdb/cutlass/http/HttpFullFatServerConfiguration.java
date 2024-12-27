@@ -40,10 +40,6 @@ public interface HttpFullFatServerConfiguration extends HttpServerConfiguration 
 
     String getPassword();
 
-    int getQueryCacheBlockCount();
-
-    int getQueryCacheRowCount();
-
     StaticContentProcessorConfiguration getStaticContentProcessorConfiguration();
 
     String getUsername();

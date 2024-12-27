@@ -164,16 +164,6 @@ public class DefaultPGWireConfiguration extends DefaultIODispatcherConfiguration
     }
 
     @Override
-    public int getSelectCacheBlockCount() {
-        return 2;
-    }
-
-    @Override
-    public int getSelectCacheRowCount() {
-        return 8;
-    }
-
-    @Override
     public int getSendBufferSize() {
         return 1024 * 1024;
     }
