@@ -70,5 +70,7 @@ public interface WorkerPoolConfiguration {
         return Thread.NORM_PRIORITY;
     }
 
-    Metrics getMetrics();
+    default Metrics getMetrics() {
+        return Metrics.ENABLED;
+    }
 }

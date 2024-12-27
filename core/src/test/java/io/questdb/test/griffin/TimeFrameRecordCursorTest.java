@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.sql.Record;
@@ -32,7 +31,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.Rows;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -483,17 +481,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                     return 1000;
                 }
             };
-            WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public Metrics getMetrics() {
-                    return configuration.getMetrics();
-                }
-
-                @Override
-                public int getWorkerCount() {
-                    return 2;
-                }
-            });
+            WorkerPool pool = new WorkerPool(() -> 2);
             TestUtils.execute(pool, runnable, configuration, LOG);
         });
     }

@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin.engine.groupby;
 
-import io.questdb.Metrics;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
@@ -51,7 +50,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
@@ -13132,17 +13130,7 @@ public class SampleByTest extends AbstractCairoTest {
         final int threadCount = 4;
         final int workerCount = 2;
 
-        WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
-            @Override
-            public Metrics getMetrics() {
-                return configuration.getMetrics();
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return workerCount;
-            }
-        });
+        WorkerPool pool = new WorkerPool(() -> workerCount);
         assertMemoryLeak(() -> TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {

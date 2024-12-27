@@ -26,7 +26,6 @@ package io.questdb.cutlass.http;
 
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
-import io.questdb.Metrics;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
@@ -120,11 +119,6 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
     @Override
     public LineHttpProcessorConfiguration getLineHttpProcessorConfiguration() {
         return lineHttpProcessorConfiguration;
-    }
-
-    @Override
-    public Metrics getMetrics() {
-        return Metrics.ENABLED;
     }
 
     @Override

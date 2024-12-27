@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.Metrics;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
@@ -2011,11 +2010,6 @@ public class AggregateTest extends AbstractCairoTest {
                 };
 
                 WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
-                    @Override
-                    public Metrics getMetrics() {
-                        return configuration1.getMetrics();
-                    }
-
                     @Override
                     public long getSleepTimeout() {
                         return 1;

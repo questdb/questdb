@@ -26,7 +26,6 @@ package io.questdb.test;
 
 import io.questdb.DefaultServerConfiguration;
 import io.questdb.FactoryProvider;
-import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
@@ -194,52 +193,10 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
                 return TestUtils.getCsvRoot();
             }
         };
-        this.confWalApplyPool = new WorkerPoolConfiguration() {
-            @Override
-            public Metrics getMetrics() {
-                return cairoConfiguration.getMetrics();
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return 0;
-            }
-        };
-        this.confSharedPool = new WorkerPoolConfiguration() {
-            @Override
-            public Metrics getMetrics() {
-                return cairoConfiguration.getMetrics();
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return workerCountShared;
-            }
-        };
-
-        this.confLineTcpIOPool = new WorkerPoolConfiguration() {
-            @Override
-            public Metrics getMetrics() {
-                return cairoConfiguration.getMetrics();
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return workerCountLineTcpIO;
-            }
-        };
-
-        this.confLineTcpWriterPool = new WorkerPoolConfiguration() {
-            @Override
-            public Metrics getMetrics() {
-                return cairoConfiguration.getMetrics();
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return workerCountLineTcpWriter;
-            }
-        };
+        this.confWalApplyPool = () -> 0;
+        this.confSharedPool = () -> workerCountShared;
+        this.confLineTcpIOPool = () -> workerCountLineTcpIO;
+        this.confLineTcpWriterPool = () -> workerCountLineTcpWriter;
     }
 
     @Override

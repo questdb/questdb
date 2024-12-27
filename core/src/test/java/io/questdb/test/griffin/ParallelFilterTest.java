@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.Metrics;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SqlJitMode;
@@ -40,7 +39,6 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.jit.JitUtil;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -228,17 +226,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
     @Test
     public void testEarlyCursorClose() throws Exception {
         // This scenario used to lead to an NPE on `circuitBreaker.cancelledFlag` access in PageFrameReduceJob.
-        WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
-            @Override
-            public Metrics getMetrics() {
-                return configuration.getMetrics();
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return 4;
-            }
-        });
+        WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
@@ -275,17 +263,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
         final int threadCount = 4;
         final int workerCount = 4;
 
-        WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
-            @Override
-            public Metrics getMetrics() {
-                return configuration.getMetrics();
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return workerCount;
-            }
-        });
+        WorkerPool pool = new WorkerPool(() -> workerCount);
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
@@ -718,17 +696,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     private void testAsyncSubQueryWithFilter(String query) throws Exception {
-        WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
-            @Override
-            public Metrics getMetrics() {
-                return configuration.getMetrics();
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return 4;
-            }
-        });
+        WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
@@ -765,17 +733,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     private void testAsyncTimestampSubQueryWithFilter(String query, String expected) throws Exception {
-        WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
-            @Override
-            public Metrics getMetrics() {
-                return configuration.getMetrics();
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return 4;
-            }
-        });
+        WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
@@ -805,17 +763,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
     private void testIn(int jitMode) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
 
-        WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
-            @Override
-            public Metrics getMetrics() {
-                return configuration.getMetrics();
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return 4;
-            }
-        });
+        WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
@@ -855,17 +803,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
     private void testInAndInTimestamp(int jitMode) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
 
-        WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
-            @Override
-            public Metrics getMetrics() {
-                return configuration.getMetrics();
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return 4;
-            }
-        });
+        WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
@@ -912,17 +850,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
     private void testInTimestamp(int jitMode) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
 
-        WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
-            @Override
-            public Metrics getMetrics() {
-                return configuration.getMetrics();
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return 4;
-            }
-        });
+        WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
@@ -965,17 +893,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
         Assume.assumeFalse(convertToParquet);
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
 
-        WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
-            @Override
-            public Metrics getMetrics() {
-                return configuration.getMetrics();
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return workerCount;
-            }
-        });
+        WorkerPool pool = new WorkerPool(() -> workerCount);
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
@@ -1031,17 +949,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
         Assume.assumeFalse(convertToParquet);
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
 
-        WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
-            @Override
-            public Metrics getMetrics() {
-                return configuration.getMetrics();
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return workerCount;
-            }
-        });
+        WorkerPool pool = new WorkerPool(() -> workerCount);
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
@@ -1096,17 +1004,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
     private void testStrBindVariable(String columnType, int jitMode) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
 
-        WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
-            @Override
-            public Metrics getMetrics() {
-                return configuration.getMetrics();
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return 4;
-            }
-        });
+        WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {

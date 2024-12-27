@@ -43,10 +43,6 @@ import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 
 public class DefaultLineTcpReceiverConfiguration extends DefaultIODispatcherConfiguration implements LineTcpReceiverConfiguration {
     private static final WorkerPoolConfiguration SHARED_CONFIGURATION = new WorkerPoolConfiguration() {
-        @Override
-        public Metrics getMetrics() {
-            return Metrics.ENABLED;
-        }
 
         @Override
         public String getPoolName() {

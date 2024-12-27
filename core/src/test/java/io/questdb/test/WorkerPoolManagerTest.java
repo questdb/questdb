@@ -57,11 +57,10 @@ import java.util.function.Consumer;
 public class WorkerPoolManagerTest {
 
     private static final String END_MESSAGE = "run is over";
-    private static final Metrics METRICS = Metrics.ENABLED;
 
     @Before
     public void setUp() throws Exception {
-        METRICS.clear();
+        Metrics.ENABLED.clear();
     }
 
     @Test
@@ -80,11 +79,6 @@ public class WorkerPoolManagerTest {
         final String poolName = "pool";
         final WorkerPoolManager workerPoolManager = createWorkerPoolManager(workerCount);
         WorkerPool workerPool = workerPoolManager.getInstance(new WorkerPoolConfiguration() {
-            @Override
-            public Metrics getMetrics() {
-                return METRICS;
-            }
-
             @Override
             public String getPoolName() {
                 return poolName;
@@ -106,11 +100,6 @@ public class WorkerPoolManagerTest {
         final String poolName = "pool";
         final WorkerPoolManager workerPoolManager = createWorkerPoolManager(workerCount);
         final WorkerPoolConfiguration workerPoolConfiguration = new WorkerPoolConfiguration() {
-            @Override
-            public Metrics getMetrics() {
-                return METRICS;
-            }
-
             @Override
             public String getPoolName() {
                 return poolName;
@@ -137,11 +126,6 @@ public class WorkerPoolManagerTest {
         final WorkerPoolManager workerPoolManager = createWorkerPoolManager(workerCount);
         WorkerPool workerPool = workerPoolManager.getInstance(new WorkerPoolConfiguration() {
             @Override
-            public Metrics getMetrics() {
-                return METRICS;
-            }
-
-            @Override
             public String getPoolName() {
                 return "pool";
             }
@@ -162,11 +146,6 @@ public class WorkerPoolManagerTest {
         workerPoolManager.start(null);
         try {
             workerPoolManager.getInstance(new WorkerPoolConfiguration() {
-                @Override
-                public Metrics getMetrics() {
-                    return METRICS;
-                }
-
                 @Override
                 public String getPoolName() {
                     return null;
@@ -216,7 +195,7 @@ public class WorkerPoolManagerTest {
         workerPoolManager.halt();
 
         Assert.assertEquals(0, endLatch.getCount());
-        WorkerMetrics metrics = METRICS.worker();
+        WorkerMetrics metrics = Metrics.ENABLED.worker();
         long min = metrics.getMinElapsedMicros();
         long max = metrics.getMaxElapsedMicros();
         Assert.assertTrue(min > 0L);
@@ -274,7 +253,7 @@ public class WorkerPoolManagerTest {
 
             @Override
             public Metrics getMetrics() {
-                return METRICS;
+                return Metrics.ENABLED;
             }
 
             @Override
@@ -299,17 +278,7 @@ public class WorkerPoolManagerTest {
 
             @Override
             public WorkerPoolConfiguration getWorkerPoolConfiguration() {
-                return new WorkerPoolConfiguration() {
-                    @Override
-                    public Metrics getMetrics() {
-                        return METRICS;
-                    }
-
-                    @Override
-                    public int getWorkerCount() {
-                        return workerCount;
-                    }
-                };
+                return () -> workerCount;
             }
         };
     }
@@ -343,7 +312,7 @@ public class WorkerPoolManagerTest {
         return (workerId, runStatus) -> {
             final DirectUtf8Sink s = sink.get();
             s.clear();
-            METRICS.scrapeIntoPrometheus(s);
+            Metrics.ENABLED.scrapeIntoPrometheus(s);
             return false; // not eager
         };
     }
@@ -357,11 +326,6 @@ public class WorkerPoolManagerTest {
 
     private static WorkerPoolConfiguration workerPoolConfiguration(String poolName, long sleepMillis) {
         return new WorkerPoolConfiguration() {
-            @Override
-            public Metrics getMetrics() {
-                return METRICS;
-            }
-
             @Override
             public String getPoolName() {
                 return poolName;

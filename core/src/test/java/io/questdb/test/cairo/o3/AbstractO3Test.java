@@ -43,7 +43,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Rnd;
@@ -359,17 +358,7 @@ public class AbstractO3Test extends AbstractTest {
                         return mixedIOEnabledFFDefault && mixedIOEnabled;
                     }
                 };
-                WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
-                    @Override
-                    public Metrics getMetrics() {
-                        return configuration.getMetrics();
-                    }
-
-                    @Override
-                    public int getWorkerCount() {
-                        return workerCount;
-                    }
-                });
+                WorkerPool pool = new WorkerPool(() -> workerCount);
                 TestUtils.execute(pool, runnable, configuration, LOG);
             } else {
                 // we need to create entire engine

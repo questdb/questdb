@@ -24,17 +24,11 @@
 
 package io.questdb.cairo.wal;
 
-import io.questdb.Metrics;
 import io.questdb.mp.WorkerPoolConfiguration;
 
 public class DefaultWalApplyWorkerPoolConfiguration implements WorkerPoolConfiguration {
     @Override
     public int getWorkerCount() {
         return 2;
-    }
-
-    @Override
-    public Metrics getMetrics() {
-        return Metrics.ENABLED;
     }
 }
