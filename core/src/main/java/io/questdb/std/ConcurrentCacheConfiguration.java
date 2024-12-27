@@ -22,42 +22,19 @@
  *
  ******************************************************************************/
 
-package io.questdb.metrics;
+package io.questdb.std;
 
-import io.questdb.std.Mutable;
+import io.questdb.metrics.Counter;
+import io.questdb.metrics.LongGauge;
 
-public class WorkerMetrics implements Mutable {
+public interface ConcurrentCacheConfiguration {
+    int getBlocks();
 
-    private final LongGauge max;
-    private final LongGauge min;
+    LongGauge getCachedGauge();
 
-    public WorkerMetrics(MetricsRegistry metricsRegistry) {
-        min = metricsRegistry.newLongGauge("workers_job_start_micros_min");
-        max = metricsRegistry.newLongGauge("workers_job_start_micros_max");
-        min.setValue(Long.MAX_VALUE);
-        max.setValue(Long.MIN_VALUE);
-    }
+    Counter getHiCounter();
 
-    @Override
-    public void clear() {
-        min.setValue(Long.MAX_VALUE);
-        max.setValue(Long.MIN_VALUE);
-    }
+    Counter getMissCounter();
 
-    public long getMaxElapsedMicros() {
-        return max.getValue();
-    }
-
-    public long getMinElapsedMicros() {
-        return min.getValue();
-    }
-
-    public void update(long candidateMin, long candidateMax) {
-        if (candidateMin < min.getValue()) {
-            min.setValue(candidateMin);
-        }
-        if (candidateMax > max.getValue()) {
-            max.setValue(candidateMax);
-        }
-    }
+    int getRows();
 }

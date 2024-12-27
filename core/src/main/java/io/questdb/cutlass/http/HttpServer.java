@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.Metrics;
 import io.questdb.ServerConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -101,15 +100,8 @@ public class HttpServer implements Closeable {
 
         if (configuration instanceof HttpFullFatServerConfiguration) {
             final HttpFullFatServerConfiguration serverConfiguration = (HttpFullFatServerConfiguration) configuration;
-            Metrics metrics = serverConfiguration.getHttpContextConfiguration().getMetrics();
             if (serverConfiguration.isQueryCacheEnabled()) {
-                this.selectCache = new ConcurrentAssociativeCache<>(
-                        serverConfiguration.getQueryCacheBlockCount(),
-                        serverConfiguration.getQueryCacheRowCount(),
-                        metrics.jsonQuery().cachedQueriesGauge(),
-                        metrics.jsonQuery().cacheHitCounter(),
-                        metrics.jsonQuery().cacheMissCounter()
-                );
+                this.selectCache = new ConcurrentAssociativeCache<>(serverConfiguration.getConcurrentCacheConfiguration());
             } else {
                 this.selectCache = NO_OP_CACHE;
             }

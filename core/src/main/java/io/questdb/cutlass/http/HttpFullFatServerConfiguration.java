@@ -27,9 +27,12 @@ package io.questdb.cutlass.http;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
+import io.questdb.std.ConcurrentCacheConfiguration;
 
 public interface HttpFullFatServerConfiguration extends HttpServerConfiguration {
     String DEFAULT_PROCESSOR_URL = "*";
+
+    ConcurrentCacheConfiguration getConcurrentCacheConfiguration();
 
     JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration();
 

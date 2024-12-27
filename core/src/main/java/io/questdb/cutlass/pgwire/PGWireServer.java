@@ -73,13 +73,7 @@ public class PGWireServer implements IPGWireServer {
     ) {
         this.metrics = engine.getMetrics();
         if (configuration.isSelectCacheEnabled()) {
-            this.typesAndSelectCache = new ConcurrentAssociativeCache<>(
-                    configuration.getSelectCacheBlockCount(),
-                    configuration.getSelectCacheRowCount(),
-                    metrics.pgWire().cachedSelectsGauge(),
-                    metrics.pgWire().selectCacheHitCounter(),
-                    metrics.pgWire().selectCacheMissCounter()
-            );
+            this.typesAndSelectCache = new ConcurrentAssociativeCache<>(configuration.getConcurrentCacheConfiguration());
         } else {
             this.typesAndSelectCache = NO_OP_CACHE;
         }

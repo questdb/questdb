@@ -34,6 +34,7 @@ import io.questdb.network.EpollFacade;
 import io.questdb.network.KqueueFacade;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.SelectFacade;
+import io.questdb.std.ConcurrentCacheConfiguration;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 import java.util.concurrent.atomic.AtomicReference;
@@ -60,6 +61,11 @@ public class HttpServerConfigurationWrapper implements HttpFullFatServerConfigur
     @Override
     public MillisecondClock getClock() {
         return getDelegate().getClock();
+    }
+
+    @Override
+    public ConcurrentCacheConfiguration getConcurrentCacheConfiguration() {
+        return getDelegate().getConcurrentCacheConfiguration();
     }
 
     @Override

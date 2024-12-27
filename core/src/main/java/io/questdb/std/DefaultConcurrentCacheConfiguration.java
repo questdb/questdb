@@ -22,42 +22,38 @@
  *
  ******************************************************************************/
 
-package io.questdb.metrics;
+package io.questdb.std;
 
-import io.questdb.std.Mutable;
+import io.questdb.metrics.Counter;
+import io.questdb.metrics.LongGauge;
+import io.questdb.metrics.NullCounter;
+import io.questdb.metrics.NullLongGauge;
 
-public class WorkerMetrics implements Mutable {
+public class DefaultConcurrentCacheConfiguration implements ConcurrentCacheConfiguration {
+    public static final ConcurrentCacheConfiguration DEFAULT = new DefaultConcurrentCacheConfiguration();
 
-    private final LongGauge max;
-    private final LongGauge min;
-
-    public WorkerMetrics(MetricsRegistry metricsRegistry) {
-        min = metricsRegistry.newLongGauge("workers_job_start_micros_min");
-        max = metricsRegistry.newLongGauge("workers_job_start_micros_max");
-        min.setValue(Long.MAX_VALUE);
-        max.setValue(Long.MIN_VALUE);
+    @Override
+    public int getBlocks() {
+        return 2;
     }
 
     @Override
-    public void clear() {
-        min.setValue(Long.MAX_VALUE);
-        max.setValue(Long.MIN_VALUE);
+    public LongGauge getCachedGauge() {
+        return NullLongGauge.INSTANCE;
     }
 
-    public long getMaxElapsedMicros() {
-        return max.getValue();
+    @Override
+    public Counter getHiCounter() {
+        return NullCounter.INSTANCE;
     }
 
-    public long getMinElapsedMicros() {
-        return min.getValue();
+    @Override
+    public Counter getMissCounter() {
+        return NullCounter.INSTANCE;
     }
 
-    public void update(long candidateMin, long candidateMax) {
-        if (candidateMin < min.getValue()) {
-            min.setValue(candidateMin);
-        }
-        if (candidateMax > max.getValue()) {
-            max.setValue(candidateMax);
-        }
+    @Override
+    public int getRows() {
+        return 8;
     }
 }
