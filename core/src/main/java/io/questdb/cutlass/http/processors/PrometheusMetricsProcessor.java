@@ -24,7 +24,11 @@
 
 package io.questdb.cutlass.http.processors;
 
-import io.questdb.cutlass.http.*;
+import io.questdb.cutlass.http.HttpChunkedResponse;
+import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.cutlass.http.HttpServerConfiguration;
+import io.questdb.cutlass.http.LocalValue;
 import io.questdb.metrics.Scrapable;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
@@ -43,7 +47,7 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor {
     private final RequestStatePool pool;
     private final byte requiredAuthType;
 
-    public PrometheusMetricsProcessor(Scrapable metrics, HttpMinServerConfiguration configuration, RequestStatePool pool) {
+    public PrometheusMetricsProcessor(Scrapable metrics, HttpServerConfiguration configuration, RequestStatePool pool) {
         this.metrics = metrics;
         this.requiredAuthType = configuration.getRequiredAuthType();
         this.pool = pool;

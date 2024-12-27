@@ -331,7 +331,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             CharSequence root,
             DdlListener ddlListener,
             DatabaseCheckpointStatus checkpointStatus,
-            Metrics metrics,
             CairoEngine cairoEngine
     ) {
         LOG.info().$("open '").utf8(tableToken.getTableName()).$('\'').$();
@@ -340,7 +339,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         this.checkpointStatus = checkpointStatus;
         this.frameFactory = new FrameFactory(configuration);
         this.mixedIOFlag = configuration.isWriterMixedIOEnabled();
-        this.metrics = metrics;
+        this.metrics = configuration.getMetrics();
         this.ownMessageBus = ownMessageBus;
         this.messageBus = ownMessageBus != null ? ownMessageBus : messageBus;
         this.lifecycleManager = lifecycleManager;
@@ -1736,7 +1735,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // find out if we are removing min partition
                 long nextMinTimestamp = minTimestamp;
                 if (timestamp == txWriter.getPartitionTimestampByIndex(0)) {
-                    nextMinTimestamp = readMinTimestamp(1);
+                    nextMinTimestamp = readMinTimestamp();
                 }
 
                 // all good, commit
@@ -1957,7 +1956,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (removedCount > 0) {
             if (txWriter.getPartitionCount() > 0) {
                 if (firstPartitionDropped) {
-                    minTimestamp = readMinTimestamp(1);
+                    minTimestamp = readMinTimestamp();
                     txWriter.setMinTimestamp(minTimestamp);
                 }
 
@@ -5127,7 +5126,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // find out if we are removing min partition
             long nextMinTimestamp = minTimestamp;
             if (timestamp == txWriter.getPartitionTimestampByIndex(0)) {
-                nextMinTimestamp = readMinTimestamp(1);
+                nextMinTimestamp = readMinTimestamp();
             }
 
             txWriter.beginPartitionSizeUpdate();
@@ -7006,13 +7005,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private long readMinTimestamp(int partitionIndex) {
+    private long readMinTimestamp() {
         other.of(path).trimTo(pathSize); // reset path to table root
-        final long timestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
-        final boolean isParquet = txWriter.isPartitionParquet(partitionIndex);
+        final long timestamp = txWriter.getPartitionTimestampByIndex(1);
+        final boolean isParquet = txWriter.isPartitionParquet(1);
         try {
             setStateForTimestamp(other, timestamp);
-            return isParquet ? readMinTimestampParquet(other, partitionIndex) : readMinTimestampNative(other, timestamp);
+            return isParquet ? readMinTimestampParquet(other, 1) : readMinTimestampNative(other, timestamp);
         } finally {
             other.trimTo(pathSize);
         }

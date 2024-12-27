@@ -30,8 +30,8 @@ import io.questdb.WorkerPoolManager;
 import io.questdb.WorkerPoolManager.Requester;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.http.HttpCookieHandler;
+import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpHeaderParserFactory;
-import io.questdb.cutlass.http.HttpMinServerConfiguration;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.HttpRequestProcessorFactory;
 import io.questdb.cutlass.http.HttpServer;
@@ -68,7 +68,7 @@ public class Services {
             CairoEngine cairoEngine,
             WorkerPoolManager workerPoolManager
     ) {
-        HttpServerConfiguration httpServerConfiguration = serverConfiguration.getHttpServerConfiguration();
+        HttpFullFatServerConfiguration httpServerConfiguration = serverConfiguration.getHttpServerConfiguration();
         if (!httpServerConfiguration.isEnabled()) {
             return null;
         }
@@ -91,7 +91,7 @@ public class Services {
             WorkerPool workerPool,
             int sharedWorkerCount
     ) {
-        final HttpServerConfiguration httpServerConfiguration = serverConfiguration.getHttpServerConfiguration();
+        final HttpFullFatServerConfiguration httpServerConfiguration = serverConfiguration.getHttpServerConfiguration();
         if (!httpServerConfiguration.isEnabled()) {
             return null;
         }
@@ -182,7 +182,7 @@ public class Services {
 
     @Nullable
     public HttpServer createMinHttpServer(
-            HttpMinServerConfiguration configuration,
+            HttpServerConfiguration configuration,
             WorkerPoolManager workerPoolManager
     ) {
         if (!configuration.isEnabled()) {
@@ -200,7 +200,7 @@ public class Services {
     }
 
     @Nullable
-    public HttpServer createMinHttpServer(HttpMinServerConfiguration configuration, WorkerPool workerPool) {
+    public HttpServer createMinHttpServer(HttpServerConfiguration configuration, WorkerPool workerPool) {
         if (!configuration.isEnabled()) {
             return null;
         }

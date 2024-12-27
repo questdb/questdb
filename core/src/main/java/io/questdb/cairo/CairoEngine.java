@@ -449,7 +449,6 @@ public class CairoEngine implements Closeable, WriterSource {
                 backupDirName,
                 getDdlListener(tableToken),
                 checkpointAgent,
-                Metrics.disabled(),
                 this
         );
     }

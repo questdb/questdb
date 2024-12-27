@@ -45,8 +45,8 @@ import io.questdb.std.str.BorrowableUtf8Sink;
 import org.jetbrains.annotations.NotNull;
 
 public class Metrics implements Scrapable, Mutable {
-    public static final Metrics DISABLED = Metrics.disabled();
-    public static final Metrics ENABLED = Metrics.enabled();
+    public static final Metrics DISABLED = new Metrics(false, new NullMetricsRegistry());
+    public static final Metrics ENABLED = new Metrics(true, new MetricsRegistryImpl());
     private final GCMetrics gcMetrics;
     private final HealthMetricsImpl healthCheck;
     private final JsonQueryMetrics jsonQuery;
@@ -74,14 +74,6 @@ public class Metrics implements Scrapable, Mutable {
         createMemoryGauges(metricsRegistry);
         this.metricsRegistry = metricsRegistry;
         this.workerMetrics = new WorkerMetrics(metricsRegistry);
-    }
-
-    public static Metrics disabled() {
-        return new Metrics(false, new NullMetricsRegistry());
-    }
-
-    public static Metrics enabled() {
-        return new Metrics(true, new MetricsRegistryImpl());
     }
 
     @Override

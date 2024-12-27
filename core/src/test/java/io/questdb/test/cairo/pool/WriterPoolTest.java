@@ -668,7 +668,6 @@ public class WriterPoolTest extends AbstractCairoTest {
                     engine.getConfiguration().getRoot(),
                     engine.getDdlListener(tableToken),
                     engine.getCheckpointStatus(),
-                    engine.getMetrics(),
                     engine
             );
             for (int i = 0; i < 100; i++) {

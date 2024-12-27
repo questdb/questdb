@@ -35,7 +35,7 @@ import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.http.HttpContextConfiguration;
-import io.questdb.cutlass.http.HttpMinServerConfiguration;
+import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.http.MimeTypesCache;
 import io.questdb.cutlass.http.WaitProcessorConfiguration;
@@ -464,8 +464,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long writerMiscAppendPageSize;
     private final boolean writerMixedIOEnabled;
     private final int writerTickRowsCountMod;
-    protected HttpMinServerConfiguration httpMinServerConfiguration = new PropHttpMinServerConfiguration();
-    protected HttpServerConfiguration httpServerConfiguration = new PropHttpServerConfiguration();
+    protected HttpServerConfiguration httpMinServerConfiguration = new PropHttpMinServerConfiguration();
+    protected HttpFullFatServerConfiguration httpServerConfiguration = new PropHttpServerConfiguration();
     protected JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new PropJsonQueryProcessorConfiguration();
     protected StaticContentProcessorConfiguration staticContentProcessorConfiguration;
     protected long walSegmentRolloverSize;
@@ -643,11 +643,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     ) throws ServerConfigurationException, JsonException {
         this.log = log;
         this.metricsEnabled = getBoolean(properties, env, PropertyKey.METRICS_ENABLED, false);
-        if (metricsEnabled) {
-            this.metrics = Metrics.enabled();
-        } else {
-            this.metrics = Metrics.DISABLED;
-        }
+        this.metrics = metricsEnabled ? Metrics.ENABLED : Metrics.DISABLED;
         this.logSqlQueryProgressExe = getBoolean(properties, env, PropertyKey.LOG_SQL_QUERY_PROGRESS_EXE, true);
         this.logLevelVerbose = getBoolean(properties, env, PropertyKey.LOG_LEVEL_VERBOSE, false);
         this.logTimestampTimezone = getString(properties, env, PropertyKey.LOG_TIMESTAMP_TIMEZONE, "UTC");
@@ -1561,12 +1557,12 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public HttpMinServerConfiguration getHttpMinServerConfiguration() {
+    public HttpServerConfiguration getHttpMinServerConfiguration() {
         return httpMinServerConfiguration;
     }
 
     @Override
-    public HttpServerConfiguration getHttpServerConfiguration() {
+    public HttpFullFatServerConfiguration getHttpServerConfiguration() {
         return httpServerConfiguration;
     }
 
@@ -3422,7 +3418,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    public class PropHttpMinServerConfiguration implements HttpMinServerConfiguration {
+    public class PropHttpMinServerConfiguration implements HttpServerConfiguration {
         @Override
         public int getBindIPv4Address() {
             return httpMinBindIPv4Address;
@@ -3599,7 +3595,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    public class PropHttpServerConfiguration implements HttpServerConfiguration {
+    public class PropHttpServerConfiguration implements HttpFullFatServerConfiguration {
         @Override
         public int getBindIPv4Address() {
             return httpNetBindIPv4Address;

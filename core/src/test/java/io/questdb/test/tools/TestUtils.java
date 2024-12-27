@@ -1410,7 +1410,6 @@ public final class TestUtils {
                 configuration.getRoot(),
                 DefaultDdlListener.INSTANCE,
                 () -> Numbers.LONG_NULL,
-                configuration.getMetrics(),
                 engine
         );
     }

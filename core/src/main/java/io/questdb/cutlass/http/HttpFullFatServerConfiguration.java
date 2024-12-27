@@ -24,21 +24,26 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.FactoryProvider;
-import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
+import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
+import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 
-public interface HttpMinServerConfiguration extends IODispatcherConfiguration, WorkerPoolConfiguration {
+public interface HttpFullFatServerConfiguration extends HttpServerConfiguration {
+    String DEFAULT_PROCESSOR_URL = "*";
 
-    FactoryProvider getFactoryProvider();
+    JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration();
 
-    HttpContextConfiguration getHttpContextConfiguration();
+    LineHttpProcessorConfiguration getLineHttpProcessorConfiguration();
 
-    byte getRequiredAuthType();
+    String getPassword();
 
-    WaitProcessorConfiguration getWaitProcessorConfiguration();
+    int getQueryCacheBlockCount();
 
-    boolean isPessimisticHealthCheckEnabled();
+    int getQueryCacheRowCount();
 
-    boolean preAllocateBuffers();
+    StaticContentProcessorConfiguration getStaticContentProcessorConfiguration();
+
+    String getUsername();
+
+    boolean isQueryCacheEnabled();
 }

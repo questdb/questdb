@@ -32,7 +32,7 @@ import io.questdb.PublicPassthroughConfiguration;
 import io.questdb.ServerConfiguration;
 import io.questdb.WorkerPoolManager;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cutlass.http.HttpMinServerConfiguration;
+import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
@@ -56,7 +56,7 @@ import java.util.function.Consumer;
 public class WorkerPoolManagerTest {
 
     private static final String END_MESSAGE = "run is over";
-    private static final Metrics METRICS = Metrics.enabled();
+    private static final Metrics METRICS = Metrics.ENABLED;
 
     @Test
     public void testConstructor() {
@@ -242,12 +242,12 @@ public class WorkerPoolManagerTest {
             }
 
             @Override
-            public HttpMinServerConfiguration getHttpMinServerConfiguration() {
+            public HttpServerConfiguration getHttpMinServerConfiguration() {
                 return null;
             }
 
             @Override
-            public HttpServerConfiguration getHttpServerConfiguration() {
+            public HttpFullFatServerConfiguration getHttpServerConfiguration() {
                 return null;
             }
 

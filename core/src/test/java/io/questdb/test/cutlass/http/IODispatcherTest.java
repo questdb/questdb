@@ -51,12 +51,12 @@ import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.DefaultHttpContextConfiguration;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.HttpRequestProcessorFactory;
 import io.questdb.cutlass.http.HttpRequestProcessorSelector;
 import io.questdb.cutlass.http.HttpServer;
-import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.http.RescheduleContext;
 import io.questdb.cutlass.http.processors.HealthCheckProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
@@ -362,7 +362,7 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testCannotSetNonBlocking() throws Exception {
         assertMemoryLeak(() -> {
-            final HttpServerConfiguration serverConfiguration = new DefaultHttpServerConfiguration();
+            final HttpFullFatServerConfiguration serverConfiguration = new DefaultHttpServerConfiguration();
             final NetworkFacade nf = new NetworkFacadeImpl() {
                 long theFd;
 
@@ -449,7 +449,7 @@ public class IODispatcherTest extends AbstractTest {
         LOG.info().$("started testConnectDisconnect").$();
 
         assertMemoryLeak(() -> {
-            HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
+            HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
 
             SOCountDownLatch connectLatch = new SOCountDownLatch(1);
             SOCountDownLatch contextClosedLatch = new SOCountDownLatch(1);
@@ -1141,7 +1141,7 @@ public class IODispatcherTest extends AbstractTest {
         final String expectedTableMetadata = "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"LONG256\"},{\"index\":1,\"name\":\"f1\",\"type\":\"CHAR\"}],\"timestampIndex\":-1}";
 
         final String baseDir = root;
-        final HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
+        final HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
             @Override
             public MillisecondClock getMillisecondClock() {
                 return StationaryMillisClock.INSTANCE;
@@ -1155,7 +1155,7 @@ public class IODispatcherTest extends AbstractTest {
 
         final ServerConfiguration serverConfiguration = new DefaultServerConfiguration(baseDir) {
             @Override
-            public HttpServerConfiguration getHttpServerConfiguration() {
+            public HttpFullFatServerConfiguration getHttpServerConfiguration() {
                 return httpServerConfiguration;
             }
         };
@@ -1221,7 +1221,7 @@ public class IODispatcherTest extends AbstractTest {
         final String expectedTableMetadata = "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"LONG256\"},{\"index\":1,\"name\":\"f1\",\"type\":\"CHAR\"}],\"timestampIndex\":-1}";
 
         final String baseDir = root;
-        final HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
+        final HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
             @Override
             public MillisecondClock getMillisecondClock() {
                 return StationaryMillisClock.INSTANCE;
@@ -1234,7 +1234,7 @@ public class IODispatcherTest extends AbstractTest {
         });
         final ServerConfiguration serverConfiguration = new DefaultServerConfiguration(baseDir) {
             @Override
-            public HttpServerConfiguration getHttpServerConfiguration() {
+            public HttpFullFatServerConfiguration getHttpServerConfiguration() {
                 return httpServerConfiguration;
             }
         };
@@ -2554,7 +2554,7 @@ public class IODispatcherTest extends AbstractTest {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                        return HttpFullFatServerConfiguration.DEFAULT_PROCESSOR_URL;
                     }
 
                     @Override
@@ -3167,7 +3167,7 @@ public class IODispatcherTest extends AbstractTest {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                        return HttpFullFatServerConfiguration.DEFAULT_PROCESSOR_URL;
                     }
 
                     @Override
@@ -5109,7 +5109,7 @@ public class IODispatcherTest extends AbstractTest {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                        return HttpFullFatServerConfiguration.DEFAULT_PROCESSOR_URL;
                     }
 
                     @Override
@@ -5346,7 +5346,7 @@ public class IODispatcherTest extends AbstractTest {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                        return HttpFullFatServerConfiguration.DEFAULT_PROCESSOR_URL;
                     }
 
                     @Override
@@ -5420,7 +5420,7 @@ public class IODispatcherTest extends AbstractTest {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                        return HttpFullFatServerConfiguration.DEFAULT_PROCESSOR_URL;
                     }
 
                     @Override
@@ -5511,7 +5511,7 @@ public class IODispatcherTest extends AbstractTest {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                        return HttpFullFatServerConfiguration.DEFAULT_PROCESSOR_URL;
                     }
 
                     @Override
@@ -5776,7 +5776,7 @@ public class IODispatcherTest extends AbstractTest {
     public void testMaxConnections() throws Exception {
         LOG.info().$("started maxConnections").$();
         assertMemoryLeak(() -> {
-            HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
+            HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
 
             // change to 400 to trigger lockup
             // excess connection take a while to return (because it's N TCP retransmissions + timeout under the hood
@@ -6251,7 +6251,7 @@ public class IODispatcherTest extends AbstractTest {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                        return HttpFullFatServerConfiguration.DEFAULT_PROCESSOR_URL;
                     }
 
                     @Override
@@ -6379,7 +6379,7 @@ public class IODispatcherTest extends AbstractTest {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                        return HttpFullFatServerConfiguration.DEFAULT_PROCESSOR_URL;
                     }
 
                     @Override
@@ -6529,7 +6529,7 @@ public class IODispatcherTest extends AbstractTest {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                        return HttpFullFatServerConfiguration.DEFAULT_PROCESSOR_URL;
                     }
 
                     @Override
@@ -6680,7 +6680,7 @@ public class IODispatcherTest extends AbstractTest {
                 "\r\n";
 
         assertMemoryLeak(() -> {
-            HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
+            HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
 
             SOCountDownLatch connectLatch = new SOCountDownLatch(1);
             SOCountDownLatch contextClosedLatch = new SOCountDownLatch(1);
@@ -6842,7 +6842,7 @@ public class IODispatcherTest extends AbstractTest {
                 "\r\n";
 
         assertMemoryLeak(() -> {
-            HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration(
+            HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration(
                     new DefaultHttpContextConfiguration() {
                         @Override
                         public MillisecondClock getMillisecondClock() {
@@ -7009,7 +7009,7 @@ public class IODispatcherTest extends AbstractTest {
                 "\r\n";
 
         assertMemoryLeak(() -> {
-            HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
+            HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
 
             SOCountDownLatch connectLatch = new SOCountDownLatch(1);
             SOCountDownLatch contextClosedLatch = new SOCountDownLatch(1);
@@ -8107,7 +8107,7 @@ public class IODispatcherTest extends AbstractTest {
         final int senderCount = 2;
 
         assertMemoryLeak(() -> {
-            HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
+            HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
 
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final AtomicInteger requestsReceived = new AtomicInteger();
@@ -8432,7 +8432,7 @@ public class IODispatcherTest extends AbstractTest {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                        return HttpFullFatServerConfiguration.DEFAULT_PROCESSOR_URL;
                     }
 
                     @Override

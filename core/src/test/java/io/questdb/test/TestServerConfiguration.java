@@ -32,7 +32,7 @@ import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.http.DefaultHttpContextConfiguration;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
-import io.questdb.cutlass.http.HttpMinServerConfiguration;
+import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.line.tcp.DefaultLineTcpReceiverConfiguration;
@@ -62,10 +62,40 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
 
     private final CairoConfiguration cairoConfiguration;
 
-    private final HttpMinServerConfiguration confHttpMin = new DefaultHttpServerConfiguration() {
+    private final HttpFullFatServerConfiguration confHttp = new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
+        @Override
+        public FactoryProvider getFactoryProvider() {
+            return factoryProvider;
+        }
+
+        @Override
+        public MillisecondClock getMillisecondClock() {
+            return StationaryMillisClock.INSTANCE;
+        }
+
+        @Override
+        public NanosecondClock getNanosecondClock() {
+            return StationaryNanosClock.INSTANCE;
+        }
+    }) {
+        @Override
+        public JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration() {
+            return new DefaultJsonQueryProcessorConfiguration() {
+                @Override
+                public FactoryProvider getFactoryProvider() {
+                    return factoryProvider;
+                }
+            };
+        }
+
+        @Override
+        public int getWorkerCount() {
+            return workerCountHttp;
+        }
+
         @Override
         public boolean isEnabled() {
-            return false;
+            return enableHttp;
         }
     };
     private final WorkerPoolConfiguration confLineTcpIOPool;
@@ -115,40 +145,10 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
     };
     private final WorkerPoolConfiguration confWalApplyPool;
     private final int workerCountHttp;
-    private final HttpServerConfiguration confHttp = new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
-        @Override
-        public FactoryProvider getFactoryProvider() {
-            return factoryProvider;
-        }
-
-        @Override
-        public MillisecondClock getMillisecondClock() {
-            return StationaryMillisClock.INSTANCE;
-        }
-
-        @Override
-        public NanosecondClock getNanosecondClock() {
-            return StationaryNanosClock.INSTANCE;
-        }
-    }) {
-        @Override
-        public JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration() {
-            return new DefaultJsonQueryProcessorConfiguration() {
-                @Override
-                public FactoryProvider getFactoryProvider() {
-                    return factoryProvider;
-                }
-            };
-        }
-
-        @Override
-        public int getWorkerCount() {
-            return workerCountHttp;
-        }
-
+    private final HttpServerConfiguration confHttpMin = new DefaultHttpServerConfiguration() {
         @Override
         public boolean isEnabled() {
-            return enableHttp;
+            return false;
         }
     };
 
@@ -253,12 +253,12 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
     }
 
     @Override
-    public HttpMinServerConfiguration getHttpMinServerConfiguration() {
+    public HttpServerConfiguration getHttpMinServerConfiguration() {
         return confHttpMin;
     }
 
     @Override
-    public HttpServerConfiguration getHttpServerConfiguration() {
+    public HttpFullFatServerConfiguration getHttpServerConfiguration() {
         return confHttp;
     }
 

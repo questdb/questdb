@@ -77,7 +77,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private static final Log LOG = LogFactory.getLog(HttpConnectionContext.class);
     private final HttpAuthenticator authenticator;
     private final ChunkedContentParser chunkedContentParser = new ChunkedContentParser();
-    private final HttpMinServerConfiguration configuration;
+    private final HttpServerConfiguration configuration;
     private final HttpCookieHandler cookieHandler;
     private final ObjectPool<DirectUtf8String> csPool;
     private final boolean dumpNetworkTraffic;
@@ -114,7 +114,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     @TestOnly
     public HttpConnectionContext(
-            HttpMinServerConfiguration configuration,
+            HttpServerConfiguration configuration,
             SocketFactory socketFactory
     ) {
         this(
@@ -127,7 +127,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     public HttpConnectionContext(
-            HttpMinServerConfiguration configuration,
+            HttpServerConfiguration configuration,
             SocketFactory socketFactory,
             HttpCookieHandler cookieHandler,
             HttpHeaderParserFactory headerParserFactory,

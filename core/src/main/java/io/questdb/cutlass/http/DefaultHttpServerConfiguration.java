@@ -44,7 +44,7 @@ import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import java.io.IOException;
 import java.io.InputStream;
 
-public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfiguration implements HttpServerConfiguration {
+public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfiguration implements HttpFullFatServerConfiguration {
     protected final MimeTypesCache mimeTypesCache;
     private final HttpContextConfiguration httpContextConfiguration;
     private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new DefaultJsonQueryProcessorConfiguration() {

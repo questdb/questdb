@@ -34,8 +34,8 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 
 import java.util.concurrent.atomic.AtomicReference;
 
-public class HttpMinServerConfigurationWrapper implements HttpMinServerConfiguration {
-    private final AtomicReference<HttpMinServerConfiguration> delegate = new AtomicReference<>();
+public class HttpMinServerConfigurationWrapper implements HttpServerConfiguration {
+    private final AtomicReference<HttpServerConfiguration> delegate = new AtomicReference<>();
     private final Metrics metrics;
 
     public HttpMinServerConfigurationWrapper(Metrics metrics) {
@@ -248,7 +248,7 @@ public class HttpMinServerConfigurationWrapper implements HttpMinServerConfigura
         return getDelegate().preAllocateBuffers();
     }
 
-    public void setDelegate(HttpMinServerConfiguration delegate) {
+    public void setDelegate(HttpServerConfiguration delegate) {
         this.delegate.set(delegate);
     }
 
@@ -257,7 +257,7 @@ public class HttpMinServerConfigurationWrapper implements HttpMinServerConfigura
         return getDelegate().workerPoolPriority();
     }
 
-    protected HttpMinServerConfiguration getDelegate() {
+    protected HttpServerConfiguration getDelegate() {
         return delegate.get();
     }
 }

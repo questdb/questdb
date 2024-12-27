@@ -40,8 +40,8 @@ import io.questdb.cutlass.auth.LineAuthenticatorFactory;
 import io.questdb.cutlass.http.DefaultHttpAuthenticatorFactory;
 import io.questdb.cutlass.http.HttpAuthenticatorFactory;
 import io.questdb.cutlass.http.HttpContextConfiguration;
+import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpServer;
-import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.http.StaticHttpAuthenticatorFactory;
 import io.questdb.cutlass.line.tcp.StaticChallengeResponseMatcher;
 import io.questdb.cutlass.pgwire.IPGWireServer;
@@ -134,7 +134,7 @@ public class ServerMain implements Closeable {
     }
 
     public static HttpAuthenticatorFactory getHttpAuthenticatorFactory(ServerConfiguration configuration) {
-        HttpServerConfiguration httpConfig = configuration.getHttpServerConfiguration();
+        HttpFullFatServerConfiguration httpConfig = configuration.getHttpServerConfiguration();
         String username = httpConfig.getUsername();
         if (Chars.empty(username)) {
             return DefaultHttpAuthenticatorFactory.INSTANCE;
