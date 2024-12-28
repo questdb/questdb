@@ -61,6 +61,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -163,12 +164,12 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumnCannotRenameMeta() throws Exception {
-        testAddColumnRecoverableFault(new MetaRenameDenyingFacade());
+        testAddColumnUnrecoverableFault(new MetaRenameDenyingFacade());
     }
 
     @Test
     public void testAddColumnCannotRenameMetaSwap() throws Exception {
-        testAddColumnRecoverableFault(new SwapMetaRenameDenyingFacade());
+        testAddColumnUnrecoverableFault(new SwapMetaRenameDenyingFacade());
     }
 
     @Test
@@ -183,7 +184,7 @@ public class TableWriterTest extends AbstractCairoTest {
                         : Files.FILES_RENAME_ERR_OTHER;
             }
         };
-        testAddColumnRecoverableFault(ff);
+        testAddColumnUnrecoverableFault(ff);
     }
 
     @Test
@@ -349,7 +350,7 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testAddColumnFileOpenFail() throws Exception {
         String abcColumnNamePattern = Files.SEPARATOR + "abc.d";
-        testAddColumnRecoverableFault(new TestFilesFacadeImpl() {
+        testAddColumnUnrecoverableFault(new TestFilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name, long opts) {
                 if (Utf8s.containsAscii(name, abcColumnNamePattern)) {
@@ -363,7 +364,7 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testAddColumnFileOpenFail2() throws Exception {
         String abcColumnNamePattern = Files.SEPARATOR + "abc.k";
-        testAddColumnRecoverableFault(new TestFilesFacadeImpl() {
+        testAddColumnUnrecoverableFault(new TestFilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name, long opts) {
                 if (Utf8s.containsAscii(name, abcColumnNamePattern)) {
@@ -399,7 +400,7 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testAddColumnFileOpenFail4() throws Exception {
         String abcColumnNamePattern = Files.SEPARATOR + "abc.d";
-        testAddColumnRecoverableFault(new TestFilesFacadeImpl() {
+        testAddColumnUnrecoverableFault(new TestFilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name, long opts) {
                 if (Utf8s.containsAscii(name, abcColumnNamePattern)) {
@@ -477,11 +478,15 @@ public class TableWriterTest extends AbstractCairoTest {
             int counter = 2;
 
             @Override
-            public long openRO(LPSZ name) {
+            public long openRW(LPSZ name, long opts) {
+                if (Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME)) {
+                    counter = 1;
+                    return -1;
+                }
                 if (Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME) && --counter == 0) {
                     return -1;
                 }
-                return super.openRO(name);
+                return super.openRW(name, opts);
             }
         });
     }
@@ -522,11 +527,17 @@ public class TableWriterTest extends AbstractCairoTest {
             int counter = 2;
 
             @Override
-            public long openRO(LPSZ name) {
+            public long openRW(LPSZ name, long opts) {
+                // Cannot write to _meta.swp
+                if (Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME)) {
+                    counter = 1;
+                    return -1;
+                }
+                // And cannot open _meta file to re-read unmodified metadata once.
                 if (Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME) && --counter == 0) {
                     return -1;
                 }
-                return super.openRO(name);
+                return super.openRW(name, opts);
             }
 
             @Override
@@ -540,20 +551,20 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testAddColumnRepairFail2() throws Exception {
         class X extends FilesFacadeImpl {
-            int counter = 2;
-
-            @Override
-            public long openRO(LPSZ name) {
-                if (Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME) && --counter == 0) {
-                    return -1;
-                }
-                return super.openRO(name);
-            }
+            int counter = 1;
 
             @Override
             public int rename(LPSZ from, LPSZ to) {
-                return !Utf8s.endsWithAscii(from, TableUtils.META_PREV_FILE_NAME)
-                        && super.rename(from, to) == Files.FILES_RENAME_OK ? Files.FILES_RENAME_OK : Files.FILES_RENAME_ERR_OTHER;
+                // DDL fails because we can't rename _meta.swp to _meta
+                if (Utf8s.containsAscii(from, TableUtils.META_SWAP_FILE_NAME)) {
+                    return -1;
+                }
+                // Also we can't rename _meta.prev to _meta once so that writer become distressed
+                if (Utf8s.containsAscii(from, TableUtils.META_PREV_FILE_NAME) && --counter == 0) {
+                    return -1;
+                }
+                // But rollback from meta.prev to _meta is ok
+                return super.rename(from, to);
             }
         }
         testAddColumnErrorFollowedByRepairFail(new X());
@@ -602,7 +613,7 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testAddColumnSwpFileDeleteFail() throws Exception {
         // simulate existence of _meta.swp
-        testAddColumnRecoverableFault(new TestFilesFacadeImpl() {
+        testAddColumnUnrecoverableFault(new TestFilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ path) {
                 return Utf8s.containsAscii(path, TableUtils.META_SWAP_FILE_NAME) || super.exists(path);
@@ -1940,11 +1951,11 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testMetaFileDoesNotExist() throws Exception {
         testConstructor(new TestFilesFacadeImpl() {
             @Override
-            public long openRO(LPSZ name) {
+            public long openRW(LPSZ name, long opts) {
                 if (Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME)) {
                     return -1;
                 }
-                return super.openRO(name);
+                return super.openRW(name, opts);
             }
         });
     }
@@ -3647,17 +3658,13 @@ public class TableWriterTest extends AbstractCairoTest {
                 }
             }
 
-            try {
-                newOffPoolWriter(configuration, PRODUCT, metrics).close();
-                Assert.fail();
-            } catch (CairoException ignore) {
-            }
+            newOffPoolWriter(configuration, PRODUCT, metrics).close();
 
             appendAndAssert10K(ts, rnd);
         });
     }
 
-    private void testAddColumnRecoverableFault(FilesFacade ff) throws Exception {
+    private void testAddColumnUnrecoverableFault(FilesFacade ff) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             long ts = populateTable();
             Rnd rnd = new Rnd();
@@ -3667,7 +3674,8 @@ public class TableWriterTest extends AbstractCairoTest {
                     return ff;
                 }
             };
-            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT, metrics)) {
+            TableWriter writer = newOffPoolWriter(configuration, PRODUCT, metrics);
+            try {
                 Assert.assertEquals(20, writer.getColumnCount());
                 ts = populateProducts(writer, rnd, ts, 10000, 60000L * 1000L);
                 writer.commit();
@@ -3677,16 +3685,24 @@ public class TableWriterTest extends AbstractCairoTest {
                 } catch (CairoException ignore) {
                 }
 
+                if (writer.isDistressed()) {
+                    // Column add exception maybe recoverable but not always
+                    Misc.free(writer);
+                    writer = newOffPoolWriter(configuration, PRODUCT, metrics);
+                }
+
                 // ignore error and add more rows
                 ts = populateProducts(writer, rnd, ts, 10000, 60000L * 1000L);
                 writer.commit();
                 Assert.assertEquals(30000, writer.size());
+            } finally {
+                writer.close();
             }
 
-            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT, metrics)) {
-                populateProducts(writer, rnd, ts, 10000, 60000L * 1000L);
-                writer.commit();
-                Assert.assertEquals(40000, writer.size());
+            try (TableWriter writer2 = newOffPoolWriter(configuration, PRODUCT, metrics)) {
+                populateProducts(writer2, rnd, ts, 10000, 60000L * 1000L);
+                writer2.commit();
+                Assert.assertEquals(40000, writer2.size());
             }
         });
     }
@@ -4251,7 +4267,9 @@ public class TableWriterTest extends AbstractCairoTest {
         final Rnd rnd = new Rnd();
         long t = TimestampFormatUtils.parseTimestamp("2019-03-22T00:00:00.000000Z");
         long increment = 2_000_000;
-        try (TableWriter w = getWriter(tableToken)) {
+        TableWriter w = null;
+        try {
+            w = getWriter(tableToken);
             testIndexIsAddedToTableAppendData(N, rnd, t, increment, w);
             w.commit();
 
@@ -4268,6 +4286,13 @@ public class TableWriterTest extends AbstractCairoTest {
             // modifier enters TableWriter in different states from which
             // truncate() call must be able to recover
             modifier.modify(w, rnd, t1, increment);
+
+            try {
+                w.rollback();
+            } catch (CairoError ignore) {
+            }
+            w.close();
+            w = getWriter(tableToken);
 
             // truncate writer mid-row-append
             w.truncate();
@@ -4329,6 +4354,10 @@ public class TableWriterTest extends AbstractCairoTest {
                 Assert.assertEquals(0, w.size());
                 Assert.assertTrue(reader.reload());
                 Assert.assertEquals(0, reader.size());
+            }
+        } finally {
+            if (w != null) {
+                w.close();
             }
         }
     }

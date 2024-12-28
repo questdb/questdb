@@ -225,6 +225,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
         setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 20_000L); // On in CI Windows updates are particularly slow
         node1.setProperty(CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT, 90_000L);
         node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 20_000L);
+        spinLockTimeout = 20_000L;
         assertMemoryLeak(() -> {
             CyclicBarrier barrier = new CyclicBarrier(numOfWriters + numOfReaders);
             ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();

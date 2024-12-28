@@ -76,7 +76,7 @@ import java.util.concurrent.locks.LockSupport;
 abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     static final int FD = 1_000_000;
     static final Log LOG = LogFactory.getLog(BaseLineTcpContextTest.class);
-    protected final AtomicInteger netMsgBufferSize = new AtomicInteger();
+    protected final AtomicInteger recvBufferSize = new AtomicInteger();
     protected boolean autoCreateNewColumns = true;
     protected boolean autoCreateNewTables = true;
     protected LineTcpConnectionContext context;
@@ -103,7 +103,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         microSecondTicks = -1;
         recvBuffer = null;
         disconnected = true;
-        netMsgBufferSize.set(512);
+        recvBufferSize.set(512);
         disconnectOnError = false;
         floatDefaultColumnType = ColumnType.DOUBLE;
         integerDefaultColumnType = ColumnType.LONG;
@@ -223,13 +223,13 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
-            public int getNetMsgBufferSize() {
-                return netMsgBufferSize.get();
+            public NetworkFacade getNetworkFacade() {
+                return nf;
             }
 
             @Override
-            public NetworkFacade getNetworkFacade() {
-                return nf;
+            public int getRecvBufferSize() {
+                return recvBufferSize.get();
             }
 
             @Override

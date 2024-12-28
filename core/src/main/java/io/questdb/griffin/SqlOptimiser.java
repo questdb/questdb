@@ -152,6 +152,9 @@ public class SqlOptimiser implements Mutable {
     private final IntList tempCrossIndexes = new IntList();
     private final IntList tempCrosses = new IntList();
     private final IntList tempList = new IntList();
+    private final ObjList<QueryColumn> tempColumns = new ObjList<QueryColumn>();
+    private final CharSequenceHashSet existsDependedTokens = new CharSequenceHashSet();
+    private final CharSequenceHashSet missingDependedTokens = new CharSequenceHashSet();
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> tmpCursorAliases = new LowerCaseCharSequenceObjHashMap<>();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
     private int defaultAliasCount = 0;
@@ -2843,6 +2846,42 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
+    private void fixAndCollectExprToken(ExpressionNode node, CharSequence old, CharSequence newToken, CharSequenceHashSet set, CharSequenceHashSet set2) {
+        sqlNodeStack.clear();
+        while (node != null) {
+            if (node.type == LITERAL) {
+                if (Chars.equalsIgnoreCase(node.token, old)) {
+                    node.token = newToken;
+                } else if (!set.contains(node.token)) {
+                    set2.add(node.token);
+                }
+            }
+
+            if (node.paramCount < 3) {
+                if (node.lhs != null) {
+                    sqlNodeStack.push(node.lhs);
+                }
+
+                if (node.rhs != null) {
+                    node = node.rhs;
+                    continue;
+                }
+            } else {
+                for (int i = 1, k = node.paramCount; i < k; i++) {
+                    sqlNodeStack.push(node.args.getQuick(i));
+                }
+                node = node.args.getQuick(0);
+                continue;
+            }
+
+            if (!sqlNodeStack.isEmpty()) {
+                node = this.sqlNodeStack.poll();
+            } else {
+                node = null;
+            }
+        }
+    }
+
     private void openReaderAndEnumerateColumns(
             SqlExecutionContext executionContext,
             QueryModel model,
@@ -4480,7 +4519,7 @@ public class SqlOptimiser implements Mutable {
                                         if (qc.getAst().type == ExpressionNode.FUNCTION || qc.getAst().type == ExpressionNode.OPERATION) {
                                             emitLiterals(qc.getAst(), synthetic, null, baseParent.getNestedModel(), false);
                                         } else {
-                                            synthetic.addBottomUpColumn(qc);
+                                            synthetic.addBottomUpColumnIfNotExists(qc);
                                         }
                                     }
                                     synthetic.setNestedModel(base);
@@ -4835,6 +4874,9 @@ public class SqlOptimiser implements Mutable {
                 // The goal is to re-populate the wrapper model with the copies in the correct positions.
                 ObjList<QueryColumn> insetColumnAliases = new ObjList<>();
                 tempList.clear();
+                existsDependedTokens.clear();
+                existsDependedTokens.add(timestampColumn);
+                int needRemoveColumns = 0;
                 boolean timestampOnly = true;
 
                 // Check if there are more aliased timestamp references, e.g.
@@ -4888,6 +4930,7 @@ public class SqlOptimiser implements Mutable {
                     model.addBottomUpColumnIfNotExists(nextColumn(timestampAlias));
 
                     timestampOnly = false;
+                    needRemoveColumns++;
                 }
                 if ((wrapAction & SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES) != 0) {
                     // column alias indexes have shifted because of the removal of duplicate timestamp columns
@@ -4959,10 +5002,22 @@ public class SqlOptimiser implements Mutable {
                 nested.setSampleByFromTo(null, null);
 
                 if ((wrapAction & SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES) != 0) {
-                    model = wrapWithSelectModel(model, tempList, insetColumnAliases, timestampAlias);
+                    missingDependedTokens.clear();
+                    for (int i = 0, size = insetColumnAliases.size(); i < size; i++) {
+                        fixAndCollectExprToken(insetColumnAliases.get(i).getAst(), timestampColumn, timestampAlias, existsDependedTokens, missingDependedTokens);
+                    }
+                    for (int i = 0, size = missingDependedTokens.size(); i < size; i++) {
+                        model.addBottomUpColumnIfNotExists(nextColumn(missingDependedTokens.get(i)));
+                    }
+                    needRemoveColumns += missingDependedTokens.size();
                 }
 
-                if ((wrapAction & SAMPLE_BY_REWRITE_WRAP_REMOVE_TIMESTAMP) != 0) {
+                if ((wrapAction & SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES) != 0 && needRemoveColumns > 0) {
+                    model = wrapWithSelectModel(model, model.getBottomUpColumns().size() - needRemoveColumns);
+                    addColumnToSelectModel(model, tempList, insetColumnAliases, timestampAlias);
+                } else if ((wrapAction & SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES) != 0) {
+                    model = wrapWithSelectModel(model, tempList, insetColumnAliases, timestampAlias);
+                } else if ((wrapAction & SAMPLE_BY_REWRITE_WRAP_REMOVE_TIMESTAMP) != 0) {
                     // we added artificial timestamp, which has to be removed
                     // in the outer query. Single query consists of two
                     // nested QueryModel instances. The outer of the two is
@@ -6241,6 +6296,34 @@ public class SqlOptimiser implements Mutable {
         }
 
         return _model;
+    }
+
+    private void addColumnToSelectModel(QueryModel model, IntList insertColumnIndexes, ObjList<QueryColumn> insertColumnAliases, CharSequence timestampAlias) {
+        tempColumns.clear();
+        tempColumns.addAll(model.getBottomUpColumns());
+        model.clearColumnMapStructs();
+
+        // These are merged columns, the assumption is that the insetColumnIndexes are ordered.
+        // This loop will fail miserably in indexes are unordered.
+        int src1ColumnCount = tempColumns.size();
+        int src2ColumnCount = insertColumnIndexes.size();
+        for (int i = 0, k = 0, m = 0; i < src1ColumnCount || k < src2ColumnCount; m++) {
+            if (k < src2ColumnCount && insertColumnIndexes.getQuick(k) == m) {
+                QueryColumn column = insertColumnAliases.get(k);
+                // insert column at this position, this column must reference our timestamp, that
+                // comes out of the group-by result set, but with user-provided aliases.
+                if (column.getAst().type == LITERAL) {
+                    model.addBottomUpColumnIfNotExists(nextColumn(column.getAlias(), timestampAlias));
+                } else {
+                    model.addBottomUpColumnIfNotExists(column);
+                }
+                k++;
+            } else {
+                QueryColumn qcFrom = tempColumns.getQuick(i);
+                model.addBottomUpColumnIfNotExists(nextColumn(qcFrom.getAlias()));
+                i++;
+            }
+        }
     }
 
     @SuppressWarnings("unused")
