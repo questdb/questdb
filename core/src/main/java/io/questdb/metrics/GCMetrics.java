@@ -37,7 +37,7 @@ import java.lang.management.ManagementFactory;
  * GC metrics don't rely on MetricsRegistry to be able to obtain and write all metrics
  * to the sink in one go.
  */
-public class GCMetrics implements Scrapable, Mutable {
+public class GCMetrics implements Target, Mutable {
 
     private static final CharSequenceHashSet majorGCNames = new CharSequenceHashSet();
     private static final CharSequenceHashSet minorGCNames = new CharSequenceHashSet();

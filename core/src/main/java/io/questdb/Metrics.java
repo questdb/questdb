@@ -35,7 +35,7 @@ import io.questdb.metrics.HealthMetricsImpl;
 import io.questdb.metrics.MetricsRegistry;
 import io.questdb.metrics.MetricsRegistryImpl;
 import io.questdb.metrics.NullMetricsRegistry;
-import io.questdb.metrics.Scrapable;
+import io.questdb.metrics.Target;
 import io.questdb.metrics.VirtualLongGauge;
 import io.questdb.metrics.WorkerMetrics;
 import io.questdb.std.MemoryTag;
@@ -45,7 +45,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.BorrowableUtf8Sink;
 import org.jetbrains.annotations.NotNull;
 
-public class Metrics implements Scrapable, Mutable {
+public class Metrics implements Target, Mutable {
     public static final Metrics DISABLED = new Metrics(false, new NullMetricsRegistry());
     public static final Metrics ENABLED = new Metrics(true, new MetricsRegistryImpl());
     private final GCMetrics gcMetrics;
@@ -160,7 +160,7 @@ public class Metrics implements Scrapable, Mutable {
         metricsRegistry.newVirtualGauge("memory_jvm_max", jvmMaxMemRef);
     }
 
-    void addScrapable(Scrapable scrapable) {
-        metricsRegistry.addScrapable(scrapable);
+    void addScrapable(Target target) {
+        metricsRegistry.addTarget(target);
     }
 }

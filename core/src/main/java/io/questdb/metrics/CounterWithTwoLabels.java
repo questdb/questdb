@@ -24,7 +24,7 @@
 
 package io.questdb.metrics;
 
-public interface CounterWithTwoLabels extends Scrapable {
+public interface CounterWithTwoLabels extends Target {
 
     void inc(short label0, short label1);
 }

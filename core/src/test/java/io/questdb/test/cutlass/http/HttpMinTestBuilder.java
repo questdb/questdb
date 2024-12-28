@@ -37,7 +37,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.metrics.Scrapable;
+import io.questdb.metrics.Target;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.PlainSocketFactory;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
@@ -50,7 +50,7 @@ public class HttpMinTestBuilder {
 
     private static final Log LOG = LogFactory.getLog(HttpMinTestBuilder.class);
     private PrometheusMetricsProcessor.RequestStatePool prometheusRequestStatePool;
-    private Scrapable scrapable;
+    private Target target;
     private int sendBufferSize;
     private int tcpSndBufSize;
     private TemporaryFolder temp;
@@ -87,7 +87,7 @@ public class HttpMinTestBuilder {
 
                     @Override
                     public HttpRequestProcessor newInstance() {
-                        return new PrometheusMetricsProcessor(scrapable, httpConfiguration, requestStatePool);
+                        return new PrometheusMetricsProcessor(target, httpConfiguration, requestStatePool);
                     }
                 });
 
@@ -122,8 +122,8 @@ public class HttpMinTestBuilder {
         return this;
     }
 
-    public HttpMinTestBuilder withScrapable(Scrapable scrapable) {
-        this.scrapable = scrapable;
+    public HttpMinTestBuilder withScrapable(Target target) {
+        this.target = target;
         return this;
     }
 

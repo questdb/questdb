@@ -26,7 +26,7 @@ package io.questdb;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.metrics.Scrapable;
+import io.questdb.metrics.Target;
 import io.questdb.mp.Worker;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -37,7 +37,7 @@ import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public abstract class WorkerPoolManager implements Scrapable {
+public abstract class WorkerPoolManager implements Target {
 
     private static final Log LOG = LogFactory.getLog(WorkerPoolManager.class);
     protected final WorkerPool sharedPool;

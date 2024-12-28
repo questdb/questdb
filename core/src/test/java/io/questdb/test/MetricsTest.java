@@ -32,7 +32,7 @@ import io.questdb.metrics.DoubleGauge;
 import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.MetricsRegistry;
 import io.questdb.metrics.NullMetricsRegistry;
-import io.questdb.metrics.Scrapable;
+import io.questdb.metrics.Target;
 import io.questdb.metrics.VirtualLongGauge;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.str.BorrowableUtf8Sink;
@@ -139,8 +139,8 @@ public class MetricsTest {
         private final Set<CharSequence> notUniqueMetrics = new HashSet<>();
 
         @Override
-        public void addScrapable(Scrapable scrapable) {
-            delegate.addScrapable(scrapable);
+        public void addTarget(Target target) {
+            delegate.addTarget(target);
         }
 
         public Set<CharSequence> getLabelNames() {
