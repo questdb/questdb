@@ -69,7 +69,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short CONVERT_PARTITION_TO_PARQUET = CHANGE_COLUMN_TYPE + 1; // 18
     public final static short CONVERT_PARTITION_TO_NATIVE = CONVERT_PARTITION_TO_PARQUET + 1; // 19
     public final static short FORCE_DROP_PARTITION = CONVERT_PARTITION_TO_NATIVE + 1; // 20
-    public final static short SET_TTL_HOURS = FORCE_DROP_PARTITION + 1; // 21
+    public final static short SET_TTL_HOURS_OR_MONTHS = FORCE_DROP_PARTITION + 1; // 21
     private static final long BIT_INDEXED = 0x1L;
     private static final long BIT_DEDUP_KEY = BIT_INDEXED << 1;
     private final static Log LOG = LogFactory.getLog(AlterOperation.class);
@@ -189,7 +189,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 case SET_PARAM_COMMIT_LAG:
                     applyParamO3MaxLag(svc);
                     break;
-                case SET_TTL_HOURS:
+                case SET_TTL_HOURS_OR_MONTHS:
                     applyTtlHoursOrMonths(svc);
                     break;
                 case RENAME_TABLE:
