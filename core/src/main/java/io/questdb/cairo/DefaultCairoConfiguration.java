@@ -94,6 +94,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean freeLeakedReaders() {
+        return false;
+    }
+
+    @Override
     public boolean getAllowTableRegistrySharedWrite() {
         return false;
     }

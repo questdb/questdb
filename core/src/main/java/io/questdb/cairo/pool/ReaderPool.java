@@ -25,8 +25,8 @@
 package io.questdb.cairo.pool;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.PartitionOverwriteControl;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.PartitionOverwriteControl;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import org.jetbrains.annotations.TestOnly;
@@ -58,8 +58,8 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
     }
 
     @Override
-    protected R newTenant(TableToken tableToken, Entry<R> entry, int index) {
-        return new R(this, entry, index, tableToken, messageBus, readerListener, partitionOverwriteControl);
+    protected R newTenant(TableToken tableToken, Entry<R> entry, int index, ResourcePoolSupervisor<R> supervisor) {
+        return new R(this, entry, index, tableToken, messageBus, readerListener, partitionOverwriteControl, supervisor);
     }
 
     @TestOnly
@@ -73,6 +73,7 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
         private final ReaderListener readerListener;
         private Entry<R> entry;
         private AbstractMultiTenantPool<R> pool;
+        private ResourcePoolSupervisor<R> supervisor;
 
         public R(
                 AbstractMultiTenantPool<R> pool,
@@ -81,22 +82,34 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
                 TableToken tableToken,
                 MessageBus messageBus,
                 ReaderListener readerListener,
-                PartitionOverwriteControl partitionOverwriteControl
+                PartitionOverwriteControl partitionOverwriteControl,
+                ResourcePoolSupervisor<R> supervisor
         ) {
             super(pool.getConfiguration(), tableToken, messageBus, partitionOverwriteControl);
             this.pool = pool;
             this.entry = entry;
             this.index = index;
             this.readerListener = readerListener;
+            this.supervisor = supervisor;
         }
 
         @Override
         public void close() {
             if (isOpen()) {
-                goPassive();
-                final AbstractMultiTenantPool<R> pool = this.pool;
-                if (pool == null || entry == null || !pool.returnToPool(this)) {
-                    super.close();
+                // report reader closure to the supervisor
+                // so that we do not freak out about reader leaks
+                if (supervisor != null) {
+                    supervisor.onResourceReturned(this);
+                }
+                try {
+                    goPassive();
+                    final AbstractMultiTenantPool<R> pool = this.pool;
+                    if (pool == null || entry == null || !pool.returnToPool(this)) {
+                        super.close();
+                    }
+                } finally {
+                    // prevent the reader from reporting to tje old supervisor
+                    supervisor = null;
                 }
             }
         }
@@ -125,7 +138,8 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
         }
 
         @Override
-        public void refresh() {
+        public void refresh(ResourcePoolSupervisor<R> supervisor) {
+            this.supervisor = supervisor;
             try {
                 goActive();
             } catch (Throwable ex) {

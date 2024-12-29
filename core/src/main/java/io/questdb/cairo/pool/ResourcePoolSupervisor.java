@@ -24,28 +24,8 @@
 
 package io.questdb.cairo.pool;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.TableToken;
-import org.jetbrains.annotations.Nullable;
+public interface ResourcePoolSupervisor<T> {
+    void onResourceBorrowed(T resource);
 
-public class TableMetadataPool extends AbstractMultiTenantPool<TableReaderMetadataTenantImpl> {
-
-    public TableMetadataPool(CairoConfiguration configuration) {
-        super(configuration, configuration.getMetadataPoolCapacity(), configuration.getInactiveReaderTTL());
-    }
-
-    @Override
-    protected byte getListenerSrc() {
-        return PoolListener.SRC_TABLE_METADATA;
-    }
-
-    @Override
-    protected TableReaderMetadataTenantImpl newTenant(
-            TableToken tableToken,
-            Entry<TableReaderMetadataTenantImpl> entry,
-            int index,
-            @Nullable ResourcePoolSupervisor<TableReaderMetadataTenantImpl> supervisor
-    ) {
-        return new TableReaderMetadataTenantImpl(this, entry, index, tableToken, false);
-    }
+    void onResourceReturned(T resource);
 }
