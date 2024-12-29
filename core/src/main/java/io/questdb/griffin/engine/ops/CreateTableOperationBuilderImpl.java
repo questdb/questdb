@@ -166,6 +166,7 @@ public class CreateTableOperationBuilderImpl implements Mutable, Sinkable, Creat
         columnModels.clear();
         typeCasts.clear();
         volumeAlias = null;
+        ttlHoursOrMonths = 0;
     }
 
     public int getColumnIndex(CharSequence columnName) {
