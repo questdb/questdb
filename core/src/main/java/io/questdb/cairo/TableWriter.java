@@ -1929,12 +1929,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             LOG.error().$("TTL set on a non-partitioned table. Ignoring");
             return;
         }
-        int partitionCount = getPartitionCount();
-        if (partitionCount < 2) {
+        if (getPartitionCount() < 2) {
             return;
         }
         long maxTimestamp = getMaxTimestamp();
-        while (getPartitionCount() > 1) {
+        do {
             long partitionTimestamp = getPartitionTimestamp(0);
             assert partitionTimestamp == floorFn.floor(partitionTimestamp) : "Partition 0 timestamp weirdness";
             long partitionCeiling = ceilFn.ceil(partitionTimestamp);
@@ -1950,7 +1949,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // Partitions are sorted by timestamp, no need to check the rest
                 break;
             }
-        }
+        } while (getPartitionCount() > 1);
     }
 
     @Override
