@@ -968,6 +968,8 @@ public class ExpressionParser {
                                 throw SqlException.$(lastPos, "constant is not allowed here");
                             }
                             break;
+                        } else if (SqlKeywords.isForKeyword(tok)) {
+                            break OUT;
                         }
                         processDefaultBranch = true;
                         break;

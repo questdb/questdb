@@ -1510,11 +1510,18 @@ public class SqlParser {
             parseSelectFrom(lexer, model, masterModel.getWithClauses(), sqlParserCallback);
             tok = setModelAliasAndTimestamp(lexer, model);
 
+            // nw todo: stop pivot being confused as an alias for the table
+
             // expect [latest by] (deprecated syntax)
             if (tok != null && isLatestKeyword(tok)) {
                 parseLatestBy(lexer, model);
                 tok = optTok(lexer);
             }
+        }
+
+        if (tok != null && isPivotKeyword(tok)) {
+            lexer.unparseLast();
+            tok = parseStandardPivot(lexer, model, sqlParserCallback);
         }
 
         // expect multiple [[inner | outer | cross] join]
@@ -2487,6 +2494,198 @@ public class SqlParser {
         parseTableName(lexer, model);
     }
 
+//    private ExecutionModel parseSimplePivot(GenericLexer lexer, SqlParserCallback sqlParserCallback) throws SqlException {
+//        lexer.unparseLast();
+//        expectTok(lexer, "pivot");
+//        PivotModel model = pivotModelPool.next();
+//        final ExpressionNode tableNameOrSubExpr = expr(lexer, (QueryModel) null, sqlParserCallback);
+//        model.setTableNameOrSubQuery(tableNameOrSubExpr);
+//
+//        expectTok(lexer, "on");
+//
+//        ObjList<ExpressionNode> onColumns = new ObjList<>();
+//
+//        CharSequence tok;
+//
+//        while ((tok = optTok(lexer)) != null && !isUsingKeyword(tok)) {
+//            lexer.unparseLast();
+//            final ExpressionNode nextColumn = expr(lexer, (QueryModel) null, sqlParserCallback);
+//            onColumns.add(nextColumn);
+//            tok = optTok(lexer);
+//            if (tok == null) {
+//                break;
+//            }
+//            if (!Chars.equals(tok, ",")) {
+//                lexer.unparseLast();
+//            }
+//        }
+//
+//        model.setOnColumns(onColumns);
+//
+//        ObjList<ExpressionNode> usingExprs = new ObjList<>();
+//
+//
+//        // tok is null or using
+//        assert tok != null;
+//        assert isUsingKeyword(tok);
+//
+//        while ((tok = optTok(lexer)) != null) {
+//            lexer.unparseLast();
+//            final ExpressionNode nextUsing = expr(lexer, (QueryModel) null, sqlParserCallback);
+//            usingExprs.add(nextUsing);
+//            tok = optTok(lexer);
+//            if (tok == null) {
+//                break;
+//            }
+//            if (!Chars.equals(tok, ",")) {
+//                lexer.unparseLast();
+//            }
+//        }
+//
+//        model.setUsingExprs(usingExprs);
+//
+//        return model;
+//    }
+
+    private CharSequence parseStandardPivot(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
+        lexer.unparseLast();
+
+        CharSequence tok = optTok(lexer);
+
+        //noinspection DoubleNegation
+        if (tok == null || !isPivotKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "expected PIVOT keyword");
+        }
+
+        tok = optTok(lexer);
+
+        // this corrects some issue where PIVOT is returned twice by the lexer
+        if (tok != null && isPivotKeyword(tok)) {
+            tok = optTok(lexer);
+        }
+
+        if (tok == null || !Chars.equals(tok, "(")) {
+            throw SqlException.$(lexer.lastTokenPosition(), "expected `(`");
+        }
+
+        ExpressionNode expr;
+
+        while (true) {
+            expr = expr(lexer, model, sqlParserCallback);
+
+            if (expr == null) {
+                throw SqlException.$(lexer.lastTokenPosition(), "missing aggregate expression");
+            }
+
+            if (expr.type != ExpressionNode.FUNCTION) {
+                throw SqlException.$(lexer.lastTokenPosition(), "expected aggregate function");
+            }
+
+            final CharSequence alias;
+
+            lexer.unparseLast();
+
+            tok = optTok(lexer);
+
+            QueryColumn col;
+            final int colPosition = expr.position;
+
+            col = queryColumnPool.next().of(null, expr);
+
+            if (tok != null && columnAliasStop.excludes(tok)) {
+                assertNotDot(lexer, tok);
+
+                // verify that * wildcard is not aliased
+
+                if (isAsKeyword(tok)) {
+                    tok = tok(lexer, "alias");
+                    SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+                    CharSequence aliasTok = GenericLexer.immutableOf(tok);
+                    validateIdentifier(lexer, aliasTok);
+                    alias = unquote(aliasTok);
+                } else {
+                    validateIdentifier(lexer, tok);
+                    SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+                    alias = GenericLexer.immutableOf(unquote(tok));
+                }
+
+                if (col.getAst().isWildcard()) {
+                    throw err(lexer, null, "wildcard cannot have alias");
+                }
+
+                tok = optTok(lexer);
+                aliasMap.put(alias, col);
+            } else {
+                alias = null;
+            }
+
+            if (alias != null) {
+                if (alias.length() == 0) {
+                    throw err(lexer, null, "column alias cannot be a blank string");
+                }
+                col.setAlias(alias);
+            }
+
+            if (model.getPivotColumns() == null) {
+                model.setPivotColumns(new ObjList<>());
+            }
+
+            model.getPivotColumns().add(col);
+
+            if (isForKeyword(tok)) {
+                break;
+            } else {
+                lexer.unparseLast();
+            }
+        }
+
+        if (!isForKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "expected `FOR`");
+        }
+
+        while (true) {
+            expr = expr(lexer, model, sqlParserCallback);
+
+            if (expr.type != ExpressionNode.FUNCTION || !Chars.equals(expr.token, "in")) {
+                throw SqlException.$(expr.position, "expected `IN` clause");
+            }
+
+
+            if (model.getPivotFor() == null) {
+                model.setPivotFor(new ObjList<>());
+            }
+
+            model.getPivotFor().add(expr);
+
+            tok = optTok(lexer);
+
+            if (isGroupKeyword(tok)) {
+                break;
+            } else {
+                lexer.unparseLast();
+            }
+        }
+
+
+        if (!isGroupKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "expected `GROUP`");
+        }
+
+        tok = optTok(lexer);
+
+        if (tok == null || !isByKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "expected `BY`");
+        }
+
+        expr = expr(lexer, model, sqlParserCallback);
+
+        model.addGroupBy(expr);
+
+        expectTok(lexer, ')');
+
+        return optTok(lexer);
+    }
+
     private int parseSymbolCapacity(GenericLexer lexer) throws SqlException {
         final int errorPosition = lexer.getPosition();
         final int symbolCapacity = expectInt(lexer);
@@ -3066,7 +3265,7 @@ public class SqlParser {
     }
 
     ExecutionModel parse(GenericLexer lexer, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {
-        CharSequence tok = tok(lexer, "'create', 'rename' or 'select'");
+        CharSequence tok = tok(lexer, "'create', 'rename', 'select' or 'pivot'");
 
         if (isExplainKeyword(tok)) {
             int format = parseExplainOptions(lexer, tok);
@@ -3152,6 +3351,7 @@ public class SqlParser {
         tableAliasStop.add("except");
         tableAliasStop.add("intersect");
         tableAliasStop.add("from");
+        tableAliasStop.add("pivot");
         //
         columnAliasStop.add("from");
         columnAliasStop.add(",");
@@ -3161,6 +3361,7 @@ public class SqlParser {
         columnAliasStop.add("intersect");
         columnAliasStop.add(")");
         columnAliasStop.add(";");
+        columnAliasStop.add("FOR");
         //
         groupByStopSet.add("order");
         groupByStopSet.add(")");

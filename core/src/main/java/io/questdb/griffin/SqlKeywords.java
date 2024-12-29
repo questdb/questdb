@@ -655,6 +655,13 @@ public class SqlKeywords {
                 && (tok.charAt(8) | 32) == 'g';
     }
 
+    public static boolean isForKeyword(CharSequence tok) {
+        return tok.length() == 3
+                && (tok.charAt(0) | 32) == 'f'
+                && (tok.charAt(1) | 32) == 'o'
+                && (tok.charAt(2) | 32) == 'r';
+    }
+
     public static boolean isForceKeyword(CharSequence tok) {
         return tok.length() == 5
                 && (tok.charAt(0) | 32) == 'f'
@@ -1374,6 +1381,15 @@ public class SqlKeywords {
                 && (tok.charAt(9) | 32) == 's';
     }
 
+    public static boolean isPivotKeyword(CharSequence tok) {
+        return tok.length() == 5
+                && (tok.charAt(0) | 32) == 'p'
+                && (tok.charAt(1) | 32) == 'i'
+                && (tok.charAt(2) | 32) == 'v'
+                && (tok.charAt(3) | 32) == 'o'
+                && (tok.charAt(4) | 32) == 't';
+    }
+
     public static boolean isPrecedingKeyword(CharSequence tok) {
         return tok.length() == 9
                 && (tok.charAt(0) | 32) == 'p'
@@ -1862,6 +1878,15 @@ public class SqlKeywords {
                 && (tok.charAt(3) | 32) == 'e'
                 && (tok.charAt(4) | 32) == 'r'
                 && (tok.charAt(5) | 32) == 't';
+    }
+
+    public static boolean isUsingKeyword(CharSequence tok) {
+        return tok.length() == 5
+                && (tok.charAt(0) | 32) == 'u'
+                && (tok.charAt(1) | 32) == 's'
+                && (tok.charAt(2) | 32) == 'i'
+                && (tok.charAt(3) | 32) == 'n'
+                && (tok.charAt(4) | 32) == 'g';
     }
 
     public static boolean isValuesKeyword(CharSequence tok) {
