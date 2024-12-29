@@ -6454,6 +6454,7 @@ public class SqlOptimiser implements Mutable {
             QueryColumn aggregate = nested.getPivotColumns().getQuick(0);
             CharSequence aggregateName = aggregate.getAst().token;
             CharSequence aggColName = aggregate.getAst().rhs.token;
+            CharSequence aggAlias = aggregate.getAlias();
 
 
             for (int i = 0, n = nested.getPivotFor().size(); i < n; i++) {
@@ -6491,7 +6492,7 @@ public class SqlOptimiser implements Mutable {
 
                     // SUM(CASE WHEN year = 2000 THEN population ELSE 0 END) AS "2000"
                     model.addBottomUpColumn(queryColumnPool.next().of(
-                            pivotInExprValue.token,
+                            aggAlias != null ? pivotInExprValue.token + "_" + aggAlias : pivotInExprValue.token,
                             agg
                     ));
                 }

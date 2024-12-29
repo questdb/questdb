@@ -46,7 +46,7 @@ public class PivotTest extends AbstractSqlParserTest {
                     "    ('US', 'New York City', 2020, 8772);";
 
     @Test
-    public void testStandardPivotRewrite() throws Exception {
+    public void testStandardPivot() throws Exception {
         assertMemoryLeak(() -> {
             execute(ddlCities);
             execute(dmlCities);
@@ -74,6 +74,43 @@ public class PivotTest extends AbstractSqlParserTest {
             assertModel(model, rewrittenQuery, ExecutionModel.QUERY);
 
             String result = "country\t2000\t2010\t2020\n" +
+                    "NL\t1005\t1065\t1158\n" +
+                    "US\t8579\t8783\t9510\n";
+
+            assertSql(result, pivotQuery);
+            assertSql(result, rewrittenQuery);
+        });
+    }
+
+    @Test
+    public void testStandardPivotWithAliasedAggregate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+            execute(dmlCities);
+
+            String pivotQuery =
+                    "SELECT *\n" +
+                            "FROM cities\n" +
+                            "PIVOT (\n" +
+                            "    SUM(population) as total\n" +
+                            "    FOR\n" +
+                            "        year IN (2000, 2010, 2020)\n" +
+                            "    GROUP BY country\n" +
+                            ");\n";
+            String rewrittenQuery =
+                    "SELECT \n" +
+                            "    country,\n" +
+                            "    SUM(CASE WHEN year = 2000 THEN population ELSE 0 END) AS \"2000_total\",\n" +
+                            "    SUM(CASE WHEN year = 2010 THEN population ELSE 0 END) AS \"2010_total\",\n" +
+                            "    SUM(CASE WHEN year = 2020 THEN population ELSE 0 END) AS \"2020_total\"\n" +
+                            "FROM cities\n" +
+                            "GROUP BY country;";
+
+            String model = "select-group-by country, SUM(switch(year,2000,population,0)) 2000_total, SUM(switch(year,2010,population,0)) 2010_total, SUM(switch(year,2020,population,0)) 2020_total from (select [country, population, year] from cities)";
+            assertModel(model, pivotQuery, ExecutionModel.QUERY);
+            assertModel(model, rewrittenQuery, ExecutionModel.QUERY);
+
+            String result = "country\t2000_total\t2010_total\t2020_total\n" +
                     "NL\t1005\t1065\t1158\n" +
                     "US\t8579\t8783\t9510\n";
 

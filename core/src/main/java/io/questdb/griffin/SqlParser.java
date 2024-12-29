@@ -2599,6 +2599,9 @@ public class SqlParser {
 
                 if (isAsKeyword(tok)) {
                     tok = tok(lexer, "alias");
+                    if (isAsKeyword(tok)) {
+                        tok = tok(lexer, "alias");
+                    }
                     SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
                     CharSequence aliasTok = GenericLexer.immutableOf(tok);
                     validateIdentifier(lexer, aliasTok);
