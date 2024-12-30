@@ -24,30 +24,37 @@
 
 package io.questdb.cutlass.line;
 
+import io.questdb.metrics.AtomicCounter;
 import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.MetricsRegistry;
 
 public class LineMetrics {
 
-    private final LongGauge connectionCountGauge;
-    private final LongGauge totalIlpTcpBytesGauge;
+    private final AtomicCounter httpConnectionCounter;
+    private final LongGauge tcpConnectionCountGauge;
     private final LongGauge totalIlpHttpBytesGauge;
+    private final LongGauge totalIlpTcpBytesGauge;
 
     public LineMetrics(MetricsRegistry metricsRegistry) {
-        this.connectionCountGauge = metricsRegistry.newLongGauge("line_tcp_connections");
+        this.tcpConnectionCountGauge = metricsRegistry.newLongGauge("line_tcp_connections");
+        this.httpConnectionCounter = metricsRegistry.newAtomicCounter("line_http_connections");
         this.totalIlpTcpBytesGauge = metricsRegistry.newLongGauge("line_tcp_recv_bytes");
         this.totalIlpHttpBytesGauge = metricsRegistry.newLongGauge("line_http_recv_bytes");
     }
 
-    public LongGauge connectionCountGauge() {
-        return connectionCountGauge;
+    public AtomicCounter httpConnectionCounter() {
+        return httpConnectionCounter;
     }
 
-    public LongGauge totalIlpTcpBytesGauge() {
-        return totalIlpTcpBytesGauge;
+    public LongGauge tcpConnectionCountGauge() {
+        return tcpConnectionCountGauge;
     }
 
     public LongGauge totalIlpHttpBytesGauge() {
         return totalIlpHttpBytesGauge;
+    }
+
+    public LongGauge totalIlpTcpBytesGauge() {
+        return totalIlpTcpBytesGauge;
     }
 }

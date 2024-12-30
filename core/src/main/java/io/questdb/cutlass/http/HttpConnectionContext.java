@@ -38,6 +38,7 @@ import io.questdb.cutlass.http.ex.TooFewBytesReceivedException;
 import io.questdb.cutlass.http.processors.RejectProcessor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.metrics.AtomicCounter;
 import io.questdb.network.HeartBeatException;
 import io.questdb.network.IOContext;
 import io.questdb.network.IODispatcher;
@@ -100,6 +101,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     };
     private final AssociativeCache<RecordCursorFactory> selectCache;
     private long authenticationNanos = 0L;
+    private boolean connectionCounted;
+    private AtomicCounter connectionCounter;
     private int nCompletedRequests;
     private boolean pendingRetry = false;
     private int receivedBytes;
@@ -181,6 +184,12 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             this.responseSink.close();
         }
         this.localValueMap.disconnect();
+
+        if (connectionCounter != null) {
+            connectionCounter.dec();
+            connectionCounter = null;
+            connectionCounted = false;
+        }
     }
 
     @Override
@@ -323,6 +332,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 throw CairoException.nonCritical().put("failed to start TLS session");
             }
         }
+        connectionCounted = false;
     }
 
     @Override
@@ -458,6 +468,24 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         } else {
             throw registerDispatcherDisconnect(DISCONNECT_REASON_KEEPALIVE_OFF);
         }
+    }
+
+    private HttpRequestProcessor checkConnectionLimit(HttpRequestProcessor processor) {
+        final int connectionLimit = processor.getConnectionLimit(configuration);
+        if (connectionLimit > -1) {
+            connectionCounter = processor.getConnectionCounter(metrics);
+            long numOfConnections;
+            do {
+                numOfConnections = connectionCounter.get();
+                if (numOfConnections >= connectionLimit) {
+                    return rejectRequest(HTTP_BAD_REQUEST, "exceeded HTTP connection soft limit [name=" + connectionCounter.getName() + ']');
+                }
+                if (numOfConnections == connectionLimit - 1 && !securityContext.isSystemAdmin()) {
+                    return rejectRequest(HTTP_BAD_REQUEST, "non-admin user exceeded HTTP connection soft limit [name=" + connectionCounter.getName() + ']');
+                }
+            } while (!connectionCounter.compareAndSet(numOfConnections, numOfConnections + 1));
+        }
+        return processor;
     }
 
     private HttpRequestProcessor checkProcessorValidForRequest(
@@ -919,6 +947,11 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     } catch (CairoException e) {
                         processor = rejectRequest(HTTP_FORBIDDEN, e.getFlyweightMessage());
                     }
+
+                    if (!connectionCounted) {
+                        processor = checkConnectionLimit(processor);
+                        connectionCounted = true;
+                    }
                 }
 
                 processor = checkProcessorValidForRequest(
@@ -1050,5 +1083,4 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         Vect.memmove(recvBuffer, start, receivedBytes);
         LOG.debug().$("peer is slow, waiting for bigger part to parse [multipart]").$();
     }
-
 }

@@ -42,6 +42,8 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
     private final int httpForceRecvFragmentationChunkSize;
     private final int httpForceSendFragmentationChunkSize;
     private final boolean httpFrozenClock;
+    private final int httpIlpConnectionLimit;
+    private final int httpQueryConnectionLimit;
     private final boolean httpReadOnlySecurityContext;
     private final int httpRecvBufferSize;
     private final int httpSendBufferSize;
@@ -73,6 +75,50 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
             long multipartIdleSpinCount,
             int requestHeaderBufferSize
     ) {
+        this(
+                connectionStringPoolCapacity,
+                connectionPoolInitialCapacity,
+                serverConfiguration,
+                httpAllowDeflateBeforeSend,
+                httpForceRecvFragmentationChunkSize,
+                httpForceSendFragmentationChunkSize,
+                httpFrozenClock,
+                httpReadOnlySecurityContext,
+                httpRecvBufferSize,
+                httpSendBufferSize,
+                httpServerCookiesEnabled,
+                httpServerKeepAlive,
+                httpVersion,
+                isReadOnlyInstance,
+                multipartHeaderBufferSize,
+                multipartIdleSpinCount,
+                requestHeaderBufferSize,
+                -1,
+                -1
+        );
+    }
+
+    PropHttpContextConfiguration(
+            int connectionPoolInitialCapacity,
+            int connectionStringPoolCapacity,
+            ServerConfiguration serverConfiguration,
+            boolean httpAllowDeflateBeforeSend,
+            int httpForceRecvFragmentationChunkSize,
+            int httpForceSendFragmentationChunkSize,
+            boolean httpFrozenClock,
+            boolean httpReadOnlySecurityContext,
+            int httpRecvBufferSize,
+            int httpSendBufferSize,
+            boolean httpServerCookiesEnabled,
+            boolean httpServerKeepAlive,
+            String httpVersion,
+            boolean isReadOnlyInstance,
+            int multipartHeaderBufferSize,
+            long multipartIdleSpinCount,
+            int requestHeaderBufferSize,
+            int httpQueryConnectionLimit,
+            int httpIlpConnectionLimit
+    ) {
         this.connectionPoolInitialCapacity = connectionPoolInitialCapacity;
         this.connectionStringPoolCapacity = connectionStringPoolCapacity;
         this.serverConfiguration = serverConfiguration;
@@ -90,6 +136,8 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
         this.multipartHeaderBufferSize = multipartHeaderBufferSize;
         this.multipartIdleSpinCount = multipartIdleSpinCount;
         this.requestHeaderBufferSize = requestHeaderBufferSize;
+        this.httpQueryConnectionLimit = httpQueryConnectionLimit;
+        this.httpIlpConnectionLimit = httpIlpConnectionLimit;
     }
 
     @Override
@@ -138,6 +186,11 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
     }
 
     @Override
+    public int getIlpConnectionLimit() {
+        return httpIlpConnectionLimit;
+    }
+
+    @Override
     public MillisecondClock getMillisecondClock() {
         return httpFrozenClock ? StationaryMillisClock.INSTANCE : MillisecondClockImpl.INSTANCE;
     }
@@ -160,6 +213,11 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
     @Override
     public NetworkFacade getNetworkFacade() {
         return NetworkFacadeImpl.INSTANCE;
+    }
+
+    @Override
+    public int getQueryConnectionLimit() {
+        return httpQueryConnectionLimit;
     }
 
     @Override

@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http.processors;
 
+import io.questdb.metrics.AtomicCounter;
 import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.MetricsRegistry;
@@ -36,10 +37,12 @@ public class JsonQueryMetrics {
     private final LongGauge cachedQueriesGauge;
     private final Counter completedQueriesCounter;
     private final LongGauge connectionCountGauge;
+    private final AtomicCounter jsonConnectionCounter;
     private final Counter startedQueriesCounter;
 
     public JsonQueryMetrics(MetricsRegistry metricsRegistry) {
         this.connectionCountGauge = metricsRegistry.newLongGauge("http_connections");
+        this.jsonConnectionCounter = metricsRegistry.newAtomicCounter("json_http_connections");
         this.startedQueriesCounter = metricsRegistry.newCounter("json_queries");
         this.completedQueriesCounter = metricsRegistry.newCounter("json_queries_completed");
         this.cachedQueriesGauge = metricsRegistry.newLongGauge("json_queries_cached");
@@ -66,6 +69,10 @@ public class JsonQueryMetrics {
 
     public LongGauge connectionCountGauge() {
         return connectionCountGauge;
+    }
+
+    public AtomicCounter jsonConnectionCounter() {
+        return jsonConnectionCounter;
     }
 
     public void markComplete() {

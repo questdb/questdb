@@ -84,7 +84,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                 configuration.getFactoryProvider().getLineSocketFactory(),
                 configuration.getNetworkFacade(),
                 LOG,
-                metrics.line().connectionCountGauge()
+                metrics.line().tcpConnectionCountGauge()
         );
         try {
             this.configuration = configuration;

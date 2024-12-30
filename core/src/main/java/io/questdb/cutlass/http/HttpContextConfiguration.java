@@ -49,6 +49,8 @@ public interface HttpContextConfiguration {
 
     String getHttpVersion();
 
+    int getIlpConnectionLimit();
+
     MillisecondClock getMillisecondClock();
 
     int getMultipartHeaderBufferSize();
@@ -58,6 +60,8 @@ public interface HttpContextConfiguration {
     NanosecondClock getNanosecondClock();
 
     NetworkFacade getNetworkFacade();
+
+    int getQueryConnectionLimit();
 
     int getRecvBufferSize();
 

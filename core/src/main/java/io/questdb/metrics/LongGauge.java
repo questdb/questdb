@@ -30,6 +30,8 @@ public interface LongGauge extends Scrapable {
 
     void dec();
 
+    CharSequence getName();
+
     long getValue();
 
     void inc();

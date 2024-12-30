@@ -24,7 +24,9 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.SecurityContext;
+import io.questdb.metrics.AtomicCounter;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.QueryPausedException;
@@ -38,6 +40,14 @@ public interface HttpRequestProcessor {
             HttpConnectionContext context,
             HttpException exception
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+    }
+
+    default AtomicCounter getConnectionCounter(Metrics metrics) {
+        return metrics.jsonQuery().jsonConnectionCounter();
+    }
+
+    default int getConnectionLimit(HttpContextConfiguration configuration) {
+        return configuration.getQueryConnectionLimit();
     }
 
     default byte getRequiredAuthType() {

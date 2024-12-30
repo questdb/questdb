@@ -28,13 +28,17 @@ public interface MetricsRegistry extends Scrapable {
 
     void addScrapable(Scrapable scrapable);
 
-    Counter newCounter(CharSequence name);
+    AtomicCounter newAtomicCounter(CharSequence name);
 
     CounterWithOneLabel newCounter(CharSequence name, CharSequence labelName0, CharSequence[] labelValues0);
 
-    CounterWithTwoLabels newCounter(CharSequence name,
-                                    CharSequence labelName0, CharSequence[] labelValues0,
-                                    CharSequence labelName1, CharSequence[] labelValues1);
+    CounterWithTwoLabels newCounter(
+            CharSequence name,
+            CharSequence labelName0, CharSequence[] labelValues0,
+            CharSequence labelName1, CharSequence[] labelValues1
+    );
+
+    Counter newCounter(CharSequence name);
 
     DoubleGauge newDoubleGauge(CharSequence name);
 

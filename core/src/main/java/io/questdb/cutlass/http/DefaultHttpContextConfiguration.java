@@ -81,6 +81,11 @@ public class DefaultHttpContextConfiguration implements HttpContextConfiguration
     }
 
     @Override
+    public int getIlpConnectionLimit() {
+        return -1;
+    }
+
+    @Override
     public MillisecondClock getMillisecondClock() {
         return MillisecondClockImpl.INSTANCE;
     }
@@ -103,6 +108,11 @@ public class DefaultHttpContextConfiguration implements HttpContextConfiguration
     @Override
     public NetworkFacade getNetworkFacade() {
         return NetworkFacadeImpl.INSTANCE;
+    }
+
+    @Override
+    public int getQueryConnectionLimit() {
+        return -1;
     }
 
     @Override

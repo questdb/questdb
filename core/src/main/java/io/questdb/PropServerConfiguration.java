@@ -902,6 +902,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             boolean httpServerCookiesEnabled = getBoolean(properties, env, PropertyKey.HTTP_SERVER_KEEP_ALIVE, true);
             boolean httpReadOnlySecurityContext = getBoolean(properties, env, PropertyKey.HTTP_SECURITY_READONLY, false);
 
+            int httpQueryConnectionLimit = getInt(properties, env, PropertyKey.HTTP_QUERY_CONNECTION_LIMIT, -1);
+            int httpIlpConnectionLimit = getInt(properties, env, PropertyKey.HTTP_ILP_CONNECTION_LIMIT, -1);
+
             httpContextConfiguration = new PropHttpContextConfiguration(
                     connectionPoolInitialCapacity,
                     connectionStringPoolCapacity,
@@ -919,7 +922,9 @@ public class PropServerConfiguration implements ServerConfiguration {
                     isReadOnlyInstance,
                     multipartHeaderBufferSize,
                     multipartIdleSpinCount,
-                    requestHeaderBufferSize
+                    requestHeaderBufferSize,
+                    httpQueryConnectionLimit,
+                    httpIlpConnectionLimit
             );
 
             // Use a separate configuration for min server. It does not make sense for the min server to grow the buffer sizes together with the main http server

@@ -24,9 +24,11 @@
 
 package io.questdb.cutlass.http.processors;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpContextConfiguration;
 import io.questdb.cutlass.http.HttpException;
 import io.questdb.cutlass.http.HttpMultipartContentListener;
 import io.questdb.cutlass.http.HttpRequestHeader;
@@ -34,6 +36,7 @@ import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.LocalValue;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.metrics.AtomicCounter;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -61,6 +64,16 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
         this.recvBufferSize = recvBufferSize;
         this.maxResponseContentLength = maxResponseContentLength;
         this.configuration = configuration;
+    }
+
+    @Override
+    public AtomicCounter getConnectionCounter(Metrics metrics) {
+        return metrics.line().httpConnectionCounter();
+    }
+
+    @Override
+    public int getConnectionLimit(HttpContextConfiguration configuration) {
+        return configuration.getIlpConnectionLimit();
     }
 
     @Override
