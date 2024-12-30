@@ -256,6 +256,8 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         if (connectionCount.get() < activeConnectionLimit) {
             if (serverFd < 0) {
                 createListenerFd();
+                // Make sure to always register for listening if server fd was recreated.
+                listening = false;
             }
 
             if (!listening) {
