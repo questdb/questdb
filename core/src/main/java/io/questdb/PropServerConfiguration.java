@@ -65,6 +65,7 @@ import io.questdb.log.Log;
 import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.MetricsConfiguration;
+import io.questdb.metrics.MetricsRegistryImpl;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.EpollFacade;
 import io.questdb.network.EpollFacadeImpl;
@@ -648,7 +649,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     ) throws ServerConfigurationException, JsonException {
         this.log = log;
         this.metricsEnabled = getBoolean(properties, env, PropertyKey.METRICS_ENABLED, false);
-        this.metrics = metricsEnabled ? Metrics.ENABLED : Metrics.DISABLED;
+        this.metrics = metricsEnabled ? new Metrics(true, new MetricsRegistryImpl()) : Metrics.DISABLED;
         this.logSqlQueryProgressExe = getBoolean(properties, env, PropertyKey.LOG_SQL_QUERY_PROGRESS_EXE, true);
         this.logLevelVerbose = getBoolean(properties, env, PropertyKey.LOG_LEVEL_VERBOSE, false);
         this.logTimestampTimezone = getString(properties, env, PropertyKey.LOG_TIMESTAMP_TIMEZONE, "UTC");
