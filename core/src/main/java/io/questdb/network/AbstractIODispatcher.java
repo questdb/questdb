@@ -136,7 +136,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         this.peerNoLinger = configuration.getPeerNoLinger();
         this.port = 0;
         this.heartbeatIntervalMs = configuration.getHeartbeatInterval() > 0 ? configuration.getHeartbeatInterval() : Long.MIN_VALUE;
-        createListenFd();
+        createListenerFd();
         listening = true;
     }
 
@@ -255,16 +255,19 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         final int activeConnectionLimit = configuration.getLimit();
         if (connectionCount.get() < activeConnectionLimit) {
             if (serverFd < 0) {
-                createListenFd();
+                createListenerFd();
             }
-            registerListenerFd();
-            listening = true;
-            LOG.advisory().$("below maximum connection limit, registered listener [serverFd=").$(serverFd).I$();
-            listenerStateChangeCounter.inc();
+
+            if (!listening) {
+                registerListenerFd();
+                listening = true;
+                listenerStateChangeCounter.inc();
+                LOG.advisory().$("below maximum connection limit, registered listener [serverFd=").$(serverFd).I$();
+            }
         }
     }
 
-    private void createListenFd() throws NetworkError {
+    private void createListenerFd() throws NetworkError {
         this.serverFd = nf.socketTcp(false);
         final int backlog = configuration.getListenBacklog();
         if (this.port == 0) {
