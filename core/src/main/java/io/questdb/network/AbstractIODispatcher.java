@@ -87,8 +87,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     private final IODispatcherConfiguration configuration;
     private final AtomicInteger connectionCount = new AtomicInteger();
     private final LongGauge connectionCountGauge;
-    private final Counter aboveMaxConnectionCountCounter;
-    private final Counter belowMaxConnectionCountCounter;
+    private final Counter listenerStateChangeCounter;
     private final boolean peerNoLinger;
     private final long queuedConnectionTimeoutMs;
     private final int testConnectionBufSize;
@@ -97,8 +96,8 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     protected long serverFd;
     private long closeListenFdEpochMs;
     private volatile boolean listening;
-    private int port;
     protected final QueueConsumer<IOEvent<C>> disconnectContextRef = this::disconnectContext;
+    private int port;
     private long testConnectionBuf;
 
     public AbstractIODispatcher(
@@ -108,8 +107,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         this.LOG = LogFactory.getLog(configuration.getDispatcherLogName());
         this.configuration = configuration;
         this.connectionCountGauge = configuration.getConnectionCountGauge();
-        this.belowMaxConnectionCountCounter = configuration.getBelowMaxConnectionCountCounter();
-        this.aboveMaxConnectionCountCounter = configuration.getAboveMaxConnectionCountCounter();
+        this.listenerStateChangeCounter = configuration.listenerStateChangeCounter();
         this.nf = configuration.getNetworkFacade();
 
         this.testConnectionBufSize = configuration.getTestConnectionBufferSize();
@@ -253,6 +251,19 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         pendingAdded(r);
     }
 
+    private void checkConnectionLimitAndRestartListener() {
+        final int activeConnectionLimit = configuration.getLimit();
+        if (connectionCount.get() < activeConnectionLimit) {
+            if (serverFd < 0) {
+                createListenFd();
+            }
+            registerListenerFd();
+            listening = true;
+            LOG.advisory().$("below maximum connection limit, registered listener [serverFd=").$(serverFd).I$();
+            listenerStateChangeCounter.inc();
+        }
+    }
+
     private void createListenFd() throws NetworkError {
         this.serverFd = nf.socketTcp(false);
         final int backlog = configuration.getListenBacklog();
@@ -360,12 +371,27 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
             connectionCountGauge.inc();
         }
 
-        if (tlConCount >= configuration.getLimit() && connectionCount.get() >= configuration.getLimit()) {
+        // the condition below is checked against connection limit twice
+        // since the limit might asynchronously change, it is imperative to
+        // perform both checks against the same value
+        final int lim = configuration.getLimit();
+        if (tlConCount >= lim && connectionCount.get() >= lim) {
             unregisterListenerFd();
             listening = false;
             closeListenFdEpochMs = timestamp + queuedConnectionTimeoutMs;
-            LOG.advisory().$("max connection limit reached, unregistered listener [serverFd=").$(serverFd).I$();
-            aboveMaxConnectionCountCounter.inc();
+            LOG.advisory()
+                    .$("max connection limit reached, unregistered listener [serverFd=").$(serverFd)
+                    .$(", tlConCount=").$(tlConCount)
+                    .$(", connectionCount=").$(connectionCount.get())
+                    .$(", limit=").$(configuration.getLimit())
+                    .$(", lim=").$(lim)
+                    .$(", connectionCountGauge=").$(connectionCountGauge.getValue())
+                    .I$();
+            listenerStateChangeCounter.inc();
+
+            if (lim != configuration.getLimit()) {
+                checkConnectionLimitAndRestartListener();
+            }
         }
     }
 
@@ -386,18 +412,8 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
             ioContextFactory.done(context);
         }
 
-        final int activeConnectionLimit = configuration.getLimit();
-        if (connectionCount.getAndDecrement() >= activeConnectionLimit) {
-            if (connectionCount.get() < activeConnectionLimit) {
-                if (serverFd < 0) {
-                    createListenFd();
-                }
-                registerListenerFd();
-                listening = true;
-                LOG.advisory().$("below maximum connection limit, registered listener [serverFd=").$(serverFd).I$();
-                belowMaxConnectionCountCounter.inc();
-            }
-        }
+        connectionCount.decrementAndGet();
+        checkConnectionLimitAndRestartListener();
         connectionCountGauge.dec();
     }
 

@@ -3452,16 +3452,6 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     public class PropHttpMinServerConfiguration implements HttpServerConfiguration {
         @Override
-        public Counter getAboveMaxConnectionCountCounter() {
-            return metrics.httpMetrics().aboveMaxConnectionCountCounter();
-        }
-
-        @Override
-        public Counter getBelowMaxConnectionCountCounter() {
-            return metrics.httpMetrics().belowMaxConnectionCountCounter();
-        }
-
-        @Override
         public int getBindIPv4Address() {
             return httpMinBindIPv4Address;
         }
@@ -3632,6 +3622,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public Counter listenerStateChangeCounter() {
+            return metrics.httpMetrics().listenerStateChangeCounter();
+        }
+
+        @Override
         public boolean preAllocateBuffers() {
             return true;
         }
@@ -3643,15 +3638,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     public class PropHttpServerConfiguration implements HttpFullFatServerConfiguration {
-        @Override
-        public Counter getAboveMaxConnectionCountCounter() {
-            return metrics.httpMetrics().aboveMaxConnectionCountCounter();
-        }
-
-        @Override
-        public Counter getBelowMaxConnectionCountCounter() {
-            return metrics.httpMetrics().belowMaxConnectionCountCounter();
-        }
 
         @Override
         public int getBindIPv4Address() {
@@ -3859,6 +3845,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public Counter listenerStateChangeCounter() {
+            return metrics.httpMetrics().listenerStateChangeCounter();
+        }
+
+        @Override
         public boolean preAllocateBuffers() {
             return false;
         }
@@ -4025,11 +4016,6 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     private class PropLineTcpReceiverConfiguration implements LineTcpReceiverConfiguration {
         @Override
-        public Counter getAboveMaxConnectionCountCounter() {
-            return metrics.lineMetrics().aboveMaxConnectionCountCounter();
-        }
-
-        @Override
         public String getAuthDB() {
             return lineTcpAuthDB;
         }
@@ -4042,11 +4028,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean getAutoCreateNewTables() {
             return ilpAutoCreateNewTables;
-        }
-
-        @Override
-        public Counter getBelowMaxConnectionCountCounter() {
-            return metrics.lineMetrics().belowMaxConnectionCountCounter();
         }
 
         @Override
@@ -4273,6 +4254,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public Counter listenerStateChangeCounter() {
+            return metrics.lineMetrics().aboveMaxConnectionCountCounter();
+        }
+
+        @Override
         public boolean logMessageOnError() {
             return lineLogMessageOnError;
         }
@@ -4463,15 +4449,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropPGWireConfiguration implements PGWireConfiguration {
-        @Override
-        public Counter getAboveMaxConnectionCountCounter() {
-            return metrics.pgWireMetrics().getAboveMaxConnectionCountCounter();
-        }
-
-        @Override
-        public Counter getBelowMaxConnectionCountCounter() {
-            return metrics.pgWireMetrics().getBelowMaxConnectionCountCounter();
-        }
 
         @Override
         public int getBinParamCountCapacity() {
@@ -4761,6 +4738,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isUpdateCacheEnabled() {
             return pgUpdateCacheEnabled;
+        }
+
+        @Override
+        public Counter listenerStateChangeCounter() {
+            return metrics.pgWireMetrics().listenerStateChangeCounter();
         }
 
         @Override

@@ -31,13 +31,12 @@ import io.questdb.std.Mutable;
 import org.jetbrains.annotations.TestOnly;
 
 public class PGWireMetrics implements Mutable {
-    private final Counter aboveMaxConnectionCountCounter;
-    private final Counter belowMaxConnectionCountCounter;
     private final LongGauge cachedSelectsGauge;
     private final LongGauge cachedUpdatesGauge;
     private final Counter completedQueriesCounter;
     private final LongGauge connectionCountGauge;
     private final Counter errorCounter;
+    private final Counter listenerStateChangeCounter;
     private final Counter selectCacheHitCounter;
     private final Counter selectCacheMissCounter;
     private final Counter startedQueriesCounter;
@@ -51,8 +50,7 @@ public class PGWireMetrics implements Mutable {
         this.selectCacheHitCounter = metricsRegistry.newCounter("pg_wire_select_cache_hits");
         this.selectCacheMissCounter = metricsRegistry.newCounter("pg_wire_select_cache_misses");
         this.errorCounter = metricsRegistry.newCounter("pg_wire_errors");
-        this.aboveMaxConnectionCountCounter = metricsRegistry.newCounter("pg_wire_above_max_connection_count");
-        this.belowMaxConnectionCountCounter = metricsRegistry.newCounter("pg_wire_below_max_connection_count");
+        this.listenerStateChangeCounter = metricsRegistry.newCounter("pg_wire_listener_state_change_count");
     }
 
     public LongGauge cachedSelectsGauge() {
@@ -73,8 +71,7 @@ public class PGWireMetrics implements Mutable {
         selectCacheHitCounter.reset();
         selectCacheMissCounter.reset();
         startedQueriesCounter.reset();
-        aboveMaxConnectionCountCounter.reset();
-        belowMaxConnectionCountCounter.reset();
+        listenerStateChangeCounter.reset();
     }
 
     @TestOnly
@@ -86,16 +83,12 @@ public class PGWireMetrics implements Mutable {
         return connectionCountGauge;
     }
 
-    public Counter getAboveMaxConnectionCountCounter() {
-        return aboveMaxConnectionCountCounter;
-    }
-
-    public Counter getBelowMaxConnectionCountCounter() {
-        return belowMaxConnectionCountCounter;
-    }
-
     public Counter getErrorCounter() {
         return errorCounter;
+    }
+
+    public Counter listenerStateChangeCounter() {
+        return listenerStateChangeCounter;
     }
 
     public void markComplete() {

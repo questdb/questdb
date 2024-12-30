@@ -34,9 +34,7 @@ public interface IODispatcherConfiguration {
     int BIAS_READ = 1;
     int BIAS_WRITE = 2;
 
-    Counter getAboveMaxConnectionCountCounter();
-
-    Counter getBelowMaxConnectionCountCounter();
+    Counter listenerStateChangeCounter();
 
     int getBindIPv4Address();
 

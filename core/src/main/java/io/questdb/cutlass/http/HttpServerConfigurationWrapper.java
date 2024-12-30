@@ -50,16 +50,6 @@ public class HttpServerConfigurationWrapper implements HttpFullFatServerConfigur
     }
 
     @Override
-    public Counter getAboveMaxConnectionCountCounter() {
-        return getDelegate().getAboveMaxConnectionCountCounter();
-    }
-
-    @Override
-    public Counter getBelowMaxConnectionCountCounter() {
-        return getDelegate().getBelowMaxConnectionCountCounter();
-    }
-
-    @Override
     public int getBindIPv4Address() {
         return getDelegate().getBindIPv4Address();
     }
@@ -297,6 +287,11 @@ public class HttpServerConfigurationWrapper implements HttpFullFatServerConfigur
     @Override
     public boolean isQueryCacheEnabled() {
         return getDelegate().isQueryCacheEnabled();
+    }
+
+    @Override
+    public Counter listenerStateChangeCounter() {
+        return getDelegate().listenerStateChangeCounter();
     }
 
     @Override

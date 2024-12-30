@@ -129,7 +129,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 }
 
                 TestUtils.assertEventually(() -> Assert.assertEquals(0, metrics.httpMetrics().connectionCountGauge().getValue()));
-                TestUtils.assertEventually(() -> Assert.assertEquals(2, metrics.httpMetrics().belowMaxConnectionCountCounter().getValue()));
+                TestUtils.assertEventually(() -> Assert.assertTrue(3 < metrics.httpMetrics().listenerStateChangeCounter().getValue()));
 
                 assertReloadConfig(true);
 
@@ -300,7 +300,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 }
 
                 TestUtils.assertEventually(() -> Assert.assertEquals(0, metrics.pgWireMetrics().connectionCountGauge().getValue()));
-                TestUtils.assertEventually(() -> Assert.assertEquals(2, metrics.pgWireMetrics().getBelowMaxConnectionCountCounter().getValue()));
+                TestUtils.assertEventually(() -> Assert.assertTrue(3 < metrics.pgWireMetrics().listenerStateChangeCounter().getValue()));
 
                 // call the reload method directly instead of using the reload_config() SQL function
                 // to avoid opening a PGWire connection;
@@ -308,7 +308,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 serverMain.getEngine().getConfigReloader().reload();
 
                 // while configuration was reloaded, metrics must not be reset
-                Assert.assertEquals(2, metrics.pgWireMetrics().getBelowMaxConnectionCountCounter().getValue());
+                TestUtils.assertEventually(() -> Assert.assertTrue(3 < metrics.pgWireMetrics().listenerStateChangeCounter().getValue()));
 
                 // we should be able to open two connections eventually
                 TestUtils.assertEventually(() -> {

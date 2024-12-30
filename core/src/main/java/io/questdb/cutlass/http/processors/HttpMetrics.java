@@ -30,29 +30,22 @@ import io.questdb.metrics.MetricsRegistry;
 import io.questdb.std.Mutable;
 
 public class HttpMetrics implements Mutable {
-    private final Counter aboveMaxConnectionCountCounter;
-    private final Counter belowMaxConnectionCountCounter;
+    private final Counter listenerStateChangeCounter;
     private final LongGauge connectionCountGauge;
 
     public HttpMetrics(MetricsRegistry metricsRegistry) {
         this.connectionCountGauge = metricsRegistry.newLongGauge("http_connections");
-        this.aboveMaxConnectionCountCounter = metricsRegistry.newCounter("http_above_max_connection_count");
-        this.belowMaxConnectionCountCounter = metricsRegistry.newCounter("http_below_max_connection_count");
-    }
-
-    public Counter aboveMaxConnectionCountCounter() {
-        return aboveMaxConnectionCountCounter;
-    }
-
-    public Counter belowMaxConnectionCountCounter() {
-        return belowMaxConnectionCountCounter;
+        this.listenerStateChangeCounter = metricsRegistry.newCounter("http_listener_state_change_count");
     }
 
     @Override
     public void clear() {
         connectionCountGauge.setValue(0);
-        aboveMaxConnectionCountCounter.reset();
-        belowMaxConnectionCountCounter.reset();
+        listenerStateChangeCounter.reset();
+    }
+
+    public Counter listenerStateChangeCounter() {
+        return listenerStateChangeCounter;
     }
 
     public LongGauge connectionCountGauge() {

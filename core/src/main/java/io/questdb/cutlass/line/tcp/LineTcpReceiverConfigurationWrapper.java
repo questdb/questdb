@@ -50,11 +50,6 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     }
 
     @Override
-    public Counter getAboveMaxConnectionCountCounter() {
-        return getDelegate().getAboveMaxConnectionCountCounter();
-    }
-
-    @Override
     public String getAuthDB() {
         return getDelegate().getAuthDB();
     }
@@ -67,11 +62,6 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     @Override
     public boolean getAutoCreateNewTables() {
         return getDelegate().getAutoCreateNewTables();
-    }
-
-    @Override
-    public Counter getBelowMaxConnectionCountCounter() {
-        return getDelegate().getBelowMaxConnectionCountCounter();
     }
 
     @Override
@@ -322,6 +312,11 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     @Override
     public boolean isUseLegacyStringDefault() {
         return getDelegate().isUseLegacyStringDefault();
+    }
+
+    @Override
+    public Counter listenerStateChangeCounter() {
+        return getDelegate().listenerStateChangeCounter();
     }
 
     @Override

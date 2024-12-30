@@ -46,16 +46,6 @@ public class HttpMinServerConfigurationWrapper implements HttpServerConfiguratio
     }
 
     @Override
-    public Counter getAboveMaxConnectionCountCounter() {
-        return getDelegate().getAboveMaxConnectionCountCounter();
-    }
-
-    @Override
-    public Counter getBelowMaxConnectionCountCounter() {
-        return getDelegate().getBelowMaxConnectionCountCounter();
-    }
-
-    @Override
     public int getBindIPv4Address() {
         return getDelegate().getBindIPv4Address();
     }
@@ -258,6 +248,11 @@ public class HttpMinServerConfigurationWrapper implements HttpServerConfiguratio
     @Override
     public boolean isPessimisticHealthCheckEnabled() {
         return getDelegate().isPessimisticHealthCheckEnabled();
+    }
+
+    @Override
+    public Counter listenerStateChangeCounter() {
+        return getDelegate().listenerStateChangeCounter();
     }
 
     @Override

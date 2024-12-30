@@ -50,16 +50,6 @@ public class PGWireConfigurationWrapper implements PGWireConfiguration {
     }
 
     @Override
-    public Counter getAboveMaxConnectionCountCounter() {
-        return getDelegate().getAboveMaxConnectionCountCounter();
-    }
-
-    @Override
-    public Counter getBelowMaxConnectionCountCounter() {
-        return getDelegate().getBelowMaxConnectionCountCounter();
-    }
-
-    @Override
     public int getBinParamCountCapacity() {
         return getDelegate().getBinParamCountCapacity();
     }
@@ -392,6 +382,11 @@ public class PGWireConfigurationWrapper implements PGWireConfiguration {
     @Override
     public boolean isUpdateCacheEnabled() {
         return getDelegate().isUpdateCacheEnabled();
+    }
+
+    @Override
+    public Counter listenerStateChangeCounter() {
+        return getDelegate().listenerStateChangeCounter();
     }
 
     @Override
