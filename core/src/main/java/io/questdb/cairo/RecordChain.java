@@ -37,6 +37,7 @@ import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -48,20 +49,20 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
-public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, WindowSPI, Reopenable {
-    private final int columnCount;
+public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSinkSPI, WindowSPI, Reopenable {
+    protected final int columnCount;
     private final long[] columnOffsets;
-    private final long fixOffset;
-    private final MemoryCARW mem;
-    private final RecordChainRecord recordA;
-    private final RecordChainRecord recordB;
-    private final RecordSink recordSink;
-    private final long varOffset;
+    protected final long fixOffset;
+    protected final MemoryCARW mem;
+    protected final RecordChainRecord recordA;
+    protected final RecordChainRecord recordB;
+    protected final RecordSink recordSink;
+    protected final long varOffset;
     private long nextRecordOffset = -1L;
     private RecordChainRecord recordC;
-    private long recordOffset;
+    protected long recordOffset;
     private SymbolTableSource symbolTableResolver;
-    private long varAppendOffset = 0L;
+    protected long varAppendOffset = 0L;
 
     public RecordChain(
             @Transient @NotNull ColumnTypes columnTypes,
@@ -73,8 +74,8 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
             this.mem = Vm.getCARWInstance(pageSize, maxPages, MemoryTag.NATIVE_RECORD_CHAIN);
             this.recordSink = recordSink;
             this.columnCount = columnTypes.getColumnCount();
-            this.recordA = new RecordChainRecord(columnCount);
-            this.recordB = new RecordChainRecord(columnCount);
+            this.recordA = this.newChainRecord();
+            this.recordB = this.newChainRecord();
             long varOffset = 0L;
             long fixOffset = 0L;
 
@@ -124,9 +125,8 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
         counter.add(result);
     }
 
+    @Override
     public void clear() {
-        // memory will self-extend on write
-        // reads are prevented by setting nextRecordOffset to -1
         mem.close();
         nextRecordOffset = -1L;
         varAppendOffset = 0L;
@@ -155,7 +155,7 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
     @Override
     public Record getRecordAt(long recordOffset) {
         if (recordC == null) {
-            recordC = new RecordChainRecord(columnCount);
+            recordC = newChainRecord();
         }
         recordC.of(rowToDataOffset(recordOffset));
         return recordC;
@@ -178,7 +178,6 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
     }
 
     public void of(long nextRecordOffset) {
-        assert nextRecordOffset == -1 || (nextRecordOffset > -1 && nextRecordOffset + Long.BYTES <= mem.size());
         this.nextRecordOffset = nextRecordOffset;
     }
 
@@ -352,8 +351,12 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
         }
     }
 
-    private static long rowToDataOffset(long row) {
+    protected long rowToDataOffset(long row) {
         return row + 8;
+    }
+
+    protected RecordChainRecord newChainRecord() {
+        return new RecordChainRecord(columnCount);
     }
 
     private void putNull() {
@@ -361,7 +364,7 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
         recordOffset += 8;
     }
 
-    private class RecordChainRecord implements Record {
+    protected class RecordChainRecord implements Record {
         private final ObjList<MemoryCR.ByteSequenceView> bsViews;
         private final ObjList<DirectString> csViewsA;
         private final ObjList<DirectString> csViewsB;
@@ -370,7 +373,7 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
         private final ObjList<Long256Impl> longs256B;
         private final ObjList<DirectUtf8String> utf8ViewsA;
         private final ObjList<DirectUtf8String> utf8ViewsB;
-        private long baseOffset;
+        protected long baseOffset;
         private long fixedOffset;
 
         public RecordChainRecord(int columnCount) {
@@ -618,7 +621,7 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
             return longs256B.getQuick(columnIndex);
         }
 
-        private void of(long offset) {
+        protected void of(long offset) {
             this.baseOffset = offset;
             this.fixedOffset = offset + varOffset;
         }
