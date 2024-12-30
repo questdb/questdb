@@ -2748,6 +2748,8 @@ if __name__ == "__main__":
 
     @Test
     public void testCancelRunningQuery() throws Exception {
+        // legacy code is liable to "resume" cursor after "cursor.close()", which would lead to undefined behaviour
+        Assume.assumeFalse(legacyMode);
         String[] queries = {
                 "create table new_tab as (select count(*) from tab t1 join tab t2 on t1.x = t2.x where sleep(120000))",
                 "select count(*) from tab t1 join tab t2 on t1.x = t2.x where sleep(120000)",
