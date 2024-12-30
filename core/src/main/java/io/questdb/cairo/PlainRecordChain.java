@@ -112,7 +112,7 @@ public class PlainRecordChain extends RecordChain {
 
     @Override
     protected RecordChainRecord newChainRecord() {
-        return new RecordChainRecord() {
+        return new RecordChainRecord(columnCount) {
             @Override
             public long getRowId() {
                 return baseOffset;

@@ -25,20 +25,35 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryARW;
-import io.questdb.std.*;
+import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.cairo.vm.api.MemoryCR;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Interval;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectString;
+import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
 public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSinkSPI, WindowSPI, Reopenable {
+    protected final int columnCount;
     private final long[] columnOffsets;
     protected final long fixOffset;
-    protected final MemoryARW mem;
+    protected final MemoryCARW mem;
     protected final RecordChainRecord recordA;
     protected final RecordChainRecord recordB;
     protected final RecordSink recordSink;
@@ -56,14 +71,16 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
             int maxPages
     ) {
         try {
-            this.mem = Vm.getARWInstance(pageSize, maxPages, MemoryTag.NATIVE_RECORD_CHAIN);
+            this.mem = Vm.getCARWInstance(pageSize, maxPages, MemoryTag.NATIVE_RECORD_CHAIN);
             this.recordSink = recordSink;
-            int count = columnTypes.getColumnCount();
+            this.columnCount = columnTypes.getColumnCount();
+            this.recordA = this.newChainRecord();
+            this.recordB = this.newChainRecord();
             long varOffset = 0L;
             long fixOffset = 0L;
 
-            this.columnOffsets = new long[count];
-            for (int i = 0; i < count; i++) {
+            this.columnOffsets = new long[columnCount];
+            for (int i = 0; i < columnCount; i++) {
                 int type = columnTypes.getColumnType(i);
                 if (ColumnType.isVarSize(type)) {
                     columnOffsets[i] = varOffset;
@@ -75,8 +92,6 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
             }
             this.varOffset = varOffset;
             this.fixOffset = fixOffset;
-            this.recordA = this.newChainRecord();
-            this.recordB = this.newChainRecord();
         } catch (Throwable th) {
             close();
             throw th;
@@ -341,7 +356,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     }
 
     protected RecordChainRecord newChainRecord() {
-        return new RecordChainRecord();
+        return new RecordChainRecord(columnCount);
     }
 
     private void putNull() {
@@ -350,14 +365,32 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     }
 
     protected class RecordChainRecord implements Record {
-        private final Interval interval = new Interval();
-        long baseOffset;
-        long fixedOffset;
+        private final ObjList<MemoryCR.ByteSequenceView> bsViews;
+        private final ObjList<DirectString> csViewsA;
+        private final ObjList<DirectString> csViewsB;
+        private final ObjList<Interval> intervals;
+        private final ObjList<Long256Impl> longs256A;
+        private final ObjList<Long256Impl> longs256B;
+        private final ObjList<DirectUtf8String> utf8ViewsA;
+        private final ObjList<DirectUtf8String> utf8ViewsB;
+        protected long baseOffset;
+        private long fixedOffset;
+
+        public RecordChainRecord(int columnCount) {
+            this.bsViews = new ObjList<>(columnCount);
+            this.csViewsA = new ObjList<>(columnCount);
+            this.csViewsB = new ObjList<>(columnCount);
+            this.intervals = new ObjList<>(columnCount);
+            this.longs256A = new ObjList<>(columnCount);
+            this.longs256B = new ObjList<>(columnCount);
+            this.utf8ViewsA = new ObjList<>(columnCount);
+            this.utf8ViewsB = new ObjList<>(columnCount);
+        }
 
         @Override
         public BinarySequence getBin(int col) {
             long offset = varWidthColumnOffset(col);
-            return offset == -1 ? null : mem.getBin(offset);
+            return offset == -1 ? null : mem.getBin(offset, bsView(col));
         }
 
         @Override
@@ -428,7 +461,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         @Override
         public Interval getInterval(int col) {
             final long offset = fixedWithColumnOffset(col);
-            return interval.of(mem.getLong(offset), mem.getLong(offset + Long.BYTES));
+            return interval(col).of(mem.getLong(offset), mem.getLong(offset + Long.BYTES));
         }
 
         @Override
@@ -453,12 +486,16 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
 
         @Override
         public Long256 getLong256A(int col) {
-            return mem.getLong256A(fixedWithColumnOffset(col));
+            Long256Impl long256 = long256A(col);
+            mem.getLong256(fixedWithColumnOffset(col), long256);
+            return long256;
         }
 
         @Override
         public Long256 getLong256B(int col) {
-            return mem.getLong256B(fixedWithColumnOffset(col));
+            Long256Impl long256 = long256B(col);
+            mem.getLong256(fixedWithColumnOffset(col), long256);
+            return long256;
         }
 
         @Override
@@ -480,14 +517,14 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         public CharSequence getStrA(int col) {
             long offset = varWidthColumnOffset(col);
             assert offset > -2;
-            return offset == -1 ? null : mem.getStrA(offset);
+            return offset == -1 ? null : mem.getStr(offset, csViewA(col));
         }
 
         @Override
         public CharSequence getStrB(int col) {
             long offset = varWidthColumnOffset(col);
             assert offset > -2;
-            return offset == -1 ? null : mem.getStrB(offset);
+            return offset == -1 ? null : mem.getStr(offset, csViewB(col));
         }
 
         @Override
@@ -515,7 +552,8 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
             if (offset == -1) {
                 return null;
             }
-            return VarcharTypeDriver.getPlainValue(mem, offset, 1); // VarcharA
+            long addr = mem.addressOf(offset);
+            return VarcharTypeDriver.getPlainValue(addr, utf8ViewA(col));
         }
 
         @Override
@@ -524,7 +562,8 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
             if (offset == -1) {
                 return null;
             }
-            return VarcharTypeDriver.getPlainValue(mem, offset, 2); // VarcharB
+            long addr = mem.addressOf(offset);
+            return VarcharTypeDriver.getPlainValue(addr, utf8ViewB(col));
         }
 
         @Override
@@ -536,13 +575,69 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
             return TableUtils.NULL_LEN;
         }
 
+        private MemoryCR.ByteSequenceView bsView(int columnIndex) {
+            if (bsViews.getQuiet(columnIndex) == null) {
+                bsViews.extendAndSet(columnIndex, new MemoryCR.ByteSequenceView());
+            }
+            return bsViews.getQuick(columnIndex);
+        }
+
+        private DirectString csViewA(int columnIndex) {
+            if (csViewsA.getQuiet(columnIndex) == null) {
+                csViewsA.extendAndSet(columnIndex, new DirectString());
+            }
+            return csViewsA.getQuick(columnIndex);
+        }
+
+        private DirectString csViewB(int columnIndex) {
+            if (csViewsB.getQuiet(columnIndex) == null) {
+                csViewsB.extendAndSet(columnIndex, new DirectString());
+            }
+            return csViewsB.getQuick(columnIndex);
+        }
+
         private long fixedWithColumnOffset(int index) {
             return fixedOffset + columnOffsets[index];
+        }
+
+        private Interval interval(int columnIndex) {
+            if (intervals.getQuiet(columnIndex) == null) {
+                intervals.extendAndSet(columnIndex, new Interval());
+            }
+            return intervals.getQuick(columnIndex);
+        }
+
+        private Long256Impl long256A(int columnIndex) {
+            if (longs256A.getQuiet(columnIndex) == null) {
+                longs256A.extendAndSet(columnIndex, new Long256Impl());
+            }
+            return longs256A.getQuick(columnIndex);
+        }
+
+        private Long256Impl long256B(int columnIndex) {
+            if (longs256B.getQuiet(columnIndex) == null) {
+                longs256B.extendAndSet(columnIndex, new Long256Impl());
+            }
+            return longs256B.getQuick(columnIndex);
         }
 
         protected void of(long offset) {
             this.baseOffset = offset;
             this.fixedOffset = offset + varOffset;
+        }
+
+        private DirectUtf8String utf8ViewA(int columnIndex) {
+            if (utf8ViewsA.getQuiet(columnIndex) == null) {
+                utf8ViewsA.extendAndSet(columnIndex, new DirectUtf8String());
+            }
+            return utf8ViewsA.getQuick(columnIndex);
+        }
+
+        private DirectUtf8String utf8ViewB(int columnIndex) {
+            if (utf8ViewsB.getQuiet(columnIndex) == null) {
+                utf8ViewsB.extendAndSet(columnIndex, new DirectUtf8String());
+            }
+            return utf8ViewsB.getQuick(columnIndex);
         }
 
         private long varWidthColumnOffset(int index) {
