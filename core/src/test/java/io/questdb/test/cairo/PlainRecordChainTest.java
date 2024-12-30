@@ -30,7 +30,6 @@ import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.PlainRecordChain;
-import io.questdb.cairo.RecordChain;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.TableColumnMetadata;
