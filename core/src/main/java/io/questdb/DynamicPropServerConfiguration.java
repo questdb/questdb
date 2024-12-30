@@ -97,7 +97,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     private final LineTcpReceiverConfigurationWrapper lineTcpConfig;
     private final boolean loadAdditionalConfigurations;
     private final Log log;
-    private final MemoryConfigurationImpl memoryConfig;
+    private final MemoryConfigurationWrapper memoryConfig;
     private final Metrics metrics;
     private final MicrosecondClock microsecondClock;
     private final HttpMinServerConfigurationWrapper minHttpServerConfig;
@@ -146,7 +146,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
         this.minHttpServerConfig = new HttpMinServerConfigurationWrapper(this.metrics);
         this.httpServerConfig = new HttpServerConfigurationWrapper(this.metrics);
         this.lineTcpConfig = new LineTcpReceiverConfigurationWrapper(this.metrics);
-        this.memoryConfig = new MemoryConfigurationImpl();
+        this.memoryConfig = new MemoryConfigurationWrapper();
         this.pgWireConfig = new PGWireConfigurationWrapper(this.metrics);
         reloadNestedConfigurations(serverConfig);
         this.version = 0;
@@ -417,18 +417,5 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
         lineTcpConfig.setDelegate(serverConfig.getLineTcpReceiverConfiguration());
         memoryConfig.setDelegate(serverConfig.getMemoryConfiguration());
         pgWireConfig.setDelegate(serverConfig.getPGWireConfiguration());
-    }
-
-    private static class MemoryConfigurationImpl extends MemoryConfigurationWrapper {
-        private final AtomicReference<MemoryConfiguration> delegate = new AtomicReference<>();
-
-        @Override
-        public MemoryConfiguration getDelegate() {
-            return delegate.get();
-        }
-
-        public void setDelegate(MemoryConfiguration delegate) {
-            this.delegate.set(delegate);
-        }
     }
 }
