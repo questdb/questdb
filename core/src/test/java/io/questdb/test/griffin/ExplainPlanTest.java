@@ -131,6 +131,8 @@ import io.questdb.griffin.engine.functions.rnd.RndSymbolListFunctionFactory;
 import io.questdb.griffin.engine.functions.table.HydrateTableMetadataFunctionFactory;
 import io.questdb.griffin.engine.functions.table.ReadParquetFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.window.LagDoubleFunctionFactory;
+import io.questdb.griffin.engine.functions.window.LeadDoubleFunctionFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.model.WindowColumn;
 import io.questdb.jit.JitUtil;
@@ -2440,7 +2442,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                         sigArgType = ColumnType.DOUBLE;
                                     } else if (factory instanceof LevelTwoPriceFunctionFactory) {
                                         sigArgType = ColumnType.DOUBLE;
-                                    } else {
+                                    } else if (factory instanceof LagDoubleFunctionFactory || factory instanceof LeadDoubleFunctionFactory) {
+                                        sigArgType = ColumnType.INT;
+                                        useConst = true;
+                                    }else {
                                         sigArgType = ColumnType.STRING;
                                     }
                                 }
