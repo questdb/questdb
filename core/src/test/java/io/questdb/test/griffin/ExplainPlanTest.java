@@ -2445,7 +2445,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     } else if (factory instanceof LagDoubleFunctionFactory || factory instanceof LeadDoubleFunctionFactory) {
                                         sigArgType = ColumnType.INT;
                                         useConst = true;
-                                    }else {
+                                    } else {
                                         sigArgType = ColumnType.STRING;
                                     }
                                 }
