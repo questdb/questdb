@@ -247,7 +247,7 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("dateadd('").val(period).val("',").val(timestampFunc).val(',').val(strideFunc).val(tzFunc).val(',').val(')');
+            sink.val("dateadd('").val(period).val("',").val(timestampFunc).val(',').val(strideFunc).val(',').val(tzFunc).val(')');
         }
     }
 
@@ -301,6 +301,11 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
             } catch (NumericException e) {
                 return Timestamps.addPeriod(timestamp, period, periodOccurrence);
             }
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("dateadd('").val(periodFunc).val("',").val(strideFunc).val(',').val(timestampFunc).val(',').val(tzFunc).val(')');
         }
     }
 }
