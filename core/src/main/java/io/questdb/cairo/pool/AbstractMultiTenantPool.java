@@ -96,9 +96,6 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
                                     .$("' [at=").$(e.index).$(':').$(i)
                                     .I$();
                             tenant = newTenant(tableToken, e, i, supervisor);
-                            if (supervisor != null) {
-                                supervisor.onResourceBorrowed(tenant);
-                            }
                         } catch (CairoException ex) {
                             Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
                             throw ex;
@@ -109,9 +106,6 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
                     } else {
                         try {
                             tenant.refresh(supervisor);
-                            if (supervisor != null) {
-                                supervisor.onResourceBorrowed(tenant);
-                            }
                         } catch (Throwable th) {
                             tenant.goodbye();
                             tenant.close();
@@ -127,12 +121,18 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
                         tenant.goodbye();
                         LOG.info().$('\'').utf8(tableToken.getDirName()).$("' born free").$();
                         tenant.updateTableToken(tableToken);
+                        if (supervisor != null) {
+                            supervisor.onResourceBorrowed(tenant);
+                        }
                         return tenant;
                     }
                     LOG.debug().$('\'').utf8(tableToken.getDirName()).$("' is assigned [at=").$(e.index).$(':').$(i)
                             .$(", thread=").$(thread)
                             .I$();
                     tenant.updateTableToken(tableToken);
+                    if (supervisor != null) {
+                        supervisor.onResourceBorrowed(tenant);
+                    }
                     return tenant;
                 }
             }

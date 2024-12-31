@@ -83,10 +83,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         LogRecord log = null;
         try {
             final int leakedReadersCount = leakedReaders != null ? leakedReaders.size() : 0;
-            log = LOG.errorW();
             if (leakedReadersCount > 0) {
+                log = LOG.errorW();
                 log.$("brk");
             } else {
+                log = LOG.info();
                 log.$("fin");
             }
             log.$(" [id=").$(sqlId)
@@ -287,12 +288,14 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
 
     @Override
     public void onResourceBorrowed(ReaderPool.R resource) {
+        assert resource.getSupervisor() != null;
         readers.add(resource);
     }
 
     @Override
     public void onResourceReturned(ReaderPool.R resource) {
-        readers.remove(resource);
+        int index = readers.remove(resource);
+        assert index > -1;
     }
 
     @Override

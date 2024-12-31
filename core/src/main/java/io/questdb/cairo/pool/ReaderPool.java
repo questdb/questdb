@@ -100,16 +100,12 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
                 // so that we do not freak out about reader leaks
                 if (supervisor != null) {
                     supervisor.onResourceReturned(this);
-                }
-                try {
-                    goPassive();
-                    final AbstractMultiTenantPool<R> pool = this.pool;
-                    if (pool == null || entry == null || !pool.returnToPool(this)) {
-                        super.close();
-                    }
-                } finally {
-                    // prevent the reader from reporting to tje old supervisor
                     supervisor = null;
+                }
+                goPassive();
+                final AbstractMultiTenantPool<R> pool = this.pool;
+                if (pool == null || entry == null || !pool.returnToPool(this)) {
+                    super.close();
                 }
             }
         }
@@ -122,6 +118,10 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
         @Override
         public int getIndex() {
             return index;
+        }
+
+        public ResourcePoolSupervisor<R> getSupervisor() {
+            return supervisor;
         }
 
         public void goodbye() {
