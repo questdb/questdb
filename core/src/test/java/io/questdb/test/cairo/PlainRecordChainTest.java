@@ -73,7 +73,6 @@ public class PlainRecordChainTest extends AbstractCairoTest {
                     LongList rows = new LongList();
                     Record cursorRecord = cursor.getRecord();
                     chain.setSymbolTableResolver(cursor);
-
                     while (cursor.hasNext()) {
                         rows.add(chain.put(cursorRecord));
                     }
