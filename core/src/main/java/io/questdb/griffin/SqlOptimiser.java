@@ -160,6 +160,7 @@ public class SqlOptimiser implements Mutable {
     private int defaultAliasCount = 0;
     private ObjList<JoinContext> emittedJoinClauses;
     private OperatorExpression opAnd;
+    private OperatorExpression opEq;
     private OperatorExpression opGeq;
     private OperatorExpression opLt;
     private CharSequence tempColumnAlias;
@@ -2428,6 +2429,7 @@ public class SqlOptimiser implements Mutable {
         opGeq = registry.map.get(">=");
         opLt = registry.map.get("<");
         opAnd = registry.map.get("and");
+        opEq = registry.map.get("=");
     }
 
     private boolean isEffectivelyConstantExpression(ExpressionNode node) {
@@ -4740,6 +4742,14 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private ExpressionNode rewritePivotMakeBinaryExpression(ExpressionNode lhs, ExpressionNode rhs, CharSequence token, OperatorExpression operator) {
+        ExpressionNode op = expressionNodePool.next().of(OPERATION, token, operator.precedence, 0);
+        op.paramCount = 2;
+        op.lhs = lhs;
+        op.rhs = rhs;
+        return op;
+    }
+
     /**
      * Recursive. Replaces "sample by" models with group-by. Not all forms of "sample by"
      * can be implemented via this method. Therefore, the rewrite avoids the following:
@@ -6432,9 +6442,7 @@ public class SqlOptimiser implements Mutable {
                 && nested != null
                 && nested.getSelectModelType() == SELECT_MODEL_NONE
                 && nested.getPivotColumns() != null
-                && nested.getPivotColumns().size() == 1
                 && nested.getPivotFor() != null
-                && nested.getPivotFor().size() == 1
                 && nested.getGroupBy() != null
                 && nested.getGroupBy().size() == 1
                 && model.getBottomUpColumns().size() == 1
@@ -6451,57 +6459,201 @@ public class SqlOptimiser implements Mutable {
             ));
 
             // add a pivot column for each entry in FOR, based on the given aggregate
-            QueryColumn aggregate = nested.getPivotColumns().getQuick(0);
-            CharSequence aggregateName = aggregate.getAst().token;
-            CharSequence aggColName = aggregate.getAst().rhs.token;
-            CharSequence aggAlias = aggregate.getAlias();
+            QueryColumn aggCol = nested.getPivotColumns().getQuick(0);
+            CharSequence aggregateNameCs = aggCol.getAst().token;
+            CharSequence aggParamTokenCs = aggCol.getAst().rhs.token;
+            CharSequence aggAliasCs = aggCol.getAlias();
+
+            CharSequence defaultValueCs = rewritePivotGetDefaultValueForAggregateFunction(aggregateNameCs.toString());
 
 
-            for (int i = 0, n = nested.getPivotFor().size(); i < n; i++) {
-                // FOR year IN (2000, 2010, 2020)
-                ExpressionNode forExpr = nested.getPivotFor().getQuick(i);
-                ExpressionNode forExprColName = forExpr.args.getLast();
+            // need to permute all of the FOR exprs
+            // FOR year in (2000, 2010, 2020)
+            //     country in ('NL, 'US')
+            // should give 6 columns.
 
-                for (int j = forExpr.args.size() - 2; j >= 0; j--) {
+            if (nested.getPivotFor().size() == 1) {
+                // fast path
+            }
 
-                    // SUM(_)
-                    ExpressionNode agg = expressionNodePool.next().of(FUNCTION, aggregateName, Integer.MIN_VALUE, 0);
-                    agg.paramCount = 1;
-
-                    // CASE(_)
-                    ExpressionNode switch_ = expressionNodePool.next().of(FUNCTION, "switch", Integer.MIN_VALUE, 0);
-                    switch_.paramCount = 4;
-
-                    // 0
-                    ExpressionNode defaultValue = expressionNodePool.next().of(CONSTANT, "0", Integer.MIN_VALUE, 0);
-
-                    // population
-                    ExpressionNode aggregateColumn = aggregate.getAst().rhs;
-
-                    // 2000
-                    ExpressionNode pivotInExprValue = forExpr.args.getQuick(j);
-
-                    // CASE WHEN year = 2000 THEN population ELSE 0 END)
-                    switch_.args.add(defaultValue);
-                    switch_.args.add(aggregateColumn);
-                    switch_.args.add(pivotInExprValue);
-                    switch_.args.add(forExprColName);
-
-                    // SUM(CASE WHEN year = 2000 THEN population ELSE 0 END)
-                    agg.rhs = switch_;
-
-                    // SUM(CASE WHEN year = 2000 THEN population ELSE 0 END) AS "2000"
-                    model.addBottomUpColumn(queryColumnPool.next().of(
-                            aggAlias != null ? pivotInExprValue.token + "_" + aggAlias : pivotInExprValue.token,
-                            agg
-                    ));
+            // outer loop
+            for (int a = 0, b = nested.getPivotFor().size(); a < b; a++) {
+                // inner loop
+                for (int c = 0, d = nested.getPivotFor().size(); c < d; c++) {
+                    if (a == c) {
+                        continue;
+                    }
                 }
             }
+
+            int pivotForSize = nested.getPivotFor().size();
+            IntList forMaxes = new IntList(nested.getPivotFor().size());
+            IntList forDepths = new IntList(nested.getPivotFor().size());
+            int expectedPivotColumnsPerAggregateFunction = 0;
+            for (int i = 0, n = nested.getPivotFor().size(); i < n; i++) {
+                // initialise depth to 0
+                forDepths.add(0);
+
+                // find max value
+                ExpressionNode for_ = nested.getPivotFor().get(i);
+                int numInArgs = for_.paramCount - 1; // skip the LHS of the IN expr
+                int maxIndex = numInArgs - 1; // index is 1 less than list length
+                forMaxes.add(maxIndex);
+
+                expectedPivotColumnsPerAggregateFunction = expectedPivotColumnsPerAggregateFunction == 0 ? numInArgs : expectedPivotColumnsPerAggregateFunction * numInArgs;
+            }
+
+            StringSink nameSink = new StringSink();
+            nameSink.clear();
+
+
+            // for each output pivot column
+            for (int i = 0; i < expectedPivotColumnsPerAggregateFunction; i++) {
+
+                // for each aggregate we want to generate
+                for (int j = 0, n = nested.getPivotColumns().size(); j < n; j++) {
+                    QueryColumn pivotColumn = nested.getPivotColumns().get(j);
+                    CharSequence pivotColumnName = aggCol.getAst().token;
+                    CharSequence pivotColumnParamToken = aggCol.getAst().rhs.token;
+                    ExpressionNode pivotColumnParam = aggCol.getAst().rhs;
+                    CharSequence pivotColumnAlias = aggCol.getAlias();
+                    CharSequence pivotDefaultValue = Chars.equalsIgnoreCase(pivotColumnName, "sum") ? "0" : "null";
+
+
+                    ExpressionNode caseValue = null;
+
+                    // for each forValue combination
+                    for (int k = 0; k < pivotForSize; k++) {
+
+                        // build name
+                        ExpressionNode forInExpr = nested.getPivotFor().getQuick(k);
+                        ExpressionNode inValue = forInExpr.args.getQuick(
+                                forMaxes.get(k) - forDepths.get(k)
+                        );
+
+                        nameSink.put(inValue.token).put('_');
+
+                        // build AND expr
+                        ExpressionNode caseClause = rewritePivotMakeBinaryExpression(forInExpr.args.getLast(), inValue, "=", opEq);
+
+                        if (caseValue == null) {
+                            caseValue = caseClause;
+                        } else {
+                            // need to combine with and
+                            caseValue = rewritePivotMakeBinaryExpression(caseValue, caseClause, "and", opAnd);
+                        }
+                    }
+
+                    if (pivotColumn.getAlias() != null) {
+                        // add the alias
+                        nameSink.put(pivotColumn.getAlias());
+                    } else {
+                        // remove the '_'
+                        nameSink.clear(nameSink.length() - 1);
+                    }
+
+                    // SUM(_)
+                    ExpressionNode aggExpr = expressionNodePool.next().of(FUNCTION, aggregateNameCs, Integer.MIN_VALUE, 0);
+                    aggExpr.paramCount = 1;
+
+                    // CASE(_)
+                    ExpressionNode caseExpr = expressionNodePool.next().of(FUNCTION, "case", Integer.MIN_VALUE, 0);
+                    caseExpr.paramCount = 3;
+
+                    // 0
+                    ExpressionNode defaultValueExpr = expressionNodePool.next().of(CONSTANT, pivotDefaultValue, Integer.MIN_VALUE, 0);
+                    caseExpr.args.add(defaultValueExpr);
+
+                    // population
+                    caseExpr.args.add(pivotColumnParam);
+
+                    // A == B AND C == D etc.
+                    caseExpr.args.add(caseValue);
+
+                    // add to sum
+                    aggExpr.rhs = caseExpr;
+
+                    model.addBottomUpColumn(queryColumnPool.next().of(
+                            nameSink.toString(),
+                            aggExpr
+                    ));
+
+                    nameSink.clear();
+
+                    for (int z = forDepths.size() - 1; z >= 0; z--) {
+                        int depth = forDepths.getQuick(z);
+                        int max = forMaxes.getQuick(z);
+
+                        if (depth < max) {
+                            forDepths.increment(z);
+                            break;
+                        }
+
+                        if (depth == max) {
+                            forDepths.setQuick(z, 0);
+                        }
+                    }
+                }
+
+
+            }
+
+//
+//            for (int i = 0, n = nested.getPivotFor().size(); i < n; i++) {
+//                // FOR year IN (2000, 2010, 2020)
+//                ExpressionNode forExpr = nested.getPivotFor().getQuick(i);
+//                ExpressionNode forExprColExpr = forExpr.args.getLast();
+//
+//                for (int j = forExpr.args.size() - 2; j >= 0; j--) {
+//
+//                    // SUM(_)
+//                    ExpressionNode aggExpr = expressionNodePool.next().of(FUNCTION, aggregateNameCs, Integer.MIN_VALUE, 0);
+//                    aggExpr.paramCount = 1;
+//
+//                    // CASE(_)
+//                    ExpressionNode switchExpr = expressionNodePool.next().of(FUNCTION, "switch", Integer.MIN_VALUE, 0);
+//                    switchExpr.paramCount = 4;
+//
+//                    // 0
+//                    ExpressionNode defaultValueExpr = expressionNodePool.next().of(CONSTANT, defaultValueCs, Integer.MIN_VALUE, 0);
+//
+//                    // population
+//                    ExpressionNode aggregateColumnExpr = aggCol.getAst().rhs;
+//
+//                    // 2000
+//                    ExpressionNode pivotInExprValue = forExpr.args.getQuick(j);
+//
+//                    // CASE WHEN year = 2000 THEN population ELSE 0 END)
+//                    switchExpr.args.add(defaultValueExpr);
+//                    switchExpr.args.add(aggregateColumnExpr);
+//                    switchExpr.args.add(pivotInExprValue);
+//                    switchExpr.args.add(forExprColExpr);
+//
+//                    // SUM(CASE WHEN year = 2000 THEN population ELSE 0 END)
+//                    aggExpr.rhs = switchExpr;
+//
+//                    // SUM(CASE WHEN year = 2000 THEN population ELSE 0 END) AS "2000"
+//                    model.addBottomUpColumn(queryColumnPool.next().of(
+//                            aggAliasCs != null ? pivotInExprValue.token + "_" + aggAliasCs : pivotInExprValue.token,
+//                            aggExpr
+//                    ));
+//                }
+//            }
         } else {
             model.setNestedModel(rewritePivot(model.getNestedModel()));
         }
 
         return model;
+    }
+
+    CharSequence rewritePivotGetDefaultValueForAggregateFunction(String functionName) {
+        switch (functionName) {
+            case "count":
+            case "COUNT":
+                return "null";
+            default:
+                return "0";
+        }
     }
 
     void validateUpdateColumns(QueryModel updateQueryModel, TableRecordMetadata metadata, SqlExecutionContext

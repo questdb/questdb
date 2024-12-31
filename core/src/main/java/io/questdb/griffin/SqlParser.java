@@ -2649,6 +2649,10 @@ public class SqlParser {
         while (true) {
             expr = expr(lexer, model, sqlParserCallback);
 
+            if (expr == null) {
+                break;
+            }
+
             if (expr.type != ExpressionNode.FUNCTION || !Chars.equals(expr.token, "in")) {
                 throw SqlException.$(expr.position, "expected `IN` clause");
             }

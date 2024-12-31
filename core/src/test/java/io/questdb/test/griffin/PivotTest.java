@@ -119,4 +119,98 @@ public class PivotTest extends AbstractSqlParserTest {
         });
     }
 
+    @Test
+    public void testStandardPivotWithMultipleAggregates() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+            execute(dmlCities);
+
+            String pivotQuery =
+                    "SELECT *\n" +
+                            "FROM cities\n" +
+                            "PIVOT (\n" +
+                            "    SUM(population)\n" +
+                            "    COUNT(population)\n" +
+                            "    FOR\n" +
+                            "        year IN (2000, 2010, 2020)\n" +
+                            "    GROUP BY country\n" +
+                            ");\n";
+            String rewrittenQuery =
+                    "SELECT \n" +
+                            "    country,\n" +
+                            "    SUM(CASE WHEN year = 2000 THEN population ELSE 0 END) AS \"2000_sum\",\n" +
+                            "    COUNT(CASE WHEN year = 2000 THEN population ELSE 0 END) AS \"2000_count\",\n" +
+                            "    SUM(CASE WHEN year = 2010 THEN population ELSE 0 END) AS \"2010_sum\",\n" +
+                            "    COUNT(CASE WHEN year = 2010 THEN population ELSE 0 END) AS \"2010_count\",\n" +
+                            "    SUM(CASE WHEN year = 2020 THEN population ELSE 0 END) AS \"2020_sum\"\n" +
+                            "    COUNT(CASE WHEN year = 2020 THEN population ELSE 0 END) AS \"2020_count\"\n" +
+                            "FROM cities\n" +
+                            "GROUP BY country;";
+
+            String model = "";
+            assertModel(model, pivotQuery, ExecutionModel.QUERY);
+            assertModel(model, rewrittenQuery, ExecutionModel.QUERY);
+
+            String result = "country\t2000_sum\t2000_count\t2010_sum\t2010_count\t2020_sum\t2020_count\n" +
+                    "NL\t1005\t1065\t1158\n" +
+                    "US\t8579\t8783\t9510\n";
+
+            assertSql(result, pivotQuery);
+            assertSql(result, rewrittenQuery);
+        });
+    }
+
+
+    @Test
+    public void testStandardPivotWithMultipleForExprs() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+            execute(dmlCities);
+
+            String pivotQuery =
+                    "SELECT *\n" +
+                            "FROM cities\n" +
+                            "PIVOT (\n" +
+                            "    SUM(population)\n" +
+                            "    FOR\n" +
+                            "        year IN (2000, 2010, 2020)\n" +
+                            "        country in ('NL', 'US')\n" +
+                            "    GROUP BY country\n" +
+                            ");\n";
+            String rewrittenQuery =
+                    "SELECT \n" +
+                            "    country,\n" +
+                            "    SUM(CASE WHEN year = 2000 THEN population ELSE 0 END) AS \"2000_sum\",\n" +
+                            "    COUNT(CASE WHEN year = 2000 THEN population ELSE 0 END) AS \"2000_count\",\n" +
+                            "    SUM(CASE WHEN year = 2010 THEN population ELSE 0 END) AS \"2010_sum\",\n" +
+                            "    COUNT(CASE WHEN year = 2010 THEN population ELSE 0 END) AS \"2010_count\",\n" +
+                            "    SUM(CASE WHEN year = 2020 THEN population ELSE 0 END) AS \"2020_sum\"\n" +
+                            "    COUNT(CASE WHEN year = 2020 THEN population ELSE 0 END) AS \"2020_count\"\n" +
+                            "FROM cities\n" +
+                            "GROUP BY country;";
+
+            String model = "";
+            assertModel(model, pivotQuery, ExecutionModel.QUERY);
+            assertModel(model, rewrittenQuery, ExecutionModel.QUERY);
+
+            String result = "country\t2000_sum\t2000_count\t2010_sum\t2010_count\t2020_sum\t2020_count\n" +
+                    "NL\t1005\t1065\t1158\n" +
+                    "US\t8579\t8783\t9510\n";
+
+            assertSql(result, pivotQuery);
+            assertSql(result, rewrittenQuery);
+        });
+    }
+
+    @Test
+    public void testStandardPivotWithoutExplicitGroupBy() throws Exception {
+        assertException("SELECT *\n" +
+                "FROM cities\n" +
+                "PIVOT (\n" +
+                "    SUM(population) as total\n" +
+                "    FOR\n" +
+                "        year IN (2000, 2010, 2020)\n" +
+                ");\n", 101, "expected `GROUP`");
+    }
+
 }
