@@ -60,6 +60,7 @@ import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
+import io.questdb.std.GenericLexer;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.IntPriorityQueue;
@@ -6521,17 +6522,19 @@ public class SqlOptimiser implements Mutable {
 
 
                     ExpressionNode caseValue = null;
+                    ExpressionNode inValue = null;
+                    ExpressionNode forInExpr = null;
 
                     // for each forValue combination
                     for (int k = 0; k < pivotForSize; k++) {
 
                         // build name
-                        ExpressionNode forInExpr = nested.getPivotFor().getQuick(k);
-                        ExpressionNode inValue = forInExpr.args.getQuick(
+                        forInExpr = nested.getPivotFor().getQuick(k);
+                        inValue = forInExpr.args.getQuick(
                                 forMaxes.get(k) - forDepths.get(k)
                         );
 
-                        nameSink.put(inValue.token).put('_');
+                        nameSink.put(GenericLexer.unquote(inValue.token)).put('_');
 
                         // build AND expr
                         ExpressionNode caseClause = rewritePivotMakeBinaryExpression(forInExpr.args.getLast(), inValue, "=", opEq);
@@ -6557,8 +6560,15 @@ public class SqlOptimiser implements Mutable {
                     aggExpr.paramCount = 1;
 
                     // CASE(_)
-                    ExpressionNode caseExpr = expressionNodePool.next().of(FUNCTION, "case", Integer.MIN_VALUE, 0);
-                    caseExpr.paramCount = 3;
+                    ExpressionNode caseExpr;
+                    if (pivotForSize == 1) {
+                        caseExpr = expressionNodePool.next().of(FUNCTION, "switch", Integer.MIN_VALUE, 0);
+                        caseExpr.paramCount = 4;
+                    } else {
+                        caseExpr = expressionNodePool.next().of(FUNCTION, "case", Integer.MIN_VALUE, 0);
+                        caseExpr.paramCount = 3;
+                    }
+
 
                     // 0
                     ExpressionNode defaultValueExpr = expressionNodePool.next().of(CONSTANT, pivotDefaultValue, Integer.MIN_VALUE, 0);
@@ -6567,8 +6577,14 @@ public class SqlOptimiser implements Mutable {
                     // population
                     caseExpr.args.add(pivotColumnParam);
 
-                    // A == B AND C == D etc.
-                    caseExpr.args.add(caseValue);
+                    // case
+                    if (pivotForSize == 1) {
+                        caseExpr.args.add(inValue);
+                        caseExpr.args.add(forInExpr.args.getLast());
+                    } else {
+                        // A == B AND C == D etc.
+                        caseExpr.args.add(caseValue);
+                    }
 
                     // add to sum
                     aggExpr.rhs = caseExpr;
