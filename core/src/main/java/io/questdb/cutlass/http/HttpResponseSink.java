@@ -89,7 +89,7 @@ public class HttpResponseSink implements Closeable, Mutable {
     private long totalBytesSent = 0;
     private long zStreamPtr = 0;
 
-    public HttpResponseSink(HttpMinServerConfiguration configuration) {
+    public HttpResponseSink(HttpServerConfiguration configuration) {
         final int responseBufferSize = configuration.getSendBufferSize();
         this.nf = configuration.getNetworkFacade();
         this.buffer = new ChunkUtf8Sink(responseBufferSize);

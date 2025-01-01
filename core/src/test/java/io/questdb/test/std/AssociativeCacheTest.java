@@ -24,8 +24,24 @@
 
 package io.questdb.test.std;
 
-import io.questdb.metrics.*;
-import io.questdb.std.*;
+import io.questdb.metrics.Counter;
+import io.questdb.metrics.CounterImpl;
+import io.questdb.metrics.LongGauge;
+import io.questdb.metrics.LongGaugeImpl;
+import io.questdb.metrics.NullCounter;
+import io.questdb.metrics.NullLongGauge;
+import io.questdb.std.AssociativeCache;
+import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.ConcurrentAssociativeCache;
+import io.questdb.std.ConcurrentCacheConfiguration;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.NoOpAssociativeCache;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.QuietCloseable;
+import io.questdb.std.Rnd;
+import io.questdb.std.SimpleAssociativeCache;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.FlyweightDirectUtf16Sink;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -334,7 +350,34 @@ public class AssociativeCacheTest {
             case SIMPLE:
                 return new SimpleAssociativeCache<>(blocks, rows, cachedGauge, hitCounter, missCounter);
             case CONCURRENT:
-                return new ConcurrentAssociativeCache<>(blocks, rows, cachedGauge, hitCounter, missCounter);
+                return new ConcurrentAssociativeCache<>(
+                        new ConcurrentCacheConfiguration() {
+                            @Override
+                            public int getBlocks() {
+                                return blocks;
+                            }
+
+                            @Override
+                            public LongGauge getCachedGauge() {
+                                return cachedGauge;
+                            }
+
+                            @Override
+                            public Counter getHiCounter() {
+                                return hitCounter;
+                            }
+
+                            @Override
+                            public Counter getMissCounter() {
+                                return missCounter;
+                            }
+
+                            @Override
+                            public int getRows() {
+                                return rows;
+                            }
+                        }
+                );
             default:
                 throw new IllegalArgumentException("Unexpected cache type: " + cacheType);
         }

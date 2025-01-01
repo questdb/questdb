@@ -628,33 +628,33 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     rollback(pendingWriters);
                     return IMPLICIT_TRANSACTION;
                 case CompiledQuery.CREATE_TABLE_AS_SELECT:
-                    engine.getMetrics().pgWire().markStart();
+                    engine.getMetrics().pgWireMetrics().markStart();
                     try (OperationFuture fut = operation.execute(sqlExecutionContext, tempSequence)) {
                         fut.await();
                         sqlAffectedRowCount = fut.getAffectedRowsCount();
                     } finally {
-                        engine.getMetrics().pgWire().markComplete();
+                        engine.getMetrics().pgWireMetrics().markComplete();
                     }
                     break;
                 case CompiledQuery.CREATE_TABLE:
                     // fall-through
                 case CompiledQuery.DROP:
-                    engine.getMetrics().pgWire().markStart();
+                    engine.getMetrics().pgWireMetrics().markStart();
                     try (OperationFuture fut = operation.execute(sqlExecutionContext, tempSequence)) {
                         fut.await();
                     } finally {
-                        engine.getMetrics().pgWire().markComplete();
+                        engine.getMetrics().pgWireMetrics().markComplete();
                     }
                     break;
                 default:
                     // execute statements that either have not been parse-executed
                     // or we are re-executing it from a prepared statement
                     if (!empty) {
-                        engine.getMetrics().pgWire().markStart();
+                        engine.getMetrics().pgWireMetrics().markStart();
                         try {
                             engine.execute(sqlText, sqlExecutionContext);
                         } finally {
-                            engine.getMetrics().pgWire().markComplete();
+                            engine.getMetrics().pgWireMetrics().markComplete();
                         }
                     }
                     break;
@@ -1375,7 +1375,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool
     ) throws SqlException, BadProtocolException {
         if (transactionState != ERROR_TRANSACTION) {
-            engine.getMetrics().pgWire().markStart();
+            engine.getMetrics().pgWireMetrics().markStart();
             // execute against writer from the engine, synchronously (null sequence)
             try {
                 for (int attempt = 1; ; attempt++) {
@@ -1399,7 +1399,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     }
                 }
             } finally {
-                engine.getMetrics().pgWire().markComplete();
+                engine.getMetrics().pgWireMetrics().markComplete();
             }
         }
     }
@@ -1421,7 +1421,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             case IMPLICIT_TRANSACTION:
                 // fall through, there is no difference between implicit and explicit transaction at this stage
             case IN_TRANSACTION: {
-                engine.getMetrics().pgWire().markStart();
+                engine.getMetrics().pgWireMetrics().markStart();
                 try {
                     for (int attempt = 1; ; attempt++) {
                         copyParameterValuesToBindVariableService(
@@ -1453,7 +1453,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         }
                     }
                 } finally {
-                    engine.getMetrics().pgWire().markComplete();
+                    engine.getMetrics().pgWireMetrics().markComplete();
                 }
             }
             break;
@@ -1476,7 +1476,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             int maxRecompileAttempts
     ) throws SqlException, BadProtocolException {
         if (cursor == null) {
-            engine.getMetrics().pgWire().markStart();
+            engine.getMetrics().pgWireMetrics().markStart();
 
             // commit implicitly if we are not in a transaction
             // this makes data inserted in the same pipeline visible to the select
@@ -1545,7 +1545,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool
     ) throws SqlException, BadProtocolException {
         if (transactionState != ERROR_TRANSACTION) {
-            engine.getMetrics().pgWire().markStart();
+            engine.getMetrics().pgWireMetrics().markStart();
             // execute against writer from the engine, synchronously (null sequence)
             try {
                 for (int attempt = 1; ; attempt++) {
@@ -1583,7 +1583,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     }
                 }
             } finally {
-                engine.getMetrics().pgWire().markComplete();
+                engine.getMetrics().pgWireMetrics().markComplete();
             }
         }
     }
@@ -2058,7 +2058,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             stateSync = SYNC_DATA_SUSPENDED;
         }
 
-        engine.getMetrics().pgWire().markComplete();
+        engine.getMetrics().pgWireMetrics().markComplete();
     }
 
     private void outError(PGResponseSink utf8Sink, ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters) {

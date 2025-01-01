@@ -44,7 +44,7 @@ public class DoubleReloadTest extends AbstractCairoTest {
 
         try (
                 TableReader reader = newOffPoolReader(configuration, "int_test");
-                TableWriter writer = newOffPoolWriter(configuration, "int_test", metrics)
+                TableWriter writer = newOffPoolWriter(configuration, "int_test")
         ) {
             reader.reload();
 
