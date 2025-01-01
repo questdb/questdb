@@ -208,7 +208,7 @@ public class LongListTest {
         Assert.assertNotEquals(list1, list5);
 
         // null
-        Assert.assertNotEquals(list1, null);
+        Assert.assertNotEquals(null, list1);
 
         // different noEntryValue
         final LongList list6 = new LongList(4, Long.MIN_VALUE);

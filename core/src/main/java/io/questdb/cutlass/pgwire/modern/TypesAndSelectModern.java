@@ -46,7 +46,7 @@ public class TypesAndSelectModern implements QuietCloseable, TypeContainer {
     private final IntList inPgParameterTypeOIDs = new IntList();
     // Bind variable types. Each entry combines:
     // 1. Lower 32 bits: QuestDB native types scrapped from BindingService after the SQL text is parsed.
-    // 2. Upper 32 bits: PostgreSQL OIDs in BigEndian. This combines types a client sent us in a PARSE message with the
+    // 2. Upper 32 bits: PostgresSQL OIDs in BigEndian. This combines types a client sent us in a PARSE message with the
     //                   types SQL Compiled derived from the SQL. Type from the PARSE message have a priority.
     private final LongList outPgParameterTypes = new LongList();
     // sqlTag is the value we will be returning back to the client

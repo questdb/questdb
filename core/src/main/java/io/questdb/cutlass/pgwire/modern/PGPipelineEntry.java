@@ -53,7 +53,6 @@ import io.questdb.griffin.CompiledQueryImpl;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
@@ -137,8 +136,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     //    Cannot we just maintain a single list and convert when needed?
     // A: Some QuestDB natives do not have native equivalents. For example BYTE or GEOHASH
     // Q: Cannot we just maintain QuestDB native types and convert to PGWire OIDs when needed?
-    // A: PGWire clients could have specified their own expectations about type in a PARSE message
-    //    and we have to respect this. Thus if a PARSE message contains a type VARCHAR then
+    // A: PGWire clients could have specified their own expectations about type in a PARSE message,
+    //    and we have to respect this. Thus, if a PARSE message contains a type VARCHAR then
     //    we need to read it from wire as VARCHAR even we use e.g. INT internally. So we need both native and wire types.
     private final LongList outParameterTypeDescriptionTypes;
     private final ObjList<String> pgResultSetColumnNames;
@@ -172,7 +171,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private String preparedStatementName;
     // the name of the prepared statement as used by "deallocate" SQL
     // not to be confused with prepared statements that come on the
-    // PostgreSQL wire.
+    // PostgresSQL wire.
     private CharSequence preparedStatementNameToDeallocate;
     private long sqlAffectedRowCount = 0;
     // The count of rows sent that have been sent to the client per fetch. Client can either
@@ -358,7 +357,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         try {
             sqlExecutionContext.setCacheHit(cacheHit = false);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                // Define the provided PostgreSQL types on the BindVariableService. The compilation
+                // Define the provided PostgresSQL types on the BindVariableService. The compilation
                 // below will use these types to build the plan, and it will also define any missing bind
                 // variables.
                 msgParseDefineBindVariableTypes(sqlExecutionContext.getBindVariableService());
@@ -1120,7 +1119,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         // Bind variables have to be configured for the cursor.
         // We have stored the following:
         // - outTypeDescriptionTypeOIDs - OIDS of the parameter types, these are all types present in the SQL
-        // - outTypeDescriptionType - QuestDB native types, as infered by SQL compiler
+        // - outTypeDescriptionType - QuestDB native types, as inferred by SQL compiler
         // - parameter values - list of parameter values supplied by the client; this list may be
         //                      incomplete insofar as being shorter than the list of bind variables. The values
         //                      are read from the parameter value arena.
@@ -1138,7 +1137,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             long encodedType = outParameterTypeDescriptionTypes.getQuick(i);
 
             // define binding variable. we have to use the exact type as was inferred by the compiler. we cannot use
-            // pgwire equaivalent. why? some QuestDB native types do not have exact equivalent in pgwire so we approximate
+            // pgwire equivalent. why? some QuestDB native types do not have exact equivalent in pgwire so we approximate
             // them by using the most similar/suitable type
             // example: there is no 8-bit unsigned integer in pgwire, but there is a 'byte' type in QuestDB.
             //          so we use int2 in pgwire for binding variables inferred as 'byte'. however, int2 is also
@@ -1598,7 +1597,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         // - Clients may specify their own type expectations
         // - Type mismatches between PARSE and subsequent DESCRIBE messages can cause client errors
         // - Some clients (e.g., PG JDBC) strictly validate type consistency between types in PARSE and DESCRIBE messages
-        // In contract, QuestDB natives types are always stored as derifed by compiler. Without considering
+        // In contract, QuestDB natives types are always stored as derived by compiler. Without considering
 
         final int n = bindVariableService.getIndexedVariableCount();
         outParameterTypeDescriptionTypes.setPos(n);
@@ -2074,10 +2073,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
         utf8Sink.putAscii('C'); // C = SQLSTATE
         if (stalePlanError) {
-            // this is what PostgreSQL sends when recompiling a query produces a different ResultSet.
+            // this is what PostgresSQL sends when recompiling a query produces a different ResultSet.
             // some clients act on it by restarting the query from the beginning.
             utf8Sink.putZ("0A000"); // SQLSTATE = feature_not_supported
-            utf8Sink.putAscii('R'); // R = Routine: the name of the source-code routine reporting the error, we mimic PostgreSQL here
+            utf8Sink.putAscii('R'); // R = Routine: the name of the source-code routine reporting the error, we mimic PostgresSQL here
             utf8Sink.putZ("RevalidateCachedQuery"); // name of the routine
         } else {
             utf8Sink.putZ("00000"); // SQLSTATE = successful_completion (sic)
@@ -2732,7 +2731,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     // When we pick up SQL (insert or select) from cache we have to check that the SQL was compiled with
-    // the same PostgreSQL parameter types that were supplied when SQL was cached. When the parameter types
+    // the same PostgresSQL parameter types that were supplied when SQL was cached. When the parameter types
     // are different we will have to recompile the SQL.
     //
     // In this method we only compare PG parameter types. For example, if client sent 0 parameters
