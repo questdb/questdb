@@ -26,6 +26,7 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
+import io.questdb.Metrics;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cutlass.line.LineTcpTimestampAdapter;
@@ -42,6 +43,7 @@ import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 
 public class DefaultLineTcpReceiverConfiguration extends DefaultIODispatcherConfiguration implements LineTcpReceiverConfiguration {
     private static final WorkerPoolConfiguration SHARED_CONFIGURATION = new WorkerPoolConfiguration() {
+
         @Override
         public String getPoolName() {
             return "ilptcp";
@@ -140,6 +142,11 @@ public class DefaultLineTcpReceiverConfiguration extends DefaultIODispatcherConf
     @Override
     public int getMaxMeasurementSize() {
         return 512;
+    }
+
+    @Override
+    public Metrics getMetrics() {
+        return Metrics.ENABLED;
     }
 
     @Override

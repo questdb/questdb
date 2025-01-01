@@ -25,12 +25,19 @@
 package io.questdb.metrics;
 
 
-public class HealthMetricsImpl implements HealthMetrics {
+import io.questdb.std.Mutable;
+
+public class HealthMetricsImpl implements HealthMetrics, Mutable {
 
     private final Counter unhandledErrorCounter;
 
     public HealthMetricsImpl(MetricsRegistry metricsRegistry) {
         this.unhandledErrorCounter = metricsRegistry.newCounter("unhandled_errors");
+    }
+
+    @Override
+    public void clear() {
+        unhandledErrorCounter.reset();
     }
 
     @Override

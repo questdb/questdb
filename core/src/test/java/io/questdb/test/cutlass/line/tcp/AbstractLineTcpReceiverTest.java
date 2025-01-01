@@ -88,7 +88,6 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected static final int WAIT_NO_WAIT = 0x0;
     private final static Log LOG = LogFactory.getLog(AbstractLineTcpReceiverTest.class);
     protected final int bindPort = 9002; // Don't clash with other tests since they may run in parallel
-    protected final WorkerPool sharedWorkerPool = new TestWorkerPool(getWorkerCount(), metrics);
     private final ThreadLocal<Socket> tlSocket = new ThreadLocal<>();
     protected String authKeyId = null;
     private final FactoryProvider factoryProvider = new DefaultFactoryProvider() {
@@ -205,6 +204,8 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
             return useLegacyStringDefault;
         }
     };
+
+    protected final WorkerPool sharedWorkerPool = new TestWorkerPool(getWorkerCount(), lineConfiguration.getMetrics());
 
     public static void assertTableExists(CairoEngine engine, CharSequence tableName) {
         try (Path path = new Path()) {

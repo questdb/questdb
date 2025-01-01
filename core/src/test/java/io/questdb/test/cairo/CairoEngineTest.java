@@ -25,7 +25,15 @@
 package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
@@ -408,7 +416,7 @@ public class CairoEngineTest extends AbstractCairoTest {
     public void testRenameExternallyLockedTable() throws Exception {
         assertMemoryLeak(() -> {
             TableToken x = createX(engine);
-            try (TableWriter ignored1 = newOffPoolWriter(configuration, "x", metrics)) {
+            try (TableWriter ignored1 = newOffPoolWriter(configuration, "x")) {
 
                 try (CairoEngine engine = new CairoEngine(configuration)) {
                     try {
@@ -519,7 +527,7 @@ public class CairoEngineTest extends AbstractCairoTest {
             // the test relies on negative inactive writer TTL - we want the maintenance job to always close idle writers
             assert engine.getConfiguration().getInactiveWriterTTL() < 0;
 
-            try (WorkerPool workerPool = new TestWorkerPool(1, metrics)) {
+            try (WorkerPool workerPool = new TestWorkerPool(1, configuration.getMetrics())) {
                 TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
                         .col("a", ColumnType.BYTE)
                         .col("b", ColumnType.STRING)

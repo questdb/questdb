@@ -161,8 +161,7 @@ public class WalWriter implements TableWriterAPI {
             TableToken tableToken,
             TableSequencerAPI tableSequencerAPI,
             DdlListener ddlListener,
-            WalDirectoryPolicy walDirectoryPolicy,
-            Metrics metrics
+            WalDirectoryPolicy walDirectoryPolicy
     ) {
         LOG.info().$("open '").utf8(tableToken.getDirName()).$('\'').$();
         this.sequencer = tableSequencerAPI;
@@ -179,7 +178,7 @@ public class WalWriter implements TableWriterAPI {
         this.pathRootSize = path.size();
         this.path.concat(tableToken).concat(walName);
         this.pathSize = path.size();
-        this.metrics = metrics;
+        this.metrics = configuration.getMetrics();
         this.open = true;
         this.symbolMapMem = Vm.getMARInstance(configuration);
 
@@ -320,7 +319,7 @@ public class WalWriter implements TableWriterAPI {
                         .$(", minTs=").$ts(txnMinTimestamp).$(", maxTs=").$ts(txnMaxTimestamp).I$();
                 resetDataTxnProperties();
                 mayRollSegmentOnNextRow();
-                metrics.wal().addRowsWritten(rowsToCommit);
+                metrics.walMetrics().addRowsWritten(rowsToCommit);
                 return seqTxn;
             }
         } catch (CairoException ex) {

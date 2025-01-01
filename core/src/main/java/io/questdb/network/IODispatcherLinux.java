@@ -24,7 +24,6 @@
 
 package io.questdb.network;
 
-import io.questdb.metrics.LongGauge;
 import io.questdb.std.LongMatrix;
 
 public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatcher<C> {
@@ -39,10 +38,9 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
 
     public IODispatcherLinux(
             IODispatcherConfiguration configuration,
-            IOContextFactory<C> ioContextFactory,
-            LongGauge connectionCountGauge
+            IOContextFactory<C> ioContextFactory
     ) {
-        super(configuration, ioContextFactory, connectionCountGauge);
+        super(configuration, ioContextFactory);
         this.epoll = new Epoll(configuration.getEpollFacade(), configuration.getEventCapacity());
         registerListenerFd();
     }
@@ -379,7 +377,7 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
 
     @Override
     protected void registerListenerFd() {
-        this.epoll.listen(serverFd);
+        epoll.listen(serverFd);
     }
 
     @Override

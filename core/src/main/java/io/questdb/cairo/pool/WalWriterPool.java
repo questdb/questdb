@@ -82,7 +82,7 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
                 WalDirectoryPolicy walDirectoryPolicy,
                 Metrics metrics
         ) {
-            super(pool.getConfiguration(), tableToken, tableSequencerAPI, ddlListener, walDirectoryPolicy, metrics);
+            super(pool.getConfiguration(), tableToken, tableSequencerAPI, ddlListener, walDirectoryPolicy);
             this.pool = pool;
             this.entry = entry;
             this.index = index;

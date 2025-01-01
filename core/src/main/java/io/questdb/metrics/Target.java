@@ -22,49 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http;
+package io.questdb.metrics;
 
-import io.questdb.FactoryProvider;
-import io.questdb.Metrics;
-import io.questdb.network.NetworkFacade;
-import io.questdb.std.NanosecondClock;
-import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.BorrowableUtf8Sink;
 
-public interface HttpContextConfiguration {
+/**
+ * Anything that can be scraped for Prometheus metrics.
+ */
+public interface Target {
 
-    boolean allowDeflateBeforeSend();
-
-    boolean areCookiesEnabled();
-
-    int getConnectionPoolInitialCapacity();
-
-    int getConnectionStringPoolCapacity();
-
-    boolean getDumpNetworkTraffic();
-
-    FactoryProvider getFactoryProvider();
-
-    int getForceRecvFragmentationChunkSize();
-
-    int getForceSendFragmentationChunkSize();
-
-    String getHttpVersion();
-
-    MillisecondClock getMillisecondClock();
-
-    int getMultipartHeaderBufferSize();
-
-    long getMultipartIdleSpinCount();
-
-    NanosecondClock getNanosecondClock();
-
-    NetworkFacade getNetworkFacade();
-
-    int getRequestHeaderBufferSize();
-
-    boolean getServerKeepAlive();
-
-    boolean readOnlySecurityContext();
-
-    Metrics getMetrics();
+    // We need a sink that we can borrow from and append to in native code.
+    void scrapeIntoPrometheus(BorrowableUtf8Sink sink);
 }

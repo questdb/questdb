@@ -147,13 +147,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
     private @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
 
-    // Kept for embedded API purposes. The second constructor (the one with metrics)
-    // should be preferred for internal use.
     public CairoEngine(CairoConfiguration configuration) {
-        this(configuration, Metrics.disabled());
-    }
-
-    public CairoEngine(CairoConfiguration configuration, Metrics metrics) {
         try {
             ffCache = new FunctionFactoryCache(
                     configuration,
@@ -164,7 +158,7 @@ public class CairoEngine implements Closeable, WriterSource {
             this.copyContext = new CopyContext(configuration);
             this.tableSequencerAPI = new TableSequencerAPI(this, configuration);
             this.messageBus = new MessageBusImpl(configuration);
-            this.metrics = metrics;
+            this.metrics = configuration.getMetrics();
             // Message bus and metrics must be initialized before the pools.
             this.writerPool = new WriterPool(configuration, this);
             this.readerPool = new ReaderPool(configuration, messageBus, partitionOverwriteControl);
@@ -460,7 +454,6 @@ public class CairoEngine implements Closeable, WriterSource {
                 backupDirName,
                 getDdlListener(tableToken),
                 checkpointAgent,
-                Metrics.disabled(),
                 this
         );
     }
