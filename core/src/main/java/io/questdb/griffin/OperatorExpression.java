@@ -33,7 +33,7 @@ public final class OperatorExpression {
     public static final int SET = 3;
     public static final int UNARY = 1;
     private static final OperatorRegistry legacyRegistry = new OperatorRegistry(
-            new ObjList<OperatorExpression>() {{
+            new ObjList<>() {{
                 add(new OperatorExpression(Operator.UnaryMinus, 3, false, UNARY));
                 add(new OperatorExpression(Operator.UnaryComplement, 3, false, UNARY));
                 add(new OperatorExpression(Operator.UnarySetNegation, 11, false, UNARY));
@@ -79,7 +79,7 @@ public final class OperatorExpression {
                 add(new OperatorExpression(Operator.BinaryOr, 11, true, BINARY, false));
             }});
     private static final OperatorRegistry registry = new OperatorRegistry(
-            new ObjList<OperatorExpression>() {{
+            new ObjList<>() {{
                 add(new OperatorExpression(Operator.DeclareVariableAssignment, 100, false, BINARY));
                 add(new OperatorExpression(Operator.UnaryMinus, 3, false, UNARY));
                 add(new OperatorExpression(Operator.UnaryComplement, 3, false, UNARY));

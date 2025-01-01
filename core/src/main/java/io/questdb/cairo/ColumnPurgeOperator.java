@@ -27,7 +27,12 @@ package io.questdb.cairo;
 import io.questdb.griffin.PurgingOperator;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Rows;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -273,11 +278,10 @@ public class ColumnPurgeOperator implements Closeable {
                     // we will have to re-setup that
                     if (!isSymbolRootFiles) {
                         setUpPartitionPath(task.getPartitionBy(), partitionTimestamp, partitionTxnName);
-                        pathTrimToPartition = path.size();
                     } else {
                         path.trimTo(pathTableLen);
-                        pathTrimToPartition = path.size();
                     }
+                    pathTrimToPartition = path.size();
                     TableUtils.dFile(path, columnName, columnVersion);
                     setupScoreboard = false;
                 }

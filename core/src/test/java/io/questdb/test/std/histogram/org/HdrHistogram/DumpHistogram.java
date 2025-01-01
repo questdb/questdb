@@ -24,7 +24,11 @@
 
 package io.questdb.test.std.histogram.org.HdrHistogram;
 
-import io.questdb.std.histogram.org.HdrHistogram.*;
+import io.questdb.std.histogram.org.HdrHistogram.AbstractHistogram;
+import io.questdb.std.histogram.org.HdrHistogram.Base64Helper;
+import io.questdb.std.histogram.org.HdrHistogram.DoubleHistogram;
+import io.questdb.std.histogram.org.HdrHistogram.DoubleHistogramIterationValue;
+import io.questdb.std.histogram.org.HdrHistogram.HistogramIterationValue;
 
 import java.nio.ByteBuffer;
 
@@ -58,7 +62,7 @@ public class DumpHistogram {
         dumpHistogram(histogram);
     }
 
-    static void dumpHistogram(DoubleHistogram histogram) throws Exception {
+    static void dumpHistogram(DoubleHistogram histogram) {
         AbstractHistogram iHist = histogram.integerValuesHistogram();
         System.out.format("digits = %d, min = %12.12g, max = %12.12g\n", histogram.getNumberOfSignificantValueDigits(), histogram.getMinNonZeroValue(), histogram.getMaxValue());
         System.out.format("lowest = %12.12g, highest = %12.12g\n", histogram.getCurrentLowestTrackableNonZeroValue(), histogram.getCurrentHighestTrackableValue());

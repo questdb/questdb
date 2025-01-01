@@ -56,6 +56,7 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
     }
 
     private static class Func extends AbstractEqBinaryFunction {
+
         public Func(Function left, Function right) {
             super(left, right);
         }

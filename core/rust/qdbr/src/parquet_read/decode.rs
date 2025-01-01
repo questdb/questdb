@@ -143,6 +143,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
             ));
         }
 
+        let accumulated_size = self.row_group_sizes_acc[row_group_index as usize];
         row_group_bufs.ensure_n_columns(columns.len())?;
 
         let mut decoded = 0usize;
@@ -172,13 +173,24 @@ impl<R: Read + Seek> ParquetDecoder<R> {
             let column_chunk_bufs = &mut row_group_bufs.column_bufs[dest_col_idx];
 
             // Get the column's format from the "questdb" key-value metadata stored in the file.
-            let format = self
+            let (column_top, format) = self
                 .qdb_meta
                 .as_ref()
                 .and_then(|m| m.schema.get(column_idx))
-                .and_then(|c| c.format);
+                .map(|c| (c.column_top, c.format))
+                .unwrap_or((0, None));
 
-            let col_info = QdbMetaCol { column_type, format };
+            if column_top >= row_group_hi as usize + accumulated_size {
+                column_chunk_bufs.data_vec.clear();
+                column_chunk_bufs.data_size = 0;
+                column_chunk_bufs.data_ptr = ptr::null_mut();
+                column_chunk_bufs.aux_vec.clear();
+                column_chunk_bufs.aux_size = 0;
+                column_chunk_bufs.aux_ptr = ptr::null_mut();
+                continue;
+            }
+
+            let col_info = QdbMetaCol { column_type, column_top, format };
             match self.decode_column_chunk(
                 column_chunk_bufs,
                 row_group_index as usize,
@@ -1361,7 +1373,7 @@ mod tests {
 
         for column_index in 0..column_count {
             let column_type = decoder.columns[column_index].column_type;
-            let col_info = QdbMetaCol { column_type, format: None };
+            let col_info = QdbMetaCol { column_type, column_top: 0, format: None };
             for row_group_index in 0..row_group_count {
                 decoder
                     .decode_column_chunk(
@@ -1411,7 +1423,7 @@ mod tests {
             for row_hi in row_lo + 1..row_group_size {
                 for column_index in 0..column_count {
                     let column_type = decoder.columns[column_index].column_type;
-                    let col_info = QdbMetaCol { column_type, format: None };
+                    let col_info = QdbMetaCol { column_type, column_top: 0, format: None };
                     for row_group_index in 0..row_group_count {
                         decoder
                             .decode_column_chunk(
@@ -1652,7 +1664,7 @@ mod tests {
                         0,
                         row_group_size,
                         column_index,
-                        QdbMetaCol { column_type, format },
+                        QdbMetaCol { column_type, column_top: 0, format },
                     )
                     .unwrap();
 

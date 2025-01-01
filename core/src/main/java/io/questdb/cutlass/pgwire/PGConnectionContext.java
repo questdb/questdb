@@ -282,8 +282,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         super(
                 configuration.getFactoryProvider().getPGWireSocketFactory(),
                 configuration.getNetworkFacade(),
-                LOG,
-                engine.getMetrics().pgWire().connectionCountGauge()
+                LOG
         );
 
         try {
@@ -291,8 +290,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             this.engine = engine;
             this.maxRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
             this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
-            this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
-            this.sendBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
+            this.recvBufferSize = configuration.getRecvBufferSize();
+            this.sendBufferSize = configuration.getSendBufferSize();
             this.forceSendFragmentationChunkSize = configuration.getForceSendFragmentationChunkSize();
             this.forceRecvFragmentationChunkSize = configuration.getForceRecvFragmentationChunkSize();
             this.characterStore = new CharacterStore(configuration.getCharacterStoreCapacity(), configuration.getCharacterStorePoolCapacity());

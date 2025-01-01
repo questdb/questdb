@@ -108,6 +108,11 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
         }
     }) {
         @Override
+        public FactoryProvider getFactoryProvider() {
+            return factoryProvider;
+        }
+
+        @Override
         public JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration() {
             return new DefaultJsonQueryProcessorConfiguration() {
                 @Override

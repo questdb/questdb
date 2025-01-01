@@ -83,9 +83,9 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         super(
                 configuration.getFactoryProvider().getLineSocketFactory(),
                 configuration.getNetworkFacade(),
-                LOG,
-                metrics.line().connectionCountGauge()
+                LOG
         );
+
         try {
             this.configuration = configuration;
             this.nf = configuration.getNetworkFacade();
@@ -221,8 +221,10 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     public LineTcpConnectionContext of(long fd, @NotNull IODispatcher<LineTcpConnectionContext> dispatcher) {
         super.of(fd, dispatcher);
         if (recvBufStart == 0) {
-            recvBufStart = Unsafe.malloc(configuration.getNetMsgBufferSize(), MemoryTag.NATIVE_ILP_RSS);
-            recvBufEnd = recvBufStart + configuration.getNetMsgBufferSize();
+            // re-read recv buffer size in case the config was reloaded
+            final int recvBufferSize = configuration.getRecvBufferSize();
+            recvBufStart = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_ILP_RSS);
+            recvBufEnd = recvBufStart + recvBufferSize;
             recvBufPos = recvBufStart;
             resetParser();
         }
