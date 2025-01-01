@@ -51,14 +51,20 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         Function periodFunc = args.getQuick(0);
         Function strideFunc = args.getQuick(1);
         Function timestampFunc = args.getQuick(2);
         Function tzFunc = args.getQuick(3);
         int stride;
 
-        if (periodFunc.isConstant()) {
+        if (periodFunc.isConstant() && tzFunc.isConstant()) {
             char period = periodFunc.getChar(null);
             LongAddIntFunction periodAddFunc = lookupAddFunction(period, argPositions.getQuick(0));
             if (strideFunc.isConstant()) {
@@ -114,7 +120,13 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
         private final Function timestampFunc;
         private final CharSequence tz;
 
-        public TimestampAddConstConstVarConst(char period, LongAddIntFunction periodAddFunction, int stride, Function timestampFunc, CharSequence tz) {
+        public TimestampAddConstConstVarConst(
+                char period,
+                LongAddIntFunction periodAddFunction,
+                int stride,
+                Function timestampFunc,
+                CharSequence tz
+        ) {
             this.period = period;
             this.periodAddFunction = periodAddFunction;
             this.stride = stride;
