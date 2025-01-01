@@ -2637,6 +2637,8 @@ public class SqlParser {
 
             if (isForKeyword(tok)) {
                 break;
+            } else if (Chars.equals(tok, ",")) {
+                tok = optTok(lexer);
             } else {
                 lexer.unparseLast();
             }
@@ -2668,6 +2670,8 @@ public class SqlParser {
 
             if (isGroupKeyword(tok)) {
                 break;
+            } else if (Chars.equals(tok, ",")) {
+                tok = optTok(lexer);
             } else {
                 lexer.unparseLast();
             }

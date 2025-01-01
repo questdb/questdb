@@ -6459,39 +6459,16 @@ public class SqlOptimiser implements Mutable {
                     nested.getGroupBy().getQuick(0)
             ));
 
-            // add a pivot column for each entry in FOR, based on the given aggregate
-            QueryColumn aggCol = nested.getPivotColumns().getQuick(0);
-            CharSequence aggregateNameCs = aggCol.getAst().token;
-            CharSequence aggParamTokenCs = aggCol.getAst().rhs.token;
-            CharSequence aggAliasCs = aggCol.getAlias();
-
-            CharSequence defaultValueCs = rewritePivotGetDefaultValueForAggregateFunction(aggregateNameCs.toString());
-
-
             // need to permute all of the FOR exprs
             // FOR year in (2000, 2010, 2020)
             //     country in ('NL, 'US')
             // should give 6 columns.
 
-            if (nested.getPivotFor().size() == 1) {
-                // fast path
-            }
-
-            // outer loop
-            for (int a = 0, b = nested.getPivotFor().size(); a < b; a++) {
-                // inner loop
-                for (int c = 0, d = nested.getPivotFor().size(); c < d; c++) {
-                    if (a == c) {
-                        continue;
-                    }
-                }
-            }
-
             int pivotForSize = nested.getPivotFor().size();
-            IntList forMaxes = new IntList(nested.getPivotFor().size());
-            IntList forDepths = new IntList(nested.getPivotFor().size());
+            IntList forMaxes = new IntList(pivotForSize);
+            IntList forDepths = new IntList(pivotForSize);
             int expectedPivotColumnsPerAggregateFunction = 0;
-            for (int i = 0, n = nested.getPivotFor().size(); i < n; i++) {
+            for (int i = 0, n = pivotForSize; i < n; i++) {
                 // initialise depth to 0
                 forDepths.add(0);
 
@@ -6514,10 +6491,10 @@ public class SqlOptimiser implements Mutable {
                 // for each aggregate we want to generate
                 for (int j = 0, n = nested.getPivotColumns().size(); j < n; j++) {
                     QueryColumn pivotColumn = nested.getPivotColumns().get(j);
-                    CharSequence pivotColumnName = aggCol.getAst().token;
-                    CharSequence pivotColumnParamToken = aggCol.getAst().rhs.token;
-                    ExpressionNode pivotColumnParam = aggCol.getAst().rhs;
-                    CharSequence pivotColumnAlias = aggCol.getAlias();
+                    CharSequence pivotColumnName = pivotColumn.getAst().token;
+                    CharSequence pivotColumnParamToken = pivotColumn.getAst().rhs.token;
+                    ExpressionNode pivotColumnParam = pivotColumn.getAst().rhs;
+                    CharSequence pivotColumnAlias = pivotColumn.getAlias();
                     CharSequence pivotDefaultValue = Chars.equalsIgnoreCase(pivotColumnName, "sum") ? "0" : "null";
 
 
@@ -6550,13 +6527,15 @@ public class SqlOptimiser implements Mutable {
                     if (pivotColumn.getAlias() != null) {
                         // add the alias
                         nameSink.put(pivotColumn.getAlias());
+                    } else if (nested.getPivotColumns().size() > 1) {
+                        nameSink.put(pivotColumnName); // todo: handle duplicate aggregates
                     } else {
                         // remove the '_'
                         nameSink.clear(nameSink.length() - 1);
                     }
 
                     // SUM(_)
-                    ExpressionNode aggExpr = expressionNodePool.next().of(FUNCTION, aggregateNameCs, Integer.MIN_VALUE, 0);
+                    ExpressionNode aggExpr = expressionNodePool.next().of(FUNCTION, pivotColumnName, Integer.MIN_VALUE, 0);
                     aggExpr.paramCount = 1;
 
                     // CASE(_)
@@ -6596,21 +6575,22 @@ public class SqlOptimiser implements Mutable {
 
                     nameSink.clear();
 
-                    for (int z = forDepths.size() - 1; z >= 0; z--) {
-                        int depth = forDepths.getQuick(z);
-                        int max = forMaxes.getQuick(z);
 
-                        if (depth < max) {
-                            forDepths.increment(z);
-                            break;
-                        }
-
-                        if (depth == max) {
-                            forDepths.setQuick(z, 0);
-                        }
-                    }
                 }
 
+                for (int z = forDepths.size() - 1; z >= 0; z--) {
+                    int depth = forDepths.getQuick(z);
+                    int max = forMaxes.getQuick(z);
+
+                    if (depth < max) {
+                        forDepths.increment(z);
+                        break;
+                    }
+
+                    if (depth == max) {
+                        forDepths.setQuick(z, 0);
+                    }
+                }
 
             }
 
