@@ -61,7 +61,7 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
 
     @Override
     public boolean freeLeakedReaders() {
-        return false;
+        return overrides.freeLeakedReaders();
     }
 
     @Override

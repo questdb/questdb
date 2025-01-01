@@ -27,6 +27,7 @@ package io.questdb.griffin.engine;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DataUnavailableException;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pool.ReaderPool;
@@ -75,16 +76,28 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         this.jit = base.usesCompiledFilter();
     }
 
-    public static void logEnd(long sqlId, CharSequence sqlText, SqlExecutionContext executionContext, long beginNanos, boolean jit) {
-        logEnd(sqlId, sqlText, executionContext, beginNanos, jit, null);
+    public static void logEnd(
+            long sqlId,
+            CharSequence sqlText,
+            SqlExecutionContext executionContext,
+            long beginNanos
+    ) {
+        logEnd(sqlId, sqlText, executionContext, beginNanos, null);
     }
 
-    public static void logEnd(long sqlId, CharSequence sqlText, SqlExecutionContext executionContext, long beginNanos, boolean jit, @Nullable ObjList<TableReader> leakedReaders) {
+    public static void logEnd(
+            long sqlId,
+            CharSequence sqlText,
+            SqlExecutionContext executionContext,
+            long beginNanos,
+            @Nullable ObjList<TableReader> leakedReaders
+    ) {
         LogRecord log = null;
         try {
             final int leakedReadersCount = leakedReaders != null ? leakedReaders.size() : 0;
             if (leakedReadersCount > 0) {
                 log = LOG.errorW();
+                executionContext.getCairoEngine().getMetrics().healthMetrics().incrementReaderLeakCounter(leakedReadersCount);
                 log.$("brk");
             } else {
                 log = LOG.info();
@@ -94,7 +107,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                     .$(", sql=`").utf8(sqlText).$('`')
                     .$(", principal=").$(executionContext.getSecurityContext().getPrincipal())
                     .$(", cache=").$(executionContext.isCacheHit())
-                    .$(", jit=").$(jit)
+                    .$(", jit=").$(executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED)
                     .$(", time=").$(executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos);
 
             appendLeakedReaderNames(leakedReaders, leakedReadersCount, log);
@@ -114,11 +127,9 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             long sqlId,
             CharSequence sqlText,
             SqlExecutionContext executionContext,
-            long beginNanos,
-            boolean jit
-
+            long beginNanos
     ) {
-        logError(e, sqlId, sqlText, executionContext, beginNanos, jit, null);
+        logError(e, sqlId, sqlText, executionContext, beginNanos, null);
     }
 
     public static void logError(
@@ -127,12 +138,12 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             CharSequence sqlText,
             SqlExecutionContext executionContext,
             long beginNanos,
-            boolean jit,
             @Nullable ObjList<TableReader> leakedReaders
     ) {
         int leakedReadersCount = leakedReaders != null ? leakedReaders.size() : 0;
         LogRecord log = null;
         try {
+            executionContext.getCairoEngine().getMetrics().healthMetrics().incrementQueryErrorCounter();
             // Extract all the variables before the call to call LOG.errorW() to avoid exception
             // causing log sequence leaks.
             long queryTime = executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos;
@@ -141,6 +152,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             log = LOG.errorW();
             if (leakedReadersCount > 0) {
                 log.$("brk");
+                executionContext.getCairoEngine().getMetrics().healthMetrics().incrementReaderLeakCounter(leakedReadersCount);
             } else {
                 log.$("err");
             }
@@ -154,7 +166,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                         .$(", sql=`").utf8(sqlText).$('`')
                         .$(", principal=").$(principal)
                         .$(", cache=").$(cacheHit)
-                        .$(", jit=").$(jit)
+                        .$(", jit=").$(executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED)
                         .$(", time=").$(queryTime)
                         .$(", msg=").$(message)
                         .$(", errno=").$(errno)
@@ -165,7 +177,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                         .$(", sql=`").utf8(sqlText).$('`')
                         .$(", principal=").$(principal)
                         .$(", cache=").$(cacheHit)
-                        .$(", jit=").$(jit)
+                        .$(", jit=").$(executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED)
                         .$(", time=").$(queryTime)
                         .$(", exception=").$(e);
             }
@@ -295,7 +307,8 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     @Override
     public void onResourceReturned(ReaderPool.R resource) {
         int index = readers.remove(resource);
-        assert index > -1;
+        // do not freak out if reader is not in the list after our cursor has been closed
+        assert index > -1 || !cursor.isOpen;
     }
 
     @Override
@@ -432,9 +445,9 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                 if (executionContext != null) {
                     try {
                         if (th == null) {
-                            logEnd(sqlId, sqlText, executionContext, beginNanos, jit, readers);
+                            logEnd(sqlId, sqlText, executionContext, beginNanos, readers);
                         } else {
-                            logError(th, sqlId, sqlText, executionContext, beginNanos, jit);
+                            logError(th, sqlId, sqlText, executionContext, beginNanos, readers);
                         }
                     } finally {
                         // Unregister must follow the base cursor close call to avoid concurrent access

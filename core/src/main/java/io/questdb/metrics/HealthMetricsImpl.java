@@ -29,10 +29,14 @@ import io.questdb.std.Mutable;
 
 public class HealthMetricsImpl implements HealthMetrics, Mutable {
 
+    private final Counter queryErrorCounter;
+    private final Counter readerLeakCounter;
     private final Counter unhandledErrorCounter;
 
     public HealthMetricsImpl(MetricsRegistry metricsRegistry) {
         this.unhandledErrorCounter = metricsRegistry.newCounter("unhandled_errors");
+        this.readerLeakCounter = metricsRegistry.newCounter("reader_leak_counter");
+        this.queryErrorCounter = metricsRegistry.newCounter("query_error_counter");
     }
 
     @Override
@@ -41,8 +45,28 @@ public class HealthMetricsImpl implements HealthMetrics, Mutable {
     }
 
     @Override
+    public void incrementQueryErrorCounter() {
+        queryErrorCounter.inc();
+    }
+
+    @Override
+    public void incrementReaderLeakCounter(int count) {
+        readerLeakCounter.add(count);
+    }
+
+    @Override
     public void incrementUnhandledErrors() {
         unhandledErrorCounter.inc();
+    }
+
+    @Override
+    public long queryErrorCounter() {
+        return queryErrorCounter.getValue();
+    }
+
+    @Override
+    public long readerLeakCounter() {
+        return readerLeakCounter.getValue();
     }
 
     @Override
