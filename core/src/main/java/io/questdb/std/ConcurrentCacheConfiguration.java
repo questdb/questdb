@@ -22,49 +22,19 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http;
+package io.questdb.std;
 
-import io.questdb.FactoryProvider;
-import io.questdb.Metrics;
-import io.questdb.network.NetworkFacade;
-import io.questdb.std.NanosecondClock;
-import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.metrics.Counter;
+import io.questdb.metrics.LongGauge;
 
-public interface HttpContextConfiguration {
+public interface ConcurrentCacheConfiguration {
+    int getBlocks();
 
-    boolean allowDeflateBeforeSend();
+    LongGauge getCachedGauge();
 
-    boolean areCookiesEnabled();
+    Counter getHiCounter();
 
-    int getConnectionPoolInitialCapacity();
+    Counter getMissCounter();
 
-    int getConnectionStringPoolCapacity();
-
-    boolean getDumpNetworkTraffic();
-
-    FactoryProvider getFactoryProvider();
-
-    int getForceRecvFragmentationChunkSize();
-
-    int getForceSendFragmentationChunkSize();
-
-    String getHttpVersion();
-
-    MillisecondClock getMillisecondClock();
-
-    int getMultipartHeaderBufferSize();
-
-    long getMultipartIdleSpinCount();
-
-    NanosecondClock getNanosecondClock();
-
-    NetworkFacade getNetworkFacade();
-
-    int getRequestHeaderBufferSize();
-
-    boolean getServerKeepAlive();
-
-    boolean readOnlySecurityContext();
-
-    Metrics getMetrics();
+    int getRows();
 }

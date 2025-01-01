@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.Metrics;
 import io.questdb.ServerConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -72,14 +71,12 @@ public class HttpServer implements Closeable {
 
     // used for min http server only
     public HttpServer(
-            HttpMinServerConfiguration configuration,
-            Metrics metrics,
+            HttpServerConfiguration configuration,
             WorkerPool pool,
             SocketFactory socketFactory
     ) {
         this(
                 configuration,
-                metrics,
                 pool,
                 socketFactory,
                 DefaultHttpCookieHandler.INSTANCE,
@@ -88,8 +85,7 @@ public class HttpServer implements Closeable {
     }
 
     public HttpServer(
-            HttpMinServerConfiguration configuration,
-            Metrics metrics,
+            HttpServerConfiguration configuration,
             WorkerPool pool,
             SocketFactory socketFactory,
             HttpCookieHandler cookieHandler,
@@ -102,16 +98,10 @@ public class HttpServer implements Closeable {
             selectors.add(new HttpRequestProcessorSelectorImpl());
         }
 
-        if (configuration instanceof HttpServerConfiguration) {
-            final HttpServerConfiguration serverConfiguration = (HttpServerConfiguration) configuration;
+        if (configuration instanceof HttpFullFatServerConfiguration) {
+            final HttpFullFatServerConfiguration serverConfiguration = (HttpFullFatServerConfiguration) configuration;
             if (serverConfiguration.isQueryCacheEnabled()) {
-                this.selectCache = new ConcurrentAssociativeCache<>(
-                        serverConfiguration.getQueryCacheBlockCount(),
-                        serverConfiguration.getQueryCacheRowCount(),
-                        metrics.jsonQuery().cachedQueriesGauge(),
-                        metrics.jsonQuery().cacheHitCounter(),
-                        metrics.jsonQuery().cacheMissCounter()
-                );
+                this.selectCache = new ConcurrentAssociativeCache<>(serverConfiguration.getConcurrentCacheConfiguration());
             } else {
                 this.selectCache = NO_OP_CACHE;
             }
@@ -120,8 +110,8 @@ public class HttpServer implements Closeable {
             this.selectCache = NO_OP_CACHE;
         }
 
-        this.httpContextFactory = new HttpContextFactory(configuration, metrics, socketFactory, cookieHandler, headerParserFactory, selectCache);
-        this.dispatcher = IODispatchers.create(configuration, httpContextFactory, metrics.jsonQuery().connectionCountGauge());
+        this.httpContextFactory = new HttpContextFactory(configuration, socketFactory, cookieHandler, headerParserFactory, selectCache);
+        this.dispatcher = IODispatchers.create(configuration, httpContextFactory);
         pool.assign(dispatcher);
         this.rescheduleContext = new WaitProcessor(configuration.getWaitProcessorConfiguration(), dispatcher);
         pool.assign(rescheduleContext);
@@ -158,7 +148,7 @@ public class HttpServer implements Closeable {
             HttpRequestProcessorBuilder jsonQueryProcessorBuilder,
             HttpRequestProcessorBuilder ilpWriteProcessorBuilderV2
     ) {
-        final HttpServerConfiguration httpServerConfiguration = serverConfiguration.getHttpServerConfiguration();
+        final HttpFullFatServerConfiguration httpServerConfiguration = serverConfiguration.getHttpServerConfiguration();
         final LineHttpProcessorConfiguration lineHttpProcessorConfiguration = httpServerConfiguration.getLineHttpProcessorConfiguration();
         // Disable ILP HTTP if the instance configured to be read-only for HTTP requests
         if (httpServerConfiguration.isEnabled() && lineHttpProcessorConfiguration.isEnabled() && !httpServerConfiguration.getHttpContextConfiguration().readOnlySecurityContext()) {
@@ -284,7 +274,7 @@ public class HttpServer implements Closeable {
         server.bind(new HttpRequestProcessorFactory() {
             @Override
             public String getUrl() {
-                return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                return HttpFullFatServerConfiguration.DEFAULT_PROCESSOR_URL;
             }
 
             @Override
@@ -303,7 +293,7 @@ public class HttpServer implements Closeable {
         assert url != null;
         for (int i = 0; i < workerCount; i++) {
             HttpRequestProcessorSelectorImpl selector = selectors.getQuick(i);
-            if (HttpServerConfiguration.DEFAULT_PROCESSOR_URL.equals(url)) {
+            if (HttpFullFatServerConfiguration.DEFAULT_PROCESSOR_URL.equals(url)) {
                 selector.defaultRequestProcessor = factory.newInstance();
             } else {
                 final HttpRequestProcessor processor = factory.newInstance();
@@ -360,14 +350,14 @@ public class HttpServer implements Closeable {
     private static class HttpContextFactory extends IOContextFactoryImpl<HttpConnectionContext> {
 
         public HttpContextFactory(
-                HttpMinServerConfiguration configuration,
-                Metrics metrics, SocketFactory socketFactory,
+                HttpServerConfiguration configuration,
+                SocketFactory socketFactory,
                 HttpCookieHandler cookieHandler,
                 HttpHeaderParserFactory headerParserFactory,
                 AssociativeCache<RecordCursorFactory> selectCache
         ) {
             super(
-                    () -> new HttpConnectionContext(configuration, metrics, socketFactory, cookieHandler, headerParserFactory, selectCache),
+                    () -> new HttpConnectionContext(configuration, socketFactory, cookieHandler, headerParserFactory, selectCache),
                     configuration.getHttpContextConfiguration().getConnectionPoolInitialCapacity()
             );
         }

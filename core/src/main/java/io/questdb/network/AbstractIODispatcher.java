@@ -27,6 +27,7 @@ package io.questdb.network;
 import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
 import io.questdb.mp.EagerThreadSetup;
 import io.questdb.mp.MCSequence;
@@ -86,6 +87,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     private final IODispatcherConfiguration configuration;
     private final AtomicInteger connectionCount = new AtomicInteger();
     private final LongGauge connectionCountGauge;
+    private final Counter listenerStateChangeCounter;
     private final boolean peerNoLinger;
     private final long queuedConnectionTimeoutMs;
     private final int testConnectionBufSize;
@@ -94,18 +96,18 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     protected long serverFd;
     private long closeListenFdEpochMs;
     private volatile boolean listening;
-    private int port;
     protected final QueueConsumer<IOEvent<C>> disconnectContextRef = this::disconnectContext;
+    private int port;
     private long testConnectionBuf;
 
     public AbstractIODispatcher(
             IODispatcherConfiguration configuration,
-            IOContextFactory<C> ioContextFactory,
-            LongGauge connectionCountGauge
+            IOContextFactory<C> ioContextFactory
     ) {
         this.LOG = LogFactory.getLog(configuration.getDispatcherLogName());
         this.configuration = configuration;
-        this.connectionCountGauge = connectionCountGauge;
+        this.connectionCountGauge = configuration.getConnectionCountGauge();
+        this.listenerStateChangeCounter = configuration.listenerStateChangeCounter();
         this.nf = configuration.getNetworkFacade();
 
         this.testConnectionBufSize = configuration.getTestConnectionBufferSize();
@@ -134,7 +136,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         this.peerNoLinger = configuration.getPeerNoLinger();
         this.port = 0;
         this.heartbeatIntervalMs = configuration.getHeartbeatInterval() > 0 ? configuration.getHeartbeatInterval() : Long.MIN_VALUE;
-        createListenFd();
+        createListenerFd();
         listening = true;
     }
 
@@ -249,7 +251,25 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         pendingAdded(r);
     }
 
-    private void createListenFd() throws NetworkError {
+    private void checkConnectionLimitAndRestartListener() {
+        final int activeConnectionLimit = configuration.getLimit();
+        if (connectionCount.get() < activeConnectionLimit) {
+            if (serverFd < 0) {
+                createListenerFd();
+                // Make sure to always register for listening if server fd was recreated.
+                listening = false;
+            }
+
+            if (!listening) {
+                registerListenerFd();
+                listening = true;
+                listenerStateChangeCounter.inc();
+                LOG.advisory().$("below maximum connection limit, registered listener [serverFd=").$(serverFd).I$();
+            }
+        }
+    }
+
+    private void createListenerFd() throws NetworkError {
         this.serverFd = nf.socketTcp(false);
         final int backlog = configuration.getListenBacklog();
         if (this.port == 0) {
@@ -356,11 +376,27 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
             connectionCountGauge.inc();
         }
 
-        if (tlConCount >= configuration.getLimit() && connectionCount.get() >= configuration.getLimit()) {
+        // the condition below is checked against connection limit twice
+        // since the limit might asynchronously change, it is imperative to
+        // perform both checks against the same value
+        final int lim = configuration.getLimit();
+        if (tlConCount >= lim && connectionCount.get() >= lim) {
             unregisterListenerFd();
             listening = false;
             closeListenFdEpochMs = timestamp + queuedConnectionTimeoutMs;
-            LOG.advisory().$("max connection limit reached, unregistered listener [serverFd=").$(serverFd).I$();
+            LOG.advisory()
+                    .$("max connection limit reached, unregistered listener [serverFd=").$(serverFd)
+                    .$(", tlConCount=").$(tlConCount)
+                    .$(", connectionCount=").$(connectionCount.get())
+                    .$(", limit=").$(configuration.getLimit())
+                    .$(", lim=").$(lim)
+                    .$(", connectionCountGauge=").$(connectionCountGauge.getValue())
+                    .I$();
+            listenerStateChangeCounter.inc();
+
+            if (lim != configuration.getLimit()) {
+                checkConnectionLimitAndRestartListener();
+            }
         }
     }
 
@@ -381,17 +417,8 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
             ioContextFactory.done(context);
         }
 
-        final int activeConnectionLimit = configuration.getLimit();
-        if (connectionCount.getAndDecrement() >= activeConnectionLimit) {
-            if (connectionCount.get() < activeConnectionLimit) {
-                if (serverFd < 0) {
-                    createListenFd();
-                }
-                registerListenerFd();
-                listening = true;
-                LOG.advisory().$("below maximum connection limit, registered listener [serverFd=").$(serverFd).I$();
-            }
-        }
+        connectionCount.decrementAndGet();
+        checkConnectionLimitAndRestartListener();
         connectionCountGauge.dec();
     }
 

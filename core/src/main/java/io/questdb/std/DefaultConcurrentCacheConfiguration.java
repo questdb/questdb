@@ -22,15 +22,38 @@
  *
  ******************************************************************************/
 
-package io.questdb.metrics;
+package io.questdb.std;
 
-import io.questdb.std.str.BorrowableUtf8Sink;
+import io.questdb.metrics.Counter;
+import io.questdb.metrics.LongGauge;
+import io.questdb.metrics.NullCounter;
+import io.questdb.metrics.NullLongGauge;
 
-/**
- * Anything that can be scraped for Prometheus metrics.
- */
-public interface Scrapable {
+public class DefaultConcurrentCacheConfiguration implements ConcurrentCacheConfiguration {
+    public static final ConcurrentCacheConfiguration DEFAULT = new DefaultConcurrentCacheConfiguration();
 
-    // We need a sink that we can borrow from and append to in native code.
-    void scrapeIntoPrometheus(BorrowableUtf8Sink sink);
+    @Override
+    public int getBlocks() {
+        return 2;
+    }
+
+    @Override
+    public LongGauge getCachedGauge() {
+        return NullLongGauge.INSTANCE;
+    }
+
+    @Override
+    public Counter getHiCounter() {
+        return NullCounter.INSTANCE;
+    }
+
+    @Override
+    public Counter getMissCounter() {
+        return NullCounter.INSTANCE;
+    }
+
+    @Override
+    public int getRows() {
+        return 8;
+    }
 }

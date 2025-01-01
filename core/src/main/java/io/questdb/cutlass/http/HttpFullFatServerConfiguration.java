@@ -24,47 +24,25 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.FactoryProvider;
-import io.questdb.Metrics;
-import io.questdb.network.NetworkFacade;
-import io.questdb.std.NanosecondClock;
-import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
+import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
+import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
+import io.questdb.std.ConcurrentCacheConfiguration;
 
-public interface HttpContextConfiguration {
+public interface HttpFullFatServerConfiguration extends HttpServerConfiguration {
+    String DEFAULT_PROCESSOR_URL = "*";
 
-    boolean allowDeflateBeforeSend();
+    ConcurrentCacheConfiguration getConcurrentCacheConfiguration();
 
-    boolean areCookiesEnabled();
+    JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration();
 
-    int getConnectionPoolInitialCapacity();
+    LineHttpProcessorConfiguration getLineHttpProcessorConfiguration();
 
-    int getConnectionStringPoolCapacity();
+    String getPassword();
 
-    boolean getDumpNetworkTraffic();
+    StaticContentProcessorConfiguration getStaticContentProcessorConfiguration();
 
-    FactoryProvider getFactoryProvider();
+    String getUsername();
 
-    int getForceRecvFragmentationChunkSize();
-
-    int getForceSendFragmentationChunkSize();
-
-    String getHttpVersion();
-
-    MillisecondClock getMillisecondClock();
-
-    int getMultipartHeaderBufferSize();
-
-    long getMultipartIdleSpinCount();
-
-    NanosecondClock getNanosecondClock();
-
-    NetworkFacade getNetworkFacade();
-
-    int getRequestHeaderBufferSize();
-
-    boolean getServerKeepAlive();
-
-    boolean readOnlySecurityContext();
-
-    Metrics getMetrics();
+    boolean isQueryCacheEnabled();
 }

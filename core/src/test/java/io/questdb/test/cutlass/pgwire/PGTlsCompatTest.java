@@ -80,7 +80,7 @@ public class PGTlsCompatTest extends BasePGTest {
                 }
             };
 
-            final WorkerPool workerPool = new TestWorkerPool(1, metrics);
+            final WorkerPool workerPool = new TestWorkerPool(1, conf.getMetrics());
             try (final IPGWireServer server = createPGWireServer(conf, engine, workerPool)) {
                 Assert.assertNotNull(server);
 
@@ -121,7 +121,7 @@ public class PGTlsCompatTest extends BasePGTest {
                 }
             };
 
-            final WorkerPool workerPool = new TestWorkerPool(1, metrics);
+            final WorkerPool workerPool = new TestWorkerPool(1, conf.getMetrics());
             try (final IPGWireServer server = createPGWireServer(conf, engine, workerPool)) {
                 Assert.assertNotNull(server);
 
@@ -168,7 +168,7 @@ public class PGTlsCompatTest extends BasePGTest {
             };
 
             final int N = 10;
-            final WorkerPool workerPool = new TestWorkerPool(1, metrics);
+            final WorkerPool workerPool = new TestWorkerPool(1, conf.getMetrics());
             try (final IPGWireServer server = createPGWireServer(conf, engine, workerPool)) {
                 Assert.assertNotNull(server);
                 final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", server.getPort());

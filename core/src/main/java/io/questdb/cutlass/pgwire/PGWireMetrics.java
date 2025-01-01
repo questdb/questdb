@@ -27,14 +27,16 @@ package io.questdb.cutlass.pgwire;
 import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.MetricsRegistry;
+import io.questdb.std.Mutable;
 import org.jetbrains.annotations.TestOnly;
 
-public class PGWireMetrics {
+public class PGWireMetrics implements Mutable {
     private final LongGauge cachedSelectsGauge;
     private final LongGauge cachedUpdatesGauge;
     private final Counter completedQueriesCounter;
     private final LongGauge connectionCountGauge;
     private final Counter errorCounter;
+    private final Counter listenerStateChangeCounter;
     private final Counter selectCacheHitCounter;
     private final Counter selectCacheMissCounter;
     private final Counter startedQueriesCounter;
@@ -48,6 +50,7 @@ public class PGWireMetrics {
         this.selectCacheHitCounter = metricsRegistry.newCounter("pg_wire_select_cache_hits");
         this.selectCacheMissCounter = metricsRegistry.newCounter("pg_wire_select_cache_misses");
         this.errorCounter = metricsRegistry.newCounter("pg_wire_errors");
+        this.listenerStateChangeCounter = metricsRegistry.newCounter("pg_wire_listener_state_change_count");
     }
 
     public LongGauge cachedSelectsGauge() {
@@ -56,6 +59,19 @@ public class PGWireMetrics {
 
     public LongGauge cachedUpdatesGauge() {
         return cachedUpdatesGauge;
+    }
+
+    @Override
+    public void clear() {
+        cachedSelectsGauge.setValue(0);
+        cachedUpdatesGauge.setValue(0);
+        completedQueriesCounter.reset();
+        connectionCountGauge.setValue(0);
+        errorCounter.reset();
+        selectCacheHitCounter.reset();
+        selectCacheMissCounter.reset();
+        startedQueriesCounter.reset();
+        listenerStateChangeCounter.reset();
     }
 
     @TestOnly
@@ -69,6 +85,10 @@ public class PGWireMetrics {
 
     public Counter getErrorCounter() {
         return errorCounter;
+    }
+
+    public Counter listenerStateChangeCounter() {
+        return listenerStateChangeCounter;
     }
 
     public void markComplete() {
