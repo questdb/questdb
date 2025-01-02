@@ -193,24 +193,27 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             // We cannot close / unmap fds here. Other copy jobs may still be running and using them.
             // exception handling code of the stack will check if all the parts are finished before closing the memory / fds.
             if (partCounter == null || partCounter.decrementAndGet() == 0) {
-                FilesFacade ff = tableWriter.getFilesFacade();
-                O3Utils.unmapAndClose(ff, srcDataFixFd, srcDataFixAddr, srcDataFixSize);
-                O3Utils.unmapAndClose(ff, srcDataVarFd, srcDataVarAddr, srcDataVarSize);
-                O3Utils.unmapAndClose(ff, dstFixFd, dstAuxAddr, dstFixSize);
-                O3Utils.unmapAndClose(ff, dstVarFd, dstVarAddr, dstVarSize);
-
-                if (indexBlockCapacity > -1 && indexWriter != null && !indexWriter.isOpen()) {
-                    ff.close(dstKFd);
-                    ff.close(dstVFd);
-                }
-
-                closeColumnIdle(
+                unmapAndCloseAllPartsComplete(
                         columnCounter,
                         timestampMergeIndexAddr,
                         timestampMergeIndexSize,
+                        srcDataFixFd,
+                        srcDataFixAddr,
+                        srcDataFixSize,
+                        srcDataVarFd,
+                        srcDataVarAddr,
+                        srcDataVarSize,
                         srcTimestampFd,
                         srcTimestampAddr,
                         srcTimestampSize,
+                        dstFixFd,
+                        dstAuxAddr,
+                        dstFixSize,
+                        dstVarFd,
+                        dstVarAddr,
+                        dstVarSize,
+                        dstKFd,
+                        dstVFd,
                         tableWriter
                 );
             }
