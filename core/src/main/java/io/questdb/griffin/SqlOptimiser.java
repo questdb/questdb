@@ -4743,6 +4743,22 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private @Nullable ExpressionNode rewritePivotGetAppropriateArgFromInExpr(ExpressionNode forInExpr, int slot) {
+        if (forInExpr.paramCount == 2) {
+            assert slot == 0;
+            return forInExpr.rhs;
+        }
+        assert slot < forInExpr.paramCount - 1;
+        return forInExpr.args.getQuick(slot);
+    }
+
+    private @Nullable ExpressionNode rewritePivotGetAppropriateNameFromInExpr(ExpressionNode forInExpr) {
+        if (forInExpr.paramCount == 2) {
+            return forInExpr.lhs;
+        }
+        return forInExpr.args.getLast();
+    }
+
     private ExpressionNode rewritePivotMakeBinaryExpression(ExpressionNode lhs, ExpressionNode rhs, CharSequence token, OperatorExpression operator) {
         ExpressionNode op = expressionNodePool.next().of(OPERATION, token, operator.precedence, 0);
         op.paramCount = 2;
@@ -6484,6 +6500,21 @@ public class SqlOptimiser implements Mutable {
             StringSink nameSink = new StringSink();
             nameSink.clear();
 
+            boolean duplicateAggregateFunctions = false;
+
+            ObjList<CharSequence> aggregateFunctionNames = new ObjList<>();
+
+            // todo: improve lazy n^2 algorithm
+            for (int i = 0, n = nested.getPivotColumns().size(); i < n; i++) {
+                aggregateFunctionNames.add(nested.getPivotColumns().get(i).getAst().token);
+
+                for (int j = 0, m = aggregateFunctionNames.size() - 1; j < m; j++) {
+                    if (Chars.equalsIgnoreCase(aggregateFunctionNames.get(i), aggregateFunctionNames.get(j))) {
+                        duplicateAggregateFunctions = true;
+                    }
+                }
+            }
+
 
             // for each output pivot column
             for (int i = 0; i < expectedPivotColumnsPerAggregateFunction; i++) {
@@ -6507,14 +6538,14 @@ public class SqlOptimiser implements Mutable {
 
                         // build name
                         forInExpr = nested.getPivotFor().getQuick(k);
-                        inValue = forInExpr.args.getQuick(
-                                forMaxes.get(k) - forDepths.get(k)
-                        );
+                        inValue = rewritePivotGetAppropriateArgFromInExpr(forInExpr, forMaxes.get(k) - forDepths.get(k));
+
+                        assert inValue != null;
 
                         nameSink.put(GenericLexer.unquote(inValue.token)).put('_');
 
                         // build AND expr
-                        ExpressionNode caseClause = rewritePivotMakeBinaryExpression(forInExpr.args.getLast(), inValue, "=", opEq);
+                        ExpressionNode caseClause = rewritePivotMakeBinaryExpression(rewritePivotGetAppropriateNameFromInExpr(forInExpr), inValue, "=", opEq);
 
                         if (caseValue == null) {
                             caseValue = caseClause;
@@ -6528,6 +6559,10 @@ public class SqlOptimiser implements Mutable {
                         // add the alias
                         nameSink.put(pivotColumn.getAlias());
                     } else if (nested.getPivotColumns().size() > 1) {
+                        if (duplicateAggregateFunctions) {
+                            nameSink.put(pivotColumnParamToken).put('_'); // to handle duplicate aggregate i.e sum twice
+
+                        }
                         nameSink.put(pivotColumnName); // todo: handle duplicate aggregates
                     } else {
                         // remove the '_'
@@ -6547,7 +6582,6 @@ public class SqlOptimiser implements Mutable {
                         caseExpr = expressionNodePool.next().of(FUNCTION, "case", Integer.MIN_VALUE, 0);
                         caseExpr.paramCount = 3;
                     }
-
 
                     // 0
                     ExpressionNode defaultValueExpr = expressionNodePool.next().of(CONSTANT, pivotDefaultValue, Integer.MIN_VALUE, 0);
@@ -6574,8 +6608,6 @@ public class SqlOptimiser implements Mutable {
                     ));
 
                     nameSink.clear();
-
-
                 }
 
                 for (int z = forDepths.size() - 1; z >= 0; z--) {
@@ -6640,16 +6672,6 @@ public class SqlOptimiser implements Mutable {
         }
 
         return model;
-    }
-
-    CharSequence rewritePivotGetDefaultValueForAggregateFunction(String functionName) {
-        switch (functionName) {
-            case "count":
-            case "COUNT":
-                return "null";
-            default:
-                return "0";
-        }
     }
 
     void validateUpdateColumns(QueryModel updateQueryModel, TableRecordMetadata metadata, SqlExecutionContext

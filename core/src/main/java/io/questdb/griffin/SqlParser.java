@@ -2668,6 +2668,10 @@ public class SqlParser {
 
             tok = optTok(lexer);
 
+            if (tok == null) {
+                throw SqlException.$(lexer.lastTokenPosition(), "expected `GROUP`");
+            }
+
             if (isGroupKeyword(tok)) {
                 break;
             } else if (Chars.equals(tok, ",")) {
