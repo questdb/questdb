@@ -293,6 +293,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.parallel.groupby.presize.max.capacity\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_CAPACITY\t100000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.presize.max.heap.size\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_HEAP_SIZE\t1073741824\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.work.stealing.threshold\tQDB_CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD\t16\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.parallel.read.parquet.enabled\tQDB_CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parquet.frame.cache.capacity\tQDB_CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY\t3\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.rename.table.model.pool.capacity\tQDB_CAIRO_SQL_RENAME_TABLE_MODEL_POOL_CAPACITY\t16\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.sampleby.page.size\tQDB_CAIRO_SQL_SAMPLEBY_PAGE_SIZE\t0\tdefault\tfalse\tfalse\n" +

@@ -45,4 +45,3 @@ select count(*) from parquet_scan('data/parquet-testing/broken/garbledfooter.par
 statement error
 select * from parquet_scan('data/parquet-testing/broken/broken_structure.parquet')
 ----
-db error: ERROR: error in PartitionDecoder.decodeRowGroup: could not decode row group 0: could not decode page for column "b" in row group 0: encoding not supported, physical type: Int64, encoding RleDictionary, logical type None, converted type: None, column type ColumnType(6/Long)

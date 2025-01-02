@@ -48,6 +48,9 @@ import io.questdb.std.Mutable;
 import io.questdb.std.str.LPSZ;
 import org.jetbrains.annotations.Nullable;
 
+/**
+ * Page frame cursor for parallel read_parquet() SQL function.
+ */
 public class ReadParquetPageFrameCursor implements PageFrameCursor {
     private static final Log LOG = LogFactory.getLog(ReadParquetPageFrameCursor.class);
     private final IntList columnIndexes;

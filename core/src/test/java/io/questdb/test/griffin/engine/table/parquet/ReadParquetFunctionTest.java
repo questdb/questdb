@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.table.parquet;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.RecordCursor;
@@ -41,15 +42,35 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+
+import java.util.Arrays;
+import java.util.Collection;
 
 import static io.questdb.cairo.TableUtils.PARQUET_PARTITION_NAME;
 
+@RunWith(Parameterized.class)
 public class ReadParquetFunctionTest extends AbstractCairoTest {
+    private final boolean parallel;
+
+    public ReadParquetFunctionTest(boolean parallel) {
+        this.parallel = parallel;
+    }
+
+    @Parameterized.Parameters(name = "parallel={0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {true},
+                {false},
+        });
+    }
 
     @Before
     public void setUp() {
         super.setUp();
         inputRoot = root;
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED, parallel);
     }
 
     @Test
@@ -126,7 +147,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                         sink,
                         null,
                         null,
-                        true,
+                        parallel,
                         true
                 );
             }
@@ -316,7 +337,11 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                 sink.clear();
                 sink.put("select * from read_parquet('x.parquet')");
 
-                assertPlanNoLeakCheck(sink, "parquet page frame scan\n");
+                if (parallel) {
+                    assertPlanNoLeakCheck(sink, "parquet page frame scan\n");
+                } else {
+                    assertPlanNoLeakCheck(sink, "parquet file sequential scan\n");
+                }
 
                 sink.put(" where 1 = 2");
                 assertSqlCursors("x where 1 = 2", sink);

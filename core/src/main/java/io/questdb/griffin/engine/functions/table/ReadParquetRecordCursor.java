@@ -58,6 +58,9 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8SplitString;
 import org.jetbrains.annotations.Nullable;
 
+/**
+ * Page frame cursor for single-threaded read_parquet() SQL function.
+ */
 public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     private static final Log LOG = LogFactory.getLog(ReadParquetRecordCursor.class);
     private final LongList auxPtrs = new LongList();

@@ -44,12 +44,12 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 /**
  * Factory for parallel read_parquet() SQL function.
  */
-public class ParquetPageFrameRecordCursorFactory extends AbstractRecordCursorFactory {
+public class ReadParquetPageFrameRecordCursorFactory extends AbstractRecordCursorFactory {
     private final PageFrameRecordCursorImpl cursor;
     private final ReadParquetPageFrameCursor pageFrameCursor;
     private Path path;
 
-    public ParquetPageFrameRecordCursorFactory(
+    public ReadParquetPageFrameRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             @Transient Path path,
             RecordMetadata metadata
