@@ -362,8 +362,7 @@ public class PivotTest extends AbstractSqlParserTest {
                     "    FOR \"symbol\" IN ('ETH-USDT')\n" +
                     "        side in ('buy', 'sell')\n" +
                     "    GROUP BY timestamp\n" +
-                    "  );\n" +
-                    "  where symbol = 'ETH-USDT'";
+                    "  );";
 
             assertSql("timestamp\tETH-USDT_buy\tETH-USDT_sell\n" +
                     "2024-12-19T08:10:00.700999Z\t0.0\t3678.25\n" +

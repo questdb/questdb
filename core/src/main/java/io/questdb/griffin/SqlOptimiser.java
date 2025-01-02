@@ -6544,6 +6544,7 @@ public class SqlOptimiser implements Mutable {
 
                         nameSink.put(GenericLexer.unquote(inValue.token)).put('_');
 
+
                         // build AND expr
                         ExpressionNode caseClause = rewritePivotMakeBinaryExpression(rewritePivotGetAppropriateNameFromInExpr(forInExpr), inValue, "=", opEq);
 
@@ -6561,12 +6562,13 @@ public class SqlOptimiser implements Mutable {
                     } else if (nested.getPivotColumns().size() > 1) {
                         if (duplicateAggregateFunctions) {
                             nameSink.put(pivotColumnParamToken).put('_'); // to handle duplicate aggregate i.e sum twice
-
                         }
                         nameSink.put(pivotColumnName); // todo: handle duplicate aggregates
                     } else {
                         // remove the '_'
+
                         nameSink.clear(nameSink.length() - 1);
+
                     }
 
                     // SUM(_)
