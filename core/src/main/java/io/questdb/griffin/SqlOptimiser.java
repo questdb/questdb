@@ -6526,7 +6526,8 @@ public class SqlOptimiser implements Mutable {
                     CharSequence pivotColumnParamToken = pivotColumn.getAst().rhs.token;
                     ExpressionNode pivotColumnParam = pivotColumn.getAst().rhs;
                     CharSequence pivotColumnAlias = pivotColumn.getAlias();
-                    CharSequence pivotDefaultValue = Chars.equalsIgnoreCase(pivotColumnName, "sum") ? "0" : "null";
+                    CharSequence pivotDefaultValue = "null";
+//                    CharSequence pivotDefaultValue = Chars.equalsIgnoreCase(pivotColumnName, "sum") ? "0" : "null";
 
 
                     ExpressionNode caseValue = null;
@@ -6543,7 +6544,6 @@ public class SqlOptimiser implements Mutable {
                         assert inValue != null;
 
                         nameSink.put(GenericLexer.unquote(inValue.token)).put('_');
-
 
                         // build AND expr
                         ExpressionNode caseClause = rewritePivotMakeBinaryExpression(rewritePivotGetAppropriateNameFromInExpr(forInExpr), inValue, "=", opEq);
@@ -6566,9 +6566,7 @@ public class SqlOptimiser implements Mutable {
                         nameSink.put(pivotColumnName); // todo: handle duplicate aggregates
                     } else {
                         // remove the '_'
-
                         nameSink.clear(nameSink.length() - 1);
-
                     }
 
                     // SUM(_)
@@ -6625,50 +6623,7 @@ public class SqlOptimiser implements Mutable {
                         forDepths.setQuick(z, 0);
                     }
                 }
-
             }
-
-//
-//            for (int i = 0, n = nested.getPivotFor().size(); i < n; i++) {
-//                // FOR year IN (2000, 2010, 2020)
-//                ExpressionNode forExpr = nested.getPivotFor().getQuick(i);
-//                ExpressionNode forExprColExpr = forExpr.args.getLast();
-//
-//                for (int j = forExpr.args.size() - 2; j >= 0; j--) {
-//
-//                    // SUM(_)
-//                    ExpressionNode aggExpr = expressionNodePool.next().of(FUNCTION, aggregateNameCs, Integer.MIN_VALUE, 0);
-//                    aggExpr.paramCount = 1;
-//
-//                    // CASE(_)
-//                    ExpressionNode switchExpr = expressionNodePool.next().of(FUNCTION, "switch", Integer.MIN_VALUE, 0);
-//                    switchExpr.paramCount = 4;
-//
-//                    // 0
-//                    ExpressionNode defaultValueExpr = expressionNodePool.next().of(CONSTANT, defaultValueCs, Integer.MIN_VALUE, 0);
-//
-//                    // population
-//                    ExpressionNode aggregateColumnExpr = aggCol.getAst().rhs;
-//
-//                    // 2000
-//                    ExpressionNode pivotInExprValue = forExpr.args.getQuick(j);
-//
-//                    // CASE WHEN year = 2000 THEN population ELSE 0 END)
-//                    switchExpr.args.add(defaultValueExpr);
-//                    switchExpr.args.add(aggregateColumnExpr);
-//                    switchExpr.args.add(pivotInExprValue);
-//                    switchExpr.args.add(forExprColExpr);
-//
-//                    // SUM(CASE WHEN year = 2000 THEN population ELSE 0 END)
-//                    aggExpr.rhs = switchExpr;
-//
-//                    // SUM(CASE WHEN year = 2000 THEN population ELSE 0 END) AS "2000"
-//                    model.addBottomUpColumn(queryColumnPool.next().of(
-//                            aggAliasCs != null ? pivotInExprValue.token + "_" + aggAliasCs : pivotInExprValue.token,
-//                            aggExpr
-//                    ));
-//                }
-//            }
         } else {
             model.setNestedModel(rewritePivot(model.getNestedModel()));
         }

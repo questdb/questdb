@@ -163,13 +163,13 @@ public class PivotTest extends AbstractSqlParserTest {
             String rewrittenQuery =
                     "SELECT \n" +
                             "    country,\n" +
-                            "    SUM(CASE WHEN year = 2000 THEN population ELSE 0 END) AS \"2000\",\n" +
-                            "    SUM(CASE WHEN year = 2010 THEN population ELSE 0 END) AS \"2010\",\n" +
-                            "    SUM(CASE WHEN year = 2020 THEN population ELSE 0 END) AS \"2020\"\n" +
+                            "    SUM(CASE WHEN year = 2000 THEN population ELSE null END) AS \"2000\",\n" +
+                            "    SUM(CASE WHEN year = 2010 THEN population ELSE null END) AS \"2010\",\n" +
+                            "    SUM(CASE WHEN year = 2020 THEN population ELSE null END) AS \"2020\"\n" +
                             "FROM cities\n" +
                             "GROUP BY country;";
 
-            String model = "select-group-by country, SUM(switch(year,2000,population,0)) 2000, SUM(switch(year,2010,population,0)) 2010, SUM(switch(year,2020,population,0)) 2020 from (select [country, population, year] from cities)";
+            String model = "select-group-by country, SUM(switch(year,2000,population,null)) 2000, SUM(switch(year,2010,population,null)) 2010, SUM(switch(year,2020,population,null)) 2020 from (select [country, population, year] from cities)";
             assertModel(model, pivotQuery, ExecutionModel.QUERY);
             assertModel(model, rewrittenQuery, ExecutionModel.QUERY);
 
@@ -200,13 +200,13 @@ public class PivotTest extends AbstractSqlParserTest {
             String rewrittenQuery =
                     "SELECT \n" +
                             "    country,\n" +
-                            "    SUM(CASE WHEN year = 2000 THEN population ELSE 0 END) AS \"2000_total\",\n" +
-                            "    SUM(CASE WHEN year = 2010 THEN population ELSE 0 END) AS \"2010_total\",\n" +
-                            "    SUM(CASE WHEN year = 2020 THEN population ELSE 0 END) AS \"2020_total\"\n" +
+                            "    SUM(CASE WHEN year = 2000 THEN population ELSE null END) AS \"2000_total\",\n" +
+                            "    SUM(CASE WHEN year = 2010 THEN population ELSE null END) AS \"2010_total\",\n" +
+                            "    SUM(CASE WHEN year = 2020 THEN population ELSE null END) AS \"2020_total\"\n" +
                             "FROM cities\n" +
                             "GROUP BY country;";
 
-            String model = "select-group-by country, SUM(switch(year,2000,population,0)) 2000_total, SUM(switch(year,2010,population,0)) 2010_total, SUM(switch(year,2020,population,0)) 2020_total from (select [country, population, year] from cities)";
+            String model = "select-group-by country, SUM(switch(year,2000,population,null)) 2000_total, SUM(switch(year,2010,population,null)) 2010_total, SUM(switch(year,2020,population,null)) 2020_total from (select [country, population, year] from cities)";
             assertModel(model, pivotQuery, ExecutionModel.QUERY);
             assertModel(model, rewrittenQuery, ExecutionModel.QUERY);
 
@@ -238,16 +238,16 @@ public class PivotTest extends AbstractSqlParserTest {
             String rewrittenQuery =
                     "SELECT \n" +
                             "    country,\n" +
-                            "    SUM(CASE WHEN year = 2000 THEN population ELSE 0 END) AS \"2000_SUM\",\n" +
+                            "    SUM(CASE WHEN year = 2000 THEN population ELSE null END) AS \"2000_SUM\",\n" +
                             "    COUNT(CASE WHEN year = 2000 THEN population ELSE null END) AS \"2000_COUNT\",\n" +
-                            "    SUM(CASE WHEN year = 2010 THEN population ELSE 0 END) AS \"2010_SUM\",\n" +
+                            "    SUM(CASE WHEN year = 2010 THEN population ELSE null END) AS \"2010_SUM\",\n" +
                             "    COUNT(CASE WHEN year = 2010 THEN population ELSE null END) AS \"2010_COUNT\",\n" +
-                            "    SUM(CASE WHEN year = 2020 THEN population ELSE 0 END) AS \"2020_SUM\",\n" +
+                            "    SUM(CASE WHEN year = 2020 THEN population ELSE null END) AS \"2020_SUM\",\n" +
                             "    COUNT(CASE WHEN year = 2020 THEN population ELSE null END) AS \"2020_COUNT\"\n" +
                             "FROM cities\n" +
                             "GROUP BY country;";
 
-            String model = "select-group-by country, SUM(switch(year,2000,population,0)) 2000_SUM, COUNT(switch(year,2000,population,null)) 2000_COUNT, SUM(switch(year,2010,population,0)) 2010_SUM, COUNT(switch(year,2010,population,null)) 2010_COUNT, SUM(switch(year,2020,population,0)) 2020_SUM, COUNT(switch(year,2020,population,null)) 2020_COUNT from (select [country, population, year] from cities)";
+            String model = "select-group-by country, SUM(switch(year,2000,population,null)) 2000_SUM, COUNT(switch(year,2000,population,null)) 2000_COUNT, SUM(switch(year,2010,population,null)) 2010_SUM, COUNT(switch(year,2010,population,null)) 2010_COUNT, SUM(switch(year,2020,population,null)) 2020_SUM, COUNT(switch(year,2020,population,null)) 2020_COUNT from (select [country, population, year] from cities)";
             assertModel(model, pivotQuery, ExecutionModel.QUERY);
             assertModel(model, rewrittenQuery, ExecutionModel.QUERY);
 
@@ -279,22 +279,22 @@ public class PivotTest extends AbstractSqlParserTest {
             String rewrittenQuery =
                     "SELECT \n" +
                             "    country,\n" +
-                            "    SUM(CASE WHEN year = 2000 AND country = 'NL' THEN population ELSE 0 END) AS \"2000_NL\",\n" +
-                            "    SUM(CASE WHEN year = 2000 AND country = 'US' THEN population ELSE 0 END) AS \"2000_US\",\n" +
-                            "    SUM(CASE WHEN year = 2010 AND country = 'NL' THEN population ELSE 0 END) AS \"2010_NL\",\n" +
-                            "    SUM(CASE WHEN year = 2010 AND country = 'US' THEN population ELSE 0 END) AS \"2010_US\",\n" +
-                            "    SUM(CASE WHEN year = 2020 AND country = 'NL' THEN population ELSE 0 END) AS \"2020_NL\",\n" +
-                            "    SUM(CASE WHEN year = 2020 AND country = 'US' THEN population ELSE 0 END) AS \"2020_US\",\n" +
+                            "    SUM(CASE WHEN year = 2000 AND country = 'NL' THEN population ELSE null END) AS \"2000_NL\",\n" +
+                            "    SUM(CASE WHEN year = 2000 AND country = 'US' THEN population ELSE null END) AS \"2000_US\",\n" +
+                            "    SUM(CASE WHEN year = 2010 AND country = 'NL' THEN population ELSE null END) AS \"2010_NL\",\n" +
+                            "    SUM(CASE WHEN year = 2010 AND country = 'US' THEN population ELSE null END) AS \"2010_US\",\n" +
+                            "    SUM(CASE WHEN year = 2020 AND country = 'NL' THEN population ELSE null END) AS \"2020_NL\",\n" +
+                            "    SUM(CASE WHEN year = 2020 AND country = 'US' THEN population ELSE null END) AS \"2020_US\",\n" +
                             "FROM cities\n" +
                             "GROUP BY country;";
 
-            String model = "select-group-by country, SUM(case(year = 2000 and country = 'NL',population,0)) 2000_NL, SUM(case(year = 2000 and country = 'US',population,0)) 2000_US, SUM(case(year = 2010 and country = 'NL',population,0)) 2010_NL, SUM(case(year = 2010 and country = 'US',population,0)) 2010_US, SUM(case(year = 2020 and country = 'NL',population,0)) 2020_NL, SUM(case(year = 2020 and country = 'US',population,0)) 2020_US from (select [country, population, year] from cities)";
+            String model = "select-group-by country, SUM(case(year = 2000 and country = 'NL',population,null)) 2000_NL, SUM(case(year = 2000 and country = 'US',population,null)) 2000_US, SUM(case(year = 2010 and country = 'NL',population,null)) 2010_NL, SUM(case(year = 2010 and country = 'US',population,null)) 2010_US, SUM(case(year = 2020 and country = 'NL',population,null)) 2020_NL, SUM(case(year = 2020 and country = 'US',population,null)) 2020_US from (select [country, population, year] from cities)";
             assertModel(model, pivotQuery, ExecutionModel.QUERY);
             assertModel(model, rewrittenQuery, ExecutionModel.QUERY);
 
             String result = "country\t2000_NL\t2000_US\t2010_NL\t2010_US\t2020_NL\t2020_US\n" +
-                    "NL\t1005\t0\t1065\t0\t1158\t0\n" +
-                    "US\t0\t8579\t0\t8783\t0\t9510\n";
+                    "NL\t1005\tnull\t1065\tnull\t1158\tnull\n" +
+                    "US\tnull\t8579\tnull\t8783\tnull\t9510\n";
 
             assertSql(result, pivotQuery);
             assertSql(result, rewrittenQuery);
@@ -321,28 +321,28 @@ public class PivotTest extends AbstractSqlParserTest {
             String rewrittenQuery =
                     "SELECT \n" +
                             "    country,\n" +
-                            "    SUM(CASE WHEN year = 2000 AND country = 'NL' THEN population ELSE 0 END) AS \"2000_NL_SUM\",\n" +
+                            "    SUM(CASE WHEN year = 2000 AND country = 'NL' THEN population ELSE null END) AS \"2000_NL_SUM\",\n" +
                             "    COUNT(CASE WHEN year = 2000 AND country = 'NL' THEN population ELSE null END) AS \"2000_NL_COUNT\",\n" +
-                            "    SUM(CASE WHEN year = 2000 AND country = 'US' THEN population ELSE 0 END) AS \"2000_US_SUM\",\n" +
+                            "    SUM(CASE WHEN year = 2000 AND country = 'US' THEN population ELSE null END) AS \"2000_US_SUM\",\n" +
                             "    COUNT(CASE WHEN year = 2000 AND country = 'US' THEN population ELSE null END) AS \"2000_US_COUNT\",\n" +
-                            "    SUM(CASE WHEN year = 2010 AND country = 'NL' THEN population ELSE 0 END) AS \"2010_NL_SUM\",\n" +
+                            "    SUM(CASE WHEN year = 2010 AND country = 'NL' THEN population ELSE null END) AS \"2010_NL_SUM\",\n" +
                             "    COUNT(CASE WHEN year = 2010 AND country = 'NL' THEN population ELSE null END) AS \"2010_NL_COUNT\",\n" +
-                            "    SUM(CASE WHEN year = 2010 AND country = 'US' THEN population ELSE 0 END) AS \"2010_US_SUM\",\n" +
+                            "    SUM(CASE WHEN year = 2010 AND country = 'US' THEN population ELSE null END) AS \"2010_US_SUM\",\n" +
                             "    COUNT(CASE WHEN year = 2010 AND country = 'US' THEN population ELSE null END) AS \"2010_US_COUNT\",\n" +
-                            "    SUM(CASE WHEN year = 2020 AND country = 'NL' THEN population ELSE 0 END) AS \"2020_NL_SUM\",\n" +
+                            "    SUM(CASE WHEN year = 2020 AND country = 'NL' THEN population ELSE null END) AS \"2020_NL_SUM\",\n" +
                             "    COUNT(CASE WHEN year = 2020 AND country = 'NL' THEN population ELSE null END) AS \"2020_NL_COUNT\",\n" +
-                            "    SUM(CASE WHEN year = 2020 AND country = 'US' THEN population ELSE 0 END) AS \"2020_US_SUM\",\n" +
+                            "    SUM(CASE WHEN year = 2020 AND country = 'US' THEN population ELSE null END) AS \"2020_US_SUM\",\n" +
                             "    COUNT(CASE WHEN year = 2020 AND country = 'US' THEN population ELSE null END) AS \"2020_US_COUNT\",\n" +
                             "FROM cities\n" +
                             "GROUP BY country;";
 
-            String model = "select-group-by country, SUM(case(year = 2000 and country = 'NL',population,0)) 2000_NL_SUM, COUNT(case(year = 2000 and country = 'NL',population,null)) 2000_NL_COUNT, SUM(case(year = 2000 and country = 'US',population,0)) 2000_US_SUM, COUNT(case(year = 2000 and country = 'US',population,null)) 2000_US_COUNT, SUM(case(year = 2010 and country = 'NL',population,0)) 2010_NL_SUM, COUNT(case(year = 2010 and country = 'NL',population,null)) 2010_NL_COUNT, SUM(case(year = 2010 and country = 'US',population,0)) 2010_US_SUM, COUNT(case(year = 2010 and country = 'US',population,null)) 2010_US_COUNT, SUM(case(year = 2020 and country = 'NL',population,0)) 2020_NL_SUM, COUNT(case(year = 2020 and country = 'NL',population,null)) 2020_NL_COUNT, SUM(case(year = 2020 and country = 'US',population,0)) 2020_US_SUM, COUNT(case(year = 2020 and country = 'US',population,null)) 2020_US_COUNT from (select [country, population, year] from cities)";
+            String model = "select-group-by country, SUM(case(year = 2000 and country = 'NL',population,null)) 2000_NL_SUM, COUNT(case(year = 2000 and country = 'NL',population,null)) 2000_NL_COUNT, SUM(case(year = 2000 and country = 'US',population,null)) 2000_US_SUM, COUNT(case(year = 2000 and country = 'US',population,null)) 2000_US_COUNT, SUM(case(year = 2010 and country = 'NL',population,null)) 2010_NL_SUM, COUNT(case(year = 2010 and country = 'NL',population,null)) 2010_NL_COUNT, SUM(case(year = 2010 and country = 'US',population,null)) 2010_US_SUM, COUNT(case(year = 2010 and country = 'US',population,null)) 2010_US_COUNT, SUM(case(year = 2020 and country = 'NL',population,null)) 2020_NL_SUM, COUNT(case(year = 2020 and country = 'NL',population,null)) 2020_NL_COUNT, SUM(case(year = 2020 and country = 'US',population,null)) 2020_US_SUM, COUNT(case(year = 2020 and country = 'US',population,null)) 2020_US_COUNT from (select [country, population, year] from cities)";
             assertModel(model, pivotQuery, ExecutionModel.QUERY);
             assertModel(model, rewrittenQuery, ExecutionModel.QUERY);
 
             String result = "country\t2000_NL_SUM\t2000_NL_COUNT\t2000_US_SUM\t2000_US_COUNT\t2010_NL_SUM\t2010_NL_COUNT\t2010_US_SUM\t2010_US_COUNT\t2020_NL_SUM\t2020_NL_COUNT\t2020_US_SUM\t2020_US_COUNT\n" +
-                    "NL\t1005\t1\t0\t0\t1065\t1\t0\t0\t1158\t1\t0\t0\n" +
-                    "US\t0\t0\t8579\t2\t0\t0\t8783\t2\t0\t0\t9510\t2\n";
+                    "NL\t1005\t1\tnull\t0\t1065\t1\tnull\t0\t1158\t1\tnull\t0\n" +
+                    "US\tnull\t0\t8579\t2\tnull\t0\t8783\t2\tnull\t0\t9510\t2\n";
 
             assertSql(result, pivotQuery);
             assertSql(result, rewrittenQuery);
@@ -365,12 +365,12 @@ public class PivotTest extends AbstractSqlParserTest {
                     "  );";
 
             assertSql("timestamp\tETH-USDT_buy\tETH-USDT_sell\n" +
-                    "2024-12-19T08:10:00.700999Z\t0.0\t3678.25\n" +
-                    "2024-12-19T08:10:00.736000Z\t0.0\t3678.25\n" +
-                    "2024-12-19T08:10:00.759000Z\t0.0\t3678.0\n" +
-                    "2024-12-19T08:10:00.772999Z\t0.0\t3678.0\n" +
-                    "2024-12-19T08:10:00.887000Z\t3678.01\t0.0\n" +
-                    "2024-12-19T08:10:00.950000Z\t0.0\t3678.0\n", pivotQuery);
+                    "2024-12-19T08:10:00.700999Z\tnull\t3678.25\n" +
+                    "2024-12-19T08:10:00.736000Z\tnull\t3678.25\n" +
+                    "2024-12-19T08:10:00.759000Z\tnull\t3678.0\n" +
+                    "2024-12-19T08:10:00.772999Z\tnull\t3678.0\n" +
+                    "2024-12-19T08:10:00.887000Z\t3678.01\tnull\n" +
+                    "2024-12-19T08:10:00.950000Z\tnull\t3678.0\n", pivotQuery);
         });
     }
 
