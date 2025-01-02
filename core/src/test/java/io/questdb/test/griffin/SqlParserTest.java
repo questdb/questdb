@@ -7416,6 +7416,27 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 ExecutionModel.CREATE_TABLE,
                 modelOf("src").col("x", ColumnType.INT)
         );
+
+        assertModel(
+                "create batch 1000000 table public as (select-choose x from (select [x] from src))",
+                "create table public as (select * from \"public\".\"src\")",
+                ExecutionModel.CREATE_TABLE,
+                modelOf("src").col("x", ColumnType.INT)
+        );
+
+        assertModel(
+                "create batch 1000000 table public as (select-choose x from (select [x] from src))",
+                "create table \"public\" as (select * from \"public\".\"src\")",
+                ExecutionModel.CREATE_TABLE,
+                modelOf("src").col("x", ColumnType.INT)
+        );
+
+        assertModel(
+                "create batch 1000000 table tab as (select-choose x from (select [x] from public))",
+                "create table public.tab as (select * from public)",
+                ExecutionModel.CREATE_TABLE,
+                modelOf("public").col("x", ColumnType.INT)
+        );
     }
 
     @Test
@@ -7441,6 +7462,18 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertModel(
                 "create atomic table tab (a INT)",
                 "create table public.\"tab\" (a int)",
+                ExecutionModel.CREATE_TABLE
+        );
+
+        assertModel(
+                "create atomic table public (a INT)",
+                "create table public (a int)",
+                ExecutionModel.CREATE_TABLE
+        );
+
+        assertModel(
+                "create atomic table public (a INT)",
+                "create table \"public\" (a int)",
                 ExecutionModel.CREATE_TABLE
         );
     }
@@ -7474,6 +7507,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertModel(
                 "insert into tab values (1)",
                 "insert into public.\"tab\" values (1)",
+                ExecutionModel.INSERT,
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+        );
+
+        assertModel(
+                "insert into public values (1)",
+                "insert into public values (1)",
                 ExecutionModel.INSERT,
                 modelOf("x")
                         .col("a", ColumnType.INT)
