@@ -52,13 +52,12 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
-import io.questdb.network.DefaultIODispatcherConfiguration;
-import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.network.SuspendEvent;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
+import io.questdb.std.Files;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -2621,6 +2620,30 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testByteBindingVariable() throws Exception {
+        skipOnWalRun();
+        skipInLegacyMode();
+
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            final PreparedStatement statement = connection.prepareStatement("create table x (a byte)");
+            statement.execute();
+
+            try (final PreparedStatement insert = connection.prepareStatement("insert into x values (?)")) {
+                // the parameter must be null so client does not know the type and parse message won't have types specified
+                // this makes the compiler to derive the type from the column type as BYTE
+                insert.setObject(1, null);
+                insert.execute();
+            }
+
+            try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
+                sink.clear();
+                assertResultSet("a[SMALLINT]\n" +
+                        "0\n", sink, resultSet);
+            }
+        });
+    }
+
+    @Test
     public void testCairoException() throws Exception {
         skipOnWalRun(); // non-partitioned
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
@@ -3294,6 +3317,46 @@ if __name__ == "__main__":
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement statement = connection.prepareStatement("")) {
                 statement.execute();
+            }
+        });
+    }
+
+    @Test
+    public void testErrnoInErrorMessage() throws Exception {
+        Assume.assumeFalse(legacyMode); // only modern server prints errno
+        skipOnWalRun(); // non-partitioned table
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public int errno() {
+                return 4; // Too many open files
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "ts.d")) {
+                    return -1;
+                }
+                return TestFilesFacadeImpl.INSTANCE.openRO(name);
+            }
+        };
+
+        assertWithPgServerExtendedBinaryOnly((connection, binary, mode, port) -> {
+            try (
+                    PreparedStatement stmt = connection.prepareStatement(
+                            "create table x as (" +
+                                    " select x, timestamp_sequence(0, 1000) ts" +
+                                    " from long_sequence(1)" +
+                                    ") timestamp (ts)"
+                    )
+            ) {
+                stmt.execute();
+            }
+
+            try (PreparedStatement stmt = connection.prepareStatement("x")) {
+                stmt.executeQuery();
+                Assert.fail();
+            } catch (PSQLException ex) {
+                assertContains(ex.getMessage(), "[4]");
             }
         });
     }
@@ -7777,7 +7840,7 @@ nodejs code:
                 }
             };
 
-            final WorkerPool workerPool = new TestWorkerPool(4, metrics);
+            final WorkerPool workerPool = new TestWorkerPool(4, conf.getMetrics());
             try (final IPGWireServer server = createPGWireServer(
                     conf,
                     engine,
@@ -8397,6 +8460,37 @@ nodejs code:
     }
 
     @Test
+    public void testQueryCountMetrics() throws Exception {
+        Assume.assumeFalse(legacyMode); // only modern PGWire server supports query counters
+        skipOnWalRun(); // non-partitioned table
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            execute("create table x as (select x id from long_sequence(10))");
+            // table
+            configuration.getMetrics().pgWireMetrics().resetQueryCounters();
+            try (
+                    PreparedStatement stmt = connection.prepareStatement("select count() from x;");
+                    ResultSet rs = stmt.executeQuery()
+            ) {
+                rs.next();
+                Assert.assertEquals(10, rs.getLong(1));
+                Assert.assertEquals(1, configuration.getMetrics().pgWireMetrics().startedQueriesCount());
+                Assert.assertEquals(1, configuration.getMetrics().pgWireMetrics().completedQueriesCount());
+            }
+            // virtual
+            configuration.getMetrics().pgWireMetrics().resetQueryCounters();
+            try (
+                    PreparedStatement stmt = connection.prepareStatement("select 1;");
+                    ResultSet rs = stmt.executeQuery()
+            ) {
+                rs.next();
+                Assert.assertEquals(1, rs.getLong(1));
+                Assert.assertEquals(1, configuration.getMetrics().pgWireMetrics().startedQueriesCount());
+                Assert.assertEquals(1, configuration.getMetrics().pgWireMetrics().completedQueriesCount());
+            }
+        });
+    }
+
+    @Test
     public void testQueryCountWithTsSmallerThanMinTsInTable() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (conn, binary, mode, port) -> {
             execute(
@@ -8547,21 +8641,6 @@ nodejs code:
         skipOnWalRun(); // test doesn't use tables
         assertMemoryLeak(() -> {
             PGWireConfiguration configuration = new Port0PGWireConfiguration() {
-                @Override
-                public IODispatcherConfiguration getDispatcherConfiguration() {
-                    return new DefaultIODispatcherConfiguration() {
-                        @Override
-                        public int getBindPort() {
-                            return getPGWirePort();
-                        }
-
-                        @Override
-                        public String getDispatcherLogName() {
-                            return "pg-server";
-                        }
-                    };
-                }
-
                 @Override
                 public int getSendBufferSize() {
                     return 192;
@@ -11875,7 +11954,7 @@ create table tab as (
             }
         };
 
-        WorkerPool workerPool = new TestWorkerPool(2, metrics);
+        WorkerPool workerPool = new TestWorkerPool(2, conf.getMetrics());
         DefaultCircuitBreakerRegistry registry = new DefaultCircuitBreakerRegistry(conf, engine.getConfiguration());
         try {
             return createPGWireServer(
@@ -11985,7 +12064,7 @@ create table tab as (
 
         try (
                 DefaultCircuitBreakerRegistry registry = new DefaultCircuitBreakerRegistry(conf, engine.getConfiguration());
-                WorkerPool pool = new WorkerPool(conf, metrics)
+                WorkerPool pool = new WorkerPool(conf)
         ) {
             pool.assign(engine.getEngineMaintenanceJob());
             try (
@@ -12370,16 +12449,6 @@ create table tab as (
         assertMemoryLeak(() -> {
             PGWireConfiguration configuration = new Port0PGWireConfiguration() {
                 @Override
-                public IODispatcherConfiguration getDispatcherConfiguration() {
-                    return new DefaultIODispatcherConfiguration() {
-                        @Override
-                        public NetworkFacade getNetworkFacade() {
-                            return nf;
-                        }
-                    };
-                }
-
-                @Override
                 public NetworkFacade getNetworkFacade() {
                     return nf;
                 }
@@ -12393,7 +12462,6 @@ create table tab as (
                     try (Connection ignored1 = getConnectionWitSslInitRequest(Mode.EXTENDED, server.getPort(), false, -2)) {
                         assertExceptionNoLeakCheck("Connection should not be established when server disconnects during authentication");
                     } catch (PSQLException ignored) {
-
                     }
                     Assert.assertEquals(0, nf.getAfterDisconnectInteractions());
                     TestUtils.assertEventually(() -> Assert.assertTrue(nf.isSocketClosed()));
