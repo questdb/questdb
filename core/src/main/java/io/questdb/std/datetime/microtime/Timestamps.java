@@ -31,8 +31,10 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.FixedTimeZoneRule;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.str.Utf16Sink;
+import org.jetbrains.annotations.NotNull;
 
 import java.time.Duration;
 import java.time.temporal.ChronoUnit;
@@ -132,31 +134,6 @@ public final class Timestamps {
             _d = maxDay;
         }
         return toMicros(_y, _m, _d) + getTimeMicros(micros) + (micros < 0 ? 1 : 0);
-    }
-
-    /**
-     * Convert a timestamp in arbitrary units to microseconds.
-     *
-     * @param value timestamp value
-     * @param unit  timestamp unit
-     * @return timestamp in microseconds
-     */
-    public static long toMicros(long value, ChronoUnit unit) {
-        switch (unit) {
-            case NANOS:
-                return value / 1_000;
-            case MICROS:
-                return value;
-            case MILLIS:
-                return value * 1_000;
-            case SECONDS:
-                return value * 1_000_000;
-            default:
-                Duration duration = unit.getDuration();
-                long micros = duration.getSeconds() * 1_000_000L;
-                micros += duration.getNano() / 1_000;
-                return micros * value;
-        }
     }
 
     public static long addPeriod(long lo, char type, int period) {
@@ -369,6 +346,7 @@ public final class Timestamps {
         return yearMicros(y = getYear(micros), l = isLeapYear(y)) + monthOfYearMicros(getMonthOfYear(micros, y, l), l);
     }
 
+    @SuppressWarnings("unused")
     public static long floorMM(long micros, long offset) {
         return floorMM(micros, 1, offset);
     }
@@ -488,6 +466,7 @@ public final class Timestamps {
         return yearMicros(y, isLeapYear(y));
     }
 
+    @SuppressWarnings("unused")
     public static long floorYYYY(long micros, long offset) {
         return floorYYYY(micros, 1, offset);
     }
@@ -822,6 +801,26 @@ public final class Timestamps {
         }
     }
 
+    public static TimeZoneRules getTimezoneRules(@NotNull DateLocale locale, @NotNull CharSequence timezone) throws NumericException {
+        return getTimezoneRules(locale, timezone, 0, timezone.length());
+    }
+
+    public static TimeZoneRules getTimezoneRules(
+            DateLocale locale,
+            CharSequence timezone,
+            int lo,
+            int hi
+    ) throws NumericException {
+        long l = parseOffset(timezone, lo, hi);
+        if (l == Long.MIN_VALUE) {
+            return locale.getZoneRules(
+                    Numbers.decodeLowInt(locale.matchZone(timezone, lo, hi)),
+                    RESOLUTION_MICROS
+            );
+        }
+        return new FixedTimeZoneRule(Numbers.decodeLowInt(l) * MINUTE_MICROS);
+    }
+
     // https://en.wikipedia.org/wiki/ISO_week_date
     public static int getWeek(long micros) {
         int w = (10 + getDoy(micros) - getDayOfWeek(micros)) / 7;
@@ -1102,6 +1101,31 @@ public final class Timestamps {
             return micros - (7 + (thisDow - dow)) * DAY_MICROS;
         } else {
             return micros - (thisDow - dow) * DAY_MICROS;
+        }
+    }
+
+    /**
+     * Convert a timestamp in arbitrary units to microseconds.
+     *
+     * @param value timestamp value
+     * @param unit  timestamp unit
+     * @return timestamp in microseconds
+     */
+    public static long toMicros(long value, ChronoUnit unit) {
+        switch (unit) {
+            case NANOS:
+                return value / 1_000;
+            case MICROS:
+                return value;
+            case MILLIS:
+                return value * 1_000;
+            case SECONDS:
+                return value * 1_000_000;
+            default:
+                Duration duration = unit.getDuration();
+                long micros = duration.getSeconds() * 1_000_000L;
+                micros += duration.getNano() / 1_000;
+                return micros * value;
         }
     }
 

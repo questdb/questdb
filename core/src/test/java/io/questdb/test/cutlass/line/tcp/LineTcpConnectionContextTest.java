@@ -25,7 +25,12 @@
 package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableUtils;
 import io.questdb.std.Files;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -470,11 +475,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     closeContext();
                     String expected = "location\ttemperature\ttimestamp\n" +
                             "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
-                            "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
-                            "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
-                            "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
-                            "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
-                            "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
+                            "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n";
                     assertTable(expected, table);
                 }, null
         );
@@ -486,7 +487,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
         String table = "commitException";
         node1.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 1);
-        netMsgBufferSize.set(60);
+        recvBufferSize.set(60);
         runInContext(
                 new TestFilesFacadeImpl() {
                     @Override
@@ -1420,7 +1421,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
                             table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
-            Assert.assertFalse(recvBuffer.length() < lineTcpConfiguration.getNetMsgBufferSize());
+            Assert.assertFalse(recvBuffer.length() < lineTcpConfiguration.getRecvBufferSize());
             handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
@@ -1573,7 +1574,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testMultipleTablesWithMultipleWriterThreads() throws Exception {
-        netMsgBufferSize.set(4096);
+        recvBufferSize.set(4096);
         nWriterThreads = 3;
         int nTables = 5;
         int nIterations = 10_000;
@@ -1582,7 +1583,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testMultipleTablesWithSingleWriterThread() throws Exception {
-        netMsgBufferSize.set(4096);
+        recvBufferSize.set(4096);
         nWriterThreads = 1;
         int nTables = 3;
         int nIterations = 10_000;
@@ -1747,7 +1748,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     @Test
     public void testOverflow() throws Exception {
         runInContext(() -> {
-            int msgBufferSize = lineTcpConfiguration.getNetMsgBufferSize();
+            int msgBufferSize = lineTcpConfiguration.getRecvBufferSize();
             recvBuffer = "A";
             while (recvBuffer.length() <= msgBufferSize) {
                 recvBuffer += recvBuffer;

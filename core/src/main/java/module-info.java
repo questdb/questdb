@@ -206,6 +206,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.conditional.NullIfIntFunctionFactory,
             io.questdb.griffin.engine.functions.conditional.NullIfLongFunctionFactory,
             io.questdb.griffin.engine.functions.conditional.NullIfStrFunctionFactory,
+            io.questdb.griffin.engine.functions.conditional.NullIfVarcharFunctionFactory,
 
 //                   '<' operator
             io.questdb.griffin.engine.functions.lt.LtDoubleVVFunctionFactory,
@@ -633,8 +634,6 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.bool.InDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.bool.InLongFunctionFactory,
             io.questdb.griffin.engine.functions.bool.InSymbolFunctionFactory,
-            io.questdb.griffin.engine.functions.bool.InTimestampStrFunctionFactory,
-            io.questdb.griffin.engine.functions.bool.InTimestampVarcharFunctionFactory,
             io.questdb.griffin.engine.functions.bool.InTimestampTimestampFunctionFactory,
             io.questdb.griffin.engine.functions.bool.BetweenTimestampFunctionFactory,
             io.questdb.griffin.engine.functions.bool.InUuidFunctionFactory,
@@ -888,6 +887,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.PrefixedVersionFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.TypeOfFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.CheckpointStatusFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.ReloadConfigFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.RefreshMaterializedViewFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.ViewsFunctionFactory,
 

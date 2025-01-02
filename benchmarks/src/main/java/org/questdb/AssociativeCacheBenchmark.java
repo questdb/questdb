@@ -30,9 +30,17 @@ import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.LongGaugeImpl;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentAssociativeCache;
+import io.questdb.std.ConcurrentCacheConfiguration;
+import io.questdb.std.DefaultConcurrentCacheConfiguration;
 import io.questdb.std.Rnd;
 import io.questdb.std.SimpleAssociativeCache;
-import org.openjdk.jmh.annotations.*;
+import org.openjdk.jmh.annotations.Benchmark;
+import org.openjdk.jmh.annotations.BenchmarkMode;
+import org.openjdk.jmh.annotations.Mode;
+import org.openjdk.jmh.annotations.OutputTimeUnit;
+import org.openjdk.jmh.annotations.Scope;
+import org.openjdk.jmh.annotations.State;
+import org.openjdk.jmh.annotations.Threads;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;
@@ -55,13 +63,46 @@ public class AssociativeCacheBenchmark {
 
     public AssociativeCacheBenchmark() {
         final int cpus = Runtime.getRuntime().availableProcessors();
-        cacheNoMetrics = new ConcurrentAssociativeCache<>(8 * cpus, 2 * cpus);
+        cacheNoMetrics = new ConcurrentAssociativeCache<>(
+                new DefaultConcurrentCacheConfiguration() {
+                    @Override
+                    public int getBlocks() {
+                        return 8 * cpus;
+                    }
+
+                    @Override
+                    public int getRows() {
+                        return 2 * cpus;
+                    }
+                }
+        );
         cacheWithMetrics = new ConcurrentAssociativeCache<>(
-                8 * cpus,
-                2 * cpus,
-                cachedGauge,
-                hitCounter,
-                missCounter
+                new ConcurrentCacheConfiguration() {
+                    @Override
+                    public int getBlocks() {
+                        return 8 * cpus;
+                    }
+
+                    @Override
+                    public LongGauge getCachedGauge() {
+                        return cachedGauge;
+                    }
+
+                    @Override
+                    public Counter getHiCounter() {
+                        return hitCounter;
+                    }
+
+                    @Override
+                    public Counter getMissCounter() {
+                        return missCounter;
+                    }
+
+                    @Override
+                    public int getRows() {
+                        return 2 * cpus;
+                    }
+                }
         );
     }
 

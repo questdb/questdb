@@ -25,6 +25,7 @@
 package io.questdb.metrics;
 
 import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.Mutable;
 import io.questdb.std.str.BorrowableUtf8Sink;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
@@ -36,7 +37,7 @@ import java.lang.management.ManagementFactory;
  * GC metrics don't rely on MetricsRegistry to be able to obtain and write all metrics
  * to the sink in one go.
  */
-public class GCMetrics implements Scrapable {
+public class GCMetrics implements Target, Mutable {
 
     private static final CharSequenceHashSet majorGCNames = new CharSequenceHashSet();
     private static final CharSequenceHashSet minorGCNames = new CharSequenceHashSet();
@@ -72,6 +73,10 @@ public class GCMetrics implements Scrapable {
         appendCounter(sink, minorTime, "jvm_minor_gc_time");
         appendCounter(sink, unknownCount, "jvm_unknown_gc_count");
         appendCounter(sink, unknownTime, "jvm_unknown_gc_time");
+    }
+
+    @Override
+    public void clear() {
     }
 
     private void appendCounter(CharSink<?> sink, long value, String name) {

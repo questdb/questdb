@@ -25,10 +25,12 @@
 package io.questdb.test.cairo.fuzz;
 
 import io.questdb.PropertyKey;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
@@ -55,6 +57,7 @@ import static io.questdb.test.cairo.fuzz.FuzzRunner.MAX_WAL_APPLY_TIME_PER_TABLE
  */
 public class WalWriterFuzzTest extends AbstractFuzzTest {
     private boolean fsAllowsMixedIO;
+    private boolean existingFilesParanoia;
 
     @Before
     public void setUp() {
@@ -64,6 +67,14 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         fsAllowsMixedIO = FilesFacadeImpl.INSTANCE.allowMixedIO(root);
         node1.setProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, fsAllowsMixedIO);
         setFuzzProperties(100, 1000, 2);
+        existingFilesParanoia = Files.PARANOIA_FD_MODE;
+        Files.PARANOIA_FD_MODE = true;
+    }
+
+    @After
+    public void tearDown() throws Exception {
+        super.tearDown();
+        Files.PARANOIA_FD_MODE = existingFilesParanoia;
     }
 
     @Test
@@ -109,7 +120,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     @Test
     public void testChunkedSequencerWriting() throws Exception {
         Rnd rnd = generateRandom(LOG);
-        fuzzer.setFuzzCounts(false, 5_000, 200, 20, 10, 20, rnd.nextInt(10), 5, 2);
+        fuzzer.setFuzzCounts(false, 5_000, 200, 20, 10, 20, rnd.nextInt(10), 5, 2, 0);
         setFuzzProperties(rnd);
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
         Assert.assertEquals(10, node1.getConfiguration().getDefaultSeqPartTxnCount());
@@ -119,7 +130,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     @Test
     public void testInOrderSmallTxns() throws Exception {
         Rnd rnd = generateRandom(LOG);
-        fuzzer.setFuzzCounts(false, 20000, 20000, 20, 10, 20, rnd.nextInt(10), 5, 2);
+        fuzzer.setFuzzCounts(false, 20000, 20000, 20, 10, 20, rnd.nextInt(10), 5, 2, 0);
         setFuzzProperties(rnd);
         node1.setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_TXN_COUNT, -1);
         runFuzz(rnd);
@@ -200,7 +211,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     @Test
     public void testWalSmallWalFdReuse() throws Exception {
         Rnd rnd = generateRandom(LOG);
-        fuzzer.setFuzzCounts(false, 100_000, 50, 20, 10, 20, 0, 5, 2);
+        fuzzer.setFuzzCounts(false, 100_000, 50, 20, 10, 20, 0, 5, 2, 0);
         setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd), getMaxWalSize(rnd), 1);
         runFuzz(rnd);
     }

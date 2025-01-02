@@ -44,7 +44,6 @@ public class WalTablesInitialisationTest extends AbstractBootstrapTest {
     @Test
     public void testWalTablesFunctionBeforeSeqTrackerInitialized() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            long httpConnMem = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN);
             assert Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN) == 0;
 
             // Need many table, single table will be initialized way too quickly on a background thread

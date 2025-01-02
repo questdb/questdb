@@ -22,15 +22,42 @@
  *
  ******************************************************************************/
 
-package io.questdb.metrics;
+package io.questdb;
 
-import io.questdb.std.str.BorrowableUtf8Sink;
+import java.util.concurrent.atomic.AtomicReference;
 
-/**
- * Anything that can be scraped for Prometheus metrics.
- */
-public interface Scrapable {
+public class MemoryConfigurationWrapper implements MemoryConfiguration {
+    private final AtomicReference<MemoryConfiguration> delegate = new AtomicReference<>();
 
-    // We need a sink that we can borrow from and append to in native code.
-    void scrapeIntoPrometheus(BorrowableUtf8Sink sink);
+    public MemoryConfigurationWrapper() {
+        delegate.set(null);
+    }
+
+    @Override
+    public long getRamUsageLimitBytes() {
+        return getDelegate().getRamUsageLimitBytes();
+    }
+
+    @Override
+    public long getRamUsageLimitPercent() {
+        return getDelegate().getRamUsageLimitPercent();
+    }
+
+    @Override
+    public long getResolvedRamUsageLimitBytes() {
+        return getDelegate().getResolvedRamUsageLimitBytes();
+    }
+
+    @Override
+    public long getTotalSystemMemory() {
+        return getDelegate().getTotalSystemMemory();
+    }
+
+    public void setDelegate(MemoryConfiguration delegate) {
+        this.delegate.set(delegate);
+    }
+
+    protected MemoryConfiguration getDelegate() {
+        return delegate.get();
+    }
 }
