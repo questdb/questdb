@@ -42,6 +42,8 @@ public class HealthMetricsImpl implements HealthMetrics, Mutable {
     @Override
     public void clear() {
         unhandledErrorCounter.reset();
+        readerLeakCounter.reset();
+        queryErrorCounter.reset();
     }
 
     @Override
