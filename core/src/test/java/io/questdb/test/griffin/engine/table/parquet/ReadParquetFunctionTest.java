@@ -324,6 +324,32 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            final long rows = 10;
+            execute("create table x as (select" +
+                    " rnd_varchar('foo1', 'foo2', 'foo3') as a_varchar1," +
+                    " rnd_varchar('bar1', 'bar2', 'bar3') as a_varchar2" +
+                    " from long_sequence(" + rows + "))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("select * from read_parquet('x.parquet') order by a_varchar1, a_varchar2");
+                assertSqlCursors("select * from x order by a_varchar1, a_varchar2", sink);
+            }
+        });
+    }
+
     protected static void assertSqlCursors(CharSequence expectedSql, CharSequence actualSql) throws SqlException {
         try (SqlCompiler sqlCompiler = engine.getSqlCompiler()) {
             TestUtils.assertSqlCursors(

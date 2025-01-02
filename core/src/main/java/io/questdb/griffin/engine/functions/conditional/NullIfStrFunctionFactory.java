@@ -36,6 +36,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class NullIfStrFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "nullif(SS)";
@@ -49,9 +50,7 @@ public class NullIfStrFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        Function strFunc1 = args.getQuick(0);
-        Function strFunc2 = args.getQuick(1);
-        return new Func(strFunc1, strFunc2);
+        return new Func(args.getQuick(0), args.getQuick(1));
     }
 
     private static class Func extends StrFunction implements BinaryFunction {
@@ -85,10 +84,10 @@ public class NullIfStrFunctionFactory implements FunctionFactory {
                 return null;
             }
             CharSequence cs2 = strFunc2.getStrA(rec);
-            if (cs2 == null) {
+            if (cs2 == null || !Chars.equals(cs1, cs2)) {
                 return cs1;
             }
-            return Chars.equals(cs1, cs2) ? null : cs1;
+            return null;
         }
 
         @Override
@@ -98,10 +97,10 @@ public class NullIfStrFunctionFactory implements FunctionFactory {
                 return null;
             }
             CharSequence cs2 = strFunc2.getStrB(rec);
-            if (cs2 == null) {
+            if (cs2 == null || !Chars.equals(cs1, cs2)) {
                 return cs1;
             }
-            return Chars.equals(cs1, cs2) ? null : cs1;
+            return null;
         }
     }
 }

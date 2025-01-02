@@ -87,8 +87,8 @@ public class RndLogFunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            super.init(symbolTableSource, executionContext);
             executionContext.getSecurityContext().authorizeSystemAdmin();
+            super.init(symbolTableSource, executionContext);
             rnd = executionContext.getRandom();
         }
 

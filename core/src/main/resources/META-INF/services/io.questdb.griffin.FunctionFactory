@@ -98,6 +98,7 @@ io.questdb.griffin.engine.functions.eq.NegContainsIPv4VarcharFunctionFactory
 # nullif
 io.questdb.griffin.engine.functions.conditional.NullIfCharFunctionFactory
 io.questdb.griffin.engine.functions.conditional.NullIfStrFunctionFactory
+io.questdb.griffin.engine.functions.conditional.NullIfVarcharFunctionFactory
 io.questdb.griffin.engine.functions.conditional.NullIfIPv4FunctionFactory
 io.questdb.griffin.engine.functions.conditional.NullIfIntFunctionFactory
 io.questdb.griffin.engine.functions.conditional.NullIfLongFunctionFactory
@@ -837,6 +838,7 @@ io.questdb.griffin.engine.functions.catalogue.PrefixedCurrentDatabaseFunctionFac
 io.questdb.griffin.engine.functions.catalogue.PrefixedVersionFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.TypeOfFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.CheckpointStatusFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.ReloadConfigFunctionFactory
 
 # PostgreSQL advisory locks functions
 io.questdb.griffin.engine.functions.lock.AdvisoryUnlockAll
