@@ -2947,8 +2947,9 @@ public class SqlParser {
             }
         }
     }
-    
-    private @NotNull CharSequence sansPublicSchema(@NotNull CharSequence tok, @NotNull GenericLexer lexer) throws SqlException {
+
+    @NotNull
+    private CharSequence sansPublicSchema(@NotNull CharSequence tok, GenericLexer lexer) throws SqlException {
         int lo = 0;
         int hi = tok.length();
         if (Chars.isQuoted(tok)) {
