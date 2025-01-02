@@ -32,13 +32,13 @@ import java.util.Random;
 public class RandomOrder implements Ordering.Factory {
     private final static long RANDOM_ORDER_SEED;
 
-    static {
-        RANDOM_ORDER_SEED = Os.currentTimeMicros();
-        System.out.println("RandomOrder seed: " + RANDOM_ORDER_SEED);
-    }
-
     @Override
     public Ordering create(Ordering.Context context) {
         return Ordering.shuffledBy(new Random(RANDOM_ORDER_SEED));
+    }
+
+    static {
+        RANDOM_ORDER_SEED = Os.currentTimeMicros();
+        System.out.println("RandomOrder seed: " + RANDOM_ORDER_SEED);
     }
 }
