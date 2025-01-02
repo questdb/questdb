@@ -7479,12 +7479,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testPublicSchemaRemovalInsert() throws SqlException {
+    public void testPublicSchemaRemovalInsert() throws Exception {
         assertModel(
                 "insert into tab values (1)",
                 "insert into public.tab values (1)",
                 ExecutionModel.INSERT,
-                modelOf("x")
+                modelOf("tab")
                         .col("a", ColumnType.INT)
         );
 
@@ -7492,7 +7492,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "insert into tab values (1)",
                 "insert into \"public\".tab values (1)",
                 ExecutionModel.INSERT,
-                modelOf("x")
+                modelOf("tab")
                         .col("a", ColumnType.INT)
         );
 
@@ -7500,7 +7500,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "insert into tab values (1)",
                 "insert into \"public\".\"tab\" values (1)",
                 ExecutionModel.INSERT,
-                modelOf("x")
+                modelOf("tab")
                         .col("a", ColumnType.INT)
         );
 
@@ -7508,7 +7508,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "insert into tab values (1)",
                 "insert into public.\"tab\" values (1)",
                 ExecutionModel.INSERT,
-                modelOf("x")
+                modelOf("tab")
                         .col("a", ColumnType.INT)
         );
 
@@ -7516,13 +7516,19 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "insert into public values (1)",
                 "insert into public values (1)",
                 ExecutionModel.INSERT,
-                modelOf("x")
+                modelOf("public")
                         .col("a", ColumnType.INT)
+        );
+
+        assertSyntaxError(
+                "insert into public.",
+                19,
+                "table name expected"
         );
     }
 
     @Test
-    public void testPublicSchemaRemovalSelect() throws SqlException {
+    public void testPublicSchemaRemovalSelect() throws Exception {
         assertQuery(
                 "select-choose x from (select [x] from tab)",
                 "select x from public.tab",
@@ -7545,6 +7551,52 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-choose x from (select [x] from tab)",
                 "select x from public.\"tab\"",
                 modelOf("tab").col("x", ColumnType.INT)
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from public)",
+                "select x from public",
+                modelOf("public").col("x", ColumnType.INT)
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from public)",
+                "select x from \"public\"",
+                modelOf("public").col("x", ColumnType.INT)
+        );
+
+        assertSyntaxError(
+                "select x from public.",
+                14,
+                "table name expected",
+                modelOf("a").col("x", ColumnType.INT).col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testPublicSchemaRemovalShowCreateTable() throws Exception {
+        assertQuery(
+                "show",
+                "show create table public.t1",
+                modelOf("t1").col("x", ColumnType.INT)
+        );
+
+        assertQuery(
+                "show",
+                "show create table public",
+                modelOf("public").col("x", ColumnType.INT)
+        );
+
+        assertSyntaxError(
+                "show create table public.",
+                25,
+                "table name expected"
+        );
+
+        assertSyntaxError(
+                "show create table public",
+                18,
+                "table does not exist [table=public]"
         );
     }
 
@@ -9055,6 +9107,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-choose a, b, c from (select [a, b, c] from t)",
                 "select a,b,c from t",
                 modelOf("t").col("a", ColumnType.INT).col("b", ColumnType.INT).col("c", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSelectQuotedEmptyTable() throws Exception {
+        assertSyntaxError(
+                "select * from \"\"",
+                14,
+                "come on, where is the table name?"
         );
     }
 

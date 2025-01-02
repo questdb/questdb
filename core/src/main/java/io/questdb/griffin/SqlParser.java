@@ -2468,6 +2468,10 @@ public class SqlParser {
                         model.setTableNameExpr(literal(tableName, expr.position));
                     } else {
                         if (isPublicKeyword(tableName, 0, dot)) {
+                            if (dot + 1 == tableName.length()) {
+                                throw SqlException.$(expr.position, "table name expected");
+                            }
+
                             BufferWindowCharSequence fs = (BufferWindowCharSequence) tableName;
                             fs.shiftLo(dot + 1);
                             model.setTableNameExpr(literal(tableName, expr.position + dot + 1));
@@ -2943,8 +2947,8 @@ public class SqlParser {
             }
         }
     }
-
-    private @NotNull CharSequence sansPublicSchema(CharSequence tok, GenericLexer lexer) throws SqlException {
+    
+    private @NotNull CharSequence sansPublicSchema(@NotNull CharSequence tok, @NotNull GenericLexer lexer) throws SqlException {
         int lo = 0;
         int hi = tok.length();
         if (Chars.isQuoted(tok)) {
@@ -2956,7 +2960,10 @@ public class SqlParser {
         }
 
         CharSequence savedTok = GenericLexer.immutableOf(tok);
-        tok = tok(lexer, "dot");
+        tok = optTok(lexer);
+        if (tok == null) {
+            return savedTok;
+        }
         if (!Chars.equals(tok, '.')) {
             lexer.unparseLast();
             return savedTok;
