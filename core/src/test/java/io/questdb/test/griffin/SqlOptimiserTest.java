@@ -1908,6 +1908,35 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testOrderByNotChooseByParent() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (f1 float, f2 float, ts timestamp) timestamp(ts)");
+            execute("insert into tab VALUES(1, 10, '2024-12-24T00:11:00.000Z'), (2, 20, '2024-12-24T00:11:00.000Z')");
+            String q1 = "select f2 - f1 as p1, f1, f2 from tab order by ts desc";
+            assertPlanNoLeakCheck(q1, "SelectedRecord\n" +
+                    "    VirtualRecord\n" +
+                    "      functions: [f2-f1,f1,f2,ts]\n" +
+                    "        PageFrame\n" +
+                    "            Row backward scan\n" +
+                    "            Frame backward scan on: tab\n");
+            assertQueryNoLeakCheck("p1\tf1\tf2\n" +
+                    "18.0\t2.0000\t20.0000\n" +
+                    "9.0\t1.0000\t10.0000\n", q1);
+
+            String q2 = "select f2 - f1, f1, f2 from tab order by ts desc";
+            assertPlanNoLeakCheck(q2, "SelectedRecord\n" +
+                    "    VirtualRecord\n" +
+                    "      functions: [f2-f1,f1,f2,ts]\n" +
+                    "        PageFrame\n" +
+                    "            Row backward scan\n" +
+                    "            Frame backward scan on: tab\n");
+            assertQueryNoLeakCheck("column\tf1\tf2\n" +
+                    "18.0\t2.0000\t20.0000\n" +
+                    "9.0\t1.0000\t10.0000\n", q2);
+        });
+    }
+
+    @Test
     public void testPushDownLimitFromChooseToNone() throws Exception {
         assertMemoryLeak(() -> {
             execute(tripsDdl);

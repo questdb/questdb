@@ -77,7 +77,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private static final Log LOG = LogFactory.getLog(HttpConnectionContext.class);
     private final HttpAuthenticator authenticator;
     private final ChunkedContentParser chunkedContentParser = new ChunkedContentParser();
-    private final HttpMinServerConfiguration configuration;
+    private final HttpServerConfiguration configuration;
     private final HttpCookieHandler cookieHandler;
     private final ObjectPool<DirectUtf8String> csPool;
     private final boolean dumpNetworkTraffic;
@@ -114,13 +114,11 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     @TestOnly
     public HttpConnectionContext(
-            HttpMinServerConfiguration configuration,
-            Metrics metrics,
+            HttpServerConfiguration configuration,
             SocketFactory socketFactory
     ) {
         this(
                 configuration,
-                metrics,
                 socketFactory,
                 DefaultHttpCookieHandler.INSTANCE,
                 DefaultHttpHeaderParserFactory.INSTANCE,
@@ -129,8 +127,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     public HttpConnectionContext(
-            HttpMinServerConfiguration configuration,
-            Metrics metrics,
+            HttpServerConfiguration configuration,
             SocketFactory socketFactory,
             HttpCookieHandler cookieHandler,
             HttpHeaderParserFactory headerParserFactory,
@@ -160,7 +157,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.dumpNetworkTraffic = contextConfiguration.getDumpNetworkTraffic();
         // This is default behaviour until the security context is overridden with correct principal.
         this.securityContext = DenyAllSecurityContext.INSTANCE;
-        this.metrics = metrics;
+        this.metrics = contextConfiguration.getMetrics();
         this.authenticator = contextConfiguration.getFactoryProvider().getHttpAuthenticatorFactory().getHttpAuthenticator();
         this.rejectProcessor = contextConfiguration.getFactoryProvider().getRejectProcessorFactory().getRejectProcessor(this);
         this.forceFragmentationReceiveChunkSize = contextConfiguration.getForceRecvFragmentationChunkSize();

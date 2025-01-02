@@ -26,6 +26,7 @@ package io.questdb.cutlass.pgwire.modern;
 
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Transient;
@@ -43,15 +44,11 @@ public class TypesAndSelectModern implements QuietCloseable, TypeContainer {
     // recompile the SQL for the new parameter type, which we will do after
     // reconciling these types.
     private final IntList inPgParameterTypeOIDs = new IntList();
-    // The QuestDB bind variable types (see ColumnType) as scraped from the
-    // BindVariableService after SQL compilation.
-    //
-    // pgParameterTypes and bindVariableTypes are related. Before we compile the SQL,
-    // we define BindVariableService indexed entries from the pgParameterTypes. So there is
-    // one-to-one map between them. The pgParameterTypes uses PostgreSQL type identifiers
-    // and bindVariableTypes uses ours. bindVariableTypes may have more values, in case
-    // the client did not define types any times or did not define enough.
-    private final IntList outPgParameterTypeOIDs = new IntList();
+    // Bind variable types. Each entry combines:
+    // 1. Lower 32 bits: QuestDB native types scrapped from BindingService after the SQL text is parsed.
+    // 2. Upper 32 bits: PostgresSQL OIDs in BigEndian. This combines types a client sent us in a PARSE message with the
+    //                   types SQL Compiled derived from the SQL. Type from the PARSE message have a priority.
+    private final LongList outPgParameterTypes = new LongList();
     // sqlTag is the value we will be returning back to the client
     private final String sqlTag;
     // sqlType is the value determined by the SQL Compiler
@@ -63,13 +60,13 @@ public class TypesAndSelectModern implements QuietCloseable, TypeContainer {
             short sqlType,
             String sqlTag,
             @Transient IntList inPgParameterTypeOIDs,
-            @Transient IntList outPgParameterTypeOIDs
+            @Transient LongList outPgParameterTypes
     ) {
         this.factory = factory;
         this.sqlType = sqlType;
         this.sqlTag = sqlTag;
         this.inPgParameterTypeOIDs.addAll(inPgParameterTypeOIDs);
-        this.outPgParameterTypeOIDs.addAll(outPgParameterTypeOIDs);
+        this.outPgParameterTypes.addAll(outPgParameterTypes);
     }
 
     @Override
@@ -81,13 +78,13 @@ public class TypesAndSelectModern implements QuietCloseable, TypeContainer {
         return factory;
     }
 
+    public LongList getOutPgParameterTypes() {
+        return outPgParameterTypes;
+    }
+
     @Override
     public IntList getPgInParameterTypeOIDs() {
         return inPgParameterTypeOIDs;
-    }
-
-    public IntList getPgOutParameterTypeOIDs() {
-        return outPgParameterTypeOIDs;
     }
 
     public String getSqlTag() {

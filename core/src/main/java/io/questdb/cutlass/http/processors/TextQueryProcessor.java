@@ -496,7 +496,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                     .$(", q=`").utf8(state.query)
                     .$("`]").$();
             // This is a critical error, so we treat it as an unhandled one.
-            metrics.health().incrementUnhandledErrors();
+            metrics.healthMetrics().incrementUnhandledErrors();
         }
     }
 

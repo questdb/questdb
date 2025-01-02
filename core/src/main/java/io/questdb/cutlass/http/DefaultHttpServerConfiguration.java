@@ -32,6 +32,8 @@ import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.cutlass.line.LineTcpTimestampAdapter;
 import io.questdb.network.DefaultIODispatcherConfiguration;
+import io.questdb.std.ConcurrentCacheConfiguration;
+import io.questdb.std.DefaultConcurrentCacheConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.NanosecondClock;
@@ -43,7 +45,7 @@ import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import java.io.IOException;
 import java.io.InputStream;
 
-public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfiguration implements HttpServerConfiguration {
+public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfiguration implements HttpFullFatServerConfiguration {
     protected final MimeTypesCache mimeTypesCache;
     private final HttpContextConfiguration httpContextConfiguration;
     private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new DefaultJsonQueryProcessorConfiguration() {
@@ -95,6 +97,11 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
     }
 
     @Override
+    public ConcurrentCacheConfiguration getConcurrentCacheConfiguration() {
+        return DefaultConcurrentCacheConfiguration.DEFAULT;
+    }
+
+    @Override
     public FactoryProvider getFactoryProvider() {
         return DefaultFactoryProvider.INSTANCE;
     }
@@ -122,16 +129,6 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
     @Override
     public String getPoolName() {
         return "http";
-    }
-
-    @Override
-    public int getQueryCacheBlockCount() {
-        return 2;
-    }
-
-    @Override
-    public int getQueryCacheRowCount() {
-        return 8;
     }
 
     @Override
