@@ -362,7 +362,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
 
         @Override
         public CharSequence getStrB(int col) {
-            return getStrB(col);
+            return getStrA(col);
         }
 
         @Override
