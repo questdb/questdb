@@ -1047,6 +1047,7 @@ io.questdb.griffin.engine.functions.math.IPv4VarcharNetmaskFunctionFactory
 # timezone conversion
 io.questdb.griffin.engine.functions.date.ToTimezoneTimestampFunctionFactory
 io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory
+io.questdb.griffin.engine.functions.date.ToTimezoneIntervalFunctionFactory
 
 # geohash functions
 io.questdb.griffin.engine.functions.geohash.GeoHashFromCoordinatesFunctionFactory
