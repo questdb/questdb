@@ -59,6 +59,7 @@ public class Overrides {
     private Map<String, String> env = null;
     private FactoryProvider factoryProvider = null;
     private FilesFacade ff;
+    private boolean freeLeakedReaders = false;
     private boolean isHiddenTelemetryTable = false;
     private boolean mangleTableDirNames = true;
     private CairoConfiguration propsConfig;
@@ -121,6 +122,14 @@ public class Overrides {
         return mangleTableDirNames;
     }
 
+    public void freeLeakedReaders(boolean freeLeakedReaders) {
+        this.freeLeakedReaders = freeLeakedReaders;
+    }
+
+    public boolean freeLeakedReaders() {
+        return freeLeakedReaders;
+    }
+
     public void reset() {
         currentMicros = -1;
         testMicrosClock = defaultMicrosecondClock;
@@ -133,6 +142,7 @@ public class Overrides {
         properties.clear();
         changed = true;
         spinLockTimeout = AbstractCairoTest.DEFAULT_SPIN_LOCK_TIMEOUT;
+        freeLeakedReaders = false;
     }
 
     public void setCurrentMicros(long currentMicros) {

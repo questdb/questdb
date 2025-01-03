@@ -22,19 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.metrics;
+package io.questdb.cairo.pool;
 
-public interface HealthMetrics {
+public interface ResourcePoolSupervisor<T> {
+    void onResourceBorrowed(T resource);
 
-    void incrementQueryErrorCounter();
-
-    void incrementReaderLeakCounter(int count);
-
-    void incrementUnhandledErrors();
-
-    long queryErrorCounter();
-
-    long readerLeakCounter();
-
-    long unhandledErrorsCount();
+    void onResourceReturned(T resource);
 }
