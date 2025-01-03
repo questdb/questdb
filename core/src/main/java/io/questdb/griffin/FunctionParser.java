@@ -499,7 +499,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         if (args != null && args.size() == 2) {
             // binary operator not found
             // function, not an operator,  is  not found
-            ex.put("there is no matching operator`").put(node.token).put("` with the argument types: ");
+            ex.put("there is no matching operator `").put(node.token).put("` with the argument types: ");
             putArgType(args, 0, ex);
             ex.put(' ');
             ex.put(node.token);
