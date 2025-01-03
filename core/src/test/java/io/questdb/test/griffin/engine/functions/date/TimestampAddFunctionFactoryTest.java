@@ -24,10 +24,11 @@
 
 package io.questdb.test.griffin.engine.functions.date;
 
+import org.junit.Test;
+
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.engine.functions.date.TimestampAddFunctionFactory;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
-import org.junit.Test;
 
 public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
