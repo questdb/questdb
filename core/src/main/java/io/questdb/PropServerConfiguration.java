@@ -260,11 +260,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final Log log;
     private final boolean logLevelVerbose;
     private final boolean logSqlQueryProgressExe;
-    private final boolean matViewEnabled;
     private final DateFormat logTimestampFormat;
     private final DateLocale logTimestampLocale;
     private final String logTimestampTimezone;
     private final TimeZoneRules logTimestampTimezoneRules;
+    private final boolean matViewEnabled;
     private final int maxFileNameLength;
     private final long maxHttpQueryResponseRowLimit;
     private final double maxRequiredDelimiterStdDev;

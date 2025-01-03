@@ -383,6 +383,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.date.IsLeapYearFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampDiffFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampAddFunctionFactory,
+            io.questdb.griffin.engine.functions.date.TimestampAddWithTimezoneFunctionFactory,
             io.questdb.griffin.engine.functions.date.ToDateFunctionFactory,
             io.questdb.griffin.engine.functions.date.VarcharToDateFunctionFactory,
             io.questdb.griffin.engine.functions.date.ToPgDateFunctionFactory,
@@ -887,9 +888,9 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.PrefixedVersionFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.TypeOfFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.CheckpointStatusFunctionFactory,
-            io.questdb.griffin.engine.functions.catalogue.ReloadConfigFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.RefreshMaterializedViewFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.ViewsFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.ReloadConfigFunctionFactory,
 
 //            PostgreSQL advisory locks functions
             io.questdb.griffin.engine.functions.lock.AdvisoryUnlockAll,
