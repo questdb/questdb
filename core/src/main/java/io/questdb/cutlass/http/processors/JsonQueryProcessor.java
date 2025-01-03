@@ -190,7 +190,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         circuitBreaker.resetTimer();
 
         if (fut == null) {
-            metrics.jsonQuery().markStart();
+            metrics.jsonQueryMetrics().markStart();
             state.startExecutionTimer();
             // do not set random for new request to avoid copying random from previous request into next one
             // the only time we need to copy random from state is when we resume request execution
@@ -432,7 +432,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                     .$(", q=`").utf8(state.getQueryOrHidden())
                     .$("`]").$();
             // This is a critical error, so we treat it as an unhandled one.
-            metrics.health().incrementUnhandledErrors();
+            metrics.healthMetrics().incrementUnhandledErrors();
         }
     }
 
@@ -578,7 +578,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 fut.close();
             }
         }
-        metrics.jsonQuery().markComplete();
+        metrics.jsonQueryMetrics().markComplete();
         sendConfirmation(state, keepAliveHeader);
     }
 
@@ -605,7 +605,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         } finally {
             Misc.free(op);
         }
-        metrics.jsonQuery().markComplete();
+        metrics.jsonQueryMetrics().markComplete();
         sendConfirmation(state, keepAliveHeader);
     }
 
@@ -621,7 +621,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         try {
             if (state.of(factory, false, sqlExecutionContext)) {
                 doResumeSend(state, context, sqlExecutionContext);
-                metrics.jsonQuery().markComplete();
+                metrics.jsonQueryMetrics().markComplete();
             } else {
                 readyForNextRequest(context);
             }
@@ -637,7 +637,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             CharSequence keepAliveHeader
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         cq.getInsertOperation().execute(sqlExecutionContext).await();
-        metrics.jsonQuery().markComplete();
+        metrics.jsonQueryMetrics().markComplete();
         sendInsertConfirmation(state, keepAliveHeader);
     }
 
@@ -668,7 +668,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         // Make sure to mark the query as non-cacheable.
         if (state.of(factory, false, sqlExecutionContext)) {
             doResumeSend(state, context, sqlExecutionContext);
-            metrics.jsonQuery().markComplete();
+            metrics.jsonQueryMetrics().markComplete();
         } else {
             readyForNextRequest(context);
         }
@@ -679,7 +679,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         try {
             if (state.of(factory, sqlExecutionContext)) {
                 doResumeSend(state, context, sqlExecutionContext);
-                metrics.jsonQuery().markComplete();
+                metrics.jsonQueryMetrics().markComplete();
             } else {
                 readyForNextRequest(context);
             }
@@ -708,7 +708,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             }
             // All good, finished update
             final long updatedCount = fut.getAffectedRowsCount();
-            metrics.jsonQuery().markComplete();
+            metrics.jsonQueryMetrics().markComplete();
             sendUpdateConfirmation(state, keepAliveHeader, updatedCount);
         } catch (CairoException e) {
             // close e.g. when query has been cancelled, or we got an OOM
@@ -854,7 +854,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             CompiledQuery cq,
             CharSequence keepAliveHeader
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        metrics.jsonQuery().markComplete();
+        metrics.jsonQueryMetrics().markComplete();
         sendConfirmation(state, keepAliveHeader);
     }
 

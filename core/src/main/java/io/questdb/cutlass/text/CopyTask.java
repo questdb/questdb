@@ -24,7 +24,19 @@
 
 package io.questdb.cutlass.text;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DefaultLifecycleManager;
+import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.SymbolMapReaderImpl;
+import io.questdb.cairo.SymbolMapWriter;
+import io.questdb.cairo.TableStructure;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -35,8 +47,26 @@ import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.griffin.engine.functions.columns.ColumnUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
-import io.questdb.std.str.*;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.IOURing;
+import io.questdb.std.IOURingFacade;
+import io.questdb.std.IntObjHashMap;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.SwarUtils;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
+import io.questdb.std.str.DirectUtf16Sink;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
@@ -505,7 +535,6 @@ public class CopyTask {
                             root,
                             cairoEngine.getDdlListener(tableToken),
                             cairoEngine.getCheckpointStatus(),
-                            cairoEngine.getMetrics(),
                             cairoEngine
                     )
             ) {
@@ -891,7 +920,6 @@ public class CopyTask {
                             importRoot,
                             engine.getDdlListener(tableToken),
                             engine.getCheckpointStatus(),
-                            engine.getMetrics(),
                             engine
                     )
             ) {
@@ -1325,6 +1353,7 @@ public class CopyTask {
                 logError(offset, fieldIndex, dus);
                 switch (atomicity) {
                     case Atomicity.SKIP_ALL:
+                        w.cancel();
                         tableWriterRef.rollback();
                         throw TextException.$("bad syntax [line offset=").put(offset).put(",column=").put(fieldIndex).put(']');
                     case Atomicity.SKIP_ROW:

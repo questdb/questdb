@@ -25,22 +25,19 @@
 package io.questdb.network;
 
 import io.questdb.log.Log;
-import io.questdb.metrics.LongGauge;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.NotNull;
 
 public abstract class IOContext<T extends IOContext<T>> implements Mutable, QuietCloseable {
     protected final Socket socket;
-    private final LongGauge connectionCountGauge;
     protected long heartbeatId = -1;
     private int disconnectReason;
     // keep dispatcher private to avoid context scheduling itself multiple times
     private IODispatcher<T> dispatcher;
 
-    protected IOContext(SocketFactory socketFactory, NetworkFacade nf, Log log, LongGauge connectionCountGauge) {
+    protected IOContext(SocketFactory socketFactory, NetworkFacade nf, Log log) {
         this.socket = socketFactory.newInstance(nf, log);
-        this.connectionCountGauge = connectionCountGauge;
     }
 
     @Override
@@ -92,9 +89,6 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
 
     @SuppressWarnings("unchecked")
     public T of(long fd, @NotNull IODispatcher<T> dispatcher) {
-        if (fd != -1) {
-            connectionCountGauge.inc();
-        }
         socket.of(fd);
         this.dispatcher = dispatcher;
         return (T) this;
@@ -122,9 +116,6 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
     }
 
     private void _clear() {
-        if (socket.getFd() != -1) {
-            connectionCountGauge.dec();
-        }
         heartbeatId = -1;
         socket.close();
         dispatcher = null;

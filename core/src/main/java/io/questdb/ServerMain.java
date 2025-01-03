@@ -41,8 +41,8 @@ import io.questdb.cutlass.auth.LineAuthenticatorFactory;
 import io.questdb.cutlass.http.DefaultHttpAuthenticatorFactory;
 import io.questdb.cutlass.http.HttpAuthenticatorFactory;
 import io.questdb.cutlass.http.HttpContextConfiguration;
+import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpServer;
-import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.http.StaticHttpAuthenticatorFactory;
 import io.questdb.cutlass.line.tcp.StaticChallengeResponseMatcher;
 import io.questdb.cutlass.pgwire.IPGWireServer;
@@ -58,8 +58,6 @@ import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.filewatch.FileWatcher;
-import io.questdb.std.filewatch.FileWatcherFactory;
-import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
@@ -137,7 +135,7 @@ public class ServerMain implements Closeable {
     }
 
     public static HttpAuthenticatorFactory getHttpAuthenticatorFactory(ServerConfiguration configuration) {
-        HttpServerConfiguration httpConfig = configuration.getHttpServerConfiguration();
+        HttpFullFatServerConfiguration httpConfig = configuration.getHttpServerConfiguration();
         String username = httpConfig.getUsername();
         if (Chars.empty(username)) {
             return DefaultHttpAuthenticatorFactory.INSTANCE;
@@ -304,27 +302,13 @@ public class ServerMain implements Closeable {
     private synchronized void initialize() {
         initialized = true;
         final ServerConfiguration config = bootstrap.getConfiguration();
-        final Metrics metrics = bootstrap.getMetrics();
         // create the worker pool manager, and configure the shared pool
         final boolean walSupported = config.getCairoConfiguration().isWalSupported();
         final boolean isReadOnly = config.getCairoConfiguration().isReadOnlyInstance();
         final boolean walApplyEnabled = config.getCairoConfiguration().isWalApplyEnabled();
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
 
-        if (config instanceof DynamicServerConfiguration) {
-            if (((DynamicServerConfiguration) config).isConfigReloadEnabled()) {
-                try (Path path = new Path()) {
-                    path.of(cairoConfig.getConfRoot()).concat(Bootstrap.CONFIG_FILE).$();
-                    fileWatcher = FileWatcherFactory.getFileWatcher(
-                            path,
-                            (DynamicServerConfiguration) config
-                    );
-                }
-                fileWatcher.start();
-            }
-        }
-
-        workerPoolManager = new WorkerPoolManager(config, metrics) {
+        workerPoolManager = new WorkerPoolManager(config) {
             @Override
             protected void configureSharedPool(WorkerPool sharedPool) {
                 try {
@@ -384,7 +368,6 @@ public class ServerMain implements Closeable {
         if (walApplyEnabled && !isReadOnly && walSupported && config.getWalApplyPoolConfiguration().isEnabled()) {
             WorkerPool walApplyWorkerPool = workerPoolManager.getInstance(
                     config.getWalApplyPoolConfiguration(),
-                    metrics,
                     WorkerPoolManager.Requester.WAL_APPLY
             );
             setupWalApplyJob(walApplyWorkerPool, engine, workerPoolManager.getSharedWorkerCount());
@@ -394,23 +377,20 @@ public class ServerMain implements Closeable {
         freeOnExit.register(httpServer = services().createHttpServer(
                 config,
                 engine,
-                workerPoolManager,
-                metrics
+                workerPoolManager
         ));
 
         // http min
         freeOnExit.register(services().createMinHttpServer(
                 config.getHttpMinServerConfiguration(),
-                workerPoolManager,
-                metrics
+                workerPoolManager
         ));
 
         // pg wire
         freeOnExit.register(pgWireServer = services().createPGWireServer(
                 config.getPGWireConfiguration(),
                 engine,
-                workerPoolManager,
-                metrics
+                workerPoolManager
         ));
 
         workerPoolManager.getSharedPool().assign(new FlushQueryCacheJob(
@@ -424,8 +404,7 @@ public class ServerMain implements Closeable {
             freeOnExit.register(services().createLineTcpReceiver(
                     config.getLineTcpReceiverConfiguration(),
                     engine,
-                    workerPoolManager,
-                    metrics
+                    workerPoolManager
             ));
 
             // ilp/udp

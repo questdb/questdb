@@ -354,6 +354,7 @@ public class CairoTextWriter implements Closeable, Mutable {
             logError(line, i, dus);
             switch (atomicity) {
                 case Atomicity.SKIP_ALL:
+                    w.cancel();
                     writer.rollback();
                     throw CairoException.nonCritical().put("bad syntax [line=").put(line).put(", col=").put(i).put(']');
                 case Atomicity.SKIP_ROW:

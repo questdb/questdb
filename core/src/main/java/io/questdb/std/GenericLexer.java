@@ -111,6 +111,13 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         return immutableOf(value);
     }
 
+    public static CharSequence unquoteIfNoDots(CharSequence value) {
+        if (Chars.isQuoted(value) && Chars.indexOf(value, '.') == -1) {
+            return value.subSequence(1, value.length() - 1);
+        }
+        return immutableOf(value);
+    }
+
     public void backTo(int position, CharSequence lastSeen) {
         if (position < 0 || position > _len) {
             throw new IndexOutOfBoundsException();
@@ -496,19 +503,19 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         }
 
         @Override
+        public void shiftLo(int positiveOffset) {
+            assert positiveOffset > -1;
+            this.lo += positiveOffset;
+            assert lo < hi;
+        }
+
+        @Override
         protected final CharSequence _subSequence(int start, int end) {
             FloatingSequence that = csPool.next();
             that.lo = lo + start;
             that.hi = lo + end;
             assert that.lo <= that.hi;
             return that;
-        }
-
-        @Override
-        public void shiftLo(int positiveOffset) {
-            assert positiveOffset > -1;
-            this.lo += positiveOffset;
-            assert lo < hi;
         }
     }
 

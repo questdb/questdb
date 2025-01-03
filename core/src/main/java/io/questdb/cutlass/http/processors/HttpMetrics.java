@@ -22,13 +22,33 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.bool;
+package io.questdb.cutlass.http.processors;
 
-public final class InTimestampVarcharFunctionFactory extends InTimestampStrFunctionFactory {
+import io.questdb.metrics.Counter;
+import io.questdb.metrics.LongGauge;
+import io.questdb.metrics.MetricsRegistry;
+import io.questdb.std.Mutable;
+
+public class HttpMetrics implements Mutable {
+    private final Counter listenerStateChangeCounter;
+    private final LongGauge connectionCountGauge;
+
+    public HttpMetrics(MetricsRegistry metricsRegistry) {
+        this.connectionCountGauge = metricsRegistry.newLongGauge("http_connections");
+        this.listenerStateChangeCounter = metricsRegistry.newCounter("http_listener_state_change_count");
+    }
 
     @Override
-    public String getSignature() {
-        // we have explicit in(NØ) otherwise the function parser would match in(NV) instead
-        return "in(NØ)";
+    public void clear() {
+        connectionCountGauge.setValue(0);
+        listenerStateChangeCounter.reset();
+    }
+
+    public Counter listenerStateChangeCounter() {
+        return listenerStateChangeCounter;
+    }
+
+    public LongGauge connectionCountGauge() {
+        return connectionCountGauge;
     }
 }

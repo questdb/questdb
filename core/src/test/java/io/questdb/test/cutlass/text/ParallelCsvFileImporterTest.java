@@ -3220,8 +3220,6 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         // we need to create entire engine
         assertMemoryLeak(() -> {
             if (workerCount > 0) {
-                WorkerPool pool = new WorkerPool(() -> workerCount);
-
                 final CairoConfiguration configuration1 = new DefaultTestCairoConfiguration(root) {
                     @Override
                     public @NotNull FilesFacade getFilesFacade() {
@@ -3253,7 +3251,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                         return queueCapacity;
                     }
                 };
-
+                WorkerPool pool = new WorkerPool(() -> workerCount);
                 execute(pool, runnable, configuration1);
             } else {
                 // we need to create entire engine

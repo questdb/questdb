@@ -160,6 +160,16 @@ public class SwitchFunctionFactory implements FunctionFactory {
         }
     }
 
+    @Override
+    public int resolvePreferredVariadicType(int sqlPos, int argPos, ObjList<Function> args) throws SqlException {
+        if (argPos == 0) {
+            throw SqlException.$(sqlPos, "bind variable is not supported here, please use column instead");
+        } else {
+            throw SqlException.$(sqlPos, "CASE values cannot be bind variables");
+        }
+
+    }
+
     private static byte getByte(Function function, Record record) {
         return function.getByte(record);
     }

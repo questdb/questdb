@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.PartitionFormat;
@@ -63,7 +64,7 @@ public class DropIndexOperator {
         this.ff = configuration.getFilesFacade();
     }
 
-    public void executeDropIndex(CharSequence columnName, int columnIndex) {
+    public void executeDropIndex(String columnName, int columnIndex) {
         int partitionBy = tableWriter.getPartitionBy();
         int partitionCount = tableWriter.getPartitionCount();
         try {
@@ -97,7 +98,7 @@ public class DropIndexOperator {
                     }
 
                     // add to cleanup tasks, the index will be removed in due time
-                    purgingOperator.add(columnIndex, columnVersion, pTimestamp, pVersion);
+                    purgingOperator.add(columnIndex, columnName, ColumnType.SYMBOL, true, columnVersion, pTimestamp, pVersion);
                 }
             }
         } catch (Throwable th) {

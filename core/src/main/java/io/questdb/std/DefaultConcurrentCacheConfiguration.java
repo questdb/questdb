@@ -22,25 +22,38 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http;
+package io.questdb.std;
 
-import io.questdb.FactoryProvider;
-import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.metrics.Counter;
+import io.questdb.metrics.LongGauge;
+import io.questdb.metrics.NullCounter;
+import io.questdb.metrics.NullLongGauge;
 
-public interface HttpMinServerConfiguration extends WorkerPoolConfiguration {
+public class DefaultConcurrentCacheConfiguration implements ConcurrentCacheConfiguration {
+    public static final ConcurrentCacheConfiguration DEFAULT = new DefaultConcurrentCacheConfiguration();
 
-    IODispatcherConfiguration getDispatcherConfiguration();
+    @Override
+    public int getBlocks() {
+        return 2;
+    }
 
-    FactoryProvider getFactoryProvider();
+    @Override
+    public LongGauge getCachedGauge() {
+        return NullLongGauge.INSTANCE;
+    }
 
-    HttpContextConfiguration getHttpContextConfiguration();
+    @Override
+    public Counter getHiCounter() {
+        return NullCounter.INSTANCE;
+    }
 
-    byte getRequiredAuthType();
+    @Override
+    public Counter getMissCounter() {
+        return NullCounter.INSTANCE;
+    }
 
-    WaitProcessorConfiguration getWaitProcessorConfiguration();
-
-    boolean isPessimisticHealthCheckEnabled();
-
-    boolean preAllocateBuffers();
+    @Override
+    public int getRows() {
+        return 8;
+    }
 }

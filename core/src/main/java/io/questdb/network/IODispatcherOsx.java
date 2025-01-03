@@ -53,9 +53,9 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
         try {
             this.kqueue = new Kqueue(configuration.getKqueueFacade(), capacity);
             registerListenerFd();
-        } catch (Throwable t) {
+        } catch (Throwable th) {
             close();
-            throw t;
+            throw th;
         }
     }
 
