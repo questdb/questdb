@@ -37,11 +37,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.ScalarFunction;
-
-import static io.questdb.griffin.SqlKeywords.isNanKeyword;
-import static io.questdb.griffin.SqlKeywords.isNullKeyword;
-import static io.questdb.griffin.SqlKeywords.startsWithGeoHashKeyword;
-
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
@@ -121,6 +116,8 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
+
+import static io.questdb.griffin.SqlKeywords.*;
 
 public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
     private static final Log LOG = LogFactory.getLog(FunctionParser.class);

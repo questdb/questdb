@@ -591,7 +591,13 @@ public abstract class AbstractCairoTest extends AbstractTest {
                         RecordCursorFactory factory = cq.getRecordCursorFactory();
                         RecordCursor cursor = factory.getCursor(sqlExecutionContext)
                 ) {
-                    cursor.hasNext();
+                    sink.clear();
+                    Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        // ignore the output, we're looking for an error
+                        TestUtils.println(record, factory.getMetadata(), sink);
+                        sink.clear();
+                    }
                 }
             } else if (cq.getOperation() != null) {
                 try (
