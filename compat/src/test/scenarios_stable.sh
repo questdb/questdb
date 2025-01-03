@@ -7,7 +7,6 @@ base_dir=$(dirname $0)
 
 if [[ $CLIENTS == 'ALL' || $CLIENTS == *'psycopg2'* ]]; then
     echo "starting psycopg2 tests"
-    cd "$base_dir"
     python3 -m venv venv/psycopg2_stable
     source venv/psycopg2_stable/bin/activate
     pip install -r compat/src/test/python/requirements_psycopg2_stable.txt
@@ -24,7 +23,6 @@ fi
 
 if [[ $CLIENTS == 'ALL' || $CLIENTS == *'psycopg3'* ]]; then
   echo "starting psycopg3 tests"
-  cd "$base_dir"
   python3 -m venv venv/psycopg3_stable
   source venv/psycopg3_stable/bin/activate
   pip install -r compat/src/test/python/requirements_psycopg3_stable.txt
@@ -41,7 +39,6 @@ fi
 
 if [[ $CLIENTS == 'ALL' || $CLIENTS == *'asyncpg'* ]]; then
   echo "starting asyncpg tests"
-  cd "$base_dir"
   python3 -m venv venv/asyncpg_stable
   source venv/asyncpg_stable/bin/activate
   pip install -r compat/src/test/python/requirements_asyncpg_stable.txt
@@ -58,8 +55,7 @@ fi
 
 if [[ $CLIENTS == 'ALL' || $CLIENTS == *'rust'* ]]; then
   echo "starting rust tests"
-  cd "$base_dir"
-  cd compat/src/test/rust/scenarios
+  cd compat/src/test/rust/scenarios || exit
   # use well-known versions of dependencies
   cp ./Cargo.unlocked ./Cargo.lock
   cargo build --release
@@ -75,8 +71,7 @@ fi
 
 if [[ $CLIENTS == 'ALL' || $CLIENTS == *'csharp'* ]]; then
   echo "starting csharp tests"
-  cd "$base_dir"
-  cd compat/src/test/csharp
+  cd "$base_dir/csharp" || exit
 
   # restore dependencies
   dotnet restore
@@ -85,12 +80,12 @@ if [[ $CLIENTS == 'ALL' || $CLIENTS == *'csharp'* ]]; then
   dotnet build --configuration Release --no-restore
 
   # run
-  dotnet run --configuration Release --no-build -- ../../resources/test_cases.yaml
+  dotnet run --configuration Release --no-build -- ../resources/test_cases.yaml
   if [ $? -ne 0 ]; then
       echo "csharp tests failed"
       exit 1
   fi
   echo "csharp tests finished"
 else
-  echo "skipping rust tests"
+  echo "skipping csharp tests"
 fi

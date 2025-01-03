@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 PGPORT=${PGPORT:-8812}
+base_dir=$(dirname $0)
 
 echo "starting psycopg2 tests"
 python3 -m venv venv/psycopg2_latest
@@ -51,7 +52,7 @@ echo "rust tests finished"
 
 if [[ $CLIENTS == 'ALL' || $CLIENTS == *'csharp'* ]]; then
   echo "starting csharp tests"
-  cd compat/src/test/csharp
+  cd "$base_dir/csharp" || exit
 
   # restore dependencies
   dotnet restore
@@ -60,12 +61,12 @@ if [[ $CLIENTS == 'ALL' || $CLIENTS == *'csharp'* ]]; then
   dotnet build --configuration Release --no-restore
 
   # run
-  dotnet run --configuration Release --no-build -- ../../resources/test_cases.yaml
+  dotnet run --configuration Release --no-build -- ../resources/test_cases.yaml
   if [ $? -ne 0 ]; then
       echo "csharp tests failed"
       exit 1
   fi
   echo "csharp tests finished"
 else
-  echo "skipping rust tests"
+  echo "skipping csharp tests"
 fi
