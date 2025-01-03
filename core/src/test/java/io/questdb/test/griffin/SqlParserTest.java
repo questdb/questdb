@@ -7388,6 +7388,219 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPublicSchemaRemovaCreateTableAsSelect() throws SqlException {
+        assertModel(
+                "create batch 1000000 table tab as (select-choose x from (select [x] from src))",
+                "create table public.tab as (select * from public.src)",
+                ExecutionModel.CREATE_TABLE,
+                modelOf("src").col("x", ColumnType.INT)
+        );
+
+        assertModel(
+                "create batch 1000000 table tab as (select-choose x from (select [x] from src))",
+                "create table \"public\".tab as (select * from \"public\".src)",
+                ExecutionModel.CREATE_TABLE,
+                modelOf("src").col("x", ColumnType.INT)
+        );
+
+        assertModel(
+                "create batch 1000000 table tab as (select-choose x from (select [x] from src))",
+                "create table public.\"tab\" as (select * from public.\"src\")",
+                ExecutionModel.CREATE_TABLE,
+                modelOf("src").col("x", ColumnType.INT)
+        );
+
+        assertModel(
+                "create batch 1000000 table tab as (select-choose x from (select [x] from src))",
+                "create table \"public\".\"tab\" as (select * from \"public\".\"src\")",
+                ExecutionModel.CREATE_TABLE,
+                modelOf("src").col("x", ColumnType.INT)
+        );
+
+        assertModel(
+                "create batch 1000000 table public as (select-choose x from (select [x] from src))",
+                "create table public as (select * from \"public\".\"src\")",
+                ExecutionModel.CREATE_TABLE,
+                modelOf("src").col("x", ColumnType.INT)
+        );
+
+        assertModel(
+                "create batch 1000000 table public as (select-choose x from (select [x] from src))",
+                "create table \"public\" as (select * from \"public\".\"src\")",
+                ExecutionModel.CREATE_TABLE,
+                modelOf("src").col("x", ColumnType.INT)
+        );
+
+        assertModel(
+                "create batch 1000000 table tab as (select-choose x from (select [x] from public))",
+                "create table public.tab as (select * from public)",
+                ExecutionModel.CREATE_TABLE,
+                modelOf("public").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testPublicSchemaRemovalCreateTable() throws SqlException {
+        assertModel(
+                "create atomic table tab (a INT)",
+                "create table public.tab (a int)",
+                ExecutionModel.CREATE_TABLE
+        );
+
+        assertModel(
+                "create atomic table tab (a INT)",
+                "create table \"public\".tab (a int)",
+                ExecutionModel.CREATE_TABLE
+        );
+
+        assertModel(
+                "create atomic table tab (a INT)",
+                "create table \"public\".\"tab\" (a int)",
+                ExecutionModel.CREATE_TABLE
+        );
+
+        assertModel(
+                "create atomic table tab (a INT)",
+                "create table public.\"tab\" (a int)",
+                ExecutionModel.CREATE_TABLE
+        );
+
+        assertModel(
+                "create atomic table public (a INT)",
+                "create table public (a int)",
+                ExecutionModel.CREATE_TABLE
+        );
+
+        assertModel(
+                "create atomic table public (a INT)",
+                "create table \"public\" (a int)",
+                ExecutionModel.CREATE_TABLE
+        );
+    }
+
+    @Test
+    public void testPublicSchemaRemovalInsert() throws Exception {
+        assertModel(
+                "insert into tab values (1)",
+                "insert into public.tab values (1)",
+                ExecutionModel.INSERT,
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+        );
+
+        assertModel(
+                "insert into tab values (1)",
+                "insert into \"public\".tab values (1)",
+                ExecutionModel.INSERT,
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+        );
+
+        assertModel(
+                "insert into tab values (1)",
+                "insert into \"public\".\"tab\" values (1)",
+                ExecutionModel.INSERT,
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+        );
+
+        assertModel(
+                "insert into tab values (1)",
+                "insert into public.\"tab\" values (1)",
+                ExecutionModel.INSERT,
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+        );
+
+        assertModel(
+                "insert into public values (1)",
+                "insert into public values (1)",
+                ExecutionModel.INSERT,
+                modelOf("public")
+                        .col("a", ColumnType.INT)
+        );
+
+        assertSyntaxError(
+                "insert into public.",
+                19,
+                "table name expected"
+        );
+    }
+
+    @Test
+    public void testPublicSchemaRemovalSelect() throws Exception {
+        assertQuery(
+                "select-choose x from (select [x] from tab)",
+                "select x from public.tab",
+                modelOf("tab").col("x", ColumnType.INT)
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from tab)",
+                "select x from \"public\".tab",
+                modelOf("tab").col("x", ColumnType.INT)
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from tab)",
+                "select x from \"public\".\"tab\"",
+                modelOf("tab").col("x", ColumnType.INT)
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from tab)",
+                "select x from public.\"tab\"",
+                modelOf("tab").col("x", ColumnType.INT)
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from public)",
+                "select x from public",
+                modelOf("public").col("x", ColumnType.INT)
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from public)",
+                "select x from \"public\"",
+                modelOf("public").col("x", ColumnType.INT)
+        );
+
+        assertSyntaxError(
+                "select x from public.",
+                14,
+                "table name expected",
+                modelOf("a").col("x", ColumnType.INT).col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testPublicSchemaRemovalShowCreateTable() throws Exception {
+        assertQuery(
+                "show",
+                "show create table public.t1",
+                modelOf("t1").col("x", ColumnType.INT)
+        );
+
+        assertQuery(
+                "show",
+                "show create table public",
+                modelOf("public").col("x", ColumnType.INT)
+        );
+
+        assertSyntaxError(
+                "show create table public.",
+                25,
+                "table name expected"
+        );
+
+        assertSyntaxError(
+                "show create table public",
+                18,
+                "table does not exist [table=public]"
+        );
+    }
+
+    @Test
     public void testPushWhereThroughUnionAll() throws SqlException {
         assertQuery(
                 "select-choose sm from (select-group-by [sum(x) sm] sum(x) sm from (select-choose [x] x from (select [x] from t1) union all select-choose [x] x from (select [x] from t2)) where sm = 1)",
@@ -8894,6 +9107,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-choose a, b, c from (select [a, b, c] from t)",
                 "select a,b,c from t",
                 modelOf("t").col("a", ColumnType.INT).col("b", ColumnType.INT).col("c", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSelectQuotedEmptyTable() throws Exception {
+        assertSyntaxError(
+                "select * from \"\"",
+                14,
+                "come on, where is the table name?"
         );
     }
 
