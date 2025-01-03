@@ -3,7 +3,7 @@
 PGPORT=${PGPORT:-8812}
 CLIENTS=${CLIENTS:-'ALL'}
 
-base_dir=$(dirname $0)
+base_dir=`pwd`
 
 if [[ $CLIENTS == 'ALL' || $CLIENTS == *'psycopg2'* ]]; then
     echo "starting psycopg2 tests"
@@ -71,7 +71,8 @@ fi
 
 if [[ $CLIENTS == 'ALL' || $CLIENTS == *'csharp'* ]]; then
   echo "starting csharp tests"
-  cd "$base_dir/csharp" || exit
+  echo "$base_dir/compat/src/test/csharp"
+  cd "$base_dir/compat/src/test/csharp" || exit
 
   # restore dependencies
   dotnet restore
