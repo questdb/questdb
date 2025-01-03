@@ -24,9 +24,15 @@
 
 package io.questdb.test;
 
-import io.questdb.*;
+import io.questdb.DefaultFactoryProvider;
+import io.questdb.FactoryProvider;
+import io.questdb.MemoryConfiguration;
+import io.questdb.Metrics;
+import io.questdb.PublicPassthroughConfiguration;
+import io.questdb.ServerConfiguration;
+import io.questdb.WorkerPoolManager;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cutlass.http.HttpMinServerConfiguration;
+import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
@@ -40,6 +46,7 @@ import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.util.concurrent.TimeUnit;
@@ -50,7 +57,11 @@ import java.util.function.Consumer;
 public class WorkerPoolManagerTest {
 
     private static final String END_MESSAGE = "run is over";
-    private static final Metrics METRICS = Metrics.enabled();
+
+    @Before
+    public void setUp() throws Exception {
+        Metrics.ENABLED.clear();
+    }
 
     @Test
     public void testConstructor() {
@@ -77,7 +88,7 @@ public class WorkerPoolManagerTest {
             public int getWorkerCount() {
                 return workerCount;
             }
-        }, METRICS, WorkerPoolManager.Requester.OTHER);
+        }, WorkerPoolManager.Requester.OTHER);
         Assert.assertNotSame(workerPoolManager.getSharedPool(), workerPool);
         Assert.assertEquals(workerCount, workerPool.getWorkerCount());
         Assert.assertEquals(poolName, workerPool.getPoolName());
@@ -99,9 +110,9 @@ public class WorkerPoolManagerTest {
                 return workerCount;
             }
         };
-        WorkerPool workerPool0 = workerPoolManager.getInstance(workerPoolConfiguration, METRICS, WorkerPoolManager.Requester.OTHER);
+        WorkerPool workerPool0 = workerPoolManager.getInstance(workerPoolConfiguration, WorkerPoolManager.Requester.OTHER);
         Assert.assertNotSame(workerPoolManager.getSharedPool(), workerPool0);
-        WorkerPool workerPool1 = workerPoolManager.getInstance(workerPoolConfiguration, METRICS, WorkerPoolManager.Requester.OTHER);
+        WorkerPool workerPool1 = workerPoolManager.getInstance(workerPoolConfiguration, WorkerPoolManager.Requester.OTHER);
         Assert.assertSame(workerPool0, workerPool1);
         Assert.assertEquals(workerCount, workerPool0.getWorkerCount());
         Assert.assertEquals(poolName, workerPool0.getPoolName());
@@ -123,7 +134,7 @@ public class WorkerPoolManagerTest {
             public int getWorkerCount() {
                 return 0; // No workers, will result in returning the shared pool
             }
-        }, METRICS, WorkerPoolManager.Requester.OTHER);
+        }, WorkerPoolManager.Requester.OTHER);
         Assert.assertSame(workerPoolManager.getSharedPool(), workerPool);
         Assert.assertEquals(workerCount, workerPool.getWorkerCount());
         Assert.assertEquals("worker", workerPool.getPoolName());
@@ -144,7 +155,7 @@ public class WorkerPoolManagerTest {
                 public int getWorkerCount() {
                     return 0;
                 }
-            }, METRICS, WorkerPoolManager.Requester.OTHER);
+            }, WorkerPoolManager.Requester.OTHER);
             Assert.fail();
         } catch (IllegalStateException err) {
             TestUtils.assertContains("can only get instance before start", err.getMessage());
@@ -161,7 +172,7 @@ public class WorkerPoolManagerTest {
         AtomicReference<DirectUtf8Sink> sink = new AtomicReference<>(new DirectUtf8Sink(32));
 
         final ServerConfiguration config = createServerConfig(1); // shared pool
-        final WorkerPoolManager workerPoolManager = new WorkerPoolManager(config, METRICS) {
+        final WorkerPoolManager workerPoolManager = new WorkerPoolManager(config) {
             @Override
             protected void configureSharedPool(WorkerPool sharedPool) {
                 sharedPool.assign(scrapeIntoPrometheusJob(sink));
@@ -169,12 +180,10 @@ public class WorkerPoolManagerTest {
         };
         WorkerPool p0 = workerPoolManager.getInstance(
                 workerPoolConfiguration("UP", 30L),
-                METRICS,
                 WorkerPoolManager.Requester.OTHER
         );
         WorkerPool p1 = workerPoolManager.getInstance(
                 workerPoolConfiguration("DOWN", 10L),
-                METRICS,
                 WorkerPoolManager.Requester.OTHER
         );
         p0.assign(slowCountUpJob(count));
@@ -186,7 +195,7 @@ public class WorkerPoolManagerTest {
         workerPoolManager.halt();
 
         Assert.assertEquals(0, endLatch.getCount());
-        WorkerMetrics metrics = METRICS.workerMetrics();
+        WorkerMetrics metrics = Metrics.ENABLED.workerMetrics();
         long min = metrics.getMinElapsedMicros();
         long max = metrics.getMaxElapsedMicros();
         Assert.assertTrue(min > 0L);
@@ -218,12 +227,12 @@ public class WorkerPoolManagerTest {
             }
 
             @Override
-            public HttpMinServerConfiguration getHttpMinServerConfiguration() {
+            public HttpServerConfiguration getHttpMinServerConfiguration() {
                 return null;
             }
 
             @Override
-            public HttpServerConfiguration getHttpServerConfiguration() {
+            public HttpFullFatServerConfiguration getHttpServerConfiguration() {
                 return null;
             }
 
@@ -240,6 +249,11 @@ public class WorkerPoolManagerTest {
             @Override
             public MemoryConfiguration getMemoryConfiguration() {
                 return null;
+            }
+
+            @Override
+            public Metrics getMetrics() {
+                return Metrics.ENABLED;
             }
 
             @Override
@@ -270,7 +284,7 @@ public class WorkerPoolManagerTest {
     }
 
     private static WorkerPoolManager createWorkerPoolManager(int workerCount, Consumer<WorkerPool> call) {
-        return new WorkerPoolManager(createServerConfig(workerCount), METRICS) {
+        return new WorkerPoolManager(createServerConfig(workerCount)) {
             @Override
             protected void configureSharedPool(WorkerPool sharedPool) {
                 if (call != null) {
@@ -298,7 +312,7 @@ public class WorkerPoolManagerTest {
         return (workerId, runStatus) -> {
             final DirectUtf8Sink s = sink.get();
             s.clear();
-            METRICS.scrapeIntoPrometheus(s);
+            Metrics.ENABLED.scrapeIntoPrometheus(s);
             return false; // not eager
         };
     }

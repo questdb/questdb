@@ -89,7 +89,7 @@ public class FullFwdPartitionFrameCursorFactoryTest extends AbstractCairoTest {
             GenericRecordMetadata metadata;
             // prepare the data
             long timestamp = 0;
-            try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
                 for (int i = 0; i < M; i++) {
                     TableWriter.Row row = writer.newRow(timestamp += increment);
                     row.putStr(0, rnd.nextChars(20));

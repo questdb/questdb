@@ -24,6 +24,7 @@
 
 package io.questdb.log;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
@@ -127,15 +128,23 @@ public class TemplateParser implements Sinkable {
 
     private void addEnvTemplateNode(int dollarOffset, int envStart, int envEnd) {
         final String envKey = originalTxt.subSequence(envStart, envEnd).toString();
-        final CharSequence envVal = props.get(envKey);
+        CharSequence envVal = props.get(envKey);
         if (envVal == null) {
-            throw new LogError("Undefined property: " + envKey);
+            if (Chars.equals(envKey, "log.dir")) {
+                envVal = props.get("QDB_LOG_LOG_DIR");
+                if (envVal == null) {
+                    throw CairoException.nonCritical().put("could not find property `log.dir`. Did you pass `QDB_LOG_LOG_DIR` as an environment variable?");
+                }
+            } else {
+                throw new LogError("Undefined property: " + envKey);
+            }
         }
         envStartIdxs.put(envKey, dollarOffset);
+        CharSequence finalEnvVal = envVal;
         templateNodes.add(new TemplateNode(TemplateNode.TYPE_ENV, envKey) {
             @Override
             public void toSink(@NotNull CharSink<?> sink) {
-                sink.put(envVal);
+                sink.put(finalEnvVal);
             }
         });
     }

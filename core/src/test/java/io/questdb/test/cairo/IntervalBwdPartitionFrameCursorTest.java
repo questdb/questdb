@@ -427,7 +427,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
 
                 assertEqualTimestamps("", record, cursor);
 
-                try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
+                try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
                     for (int i = 0; i < rowCount; i++) {
                         TableWriter.Row row = writer.newRow(timestamp);
                         row.putSym(0, rnd.nextChars(4));
@@ -664,7 +664,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
 
             final Rnd rnd = new Rnd();
             long timestamp = TimestampFormatUtils.parseTimestamp("1980-01-01T00:00:00.000Z");
-            try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
                 for (int i = 0; i < rowCount; i++) {
                     TableWriter.Row row = writer.newRow(timestamp);
                     row.putSym(0, rnd.nextChars(4));

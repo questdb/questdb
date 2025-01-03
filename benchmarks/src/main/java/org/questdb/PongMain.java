@@ -24,11 +24,26 @@
 
 package org.questdb;
 
+import io.questdb.Metrics;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.metrics.NullLongGauge;
 import io.questdb.mp.WorkerPool;
-import io.questdb.network.*;
+import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.network.DefaultIODispatcherConfiguration;
+import io.questdb.network.IOContext;
+import io.questdb.network.IOContextFactoryImpl;
+import io.questdb.network.IODispatcher;
+import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.network.IODispatchers;
+import io.questdb.network.IOOperation;
+import io.questdb.network.IORequestProcessor;
+import io.questdb.network.Net;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.PeerIsSlowToWriteException;
+import io.questdb.network.PlainSocketFactory;
+import io.questdb.network.ServerDisconnectException;
+import io.questdb.network.SocketFactory;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8String;
@@ -45,7 +60,17 @@ public class PongMain {
         // configuration defines bind address and port
         final IODispatcherConfiguration dispatcherConf = new DefaultIODispatcherConfiguration();
         // worker pool, which would handle jobs
-        final WorkerPool workerPool = new WorkerPool(() -> 1);
+        final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
+            @Override
+            public Metrics getMetrics() {
+                return Metrics.DISABLED;
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return 1;
+            }
+        });
         // event loop that accepts connections and publishes network events to event queue
         final IODispatcher<PongConnectionContext> dispatcher = IODispatchers.create(
                 dispatcherConf,
@@ -71,7 +96,7 @@ public class PongMain {
         private int writtenLen;
 
         protected PongConnectionContext(SocketFactory socketFactory, NetworkFacade nf, Log log) {
-            super(socketFactory, nf, log, NullLongGauge.INSTANCE);
+            super(socketFactory, nf, log);
         }
 
         @Override

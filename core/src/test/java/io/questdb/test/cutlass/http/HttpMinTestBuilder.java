@@ -24,7 +24,6 @@
 
 package io.questdb.test.cutlass.http;
 
-import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.security.AllowAllSecurityContext;
@@ -38,7 +37,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.metrics.Scrapable;
+import io.questdb.metrics.Target;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.PlainSocketFactory;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
@@ -51,7 +50,7 @@ public class HttpMinTestBuilder {
 
     private static final Log LOG = LogFactory.getLog(HttpMinTestBuilder.class);
     private PrometheusMetricsProcessor.RequestStatePool prometheusRequestStatePool;
-    private Scrapable scrapable;
+    private Target target;
     private int sendBufferSize;
     private int tcpSndBufSize;
     private TemporaryFolder temp;
@@ -72,8 +71,8 @@ public class HttpMinTestBuilder {
             CairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(baseDir);
 
             try (
-                    CairoEngine engine = new CairoEngine(cairoConfiguration, Metrics.disabled());
-                    HttpServer httpServer = new HttpServer(httpConfiguration, Metrics.disabled(), workerPool, PlainSocketFactory.INSTANCE);
+                    CairoEngine engine = new CairoEngine(cairoConfiguration);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE);
                     SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
             ) {
                 final PrometheusMetricsProcessor.RequestStatePool requestStatePool = prometheusRequestStatePool != null
@@ -88,7 +87,7 @@ public class HttpMinTestBuilder {
 
                     @Override
                     public HttpRequestProcessor newInstance() {
-                        return new PrometheusMetricsProcessor(scrapable, httpConfiguration, requestStatePool);
+                        return new PrometheusMetricsProcessor(target, httpConfiguration, requestStatePool);
                     }
                 });
 
@@ -123,8 +122,8 @@ public class HttpMinTestBuilder {
         return this;
     }
 
-    public HttpMinTestBuilder withScrapable(Scrapable scrapable) {
-        this.scrapable = scrapable;
+    public HttpMinTestBuilder withScrapable(Target target) {
+        this.target = target;
         return this;
     }
 

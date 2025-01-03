@@ -118,7 +118,7 @@ class LineTcpWriterJob implements Job, Closeable {
                             .$("commit failed [table=").$(assignedTables.getQuick(n).getTableToken())
                             .$(",ex=").$(ex)
                             .I$();
-                    metrics.health().incrementUnhandledErrors();
+                    metrics.healthMetrics().incrementUnhandledErrors();
                 }
             }
             // if no tables, just use the default commit interval
@@ -167,7 +167,7 @@ class LineTcpWriterJob implements Job, Closeable {
                                 .$("closing writer because of error [table=").$(tud.getTableToken())
                                 .$(", ex=").$(ex)
                                 .I$();
-                        metrics.health().incrementUnhandledErrors();
+                        metrics.healthMetrics().incrementUnhandledErrors();
                         closeWriter = true;
                         event.createWriterReleaseEvent(tud, false);
                         // This is a critical error, so we treat it as an unhandled one.

@@ -25,6 +25,7 @@
 package io.questdb.log;
 
 import io.questdb.Metrics;
+import io.questdb.cairo.CairoException;
 import io.questdb.mp.FanOut;
 import io.questdb.mp.Job;
 import io.questdb.mp.MPSequence;
@@ -109,6 +110,11 @@ public class LogFactory implements Closeable {
         this.clock = clock;
         workerPool = new WorkerPool(new WorkerPoolConfiguration() {
             @Override
+            public Metrics getMetrics() {
+                return Metrics.DISABLED;
+            }
+
+            @Override
             public String getPoolName() {
                 return "logging";
             }
@@ -122,7 +128,7 @@ public class LogFactory implements Closeable {
             public boolean isDaemonPool() {
                 return true;
             }
-        }, Metrics.disabled());
+        });
     }
 
     public static synchronized void closeInstance() {
@@ -632,6 +638,11 @@ public class LogFactory implements Closeable {
             }
         }
 
+        // ensure that file location is set, so the env var can be picked up later
+        if (properties.getProperty("w.file.location") == null) {
+            properties.put("w.file.location", "");
+        }
+
         for (String w : writers.split(",")) {
             LogWriterConfig conf = createWriter(properties, w.trim());
             if (conf != null) {
@@ -1087,6 +1098,9 @@ public class LogFactory implements Closeable {
                 // all bits in level mask will point to the same queue,
                 // so we just get most significant bit number
                 // and dereference queue on its index
+                if (c.getLevel() < 1) {
+                    throw CairoException.nonCritical().put("logging level not set"); // when `QDB_LOG_W_FILE_LEVEL` is missing (or on another driver)
+                }
                 Holder h = holderMap.get(channels[Numbers.msb(c.getLevel())]);
                 // check if this queue was used by another writer
                 if (h.wSeq != null) {

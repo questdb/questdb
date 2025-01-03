@@ -26,8 +26,17 @@ package io.questdb.test;
 
 import io.questdb.Bootstrap;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.log.*;
-import io.questdb.std.*;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.log.LogFileWriter;
+import io.questdb.log.LogLevel;
+import io.questdb.log.LogWriterConfig;
+import io.questdb.log.Logger;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Files;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -59,7 +68,7 @@ public class BootstrapTest extends AbstractBootstrapTest {
         Bootstrap bootstrap = new Bootstrap(getServerMainArgs());
         Assert.assertNotNull(bootstrap.getLog());
         Assert.assertNotNull(bootstrap.getConfiguration());
-        Assert.assertNotNull(bootstrap.getMetrics());
+        Assert.assertNotNull(bootstrap.getConfiguration().getMetrics());
         bootstrap.extractSite();
         Assert.assertTrue(Files.exists(auxPath.trimTo(pathLen).concat("conf").concat(LogFactory.DEFAULT_CONFIG_NAME).$()));
     }

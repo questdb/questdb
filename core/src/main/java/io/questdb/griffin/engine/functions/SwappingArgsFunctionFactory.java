@@ -24,17 +24,19 @@
 
 package io.questdb.griffin.engine.functions;
 
+import org.jetbrains.annotations.TestOnly;
+
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
+
+import static io.questdb.griffin.FunctionFactoryDescriptor.replaceSignatureNameAndSwapArgs;
+
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
-import org.jetbrains.annotations.TestOnly;
-
-import static io.questdb.griffin.FunctionFactoryDescriptor.replaceSignatureNameAndSwapArgs;
 
 public class SwappingArgsFunctionFactory implements FunctionFactory {
     private final FunctionFactory delegate;

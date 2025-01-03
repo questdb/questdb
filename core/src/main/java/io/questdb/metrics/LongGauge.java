@@ -24,7 +24,7 @@
 
 package io.questdb.metrics;
 
-public interface LongGauge extends Scrapable {
+public interface LongGauge extends Target {
 
     void add(long value);
 

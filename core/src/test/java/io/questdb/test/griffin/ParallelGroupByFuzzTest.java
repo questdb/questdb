@@ -231,9 +231,10 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         // The table is empty.
         Assume.assumeFalse(convertToParquet);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool((() -> 4));
+            final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
-                    pool, (engine, compiler, sqlExecutionContext) -> {
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
                         execute(
                                 compiler,
                                 "CREATE TABLE tab (" +
@@ -689,9 +690,10 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         // This query shouldn't be executed in parallel,
         // so this test verifies that nothing breaks.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool((() -> 4));
+            final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
-                    pool, (engine, compiler, sqlExecutionContext) -> {
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
                         execute(
                                 compiler,
                                 "create table x as (select * from (select rnd_symbol('a','b','c') a, 'x' || x b from long_sequence(" + ROW_COUNT + ")))",
@@ -1170,9 +1172,10 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                 "2025.5\t8202000.0\n";
 
         final ConcurrentHashMap<Integer, Throwable> errors = new ConcurrentHashMap<>();
-        final WorkerPool pool = new WorkerPool((() -> 4));
+        final WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
-                pool, (engine, compiler, sqlExecutionContext) -> {
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE tab (" +
                                     "  ts TIMESTAMP," +
@@ -1662,7 +1665,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         Assume.assumeFalse(convertToParquet);
 
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool((() -> 4));
+            final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -2027,9 +2030,10 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                 "k4\t1643226.5\n";
 
         final ConcurrentHashMap<Integer, Throwable> errors = new ConcurrentHashMap<>();
-        final WorkerPool pool = new WorkerPool((() -> 4));
+        final WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
-                pool, (engine, compiler, sqlExecutionContext) -> {
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE tab (" +
                                     "  ts TIMESTAMP," +
@@ -2097,9 +2101,10 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         final int numOfThreads = 8;
         final int numOfIterations = 50;
         final ConcurrentHashMap<Integer, Throwable> errors = new ConcurrentHashMap<>();
-        final WorkerPool pool = new WorkerPool((() -> 4));
+        final WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
-                pool, (engine, compiler, sqlExecutionContext) -> {
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE tab (" +
                                     "  ts TIMESTAMP," +
@@ -2830,7 +2835,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         // The table is empty, so there is nothing to convert.
         Assume.assumeFalse(convertToParquet);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool((() -> 4));
+            final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -2895,7 +2900,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         Assume.assumeTrue(enableParallelGroupBy);
         assertMemoryLeak(() -> {
             final Rnd rnd = TestUtils.generateRandom(LOG);
-            final WorkerPool pool = new WorkerPool((() -> 4));
+            final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -2961,7 +2966,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     private void testParallelGroupByAllTypes(BindVariablesInitializer initializer, String... queriesAndExpectedResults) throws Exception {
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool((() -> 4));
+            final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -3014,7 +3019,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         Assume.assumeTrue(enableParallelGroupBy);
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool((() -> 4));
+            final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -3115,7 +3120,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     private void testParallelJsonKeyGroupBy(String... queriesAndExpectedResults) throws Exception {
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool((() -> 4));
+            final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -3146,7 +3151,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     private void testParallelMultiSymbolKeyGroupBy(String... queriesAndExpectedResults) throws Exception {
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool((() -> 4));
+            final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -3185,7 +3190,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     private void testParallelNonKeyedGroupBy(String... queriesAndExpectedResults) throws Exception {
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool((() -> 4));
+            final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -3224,7 +3229,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         // Rosti doesn't support filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool((() -> 4));
+            final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -3278,7 +3283,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     private void testParallelStringAndVarcharKeyGroupBy(String... queriesAndExpectedResults) throws Exception {
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool((() -> 4));
+            final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -3341,7 +3346,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     private void testParallelSymbolKeyGroupBy(String... queriesAndExpectedResults) throws Exception {
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool((() -> 4));
+            final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {

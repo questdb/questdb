@@ -79,20 +79,20 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     private long nextCheckIdleTime;
     private long nextCommitTime;
 
-    public LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler, Metrics metrics) {
+    public LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler) {
         super(
                 configuration.getFactoryProvider().getLineSocketFactory(),
                 configuration.getNetworkFacade(),
-                LOG,
-                metrics.line().connectionCountGauge()
+                LOG
         );
+
         try {
             this.configuration = configuration;
             this.nf = configuration.getNetworkFacade();
             this.disconnectOnError = configuration.getDisconnectOnError();
             this.logMessageOnError = configuration.logMessageOnError();
             this.scheduler = scheduler;
-            this.metrics = metrics;
+            this.metrics = configuration.getMetrics();
             this.milliClock = configuration.getMillisecondClock();
             parser = new LineTcpParser();
             this.authenticator = configuration.getFactoryProvider().getLineAuthenticatorFactory().getLineTCPAuthenticator();
@@ -221,8 +221,10 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     public LineTcpConnectionContext of(long fd, @NotNull IODispatcher<LineTcpConnectionContext> dispatcher) {
         super.of(fd, dispatcher);
         if (recvBufStart == 0) {
-            recvBufStart = Unsafe.malloc(configuration.getNetMsgBufferSize(), MemoryTag.NATIVE_ILP_RSS);
-            recvBufEnd = recvBufStart + configuration.getNetMsgBufferSize();
+            // re-read recv buffer size in case the config was reloaded
+            final int recvBufferSize = configuration.getRecvBufferSize();
+            recvBufStart = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_ILP_RSS);
+            recvBufEnd = recvBufStart + recvBufferSize;
             recvBufPos = recvBufStart;
             resetParser();
         }
@@ -430,7 +432,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                         .$(", ex=").$(ex)
                         .I$();
                 // This is a critical error, so we treat it as an unhandled one.
-                metrics.health().incrementUnhandledErrors();
+                metrics.healthMetrics().incrementUnhandledErrors();
                 return IOContextResult.NEEDS_DISCONNECT;
             }
         }
@@ -441,7 +443,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         final int orig = bufferRemaining;
         if (bufferRemaining > 0 && !peerDisconnected) {
             int bytesRead = socket.recv(recvBufPos, bufferRemaining);
-            metrics.line().totalIlpTcpBytesGauge().add(bytesRead);
+            metrics.lineMetrics().totalIlpTcpBytesGauge().add(bytesRead);
             if (bytesRead > 0) {
                 recvBufPos += bytesRead;
                 bufferRemaining -= bytesRead;

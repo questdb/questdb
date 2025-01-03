@@ -53,6 +53,11 @@ public interface IODispatcher<C extends IOContext<C>> extends Closeable, Job {
 
     void disconnect(C context, int reason);
 
+    default void drainIOQueue(IORequestProcessor<C> processor) {
+        //noinspection StatementWithEmptyBody
+        while (processIOQueue(processor)) ;
+    }
+
     int getConnectionCount();
 
     int getPort();

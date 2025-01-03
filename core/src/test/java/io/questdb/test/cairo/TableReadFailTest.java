@@ -53,6 +53,7 @@ public class TableReadFailTest extends AbstractCairoTest {
     @Test
     public void testMetaFileCannotOpenConstructor() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
+        spinLockTimeout = 1;
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
@@ -68,6 +69,7 @@ public class TableReadFailTest extends AbstractCairoTest {
     @Test
     public void testMetaFileMissingConstructor() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
+        spinLockTimeout = 1;
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long openRO(LPSZ path) {
@@ -84,6 +86,7 @@ public class TableReadFailTest extends AbstractCairoTest {
     public void testReloadTimeout() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
+            spinLockTimeout = 1;
             String x = "x";
             TableModel model = new TableModel(configuration, x, PartitionBy.NONE)
                     .col("a", ColumnType.INT)
@@ -104,7 +107,7 @@ public class TableReadFailTest extends AbstractCairoTest {
                 TableToken tableToken = engine.verifyTableName(x);
                 path.of(configuration.getRoot()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
 
-                try (TableWriter writer = newOffPoolWriter(configuration, x, metrics)) {
+                try (TableWriter writer = newOffPoolWriter(configuration, x)) {
                     for (int i = 0; i < N; i++) {
                         TableWriter.Row r = writer.newRow();
                         r.putInt(0, rnd.nextInt());
@@ -162,7 +165,7 @@ public class TableReadFailTest extends AbstractCairoTest {
                 // make sure reload functions correctly. Txn changed from 1 to 3, reload should return true
                 Assert.assertTrue(reader.reload());
 
-                try (TableWriter writer = newOffPoolWriter(configuration, x, metrics)) {
+                try (TableWriter writer = newOffPoolWriter(configuration, x)) {
                     // add more data
                     for (int i = 0; i < N; i++) {
                         TableWriter.Row r = writer.newRow();

@@ -24,7 +24,14 @@
 
 package io.questdb.test.metrics;
 
-import io.questdb.metrics.*;
+import io.questdb.metrics.Counter;
+import io.questdb.metrics.CounterWithOneLabel;
+import io.questdb.metrics.CounterWithTwoLabels;
+import io.questdb.metrics.LongGauge;
+import io.questdb.metrics.MetricsRegistry;
+import io.questdb.metrics.MetricsRegistryImpl;
+import io.questdb.metrics.NullMetricsRegistry;
+import io.questdb.metrics.Target;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
@@ -130,16 +137,16 @@ public class MetricsRegistryTest {
         assetNull(gauge);
     }
 
-    private static void assertScrapable(Scrapable scrapable, CharSequence expected) {
+    private static void assertScrapable(Target target, CharSequence expected) {
         try (DirectUtf8Sink sink = new DirectUtf8Sink(32)) {
-            scrapable.scrapeIntoPrometheus(sink);
+            target.scrapeIntoPrometheus(sink);
             TestUtils.assertEquals(expected, sink.toString());
         }
     }
 
-    private static void assetNull(Scrapable scrapable) {
+    private static void assetNull(Target target) {
         try (DirectUtf8Sink sink = new DirectUtf8Sink(32)) {
-            scrapable.scrapeIntoPrometheus(sink);
+            target.scrapeIntoPrometheus(sink);
             TestUtils.assertEquals("", sink.toString());
         }
     }

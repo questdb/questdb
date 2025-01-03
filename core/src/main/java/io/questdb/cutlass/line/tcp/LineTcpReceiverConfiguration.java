@@ -25,6 +25,7 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.FactoryProvider;
+import io.questdb.Metrics;
 import io.questdb.cutlass.line.LineTcpTimestampAdapter;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
@@ -33,7 +34,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
-public interface LineTcpReceiverConfiguration {
+public interface LineTcpReceiverConfiguration extends IODispatcherConfiguration {
 
     String getAuthDB();
 
@@ -57,8 +58,6 @@ public interface LineTcpReceiverConfiguration {
 
     boolean getDisconnectOnError();
 
-    IODispatcherConfiguration getDispatcherConfiguration();
-
     FactoryProvider getFactoryProvider();
 
     FilesFacade getFilesFacade();
@@ -77,11 +76,11 @@ public interface LineTcpReceiverConfiguration {
 
     int getMaxMeasurementSize();
 
+    Metrics getMetrics();
+
     MicrosecondClock getMicrosecondClock();
 
     MillisecondClock getMillisecondClock();
-
-    int getNetMsgBufferSize();
 
     NetworkFacade getNetworkFacade();
 

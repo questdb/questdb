@@ -74,8 +74,8 @@ public class TimestampFinderTest extends AbstractCairoTest {
             long maxTimestamp = minTimestamp;
             long timestamp = minTimestamp;
             try (
-                    TableWriter oracleWriter = newOffPoolWriter(configuration, "oracle", metrics);
-                    TableWriter writer = newOffPoolWriter(configuration, "x", metrics)
+                    TableWriter oracleWriter = newOffPoolWriter(configuration, "oracle");
+                    TableWriter writer = newOffPoolWriter(configuration, "x")
             ) {
                 int ticks = duplicatesPerTick;
                 for (int i = 0; i < rowCount; i++) {

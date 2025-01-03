@@ -35,7 +35,7 @@ import io.questdb.metrics.CounterWithTwoLabels;
 import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.MetricsRegistry;
 import io.questdb.metrics.MetricsRegistryImpl;
-import io.questdb.metrics.Scrapable;
+import io.questdb.metrics.Target;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.ObjList;
@@ -241,7 +241,7 @@ public class MetricsIODispatcherTest {
         final int workerCount = Math.max(2, Math.min(parallelRequestBatches, 6));
         final PrometheusMetricsProcessor.RequestStatePool pool = new PrometheusMetricsProcessor.RequestStatePool(workerCount);
 
-        Assert.assertEquals(pool.size(), 0);
+        Assert.assertEquals(0, pool.size());
 
         MetricsRegistry metrics = new MetricsRegistryImpl();
         for (int i = 0; i < metricCount; i++) {
@@ -256,7 +256,7 @@ public class MetricsIODispatcherTest {
         final HttpQueryTestBuilder.HttpClientCode makeRequest = (engine, sqlExecutionContext) -> {
             try (HttpClient client = HttpClientFactory.newPlainTextInstance()) {
                 if (parallelRequestBatches == 1) {
-                    Assert.assertEquals(pool.size(), 0);
+                    Assert.assertEquals(0, pool.size());
                 }
 
                 final StringSink utf16Sink = new StringSink();
@@ -308,10 +308,10 @@ public class MetricsIODispatcherTest {
                 .withPrometheusPool(pool)
                 .run(clientCode);
 
-        Assert.assertEquals(pool.size(), 0);
+        Assert.assertEquals(0, pool.size());
     }
 
-    private static class TestMetrics implements Scrapable {
+    private static class TestMetrics implements Target {
         private static final short INSERT = 0;
         private static final short QUERY_CANCELLED = 0;
         private static final CharSequence[] QUERY_TYPE_ID_TO_NAME = new CharSequence[2];

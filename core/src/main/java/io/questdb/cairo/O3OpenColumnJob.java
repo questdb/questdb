@@ -1236,11 +1236,29 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             if (partsPublished != partsToPublish) {
                 // An exception happened, we need to adjust partCounter
                 if (partCounter.addAndGet(partsPublished - partsToPublish) == 0) {
-                    FilesFacade ff = tableWriter.getFilesFacade();
-                    O3Utils.unmapAndClose(ff, srcDataFixFd, srcDataFixAddr, srcDataFixSize);
-                    O3Utils.unmapAndClose(ff, srcDataVarFd, srcDataVarAddr, srcDataVarSize);
-                    O3Utils.unmapAndClose(ff, dstFixFd, dstFixAddr, dstFixSize);
-                    O3Utils.unmapAndClose(ff, dstVarFd, dstVarAddr, dstVarSize);
+                    O3CopyJob.unmapAndCloseAllPartsComplete(
+                            columnCounter,
+                            timestampMergeIndexAddr,
+                            timestampMergeIndexSize,
+                            srcDataFixFd,
+                            srcDataFixAddr,
+                            srcDataFixSize,
+                            srcDataVarFd,
+                            srcDataVarAddr,
+                            srcDataVarSize,
+                            srcTimestampFd,
+                            srcTimestampAddr,
+                            srcTimestampSize,
+                            dstFixFd,
+                            dstFixAddr,
+                            dstFixSize,
+                            dstVarFd,
+                            dstVarAddr,
+                            dstVarSize,
+                            dstKFd,
+                            dstVFd,
+                            tableWriter
+                    );
                 }
             }
         }

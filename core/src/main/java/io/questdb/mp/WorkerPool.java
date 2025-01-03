@@ -38,7 +38,6 @@ import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class WorkerPool implements Closeable {
-    private static final Metrics DISABLED = Metrics.disabled();
     private final AtomicBoolean closed = new AtomicBoolean();
     private final boolean daemons;
     private final ObjList<Closeable> freeOnExit = new ObjList<>();
@@ -60,10 +59,6 @@ public class WorkerPool implements Closeable {
     private final long yieldThreshold;
 
     public WorkerPool(WorkerPoolConfiguration configuration) {
-        this(configuration, DISABLED);
-    }
-
-    public WorkerPool(WorkerPoolConfiguration configuration, Metrics metrics) {
         this.workerCount = configuration.getWorkerCount();
         int[] workerAffinity = configuration.getWorkerAffinity();
         if (workerAffinity != null && workerAffinity.length > 0) {
@@ -79,7 +74,7 @@ public class WorkerPool implements Closeable {
         this.napThreshold = configuration.getNapThreshold();
         this.sleepThreshold = configuration.getSleepThreshold();
         this.sleepMs = configuration.getSleepTimeout();
-        this.metrics = metrics;
+        this.metrics = configuration.getMetrics();
         this.priority = configuration.workerPoolPriority();
 
         assert this.workerAffinity.length == workerCount;

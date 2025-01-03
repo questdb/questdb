@@ -24,7 +24,9 @@
 
 package io.questdb.metrics;
 
-public class WorkerMetrics {
+import io.questdb.std.Mutable;
+
+public class WorkerMetrics implements Mutable {
 
     private final LongGauge max;
     private final LongGauge min;
@@ -32,6 +34,12 @@ public class WorkerMetrics {
     public WorkerMetrics(MetricsRegistry metricsRegistry) {
         min = metricsRegistry.newLongGauge("workers_job_start_micros_min");
         max = metricsRegistry.newLongGauge("workers_job_start_micros_max");
+        min.setValue(Long.MAX_VALUE);
+        max.setValue(Long.MIN_VALUE);
+    }
+
+    @Override
+    public void clear() {
         min.setValue(Long.MAX_VALUE);
         max.setValue(Long.MIN_VALUE);
     }

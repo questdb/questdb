@@ -186,7 +186,7 @@ Interact with QuestDB and your data via the following interfaces:
 
 Popular tools that integrate with QuestDB include:
 
-- [Apache Kafka](https://questdb.io/docs/third-party-tools/kafka/questdb-kafka/)
+- [Apache Kafka](https://questdb.io/docs/third-party-tools/kafka/)
 - [Grafana](https://questdb.io/docs/third-party-tools/grafana/)
 - [Superset](https://questdb.io/docs/third-party-tools/superset/)
 - [Telegraf](https://questdb.io/docs/third-party-tools/telegraf/)

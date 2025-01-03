@@ -70,8 +70,8 @@ public class O3MetricsTest extends AbstractO3Test {
             TestUtils.assertEquals(expected, sink);
 
             Metrics metrics = engine.getMetrics();
-            Assert.assertEquals(initRowCount + 1, metrics.tableWriter().getCommittedRows());
-            Assert.assertEquals(initRowCount + 1, metrics.tableWriter().getPhysicallyWrittenRows());
+            Assert.assertEquals(initRowCount + 1, metrics.tableWriterMetrics().getCommittedRows());
+            Assert.assertEquals(initRowCount + 1, metrics.tableWriterMetrics().getPhysicallyWrittenRows());
         });
     }
 
@@ -102,10 +102,10 @@ public class O3MetricsTest extends AbstractO3Test {
             }
 
             Metrics metrics = engine.getMetrics();
-            Assert.assertEquals(initRowCount + 1, metrics.tableWriter().getCommittedRows());
+            Assert.assertEquals(initRowCount + 1, metrics.tableWriterMetrics().getCommittedRows());
 
             // Appended to new partition.
-            Assert.assertEquals(initRowCount + 1, metrics.tableWriter().getPhysicallyWrittenRows());
+            Assert.assertEquals(initRowCount + 1, metrics.tableWriterMetrics().getPhysicallyWrittenRows());
 
             try (TableWriter w = TestUtils.getWriter(engine, "x")) {
                 TableWriter.Row r;
@@ -128,10 +128,10 @@ public class O3MetricsTest extends AbstractO3Test {
                 TestUtils.assertEquals(expected, sink);
             }
 
-            Assert.assertEquals(initRowCount + 2, metrics.tableWriter().getCommittedRows());
+            Assert.assertEquals(initRowCount + 2, metrics.tableWriterMetrics().getCommittedRows());
 
             // Created new partition that didn't previously exist in between the other two.
-            Assert.assertEquals(initRowCount + 2, metrics.tableWriter().getPhysicallyWrittenRows());
+            Assert.assertEquals(initRowCount + 2, metrics.tableWriterMetrics().getPhysicallyWrittenRows());
         });
     }
 
@@ -166,10 +166,10 @@ public class O3MetricsTest extends AbstractO3Test {
             TestUtils.assertEquals(expected, sink);
 
             Metrics metrics = engine.getMetrics();
-            Assert.assertEquals(initRowCount + 1, metrics.tableWriter().getCommittedRows());
+            Assert.assertEquals(initRowCount + 1, metrics.tableWriterMetrics().getCommittedRows());
 
             // There was a single partition which had to be re-written, along with the additional record.
-            Assert.assertEquals(initRowCount * 2 + 1, metrics.tableWriter().getPhysicallyWrittenRows());
+            Assert.assertEquals(initRowCount * 2 + 1, metrics.tableWriterMetrics().getPhysicallyWrittenRows());
         });
     }
 
@@ -204,10 +204,10 @@ public class O3MetricsTest extends AbstractO3Test {
             TestUtils.assertEquals(expected, sink);
 
             Metrics metrics = engine.getMetrics();
-            Assert.assertEquals(initRowCount + 1, metrics.tableWriter().getCommittedRows());
+            Assert.assertEquals(initRowCount + 1, metrics.tableWriterMetrics().getCommittedRows());
 
             // There was a single partition which had to be re-written, along with the additional record.
-            Assert.assertEquals(initRowCount * 2 + 1, metrics.tableWriter().getPhysicallyWrittenRows());
+            Assert.assertEquals(initRowCount * 2 + 1, metrics.tableWriterMetrics().getPhysicallyWrittenRows());
         });
     }
 
@@ -283,10 +283,10 @@ public class O3MetricsTest extends AbstractO3Test {
             TestUtils.assertEquals(expected, sink);
 
             Metrics metrics = engine.getMetrics();
-            Assert.assertEquals(initRowCount + 6, metrics.tableWriter().getCommittedRows());
+            Assert.assertEquals(initRowCount + 6, metrics.tableWriterMetrics().getCommittedRows());
 
             // No partitions had to be re-written: New records appended at the end of each.
-            Assert.assertEquals(initRowCount + 6, metrics.tableWriter().getPhysicallyWrittenRows());
+            Assert.assertEquals(initRowCount + 6, metrics.tableWriterMetrics().getPhysicallyWrittenRows());
         });
     }
 
@@ -315,10 +315,10 @@ public class O3MetricsTest extends AbstractO3Test {
             TestUtils.assertEquals(expected, sink);
 
             Metrics metrics = engine.getMetrics();
-            Assert.assertEquals(initRowCount + 1, metrics.tableWriter().getCommittedRows());
+            Assert.assertEquals(initRowCount + 1, metrics.tableWriterMetrics().getCommittedRows());
 
             // Appended to earlier partition.
-            Assert.assertEquals(initRowCount + 1, metrics.tableWriter().getPhysicallyWrittenRows());
+            Assert.assertEquals(initRowCount + 1, metrics.tableWriterMetrics().getPhysicallyWrittenRows());
         });
     }
 
@@ -331,7 +331,7 @@ public class O3MetricsTest extends AbstractO3Test {
             Metrics metrics = engine.getMetrics();
 
             long rowCount = initRowCount;
-            Assert.assertEquals(rowCount, metrics.tableWriter().getPhysicallyWrittenRows());
+            Assert.assertEquals(rowCount, metrics.tableWriterMetrics().getPhysicallyWrittenRows());
 
             try (TableWriter w = TestUtils.getWriter(engine, "x")) {
                 TableWriter.Row r = w.newRow(millenniumTimestamp(0));
@@ -359,8 +359,8 @@ public class O3MetricsTest extends AbstractO3Test {
                 w.ic();
 
                 w.commit();
-                Assert.assertEquals(rowCount, metrics.tableWriter().getCommittedRows());
-                Assert.assertEquals(rowCount + 2, metrics.tableWriter().getPhysicallyWrittenRows());
+                Assert.assertEquals(rowCount, metrics.tableWriterMetrics().getCommittedRows());
+                Assert.assertEquals(rowCount + 2, metrics.tableWriterMetrics().getPhysicallyWrittenRows());
 
             }
         });
@@ -405,7 +405,7 @@ public class O3MetricsTest extends AbstractO3Test {
         engine.execute(createTableSql, sqlExecutionContext);
 
         Metrics metrics = engine.getMetrics();
-        Assert.assertEquals(rowCount, metrics.tableWriter().getCommittedRows());
-        Assert.assertEquals(rowCount, metrics.tableWriter().getPhysicallyWrittenRows());
+        Assert.assertEquals(rowCount, metrics.tableWriterMetrics().getCommittedRows());
+        Assert.assertEquals(rowCount, metrics.tableWriterMetrics().getPhysicallyWrittenRows());
     }
 }

@@ -25,15 +25,34 @@
 package io.questdb.test.cairo;
 
 import io.questdb.MessageBusImpl;
-import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoError;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnIndexerJob;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.FullFwdPartitionFrameCursor;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.PartitionFrame;
+import io.questdb.cairo.sql.PartitionFrameCursor;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.MCSequence;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
@@ -86,7 +105,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
             long timestamp;
             final Rnd rnd = new Rnd();
-            try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
                 timestamp = TimestampFormatUtils.parseTimestamp("1970-01-03T08:00:00.000Z");
 
                 TableWriter.Row row = writer.newRow(timestamp);
@@ -877,7 +896,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
                     }, null)
             ) {
                 long timestamp = 0;
-                try (TableWriter writer = newOffPoolWriter(configuration, "ABC", metrics, workScheduler)) {
+                try (TableWriter writer = newOffPoolWriter(configuration, "ABC", workScheduler)) {
                     for (int i = 0; i < N; i++) {
                         TableWriter.Row r = writer.newRow(timestamp);
                         r.putSym(0, sg.symA[rnd.nextPositiveInt() % S]);
@@ -1187,7 +1206,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
             long timestamp = 0;
             boolean closedFailed = false;
-            try (TableWriter writer = newOffPoolWriter(configuration, "ABC", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "ABC")) {
                 for (int i = 0; i < (long) N; i++) {
                     TableWriter.Row r = writer.newRow(timestamp += increment);
                     r.putSym(0, sg.symA[rnd.nextPositiveInt() % sg.S]);
@@ -1203,7 +1222,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
             }
             Assert.assertTrue("closing writer should have failed", closedFailed);
 
-            newOffPoolWriter(AbstractCairoTest.configuration, "ABC", metrics).close();
+            newOffPoolWriter(AbstractCairoTest.configuration, "ABC").close();
 
             Assert.assertTrue(ff.wasCalled());
 
@@ -1302,7 +1321,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
             if (!empty) {
                 timestamp = sg.appendABC(AbstractCairoTest.configuration, rnd, N, timestamp, increment);
             }
-            try (TableWriter writer = newOffPoolWriter(configuration, "ABC", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "ABC")) {
                 try {
                     for (int i = 0; i < N; i++) {
                         TableWriter.Row r = writer.newRow(timestamp);
@@ -1340,7 +1359,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
             // ft table is empty constructor should only attempt to recover non-partitioned ones
             if (empty && partitionBy == PartitionBy.NONE) {
                 try {
-                    newOffPoolWriter(configuration, "ABC", metrics);
+                    newOffPoolWriter(configuration, "ABC");
                     Assert.fail();
                 } catch (CairoException ignore) {
                 }
@@ -1444,7 +1463,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
             }
 
             try {
-                newOffPoolWriter(configuration, "ABC", metrics);
+                newOffPoolWriter(configuration, "ABC");
                 Assert.fail();
             } catch (CairoException ignore) {
             }
@@ -1519,13 +1538,13 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
                 WorkerPool workerPool = null;
                 try {
                     if (subSeq != null) {
-                        workerPool = new TestWorkerPool(2, metrics);
+                        workerPool = new TestWorkerPool(2, configuration.getMetrics());
                         workerPool.assign(new ColumnIndexerJob(workScheduler));
                         workerPool.start(LOG);
                     }
 
                     long timestamp = 0;
-                    try (TableWriter writer = newOffPoolWriter(configuration, "ABC", metrics, workScheduler)) {
+                    try (TableWriter writer = newOffPoolWriter(configuration, "ABC", workScheduler)) {
                         for (int i = 0; i < N; i++) {
                             TableWriter.Row r = writer.newRow(timestamp += increment);
                             r.putSym(0, sg.symA[rnd.nextPositiveInt() % S]);
@@ -1644,11 +1663,11 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
             try (
                     final MyWorkScheduler workScheduler = new MyWorkScheduler();
-                    WorkerPool workerPool = new TestWorkerPool(2, metrics)
+                    WorkerPool workerPool = new TestWorkerPool(2, configuration.getMetrics())
             ) {
                 workerPool.assign(new ColumnIndexerJob(workScheduler));
 
-                try (TableWriter writer = newOffPoolWriter(configuration, "ABC", metrics, workScheduler)) {
+                try (TableWriter writer = newOffPoolWriter(configuration, "ABC", workScheduler)) {
                     try {
                         for (int i = 0; i < (long) N; i++) {
                             TableWriter.Row r = writer.newRow(timestamp += increment);
@@ -1685,7 +1704,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
                 // constructor must attempt to recover non-partitioned empty table
                 if (empty && partitionBy == PartitionBy.NONE) {
                     try {
-                        newOffPoolWriter(configuration, "ABC", metrics);
+                        newOffPoolWriter(configuration, "ABC");
                         Assert.fail();
                     } catch (CairoException ignore) {
                     }
@@ -1763,7 +1782,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
             // prepare the data
             long timestamp = 0;
-            try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
                 for (int i = 0; i < M; i++) {
                     TableWriter.Row row = writer.newRow(timestamp += increment);
                     row.putStr(0, rnd.nextChars(20));
@@ -1837,7 +1856,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
             // prepare the data
             long timestamp = 0;
-            try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
                 for (int i = 0; i < M; i++) {
                     TableWriter.Row row = writer.newRow(timestamp += increment);
                     row.putStr(0, rnd.nextChars(20));
@@ -1906,7 +1925,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
             // prepare the data
             long timestamp = 0;
-            try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
                 for (int i = 0; i < M; i++) {
                     TableWriter.Row row = writer.newRow(timestamp += increment);
                     row.putStr(0, rnd.nextChars(20));
@@ -1981,7 +2000,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
             // prepare the data
             long timestamp = 0;
-            try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
                 for (int i = 0; i < M; i++) {
                     TableWriter.Row row = writer.newRow(timestamp += increment);
                     row.putStr(0, rnd.nextChars(20));
@@ -2052,7 +2071,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
             // prepare the data
             long timestamp = 0;
-            try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
                 for (int i = 0; i < M; i++) {
                     TableWriter.Row row = writer.newRow(timestamp += increment);
                     row.putStr(0, rnd.nextChars(20));
@@ -2148,7 +2167,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
             // prepare the data
             long timestamp = 0;
-            try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
                 for (int i = 0; i < M; i++) {
                     TableWriter.Row row = writer.newRow(timestamp += increment);
                     row.putStr(0, rnd.nextChars(20));
@@ -2218,7 +2237,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
             // prepare the data
             long timestamp = 0;
-            try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
                 for (int i = 0; i < M; i++) {
                     TableWriter.Row row = writer.newRow(timestamp += increment);
                     row.putStr(0, rnd.nextChars(20));
@@ -2285,7 +2304,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
             // prepare the data
             long timestamp = 0;
-            try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
                 populateTable(writer, symbols, rnd, timestamp, increment, M);
                 writer.commit();
             }
@@ -2331,7 +2350,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
             // prepare the data
             long timestamp = 0;
-            try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
                 timestamp = populateTable(writer, symbols, rnd, timestamp, increment, M / 2);
 
                 writer.addIndex("a", configuration.getIndexValueBlockSize());
@@ -2383,7 +2402,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
             // prepare the data, make sure rollback does the job
             long timestamp = 0;
 
-            try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
                 timestamp = populateTable(writer, symbols, rnd, timestamp, increment, M);
                 writer.commit();
                 timestamp = populateTable(writer, symbols, rnd, timestamp, increment, M);
@@ -2431,7 +2450,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
             // prepare the data
             long timestamp = 0;
-            try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
                 for (int i = 0; i < M / 2; i++) {
                     TableWriter.Row row = writer.newRow(timestamp += increment);
                     row.append();
@@ -2550,7 +2569,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
         }
 
         long appendABC(CairoConfiguration configuration, Rnd rnd, long N, long timestamp, long increment) {
-            try (TableWriter writer = newOffPoolWriter(configuration, "ABC", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "ABC")) {
                 // first batch without problems
                 for (int i = 0; i < N; i++) {
                     TableWriter.Row r = writer.newRow(timestamp);

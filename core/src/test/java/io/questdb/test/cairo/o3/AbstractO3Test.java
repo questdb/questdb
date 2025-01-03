@@ -89,11 +89,6 @@ public class AbstractO3Test extends AbstractTest {
     }
 
     @Before
-    public void clearRecordToRowCopier() {
-        copier = null;
-    }
-
-    @Before
     public void setUp() {
         SharedRandom.RANDOM.set(new Rnd());
         // instantiate these paths so that they are not included in memory leak test
@@ -102,6 +97,8 @@ public class AbstractO3Test extends AbstractTest {
         super.setUp();
         mixedIOEnabledFFDefault = TestFilesFacadeImpl.INSTANCE.allowMixedIO(root);
         mixedIOEnabled = mixedIOEnabledFFDefault;
+        copier = null;
+        Metrics.ENABLED.clear();
     }
 
     @After
@@ -284,7 +281,7 @@ public class AbstractO3Test extends AbstractTest {
     }
 
     protected static void executeVanillaWithMetrics(CustomisableRunnable code) throws Exception {
-        executeVanilla(() -> TestUtils.execute(null, code, new DefaultTestCairoConfiguration(root), Metrics.enabled(), LOG));
+        executeVanilla(() -> TestUtils.execute(null, code, new DefaultTestCairoConfiguration(root), LOG));
     }
 
     protected static void executeWithPool(
@@ -305,8 +302,6 @@ public class AbstractO3Test extends AbstractTest {
     ) throws Exception {
         executeVanilla(() -> {
             if (workerCount > 0) {
-                WorkerPool pool = new WorkerPool(() -> workerCount);
-
                 final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                     @Override
                     public boolean disableColumnPurgeJob() {
@@ -363,7 +358,7 @@ public class AbstractO3Test extends AbstractTest {
                         return mixedIOEnabledFFDefault && mixedIOEnabled;
                     }
                 };
-
+                WorkerPool pool = new WorkerPool(() -> workerCount);
                 TestUtils.execute(pool, runnable, configuration, LOG);
             } else {
                 // we need to create entire engine

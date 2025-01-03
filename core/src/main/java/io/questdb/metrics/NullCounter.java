@@ -55,6 +55,10 @@ public class NullCounter implements Counter, CounterWithOneLabel, CounterWithTwo
     }
 
     @Override
+    public void reset() {
+    }
+
+    @Override
     public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
     }
 }

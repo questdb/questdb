@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.cairo.Reopenable;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.LowerCaseUtf8SequenceObjHashMap;
@@ -57,7 +58,6 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
     private final Utf8SequenceObjHashMap<HttpCookie> cookies = new Utf8SequenceObjHashMap<>();
     private final ObjectPool<DirectUtf8String> csPool;
     private final LowerCaseUtf8SequenceObjHashMap<DirectUtf8String> headers = new LowerCaseUtf8SequenceObjHashMap<>();
-    private final long hi;
     private final DirectUtf8String temp = new DirectUtf8String();
     private final Utf8SequenceObjHashMap<DirectUtf8String> urlParams = new Utf8SequenceObjHashMap<>();
     protected boolean incomplete;
@@ -73,6 +73,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
     private DirectUtf8String contentType;
     private DirectUtf8String headerName;
     private long headerPtr;
+    private long hi;
     private int ignoredCookieCount;
     private boolean isMethod = true;
     private boolean isProtocol = true;
@@ -90,8 +91,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
     private DirectUtf8String statusCode;
     private DirectUtf8String statusText;
 
-    public HttpHeaderParser(int bufferLen, ObjectPool<DirectUtf8String> csPool) {
-        int bufferSize = Numbers.ceilPow2(bufferLen);
+    public HttpHeaderParser(int bufferSize, ObjectPool<DirectUtf8String> csPool) {
         this.headerPtr = this._wptr = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_HTTP_CONN);
         this.hi = headerPtr + bufferSize;
         this.csPool = csPool;
@@ -137,7 +137,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
     public void close() {
         clear();
         if (headerPtr != 0) {
-            headerPtr = _wptr = Unsafe.free(headerPtr, hi - headerPtr, MemoryTag.NATIVE_HTTP_CONN);
+            headerPtr = _wptr = hi = Unsafe.free(headerPtr, hi - headerPtr, MemoryTag.NATIVE_HTTP_CONN);
             boundaryAugmenter.close();
         }
     }
@@ -305,6 +305,14 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
             }
         }
         return p;
+    }
+
+    public void reopen(int bufferSize) {
+        if (headerPtr == 0) {
+            this.headerPtr = this._wptr = this._lo = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_HTTP_CONN);
+            this.hi = headerPtr + bufferSize;
+        }
+        boundaryAugmenter.reopen();
     }
 
     public int size() {
@@ -874,7 +882,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         return offset;
     }
 
-    public static class BoundaryAugmenter implements QuietCloseable {
+    public static class BoundaryAugmenter implements Reopenable, QuietCloseable {
         private static final Utf8String BOUNDARY_PREFIX = new Utf8String("\r\n--");
         private final DirectUtf8String export = new DirectUtf8String();
         private long _wptr;
@@ -883,7 +891,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
 
         public BoundaryAugmenter() {
             this.lim = 64;
-            this.lo = this._wptr = Unsafe.malloc(this.lim, MemoryTag.NATIVE_HTTP_CONN);
+            this.lo = this._wptr = Unsafe.malloc(lim, MemoryTag.NATIVE_HTTP_CONN);
             of0(BOUNDARY_PREFIX);
         }
 
@@ -902,6 +910,14 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
             _wptr = lo + BOUNDARY_PREFIX.size();
             of0(value);
             return export.of(lo, _wptr);
+        }
+
+        @Override
+        public void reopen() {
+            if (lo == 0) {
+                this.lo = this._wptr = Unsafe.malloc(lim, MemoryTag.NATIVE_HTTP_CONN);
+                of0(BOUNDARY_PREFIX);
+            }
         }
 
         private void of0(Utf8Sequence value) {

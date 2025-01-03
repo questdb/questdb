@@ -26,8 +26,8 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
-import io.questdb.cutlass.http.HttpMinServerConfiguration;
 import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.metrics.HealthMetricsImpl;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
@@ -37,7 +37,7 @@ public class HealthCheckProcessor implements HttpRequestProcessor {
     private final boolean pessimisticMode;
     private final byte requiredAuthType;
 
-    public HealthCheckProcessor(HttpMinServerConfiguration configuration) {
+    public HealthCheckProcessor(HttpServerConfiguration configuration) {
         this.pessimisticMode = configuration.isPessimisticHealthCheckEnabled();
         this.requiredAuthType = configuration.getRequiredAuthType();
     }
@@ -52,7 +52,7 @@ public class HealthCheckProcessor implements HttpRequestProcessor {
         HttpChunkedResponse response = context.getChunkedResponse();
 
         if (pessimisticMode) {
-            final HealthMetricsImpl metrics = context.getMetrics().health();
+            final HealthMetricsImpl metrics = context.getMetrics().healthMetrics();
             final long unhandledErrors = metrics.unhandledErrorsCount();
             if (unhandledErrors > 0) {
                 response.status(500, "text/plain");

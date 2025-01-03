@@ -173,7 +173,7 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                 Assert.assertEquals(13, metadata.getColumnCount());
                 Assert.assertEquals(expectedInitialTimestampIndex, metadata.getTimestampIndex());
                 long structureVersion;
-                try (TableWriter writer = newOffPoolWriter(configuration, tableName, metrics)) {
+                try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
                     writer.removeColumn("timestamp");
                     structureVersion = writer.getMetadataVersion();
                 }
@@ -217,7 +217,7 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                 Assert.assertEquals(13, metadata.getColumnCount());
                 Assert.assertEquals(expectedInitialTimestampIndex, metadata.getTimestampIndex());
                 long structVersion;
-                try (TableWriter writer = newOffPoolWriter(configuration, tableName, metrics)) {
+                try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
                     manipulator.restructure(writer);
                     structVersion = writer.getMetadataVersion();
                 }

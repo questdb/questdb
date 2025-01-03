@@ -39,10 +39,10 @@ import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
-import io.questdb.network.DefaultIODispatcherConfiguration;
-import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.ConcurrentCacheConfiguration;
+import io.questdb.std.DefaultConcurrentCacheConfiguration;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjectFactory;
@@ -84,7 +84,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
     public static final long CONN_AWARE_EXTENDED_LIMITED = 1;
     // QUIRKS Mode is where PostgresJDBC driver might send incorrect
     // message to the server. This breaks tests not just with QuestDB
-    // but also with PostgresSQL actual.
+    // but also with PostgreSQL actual.
     public static final long CONN_AWARE_QUIRKS = 4;
     public static final long CONN_AWARE_EXTENDED = CONN_AWARE_EXTENDED_LIMITED | CONN_AWARE_QUIRKS;
     public static final long CONN_AWARE_SIMPLE = 2;
@@ -393,10 +393,6 @@ public abstract class BasePGTest extends AbstractCairoTest {
         });
     }
 
-    protected void assertWithPgServerExtendedBinaryOnly(PGJobContextTest.ConnectionAwareRunnable runnable) throws Exception {
-        assertWithPgServer(Mode.EXTENDED, true, -1, runnable);
-    }
-
     protected void assertWithPgServer(
             Mode mode,
             boolean binary,
@@ -447,6 +443,10 @@ public abstract class BasePGTest extends AbstractCairoTest {
         }
     }
 
+    protected void assertWithPgServerExtendedBinaryOnly(PGJobContextTest.ConnectionAwareRunnable runnable) throws Exception {
+        assertWithPgServer(Mode.EXTENDED, true, -1, runnable);
+    }
+
     protected IPGWireServer createPGServer(PGWireConfiguration configuration) throws SqlException {
         return createPGServer(configuration, false);
     }
@@ -458,7 +458,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
         if (configuration.isLegacyModeEnabled() != legacyMode) {
             ((Port0PGWireConfiguration) configuration).isLegacyMode = legacyMode;
         }
-        TestWorkerPool workerPool = new TestWorkerPool(configuration.getWorkerCount(), metrics);
+        TestWorkerPool workerPool = new TestWorkerPool(configuration);
         copyRequestJob = new CopyRequestJob(engine, configuration.getWorkerCount());
 
         workerPool.assign(copyRequestJob);
@@ -495,6 +495,13 @@ public abstract class BasePGTest extends AbstractCairoTest {
             }
         };
 
+        final ConcurrentCacheConfiguration concurrentCacheConfiguration = new DefaultConcurrentCacheConfiguration() {
+            @Override
+            public int getBlocks() {
+                return selectCacheBlockCount == -1 ? super.getBlocks() : selectCacheBlockCount;
+            }
+        };
+
         final PGWireConfiguration conf = new Port0PGWireConfiguration(-1, legacyMode) {
 
             @Override
@@ -503,8 +510,8 @@ public abstract class BasePGTest extends AbstractCairoTest {
             }
 
             @Override
-            public IODispatcherConfiguration getDispatcherConfiguration() {
-                return super.getDispatcherConfiguration();
+            public ConcurrentCacheConfiguration getConcurrentCacheConfiguration() {
+                return concurrentCacheConfiguration;
             }
 
             @Override
@@ -520,11 +527,6 @@ public abstract class BasePGTest extends AbstractCairoTest {
             @Override
             public int getRecvBufferSize() {
                 return recvBufferSize;
-            }
-
-            @Override
-            public int getSelectCacheBlockCount() {
-                return selectCacheBlockCount == -1 ? super.getSelectCacheBlockCount() : selectCacheBlockCount;
             }
 
             @Override
@@ -613,13 +615,8 @@ public abstract class BasePGTest extends AbstractCairoTest {
     protected DefaultPGWireConfiguration getStdPgWireConfig() {
         return new DefaultPGWireConfiguration() {
             @Override
-            public IODispatcherConfiguration getDispatcherConfiguration() {
-                return new DefaultIODispatcherConfiguration() {
-                    @Override
-                    public int getBindPort() {
-                        return getPGWirePort();
-                    }
-                };
+            public int getBindPort() {
+                return getPGWirePort();
             }
 
             @Override
@@ -638,6 +635,11 @@ public abstract class BasePGTest extends AbstractCairoTest {
     protected DefaultPGWireConfiguration getStdPgWireConfigAltCreds() {
         return new DefaultPGWireConfiguration() {
             @Override
+            public int getBindPort() {
+                return getPGWirePort();
+            }
+
+            @Override
             public String getDefaultPassword() {
                 return "oh";
             }
@@ -645,16 +647,6 @@ public abstract class BasePGTest extends AbstractCairoTest {
             @Override
             public String getDefaultUsername() {
                 return "xyz";
-            }
-
-            @Override
-            public IODispatcherConfiguration getDispatcherConfiguration() {
-                return new DefaultIODispatcherConfiguration() {
-                    @Override
-                    public int getBindPort() {
-                        return getPGWirePort();
-                    }
-                };
             }
 
             @Override

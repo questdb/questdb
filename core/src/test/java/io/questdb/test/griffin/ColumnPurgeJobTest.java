@@ -905,10 +905,10 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
         }
     }
 
-    private void assertFilesExist(String[] partitions, Path path, String up_part, String colSuffix, boolean exist) {
+    private void assertFilesExist(String[] partitions, Path path, String tableName, String colSuffix, boolean exist) {
         for (int i = 0; i < partitions.length; i++) {
             String partition = partitions[i];
-            assertFilesExist(path, up_part, partition, colSuffix, exist);
+            assertFilesExist(path, tableName, partition, colSuffix, exist);
         }
     }
 

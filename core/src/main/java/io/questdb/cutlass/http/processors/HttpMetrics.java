@@ -22,25 +22,33 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http;
+package io.questdb.cutlass.http.processors;
 
-import io.questdb.FactoryProvider;
-import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.metrics.Counter;
+import io.questdb.metrics.LongGauge;
+import io.questdb.metrics.MetricsRegistry;
+import io.questdb.std.Mutable;
 
-public interface HttpMinServerConfiguration extends WorkerPoolConfiguration {
+public class HttpMetrics implements Mutable {
+    private final Counter listenerStateChangeCounter;
+    private final LongGauge connectionCountGauge;
 
-    IODispatcherConfiguration getDispatcherConfiguration();
+    public HttpMetrics(MetricsRegistry metricsRegistry) {
+        this.connectionCountGauge = metricsRegistry.newLongGauge("http_connections");
+        this.listenerStateChangeCounter = metricsRegistry.newCounter("http_listener_state_change_count");
+    }
 
-    FactoryProvider getFactoryProvider();
+    @Override
+    public void clear() {
+        connectionCountGauge.setValue(0);
+        listenerStateChangeCounter.reset();
+    }
 
-    HttpContextConfiguration getHttpContextConfiguration();
+    public Counter listenerStateChangeCounter() {
+        return listenerStateChangeCounter;
+    }
 
-    byte getRequiredAuthType();
-
-    WaitProcessorConfiguration getWaitProcessorConfiguration();
-
-    boolean isPessimisticHealthCheckEnabled();
-
-    boolean preAllocateBuffers();
+    public LongGauge connectionCountGauge() {
+        return connectionCountGauge;
+    }
 }

@@ -24,11 +24,22 @@
 
 package io.questdb.log;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.mp.QueueConsumer;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SynchronizedJob;
-import io.questdb.std.*;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.FindVisitor;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -65,7 +76,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private long idleSpinCount = 0;
     private String lifeDuration;
     private long lim;
-    // can be set via reflection
+    // can be set via reflection in LogFactory.createWriter
     private String location;
     private String logDir;
     // used in size limit based auto-deletion; contains [last_modification_ts, packed_file_name_offsets] pairs
@@ -115,6 +126,9 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
 
     @Override
     public void bindProperties(LogFactory factory) {
+        if (location == null) {
+            throw CairoException.nonCritical().put("rolling log file location not set [location=null]");
+        }
         locationParser.parseEnv(location, clock.getTicks());
         if (bufferSize != null) {
             try {
@@ -166,7 +180,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         }
 
         if (rollEvery != null) {
-            switch (rollEvery.toUpperCase()) {
+            switch (rollEvery.trim().toUpperCase()) {
                 case "DAY":
                     rollDeadlineFunction = this::getNextDayDeadline;
                     break;
@@ -194,7 +208,11 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         buf = _wptr = Unsafe.malloc(nBufferSize, MemoryTag.NATIVE_LOGGER);
         lim = buf + nBufferSize;
         openFile();
-        logFileTemplate = location.substring(path.toString().lastIndexOf(Files.SEPARATOR) + 1, location.indexOf('$'));
+        // handles when $ is omitted from the log file location
+        if (location.indexOf('$') < 0) {
+            throw CairoException.nonCritical().put("rolling log file location does not contain `$` character [location=").put(location).put(']');
+        }
+        logFileTemplate = location.substring(path.toString().lastIndexOf(Files.SEPARATOR) + 1, location.lastIndexOf('$'));
         logDir = location.substring(0, location.indexOf(logFileTemplate) - 1);
     }
 
@@ -214,6 +232,11 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         Misc.free(renameToPath);
         Misc.free(logFileList);
         Misc.free(logFileNameSink);
+    }
+
+    @TestOnly
+    public NextDeadline getRollDeadlineFunction() {
+        return rollDeadlineFunction;
     }
 
     @TestOnly
@@ -425,8 +448,8 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
                 logFileNameSink.put(logFileName);
                 int endOffset = logFileNameSink.length();
                 // It will be sorted as 128 bits hence
-                // set 2 longs for an entry, [packedOffsets, last_modification_ts]
-                // and it will sort it by last_modification_ts first and then by packedOffsets
+                // set 2 longs for an entry, [packed_offsets, last_modification_ts]
+                // and it will sort it by last_modification_ts first and then by packed_offsets
                 long packedOffsets = Numbers.encodeLowHighInts(startOffset, endOffset);
                 logFileList.add(packedOffsets);
                 logFileList.add(ff.getLastModified(path.$()));
@@ -471,7 +494,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     }
 
     @FunctionalInterface
-    private interface NextDeadline {
+    public interface NextDeadline {
         long getDeadline();
     }
 }
