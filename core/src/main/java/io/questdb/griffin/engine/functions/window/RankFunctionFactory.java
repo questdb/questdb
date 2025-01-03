@@ -54,7 +54,8 @@ import io.questdb.std.Unsafe;
 
 public class RankFunctionFactory implements FunctionFactory {
 
-    private static final String SIGNATURE = "rank()";
+    public static final String NAME = "rank";
+    private static final String SIGNATURE = NAME + "()";
 
     @Override
     public String getSignature() {
