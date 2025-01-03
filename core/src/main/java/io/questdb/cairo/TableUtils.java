@@ -1019,6 +1019,66 @@ public final class TableUtils {
         return columnValue != null ? columnValue.length() : NULL_LEN;
     }
 
+    public static @NotNull MaterializedViewDefinition loadMatViewDefinition(
+            FilesFacade ff,
+            MemoryCMR mem,
+            Path path,
+            int rootLen,
+            TableToken matViewToken
+    ) {
+
+        mem.smallFile(ff, path.trimTo(rootLen)
+                .concat(matViewToken.getDirName())
+                .concat(MAT_VIEW_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+        assert mem.size() >= MV_HEADER_SIZE + 3 * Long.BYTES + 3 * Integer.BYTES + Character.BYTES;
+
+        long offset = MV_HEADER_SIZE;
+
+        final CharSequence baseTableName = mem.getStrA(offset);
+        assert baseTableName != null;
+        offset += Vm.getStorageLength(baseTableName);
+        final String baseTableNameStr = Chars.toString(baseTableName);
+
+        final long fromMicros = mem.getLong(offset);
+        offset += Long.BYTES;
+
+        final long toMicros = mem.getLong(offset);
+        offset += Long.BYTES;
+
+        final long samplingInterval = mem.getLong(offset);
+        offset += Long.BYTES;
+
+        final char samplingIntervalUnit = mem.getChar(offset);
+        offset += Character.BYTES;
+
+        final CharSequence timeZone = mem.getStrA(offset);
+        offset += Vm.getStorageLength(timeZone);
+        final String timeZoneStr = Chars.toString(timeZone);
+
+        final CharSequence timeZoneOffset = mem.getStrA(offset);
+        final String timeZoneOffsetStr = Chars.toString(timeZoneOffset);
+
+        mem.smallFile(ff, path.trimTo(rootLen)
+                .concat(matViewToken.getDirName())
+                .concat(MAT_VIEW_QUERY_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+        assert mem.size() >= Integer.BYTES;
+        final CharSequence matViewSql = mem.getStrA(0);
+        assert matViewSql != null;
+        final String matViewSqlStr = Chars.toString(matViewSql);
+
+        return new MaterializedViewDefinition(
+                matViewToken,
+                matViewSqlStr,
+                baseTableNameStr,
+                samplingInterval,
+                samplingIntervalUnit,
+                fromMicros,
+                toMicros,
+                timeZoneStr,
+                timeZoneOffsetStr
+        );
+    }
+
     public static long lock(FilesFacade ff, LPSZ path, boolean verbose) {
         // workaround for https://github.com/docker/for-mac/issues/7004
         if (Files.VIRTIO_FS_DETECTED) {

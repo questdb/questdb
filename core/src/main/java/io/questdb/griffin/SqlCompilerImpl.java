@@ -1266,6 +1266,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         tok = expectToken(lexer, "table name");
         SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, tableNamePosition);
         final TableToken tableToken = tableExistsOrFail(tableNamePosition, GenericLexer.unquote(tok), executionContext);
+        if (tableToken != null && tableToken.isMatView()) {
+            throw SqlException.position(tableNamePosition)
+                    .put("cannot modify materialized view [view=")
+                    .put(tableToken.getTableName())
+                    .put(']');
+        }
         final SecurityContext securityContext = executionContext.getSecurityContext();
 
         try (TableRecordMetadata tableMetadata = executionContext.getMetadataForWrite(tableToken)) {
@@ -1882,6 +1888,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             tok = GenericLexer.unquote(tok);
         }
         TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
+        if (tableToken != null && tableToken.isMatView()) {
+            throw SqlException.position(lexer.lastTokenPosition())
+                    .put("cannot modify materialized view [view=")
+                    .put(tableToken.getTableName())
+                    .put(']');
+        }
         try (IndexBuilder indexBuilder = new IndexBuilder(configuration)) {
             indexBuilder.of(path.of(configuration.getRoot()).concat(tableToken.getDirName()));
 
@@ -1974,6 +1986,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     tok = GenericLexer.unquote(tok);
                 }
                 TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
+                if (tableToken != null && tableToken.isMatView()) {
+                    throw SqlException.position(lexer.lastTokenPosition())
+                            .put("cannot modify materialized view [view=")
+                            .put(tableToken.getTableName())
+                            .put(']');
+                }
                 executionContext.getSecurityContext().authorizeTableTruncate(tableToken);
                 try {
                     tableWriters.add(engine.getTableWriterAPI(tableToken, "truncateTables"));
@@ -2172,6 +2190,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             CharSequence eol = SqlUtil.fetchNext(lexer);
             if (eol == null || Chars.equals(eol, ';')) {
                 TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tableName, executionContext);
+                if (tableToken != null && tableToken.isMatView()) {
+                    throw SqlException.position(lexer.lastTokenPosition())
+                            .put("cannot modify materialized view [view=")
+                            .put(tableToken.getTableName())
+                            .put(']');
+                }
                 try (TableReader rdr = executionContext.getReader(tableToken)) {
                     int partitionBy = rdr.getMetadata().getPartitionBy();
                     if (PartitionBy.isPartitioned(partitionBy)) {

@@ -66,13 +66,22 @@ public class MatViewGraph implements QuietCloseable {
                         .put(matViewToken.getTableName());
             }
         } else {
+            // TODO(eugene): `MatViewRefreshState` is Closable.
+            //  review data race/memory leak case.
+            //  use computeIfAbsent?
+            //  close `viewRefreshState` explicitly ?
+            //  `viewRefreshState` not null and not dropped, same definition ?
             viewRefreshState = new MatViewRefreshState(viewDefinition);
             refreshStateByTableDirName.putIfAbsent(matViewToken.getDirName(), viewRefreshState);
 
             MatViewRefreshList list = getDependencyList(baseTableToken.getTableName());
             try {
                 ObjList<TableToken> matViews = list.writeLock();
+                // TODO(eugene): what the purpose of this loop?
+                //  `matViews` is updated unconditionaly with `matViewToken`
+                //  can `matViews` contain token for the dropped view?
                 for (int i = 0, n = matViews.size(); i < n; i++) {
+                    // TODO(eugene): index is always 0 !!!
                     TableToken existingViewToken = matViews.getQuick(0);
                     if (existingViewToken.equals(matViewToken)) {
                         break;
@@ -91,6 +100,7 @@ public class MatViewGraph implements QuietCloseable {
         MatViewRefreshState refreshState = refreshStateByTableDirName.remove(viewToken.getDirName());
         if (refreshState != null) {
             if (refreshState.tryLock()) {
+                // TODO(eugene): `refreshState` already removed from `refreshStateByTableDirName`
                 refreshStateByTableDirName.remove(viewToken.getDirName());
                 Misc.free(refreshState);
             } else {
@@ -201,7 +211,9 @@ public class MatViewGraph implements QuietCloseable {
     private MatViewRefreshList getDependencyList(CharSequence tableName) {
         MatViewRefreshList state = dependantViewsByTableName.get(tableName);
         if (state == null) {
+            // TODO(eugene): what if `MatViewRefreshList` will become Closable later?
             state = new MatViewRefreshList();
+            // TODO(eugene): use computeIfAbsent ?
             MatViewRefreshList existingState = dependantViewsByTableName.putIfAbsent(tableName, state);
             return existingState != null ? existingState : state;
         }
