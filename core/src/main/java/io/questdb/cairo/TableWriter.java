@@ -139,8 +139,7 @@ import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
-import static io.questdb.std.Files.FILES_RENAME_OK;
-import static io.questdb.std.Files.PAGE_SIZE;
+import static io.questdb.std.Files.*;
 import static io.questdb.tasks.TableWriterTask.*;
 
 public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
@@ -8512,11 +8511,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (metaSwapIndex > 0) {
                     path.put('.').put(metaSwapIndex);
                 }
-                ddlMem.smallFile(ff, path.$(), MemoryTag.MMAP_TABLE_WRITER);
+                // Map meta swap file for verification to exact length.
+                long len = ff.length(path.$());
+                // Check that file length is ok, do not allow to map to default page size if it's returned as -1.
+                if (len < 1) {
+                    throw CairoException.critical(ff.errno()).put("cannot swap metadata file, invalid size: ").put(path);
+                }
+                ddlMem.of(ff, path.$(), ff.getPageSize(), len, MemoryTag.MMAP_TABLE_WRITER, CairoConfiguration.O_NONE, POSIX_MADV_RANDOM);
                 validationMap.clear();
                 validateMeta(ddlMem, validationMap, ColumnType.VERSION);
             } finally {
-                ddlMem.close();
+                ddlMem.close(false);
                 path.trimTo(pathSize);
             }
         } catch (CairoException e) {
