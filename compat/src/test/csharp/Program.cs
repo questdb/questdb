@@ -252,11 +252,11 @@ public class TestRunner
 
         return type.ToLower() switch
         {
-            "int4" or "int8" => Convert.ToInt64(value),
-            "float4" or "float8" => Convert.ToDouble(value),
+            "int4" or "int8" => Convert.ToInt64(value, CultureInfo.InvariantCulture),
+            "float4" or "float8" => Convert.ToDouble(value.ToString(), CultureInfo.InvariantCulture),
             "boolean" => Convert.ToBoolean(value),
             "varchar" => value.ToString(),
-            "timestamp" => DateTime.Parse(value.ToString(), DateTimeFormatInfo.CurrentInfo, DateTimeStyles.AdjustToUniversal),
+            "timestamp" => DateTime.Parse(value.ToString(), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
             _ => value
         };
     }
