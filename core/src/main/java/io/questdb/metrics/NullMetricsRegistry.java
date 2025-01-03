@@ -34,6 +34,11 @@ public class NullMetricsRegistry implements MetricsRegistry {
     }
 
     @Override
+    public AtomicCounter newAtomicCounter(CharSequence name) {
+        return NullAtomicCounter.INSTANCE;
+    }
+
+    @Override
     public Counter newCounter(CharSequence name) {
         return NullCounter.INSTANCE;
     }

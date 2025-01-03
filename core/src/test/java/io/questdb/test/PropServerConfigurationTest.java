@@ -121,7 +121,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(10_000, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getMultipartIdleSpinCount());
         Assert.assertEquals(64448, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getRequestHeaderBufferSize());
         Assert.assertFalse(configuration.getHttpServerConfiguration().haltOnError());
-        Assert.assertFalse(configuration.getHttpServerConfiguration().haltOnError());
+        Assert.assertEquals(-1, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getQueryConnectionLimit());
+        Assert.assertEquals(-1, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getIlpConnectionLimit());
         Assert.assertEquals("index.html", configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getIndexFileName());
         Assert.assertEquals(SecurityContext.AUTH_TYPE_NONE, configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getRequiredAuthType());
         Assert.assertTrue(configuration.getHttpServerConfiguration().isEnabled());
@@ -694,6 +695,11 @@ public class PropServerConfigurationTest {
         properties.setProperty("cairo.legacy.string.column.type.default", "false");
         env.put("QDB_CAIRO_LEGACY_STRING_COLUMN_TYPE_DEFAULT", "true");
 
+        properties.setProperty("http.query.connection.limit", "6");
+        env.put("QDB_HTTP_QUERY_CONNECTION_LIMIT", "12");
+        properties.setProperty("http.ilp.connection.limit", "4");
+        env.put("QDB_HTTP_ILP_CONNECTION_LIMIT", "8");
+
         PropServerConfiguration configuration = newPropServerConfiguration(root, properties, env, new BuildInformationHolder());
         Assert.assertEquals(1.5, configuration.getCairoConfiguration().getTextConfiguration().getMaxRequiredDelimiterStdDev(), 0.000001);
         Assert.assertEquals(3000, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionStringPoolCapacity());
@@ -701,6 +707,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(3, configuration.getWorkerPoolConfiguration().getWorkerCount());
         Assert.assertArrayEquals(new int[]{5, 6, 7}, configuration.getWorkerPoolConfiguration().getWorkerAffinity());
         Assert.assertEquals(12288, configuration.getHttpServerConfiguration().getSendBufferSize());
+        Assert.assertEquals(12, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getQueryConnectionLimit());
+        Assert.assertEquals(8, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getIlpConnectionLimit());
         Assert.assertEquals(900, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getMultipartIdleSpinCount());
         Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().readOnlySecurityContext());
         Assert.assertEquals(9663676416L, configuration.getCairoConfiguration().getDataAppendPageSize());
@@ -1086,6 +1094,8 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(6, configuration.getHttpServerConfiguration().getWorkerCount());
             Assert.assertArrayEquals(new int[]{1, 2, 3, 4, 5, 6}, configuration.getHttpServerConfiguration().getWorkerAffinity());
             Assert.assertTrue(configuration.getHttpServerConfiguration().haltOnError());
+            Assert.assertEquals(6, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getQueryConnectionLimit());
+            Assert.assertEquals(2, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getIlpConnectionLimit());
             Assert.assertEquals("index2.html", configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getIndexFileName());
             Assert.assertEquals(SecurityContext.AUTH_TYPE_NONE, configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getRequiredAuthType());
             Assert.assertFalse(configuration.getHttpServerConfiguration().isQueryCacheEnabled());

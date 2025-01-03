@@ -52,6 +52,11 @@ public class VirtualLongGauge implements LongGauge {
     }
 
     @Override
+    public CharSequence getName() {
+        return name;
+    }
+
+    @Override
     public long getValue() {
         return provider.getValue();
     }
@@ -76,17 +81,13 @@ public class VirtualLongGauge implements LongGauge {
 
     private void appendMetricName(CharSink<?> sink) {
         sink.putAscii(PrometheusFormatUtils.METRIC_NAME_PREFIX);
-        sink.put(getName());
+        sink.put(name);
     }
 
     private void appendType(CharSink<?> sink) {
         sink.putAscii(PrometheusFormatUtils.TYPE_PREFIX);
-        sink.put(getName());
+        sink.put(name);
         sink.putAscii(" gauge\n");
-    }
-
-    private CharSequence getName() {
-        return this.name;
     }
 
     @FunctionalInterface

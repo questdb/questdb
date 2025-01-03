@@ -50,6 +50,11 @@ public class LongGaugeImpl implements LongGauge {
     }
 
     @Override
+    public CharSequence getName() {
+        return name;
+    }
+
+    @Override
     public long getValue() {
         return counter.sum();
     }

@@ -152,4 +152,6 @@ public interface SecurityContext extends Mutable {
     default boolean isQueryCancellationAllowed() {
         return true;
     }
+
+    boolean isSystemAdmin();
 }

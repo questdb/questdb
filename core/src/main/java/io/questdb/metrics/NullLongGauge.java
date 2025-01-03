@@ -42,6 +42,11 @@ public class NullLongGauge implements LongGauge {
     }
 
     @Override
+    public CharSequence getName() {
+        return null;
+    }
+
+    @Override
     public long getValue() {
         return 0;
     }
