@@ -43,6 +43,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     private final NetworkFacade nf;
     private final int throttle;
     private long buffer;
+    @NotNull
     private AtomicBoolean cancelledFlag;
     private long fd = -1;
     private volatile long powerUpTime = Long.MAX_VALUE;
@@ -67,14 +68,13 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
             this.timeout = Long.MAX_VALUE;
         }
         this.defaultMaxTime = this.timeout;
+        this.cancelledFlag = new AtomicBoolean(false);
     }
 
     @Override
     public void cancel() {
         powerUpTime = Long.MIN_VALUE;
-        if (cancelledFlag != null) {
-            cancelledFlag.set(true);
-        }
+        cancelledFlag.set(true);
     }
 
     @Override
@@ -87,7 +87,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         if (clock.getTicks() - timeout > millis) {
             return true;
         }
-        if (cancelledFlag != null && cancelledFlag.get()) {
+        if (cancelledFlag.get()) {
             return true;
         }
         return testConnection(fd);
@@ -105,6 +105,10 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     public void close() {
         buffer = Unsafe.free(buffer, bufferSize, memoryTag);
         fd = -1;
+    }
+
+    public AtomicBoolean getCancelledFlag() {
+        return cancelledFlag;
     }
 
     @Override
@@ -131,7 +135,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         if (clock.getTicks() - timeout > millis) {
             return STATE_TIMEOUT;
         }
-        if (cancelledFlag != null && cancelledFlag.get()) {
+        if (cancelledFlag.get()) {
             return STATE_CANCELLED;
         }
         if (testConnection(fd)) {
@@ -149,6 +153,13 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     public void init(SqlExecutionCircuitBreaker circuitBreaker) {
         fd = circuitBreaker.getFd();
         timeout = circuitBreaker.getTimeout();
+        if (circuitBreaker instanceof NetworkSqlExecutionCircuitBreaker) {
+            NetworkSqlExecutionCircuitBreaker cb = (NetworkSqlExecutionCircuitBreaker) circuitBreaker;
+            cancelledFlag = cb.getCancelledFlag();
+        } else if (circuitBreaker instanceof AtomicBooleanCircuitBreaker) {
+            AtomicBooleanCircuitBreaker cb = (AtomicBooleanCircuitBreaker) circuitBreaker;
+            cancelledFlag = cb.cancelledFlag;
+        }
     }
 
     @Override
@@ -178,7 +189,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
-    public void setCancelledFlag(AtomicBoolean cancelledFlag) {
+    public void setCancelledFlag(@NotNull AtomicBoolean cancelledFlag) {
         this.cancelledFlag = cancelledFlag;
     }
 
@@ -235,7 +246,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     private void testCancelled() {
-        if (cancelledFlag != null && cancelledFlag.get()) {
+        if (cancelledFlag.get()) {
             throw CairoException.queryCancelled(fd);
         }
     }
