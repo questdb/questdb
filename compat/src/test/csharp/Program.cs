@@ -313,11 +313,11 @@ public class TestRunner
                 {
                     DateTime dt => (object)dt.ToString("yyyy-MM-ddTHH:mm:ss.ffffffZ"),
                     // Convert all numeric types to string and cast back to object
-                    long l => (object)l.ToString(),
-                    double d => (object)d.ToString(),
-                    int i => (object)i.ToString(),
-                    short s => (object)s.ToString(),
-                    decimal dec => (object)dec.ToString(),
+                    long l => (object)l.ToString(CultureInfo.InvariantCulture),
+                    double d => (object)d.ToString(CultureInfo.InvariantCulture),
+                    int i => (object)i.ToString(CultureInfo.InvariantCulture),
+                    short s => (object)s.ToString(CultureInfo.InvariantCulture),
+                    decimal dec => (object)dec.ToString(CultureInfo.InvariantCulture),
                     _ => (object)(value?.ToString() ?? "")
                 })
                 .ToList())
