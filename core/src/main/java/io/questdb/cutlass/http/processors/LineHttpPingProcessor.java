@@ -42,7 +42,7 @@ public class LineHttpPingProcessor implements HttpRequestProcessor {
 
     @Override
     public AtomicCounter getConnectionCounter(Metrics metrics) {
-        return metrics.line().httpConnectionCounter();
+        return metrics.lineMetrics().httpConnectionCounter();
     }
 
     @Override

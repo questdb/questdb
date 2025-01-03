@@ -68,7 +68,7 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
 
     @Override
     public AtomicCounter getConnectionCounter(Metrics metrics) {
-        return metrics.line().httpConnectionCounter();
+        return metrics.lineMetrics().httpConnectionCounter();
     }
 
     @Override
@@ -169,7 +169,7 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
             state.setSendStatus(SendStatus.CONTENT);
             sendErrorContent(context);
         }
-        engine.getMetrics().line().totalIlpHttpBytesGauge().add(context.getTotalReceived());
+        engine.getMetrics().lineMetrics().totalIlpHttpBytesGauge().add(context.getTotalReceived());
     }
 
     @Override

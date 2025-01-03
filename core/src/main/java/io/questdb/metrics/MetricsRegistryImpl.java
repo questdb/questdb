@@ -29,11 +29,11 @@ import io.questdb.std.str.BorrowableUtf8Sink;
 import org.jetbrains.annotations.NotNull;
 
 public class MetricsRegistryImpl implements MetricsRegistry {
-    private final ObjList<Scrapable> metrics = new ObjList<>();
+    private final ObjList<Target> metrics = new ObjList<>();
 
     @Override
-    public void addScrapable(Scrapable scrapable) {
-        metrics.add(scrapable);
+    public void addTarget(Target target) {
+        metrics.add(target);
     }
 
     @Override
@@ -99,7 +99,7 @@ public class MetricsRegistryImpl implements MetricsRegistry {
     @Override
     public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
         for (int i = 0, n = metrics.size(); i < n; i++) {
-            Scrapable metric = metrics.getQuick(i);
+            Target metric = metrics.getQuick(i);
             metric.scrapeIntoPrometheus(sink);
         }
     }

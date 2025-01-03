@@ -45,8 +45,6 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
     private final int httpIlpConnectionLimit;
     private final int httpQueryConnectionLimit;
     private final boolean httpReadOnlySecurityContext;
-    private final int httpRecvBufferSize;
-    private final int httpSendBufferSize;
     private final boolean httpServerCookiesEnabled;
     private final boolean httpServerKeepAlive;
     private final String httpVersion;
@@ -65,8 +63,6 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
             int httpForceSendFragmentationChunkSize,
             boolean httpFrozenClock,
             boolean httpReadOnlySecurityContext,
-            int httpRecvBufferSize,
-            int httpSendBufferSize,
             boolean httpServerCookiesEnabled,
             boolean httpServerKeepAlive,
             String httpVersion,
@@ -76,16 +72,14 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
             int requestHeaderBufferSize
     ) {
         this(
-                connectionStringPoolCapacity,
                 connectionPoolInitialCapacity,
+                connectionStringPoolCapacity,
                 serverConfiguration,
                 httpAllowDeflateBeforeSend,
                 httpForceRecvFragmentationChunkSize,
                 httpForceSendFragmentationChunkSize,
                 httpFrozenClock,
                 httpReadOnlySecurityContext,
-                httpRecvBufferSize,
-                httpSendBufferSize,
                 httpServerCookiesEnabled,
                 httpServerKeepAlive,
                 httpVersion,
@@ -107,8 +101,6 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
             int httpForceSendFragmentationChunkSize,
             boolean httpFrozenClock,
             boolean httpReadOnlySecurityContext,
-            int httpRecvBufferSize,
-            int httpSendBufferSize,
             boolean httpServerCookiesEnabled,
             boolean httpServerKeepAlive,
             String httpVersion,
@@ -127,8 +119,6 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
         this.httpForceSendFragmentationChunkSize = httpForceSendFragmentationChunkSize;
         this.httpFrozenClock = httpFrozenClock;
         this.httpReadOnlySecurityContext = httpReadOnlySecurityContext;
-        this.httpRecvBufferSize = httpRecvBufferSize;
-        this.httpSendBufferSize = httpSendBufferSize;
         this.httpServerCookiesEnabled = httpServerCookiesEnabled;
         this.httpServerKeepAlive = httpServerKeepAlive;
         this.httpVersion = httpVersion;
@@ -191,6 +181,11 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
     }
 
     @Override
+    public Metrics getMetrics() {
+        return serverConfiguration.getMetrics();
+    }
+
+    @Override
     public MillisecondClock getMillisecondClock() {
         return httpFrozenClock ? StationaryMillisClock.INSTANCE : MillisecondClockImpl.INSTANCE;
     }
@@ -221,18 +216,8 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
     }
 
     @Override
-    public int getRecvBufferSize() {
-        return httpRecvBufferSize;
-    }
-
-    @Override
     public int getRequestHeaderBufferSize() {
         return requestHeaderBufferSize;
-    }
-
-    @Override
-    public int getSendBufferSize() {
-        return httpSendBufferSize;
     }
 
     @Override

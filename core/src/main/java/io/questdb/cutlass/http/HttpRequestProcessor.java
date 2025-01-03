@@ -43,7 +43,7 @@ public interface HttpRequestProcessor {
     }
 
     default AtomicCounter getConnectionCounter(Metrics metrics) {
-        return metrics.jsonQuery().jsonConnectionCounter();
+        return metrics.jsonQueryMetrics().jsonConnectionCounter();
     }
 
     default int getConnectionLimit(HttpContextConfiguration configuration) {

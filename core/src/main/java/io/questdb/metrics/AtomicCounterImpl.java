@@ -41,6 +41,11 @@ public class AtomicCounterImpl implements AtomicCounter {
     }
 
     @Override
+    public void reset() {
+        counter.set(0);
+    }
+
+    @Override
     public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
         appendType(sink);
         appendMetricName(sink);

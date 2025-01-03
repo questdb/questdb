@@ -29,6 +29,7 @@ import io.questdb.BuildInformationHolder;
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.DefaultTelemetryConfiguration;
 import io.questdb.FactoryProvider;
+import io.questdb.Metrics;
 import io.questdb.PropServerConfiguration;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
@@ -466,6 +467,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getMetadataPoolCapacity() {
         return getSqlModelPoolCapacity();
+    }
+
+    @Override
+    public Metrics getMetrics() {
+        return Metrics.ENABLED;
     }
 
     @Override

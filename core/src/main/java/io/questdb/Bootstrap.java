@@ -90,7 +90,6 @@ public class Bootstrap {
     private final BuildInformation buildInformation;
     private final ServerConfiguration config;
     private final Log log;
-    private final Metrics metrics;
     private final MicrosecondClock microsecondClock;
     private final String rootDirectory;
 
@@ -225,10 +224,7 @@ public class Bootstrap {
             log.errorW().$(e).$();
             throw new BootstrapException(e);
         }
-        if (config.getMetricsConfiguration().isEnabled()) {
-            metrics = Metrics.enabled();
-        } else {
-            metrics = Metrics.disabled();
+        if (!config.getMetricsConfiguration().isEnabled()) {
             log.advisoryW().$("Metrics are disabled, health check endpoint will not consider unhandled errors").$();
         }
         Unsafe.setRssMemLimit(config.getMemoryConfiguration().getResolvedRamUsageLimitBytes());
@@ -367,10 +363,6 @@ public class Bootstrap {
         return log;
     }
 
-    public Metrics getMetrics() {
-        return metrics;
-    }
-
     public MicrosecondClock getMicrosecondClock() {
         return microsecondClock;
     }
@@ -397,7 +389,7 @@ public class Bootstrap {
     }
 
     public CairoEngine newCairoEngine() {
-        return new CairoEngine(getConfiguration().getCairoConfiguration(), getMetrics());
+        return new CairoEngine(getConfiguration().getCairoConfiguration());
     }
 
     private static void copyInputStream(boolean force, byte[] buffer, File out, InputStream is, Log log) throws IOException {
@@ -681,7 +673,7 @@ public class Bootstrap {
                 sb.append("ILP Client Connection String");
             }
             sb.append("\n\n");
-            final IODispatcherConfiguration httpConf = config.getHttpServerConfiguration().getDispatcherConfiguration();
+            final IODispatcherConfiguration httpConf = config.getHttpServerConfiguration();
             final int bindIP = httpConf.getBindIPv4Address();
             final int bindPort = httpConf.getBindPort();
             if (bindIP == 0) {

@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.Metrics;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
@@ -32,9 +31,21 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.*;
-import io.questdb.griffin.model.*;
-import io.questdb.std.*;
+import io.questdb.griffin.FunctionParser;
+import io.questdb.griffin.PostOrderTreeTraversalAlgo;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.WhereClauseParser;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.griffin.model.IntrinsicModel;
+import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
+import io.questdb.std.LongList;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
@@ -127,7 +138,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                 .timestamp();
         AbstractCairoTest.create(model);
 
-        try (TableWriter writer = newOffPoolWriter(configuration, "v", Metrics.disabled())) {
+        try (TableWriter writer = newOffPoolWriter(configuration, "v")) {
             TableWriter.Row row = writer.newRow(0);
             row.putSym(0, "sym1");
             row.putSym(5, "mode1");

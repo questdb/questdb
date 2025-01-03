@@ -24,9 +24,9 @@
 
 package io.questdb.metrics;
 
-public interface MetricsRegistry extends Scrapable {
+public interface MetricsRegistry extends Target {
 
-    void addScrapable(Scrapable scrapable);
+    void addTarget(Target target);
 
     AtomicCounter newAtomicCounter(CharSequence name);
 

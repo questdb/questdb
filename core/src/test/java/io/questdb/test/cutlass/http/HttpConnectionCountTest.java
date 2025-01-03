@@ -25,7 +25,6 @@
 package io.questdb.test.cutlass.http;
 
 import io.questdb.DefaultHttpClientConfiguration;
-import io.questdb.Metrics;
 import io.questdb.ServerConfiguration;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
@@ -89,8 +88,8 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                 protected Services services() {
                     return new Services() {
                         @Override
-                        public @Nullable HttpServer createHttpServer(ServerConfiguration configuration, CairoEngine cairoEngine, WorkerPool workerPool, int sharedWorkerCount, Metrics metrics) {
-                            HttpServer server = super.createHttpServer(configuration, cairoEngine, workerPool, sharedWorkerCount, metrics);
+                        public @Nullable HttpServer createHttpServer(ServerConfiguration configuration, CairoEngine cairoEngine, WorkerPool workerPool, int sharedWorkerCount) {
+                            HttpServer server = super.createHttpServer(configuration, cairoEngine, workerPool, sharedWorkerCount);
                             if (server != null) {
                                 server.bind(new HttpRequestProcessorFactory() {
                                     @Override

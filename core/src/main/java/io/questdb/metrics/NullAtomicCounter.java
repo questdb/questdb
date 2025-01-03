@@ -29,6 +29,10 @@ public class NullAtomicCounter implements AtomicCounter {
     }
 
     @Override
+    public void reset() {
+    }
+
+    @Override
     public void scrapeIntoPrometheus(BorrowableUtf8Sink sink) {
     }
 }

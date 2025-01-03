@@ -110,6 +110,11 @@ public class LogFactory implements Closeable {
         this.clock = clock;
         workerPool = new WorkerPool(new WorkerPoolConfiguration() {
             @Override
+            public Metrics getMetrics() {
+                return Metrics.DISABLED;
+            }
+
+            @Override
             public String getPoolName() {
                 return "logging";
             }
@@ -123,7 +128,7 @@ public class LogFactory implements Closeable {
             public boolean isDaemonPool() {
                 return true;
             }
-        }, Metrics.disabled());
+        });
     }
 
     public static synchronized void closeInstance() {

@@ -1,6 +1,6 @@
 package io.questdb.metrics;
 
-public interface AtomicCounter extends Scrapable {
+public interface AtomicCounter extends Target {
     boolean compareAndSet(long expectedValue, long newValue);
 
     void dec();
@@ -10,4 +10,6 @@ public interface AtomicCounter extends Scrapable {
     CharSequence getName();
 
     void inc();
+
+    void reset();
 }

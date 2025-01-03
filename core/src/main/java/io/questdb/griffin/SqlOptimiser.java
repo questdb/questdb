@@ -4519,7 +4519,7 @@ public class SqlOptimiser implements Mutable {
                                         if (qc.getAst().type == ExpressionNode.FUNCTION || qc.getAst().type == ExpressionNode.OPERATION) {
                                             emitLiterals(qc.getAst(), synthetic, null, baseParent.getNestedModel(), false);
                                         } else {
-                                            synthetic.addBottomUpColumn(qc);
+                                            synthetic.addBottomUpColumnIfNotExists(qc);
                                         }
                                     }
                                     synthetic.setNestedModel(base);
