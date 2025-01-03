@@ -24,11 +24,13 @@
 
 package io.questdb;
 
-public class MemoryConfigurationWrapper implements MemoryConfiguration {
-    private final MemoryConfiguration delegate;
+import java.util.concurrent.atomic.AtomicReference;
 
-    protected MemoryConfigurationWrapper() {
-        delegate = null;
+public class MemoryConfigurationWrapper implements MemoryConfiguration {
+    private final AtomicReference<MemoryConfiguration> delegate = new AtomicReference<>();
+
+    public MemoryConfigurationWrapper() {
+        delegate.set(null);
     }
 
     @Override
@@ -51,7 +53,11 @@ public class MemoryConfigurationWrapper implements MemoryConfiguration {
         return getDelegate().getTotalSystemMemory();
     }
 
+    public void setDelegate(MemoryConfiguration delegate) {
+        this.delegate.set(delegate);
+    }
+
     protected MemoryConfiguration getDelegate() {
-        return delegate;
+        return delegate.get();
     }
 }

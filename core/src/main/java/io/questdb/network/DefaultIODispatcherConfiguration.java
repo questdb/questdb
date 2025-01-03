@@ -24,6 +24,9 @@
 
 package io.questdb.network;
 
+import io.questdb.Metrics;
+import io.questdb.metrics.Counter;
+import io.questdb.metrics.LongGauge;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 
@@ -43,6 +46,11 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     @Override
     public MillisecondClock getClock() {
         return MillisecondClockImpl.INSTANCE;
+    }
+
+    @Override
+    public LongGauge getConnectionCountGauge() {
+        return Metrics.DISABLED.httpMetrics().connectionCountGauge();
     }
 
     @Override
@@ -109,5 +117,10 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     @Override
     public long getTimeout() {
         return 5 * 60 * 1000L;
+    }
+
+    @Override
+    public Counter listenerStateChangeCounter() {
+        return Metrics.DISABLED.httpMetrics().listenerStateChangeCounter();
     }
 }

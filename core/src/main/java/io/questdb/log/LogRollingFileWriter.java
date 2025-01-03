@@ -180,7 +180,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         }
 
         if (rollEvery != null) {
-            switch (rollEvery.toUpperCase()) {
+            switch (rollEvery.trim().toUpperCase()) {
                 case "DAY":
                     rollDeadlineFunction = this::getNextDayDeadline;
                     break;
@@ -232,6 +232,11 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         Misc.free(renameToPath);
         Misc.free(logFileList);
         Misc.free(logFileNameSink);
+    }
+
+    @TestOnly
+    public NextDeadline getRollDeadlineFunction() {
+        return rollDeadlineFunction;
     }
 
     @TestOnly
@@ -489,7 +494,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     }
 
     @FunctionalInterface
-    private interface NextDeadline {
+    public interface NextDeadline {
         long getDeadline();
     }
 }

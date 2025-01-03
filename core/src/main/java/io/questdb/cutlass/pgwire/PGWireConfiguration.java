@@ -28,6 +28,7 @@ import io.questdb.FactoryProvider;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.std.ConcurrentCacheConfiguration;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.DateLocale;
 
@@ -82,10 +83,6 @@ public interface PGWireConfiguration extends IODispatcherConfiguration, WorkerPo
 
     String getReadOnlyUsername();
 
-    int getSelectCacheBlockCount();
-
-    int getSelectCacheRowCount();
-
     String getServerVersion();
 
     int getUpdateCacheBlockCount();
@@ -103,4 +100,6 @@ public interface PGWireConfiguration extends IODispatcherConfiguration, WorkerPo
     boolean isUpdateCacheEnabled();
 
     boolean readOnlySecurityContext();
+
+    ConcurrentCacheConfiguration getConcurrentCacheConfiguration();
 }

@@ -25,6 +25,7 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.FactoryProvider;
+import io.questdb.Metrics;
 import io.questdb.cutlass.line.LineTcpTimestampAdapter;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
@@ -74,6 +75,8 @@ public interface LineTcpReceiverConfiguration extends IODispatcherConfiguration 
     int getMaxFileNameLength();
 
     int getMaxMeasurementSize();
+
+    Metrics getMetrics();
 
     MicrosecondClock getMicrosecondClock();
 

@@ -26,6 +26,7 @@ package io.questdb.cutlass.http;
 
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
+import io.questdb.Metrics;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.NanosecondClock;
@@ -119,5 +120,10 @@ public class DefaultHttpContextConfiguration implements HttpContextConfiguration
     @Override
     public boolean readOnlySecurityContext() {
         return false;
+    }
+
+    @Override
+    public Metrics getMetrics() {
+        return Metrics.ENABLED;
     }
 }

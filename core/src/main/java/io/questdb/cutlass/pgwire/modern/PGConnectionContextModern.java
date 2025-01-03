@@ -409,7 +409,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             shutdownSocketGracefully();
             throw bpe; // request disconnection
         } catch (Throwable th) {
-            metrics.pgWire().getErrorCounter().inc();
+            metrics.pgWireMetrics().getErrorCounter().inc();
             throw th;
         }
 

@@ -25,17 +25,24 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.FactoryProvider;
+import io.questdb.Metrics;
+import io.questdb.metrics.Counter;
+import io.questdb.metrics.LongGauge;
 import io.questdb.network.EpollFacade;
 import io.questdb.network.KqueueFacade;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.SelectFacade;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
-public class HttpMinServerConfigurationWrapper implements HttpMinServerConfiguration {
-    private final HttpMinServerConfiguration delegate;
+import java.util.concurrent.atomic.AtomicReference;
 
-    protected HttpMinServerConfigurationWrapper() {
-        delegate = null;
+public class HttpMinServerConfigurationWrapper implements HttpServerConfiguration {
+    private final AtomicReference<HttpServerConfiguration> delegate = new AtomicReference<>();
+    private final Metrics metrics;
+
+    public HttpMinServerConfigurationWrapper(Metrics metrics) {
+        this.metrics = metrics;
+        delegate.set(null);
     }
 
     @Override
@@ -51,6 +58,11 @@ public class HttpMinServerConfigurationWrapper implements HttpMinServerConfigura
     @Override
     public MillisecondClock getClock() {
         return getDelegate().getClock();
+    }
+
+    @Override
+    public LongGauge getConnectionCountGauge() {
+        return metrics.httpMetrics().connectionCountGauge();
     }
 
     @Override
@@ -116,6 +128,11 @@ public class HttpMinServerConfigurationWrapper implements HttpMinServerConfigura
     @Override
     public int getListenBacklog() {
         return getDelegate().getListenBacklog();
+    }
+
+    @Override
+    public Metrics getMetrics() {
+        return metrics;
     }
 
     @Override
@@ -234,8 +251,17 @@ public class HttpMinServerConfigurationWrapper implements HttpMinServerConfigura
     }
 
     @Override
+    public Counter listenerStateChangeCounter() {
+        return getDelegate().listenerStateChangeCounter();
+    }
+
+    @Override
     public boolean preAllocateBuffers() {
         return getDelegate().preAllocateBuffers();
+    }
+
+    public void setDelegate(HttpServerConfiguration delegate) {
+        this.delegate.set(delegate);
     }
 
     @Override
@@ -243,7 +269,7 @@ public class HttpMinServerConfigurationWrapper implements HttpMinServerConfigura
         return getDelegate().workerPoolPriority();
     }
 
-    protected HttpMinServerConfiguration getDelegate() {
-        return delegate;
+    protected HttpServerConfiguration getDelegate() {
+        return delegate.get();
     }
 }

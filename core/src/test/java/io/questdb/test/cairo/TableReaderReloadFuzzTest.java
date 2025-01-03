@@ -91,7 +91,7 @@ public class TableReaderReloadFuzzTest extends AbstractCairoTest {
         TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY).timestamp();
         AbstractCairoTest.create(model);
 
-        try (TableWriter writer = newOffPoolWriter(configuration, tableName, metrics)) {
+        try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
             TableWriter.Row row = writer.newRow(0L);
             row.append();
             writer.commit();
@@ -254,7 +254,7 @@ public class TableReaderReloadFuzzTest extends AbstractCairoTest {
 
     private void testFuzzReload(int numOfReloads, int addFactor, int removeFactor, int renameFactor, int convertFactor) {
         createTable();
-        try (TableWriter writer = newOffPoolWriter(configuration, "all", metrics)) {
+        try (TableWriter writer = newOffPoolWriter(configuration, "all")) {
             try (TableReader reader = newOffPoolReader(configuration, "all")) {
                 for (int i = 0; i < numOfReloads; i++) {
                     ingest(writer);

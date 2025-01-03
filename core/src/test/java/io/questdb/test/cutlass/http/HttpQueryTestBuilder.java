@@ -25,7 +25,6 @@
 package io.questdb.test.cutlass.http;
 
 import io.questdb.FactoryProvider;
-import io.questdb.Metrics;
 import io.questdb.TelemetryJob;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
@@ -35,10 +34,10 @@ import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
+import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.HttpRequestProcessorFactory;
 import io.questdb.cutlass.http.HttpServer;
-import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.http.processors.HealthCheckProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
@@ -82,7 +81,6 @@ public class HttpQueryTestBuilder {
     private byte httpStaticContentAuthType = SecurityContext.AUTH_TYPE_NONE;
     private int jitMode = SqlJitMode.JIT_MODE_ENABLED;
     private long maxWriterWaitTimeout = 30_000L;
-    private Metrics metrics;
     private MicrosecondClock microsecondClock;
     private NanosecondClock nanosecondClock = NanosecondClockImpl.INSTANCE;
     private QueryFutureUpdateListener queryFutureUpdateListener;
@@ -117,11 +115,7 @@ public class HttpQueryTestBuilder {
                     .withHealthCheckAuthRequired(httpHealthCheckAuthType)
                     .withNanosClock(nanosecondClock)
                     .build();
-            if (metrics == null) {
-                metrics = Metrics.enabled();
-            }
-
-            final WorkerPool workerPool = new TestWorkerPool(workerCount, metrics);
+            final WorkerPool workerPool = new TestWorkerPool(workerCount, httpConfiguration.getMetrics());
 
             CairoConfiguration cairoConfiguration = configuration;
             if (cairoConfiguration == null) {
@@ -179,8 +173,8 @@ public class HttpQueryTestBuilder {
                 };
             }
             try (
-                    CairoEngine engine = new CairoEngine(cairoConfiguration, metrics);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, PlainSocketFactory.INSTANCE);
+                    CairoEngine engine = new CairoEngine(cairoConfiguration);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE);
                     SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
             ) {
                 TelemetryJob telemetryJob = null;
@@ -197,7 +191,7 @@ public class HttpQueryTestBuilder {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                        return HttpFullFatServerConfiguration.DEFAULT_PROCESSOR_URL;
                     }
 
                     @Override
@@ -358,11 +352,6 @@ public class HttpQueryTestBuilder {
 
     public HttpQueryTestBuilder withJitMode(int jitMode) {
         this.jitMode = jitMode;
-        return this;
-    }
-
-    public HttpQueryTestBuilder withMetrics(Metrics metrics) {
-        this.metrics = metrics;
         return this;
     }
 

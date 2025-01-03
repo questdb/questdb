@@ -1992,18 +1992,6 @@ public class AggregateTest extends AbstractCairoTest {
         // we need to create entire engine
         assertMemoryLeak(() -> {
             if (workerCount > 0) {
-                WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
-                    @Override
-                    public long getSleepTimeout() {
-                        return 1;
-                    }
-
-                    @Override
-                    public int getWorkerCount() {
-                        return workerCount - 1;
-                    }
-                });
-
                 final CairoConfiguration configuration1 = new DefaultTestCairoConfiguration(root) {
                     @Override
                     public @NotNull RostiAllocFacade getRostiAllocFacade() {
@@ -2020,6 +2008,18 @@ public class AggregateTest extends AbstractCairoTest {
                         return queueSize;
                     }
                 };
+
+                WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
+                    @Override
+                    public long getSleepTimeout() {
+                        return 1;
+                    }
+
+                    @Override
+                    public int getWorkerCount() {
+                        return workerCount - 1;
+                    }
+                });
 
                 execute(pool, runnable, configuration1);
             } else {
