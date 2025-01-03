@@ -117,6 +117,8 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 
+import static io.questdb.griffin.SqlKeywords.*;
+
 public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
     private static final Log LOG = LogFactory.getLog(FunctionParser.class);
     private static final int MATCH_EXACT_MATCH = 3;
