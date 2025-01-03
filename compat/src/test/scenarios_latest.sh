@@ -48,3 +48,24 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 echo "rust tests finished"
+
+if [[ $CLIENTS == 'ALL' || $CLIENTS == *'csharp'* ]]; then
+  echo "starting csharp tests"
+  cd compat/src/test/csharp
+
+  # restore dependencies
+  dotnet restore
+
+  # build
+  dotnet build --configuration Release --no-restore
+
+  # run
+  dotnet run --configuration Release --no-build -- ../../resources/test_cases.yaml
+  if [ $? -ne 0 ]; then
+      echo "csharp tests failed"
+      exit 1
+  fi
+  echo "csharp tests finished"
+else
+  echo "skipping rust tests"
+fi
