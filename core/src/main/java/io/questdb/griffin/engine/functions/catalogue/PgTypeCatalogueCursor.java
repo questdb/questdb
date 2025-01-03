@@ -43,7 +43,7 @@ class PgTypeCatalogueCursor implements NoRandomAccessRecordCursor {
     private int row = -1;
 
     public PgTypeCatalogueCursor() {
-        this.intValues[4] = PG_PUBLIC_OID;
+        this.intValues[4] = PG_CATALOG_OID;
     }
 
     @Override

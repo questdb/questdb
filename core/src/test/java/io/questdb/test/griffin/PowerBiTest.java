@@ -34,20 +34,20 @@ public class PowerBiTest extends AbstractCairoTest {
         // PowerBI runs this SQL on connection startup
         assertQuery(
                 "nspname\ttypname\toid\ttyprelid\ttypbasetype\ttype\telemoid\tord\n" +
-                        "public\tvarchar\t1043\tnull\t0\tb\t0\t0\n" +
-                        "public\ttimestamp\t1114\tnull\t0\tb\t0\t0\n" +
-                        "public\tfloat8\t701\tnull\t0\tb\t0\t0\n" +
-                        "public\tfloat4\t700\tnull\t0\tb\t0\t0\n" +
-                        "public\tint4\t23\tnull\t0\tb\t0\t0\n" +
-                        "public\tint2\t21\tnull\t0\tb\t0\t0\n" +
-                        "public\tchar\t18\tnull\t0\tb\t0\t0\n" +
-                        "public\tint8\t20\tnull\t0\tb\t0\t0\n" +
-                        "public\tbool\t16\tnull\t0\tb\t0\t0\n" +
-                        "public\tbinary\t17\tnull\t0\tb\t0\t0\n" +
-                        "public\tdate\t1082\tnull\t0\tb\t0\t0\n" +
-                        "public\tuuid\t2950\tnull\t0\tb\t0\t0\n" +
-                        "public\tinternal\t2281\tnull\t0\tb\t0\t0\n" +
-                        "public\toid\t26\tnull\t0\tb\t0\t0\n",
+                        "pg_catalog\tvarchar\t1043\tnull\t0\tb\t0\t0\n" +
+                        "pg_catalog\ttimestamp\t1114\tnull\t0\tb\t0\t0\n" +
+                        "pg_catalog\tfloat8\t701\tnull\t0\tb\t0\t0\n" +
+                        "pg_catalog\tfloat4\t700\tnull\t0\tb\t0\t0\n" +
+                        "pg_catalog\tint4\t23\tnull\t0\tb\t0\t0\n" +
+                        "pg_catalog\tint2\t21\tnull\t0\tb\t0\t0\n" +
+                        "pg_catalog\tchar\t18\tnull\t0\tb\t0\t0\n" +
+                        "pg_catalog\tint8\t20\tnull\t0\tb\t0\t0\n" +
+                        "pg_catalog\tbool\t16\tnull\t0\tb\t0\t0\n" +
+                        "pg_catalog\tbinary\t17\tnull\t0\tb\t0\t0\n" +
+                        "pg_catalog\tdate\t1082\tnull\t0\tb\t0\t0\n" +
+                        "pg_catalog\tuuid\t2950\tnull\t0\tb\t0\t0\n" +
+                        "pg_catalog\tinternal\t2281\tnull\t0\tb\t0\t0\n" +
+                        "pg_catalog\toid\t26\tnull\t0\tb\t0\t0\n",
                 "SELECT ns.nspname, a.typname, a.oid, a.typrelid, a.typbasetype,\n" +
                         "CASE WHEN pg_proc.proname='array_recv' THEN 'a' ELSE a.typtype END AS type,\n" +
                         "CASE\n" +

@@ -1031,20 +1031,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         bindVariableService.setBin(variableIndex, binarySequenceParamsPool.next().of(valueAddr, valueSize));
     }
 
-    private static void setBindVariableAsBoolean(
-            int variableIndex,
-            int valueSize,
-            BindVariableService bindVariableService
-    ) throws SqlException {
-        if (valueSize != 4 && valueSize != 5) {
-            throw SqlException
-                    .$(0, "bad value for BOOLEAN parameter [variableIndex=").put(variableIndex)
-                    .put(", valueSize=").put(valueSize)
-                    .put(']');
-        }
-        bindVariableService.setBoolean(variableIndex, valueSize == 4);
-    }
-
     private long calculateRecordTailSize(
             Record record,
             int startFrom,
@@ -1194,7 +1180,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         setBindVariableAsDate(i, lo, valueSize, bindVariableService, characterStore);
                         break;
                     case X_PG_BOOL:
-                        setBindVariableAsBoolean(i, valueSize, bindVariableService);
+                        setBindVariableAsBoolean(i, lo, valueSize, bindVariableService);
                         break;
                     case X_PG_BYTEA:
                         setBindVariableAsBin(i, lo, valueSize, bindVariableService, binarySequenceParamsPool);
@@ -2384,6 +2370,17 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         outResendRecordHeader = true;
         // reset to the message start
         utf8Sink.resetToBookmark(messageLengthAddress - Byte.BYTES);
+    }
+
+    private void setBindVariableAsBoolean(
+            int variableIndex,
+            long valueAddr,
+            int valueSize,
+            BindVariableService bindVariableService
+    ) throws SqlException, BadProtocolException {
+        ensureValueLength(variableIndex, Byte.BYTES, valueSize);
+        byte val = Unsafe.getUnsafe().getByte(valueAddr);
+        bindVariableService.setBoolean(variableIndex, val == 1);
     }
 
     private void setBindVariableAsChar(
