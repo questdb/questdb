@@ -72,6 +72,10 @@ public interface CairoConfiguration {
 
     boolean enableTestFactories();
 
+    default boolean freeLeakedReaders() {
+        return true;
+    }
+
     /**
      * All effective configuration values are seen by the server instance.
      *

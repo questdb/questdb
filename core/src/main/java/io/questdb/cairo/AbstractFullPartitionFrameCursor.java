@@ -40,7 +40,11 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
 
     @Override
     public void close() {
-        reader = Misc.free(reader);
+        // avoid double-close in case of cursor not closing the reader, query progress catching the leak
+        // and then factory is trying to close the cursor and the reader
+        if (reader != null && reader.isActive()) {
+            reader = Misc.free(reader);
+        }
         Misc.free(parquetDecoder);
     }
 

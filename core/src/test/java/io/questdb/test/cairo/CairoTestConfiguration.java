@@ -60,6 +60,11 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     }
 
     @Override
+    public boolean freeLeakedReaders() {
+        return overrides.freeLeakedReaders();
+    }
+
+    @Override
     public @NotNull CharSequence getCheckpointRoot() {
         return snapshotRoot;
     }
