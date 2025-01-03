@@ -24,6 +24,8 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.mv.MaterializedViewDefinition;
+
 public interface TableStructure {
 
     int getColumnCount();
@@ -33,6 +35,10 @@ public interface TableStructure {
     int getColumnType(int columnIndex);
 
     int getIndexBlockCapacity(int columnIndex);
+
+    default MaterializedViewDefinition getMatViewDefinition() {
+        return null;
+    }
 
     int getMaxUncommittedRows();
 
@@ -50,9 +56,16 @@ public interface TableStructure {
 
     int getTimestampIndex();
 
+    default void init(TableToken tableToken) {
+    }
+
     boolean isDedupKey(int columnIndex);
 
     boolean isIndexed(int columnIndex);
+
+    default boolean isMatView() {
+        return false;
+    }
 
     boolean isWalEnabled();
 }

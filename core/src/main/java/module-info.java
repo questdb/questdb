@@ -1,5 +1,3 @@
-import io.questdb.griffin.engine.functions.date.TimestampAddWithTimezoneFunctionFactory;
-
 /*******************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
@@ -120,6 +118,7 @@ open module io.questdb {
     exports io.questdb.griffin.engine.functions.json;
     exports io.questdb.std.filewatch;
     exports io.questdb.griffin.engine.table.parquet;
+    exports io.questdb.cairo.mv;
     exports io.questdb.cutlass.pgwire.modern;
 
     provides io.questdb.griffin.FunctionFactory with
@@ -889,6 +888,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.PrefixedVersionFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.TypeOfFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.CheckpointStatusFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.RefreshMaterializedViewFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.ViewsFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.ReloadConfigFunctionFactory,
 
 //            PostgreSQL advisory locks functions

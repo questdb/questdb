@@ -28,6 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.mv.MaterializedViewDefinition;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -97,6 +98,8 @@ public final class TableUtils {
     public static final String LEGACY_CHECKPOINT_DIRECTORY = "snapshot";
     public static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
+    public static final String MAT_VIEW_FILE_NAME = "_mv";
+    public static final String MAT_VIEW_QUERY_FILE_NAME = "_mv.q";
     public static final long META_COLUMN_DATA_SIZE = 32;
     public static final String META_FILE_NAME = "_meta";
     public static final short META_MINOR_VERSION_LATEST = 1;
@@ -133,6 +136,9 @@ public final class TableUtils {
 
     public static final String META_SWAP_FILE_NAME = "_meta.swp";
     public static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
+    // 24-byte header left empty for possible future use
+    // in case we decide to support ALTER MAT VIEW, and modify mat view metadata
+    public static final int MV_HEADER_SIZE = 24;
     public static final int NULL_LEN = -1;
     public static final String PARQUET_PARTITION_NAME = "data.parquet";
     public static final String RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME = "_restore";
@@ -142,6 +148,7 @@ public final class TableUtils {
     public static final int TABLE_EXISTS = 0;
     public static final String TABLE_NAME_FILE = "_name";
     public static final int TABLE_RESERVED = 2;
+    public static final int TABLE_TYPE_MAT = 2;
     public static final int TABLE_TYPE_NON_WAL = 0;
     public static final int TABLE_TYPE_WAL = 1;
     public static final String TAB_INDEX_FILE_NAME = "_tab_index.d";
@@ -193,6 +200,7 @@ public final class TableUtils {
     public static final long TX_OFFSET_LAG_ROW_COUNT_32 = TX_OFFSET_LAG_TXN_COUNT_32 + 4;
     public static final long TX_OFFSET_LAG_MIN_TIMESTAMP_64 = TX_OFFSET_LAG_ROW_COUNT_32 + 4;
     public static final long TX_OFFSET_LAG_MAX_TIMESTAMP_64 = TX_OFFSET_LAG_MIN_TIMESTAMP_64 + 8;
+    public static final long TX_OFFSET_MAT_VIEW_BASE_TXN_64 = TX_OFFSET_LAG_MAX_TIMESTAMP_64 + 8;
     // @formatter:on
     public static final int TX_RECORD_HEADER_SIZE = (int) TX_OFFSET_MAP_WRITER_COUNT_32 + Integer.BYTES;
     public static final String UPGRADE_FILE_NAME = "_upgrade.d";
@@ -358,6 +366,22 @@ public final class TableUtils {
         return function;
     }
 
+    public static void createMatViewDefinitionFile(MemoryMARW mem, MaterializedViewDefinition matViewDefinition) {
+        mem.extend(MV_HEADER_SIZE);
+        mem.jumpTo(MV_HEADER_SIZE);
+        mem.putStr(matViewDefinition.getBaseTableName());
+        mem.putLong(matViewDefinition.getFromMicros());
+        mem.putLong(matViewDefinition.getToMicros());
+        mem.putLong(matViewDefinition.getSamplingInterval());
+        mem.putChar(matViewDefinition.getSamplingIntervalUnit());
+        mem.putStr(matViewDefinition.getTimeZone());
+        mem.putStr(matViewDefinition.getTimeZoneOffset());
+    }
+
+    public static void createMatViewQueryFile(MemoryMARW mem, MaterializedViewDefinition matViewDefinition) {
+        mem.putStr(matViewDefinition.getMatViewSql());
+    }
+
     public static void createTable(
             CairoConfiguration configuration,
             MemoryMARW memory,
@@ -492,6 +516,10 @@ public final class TableUtils {
             mem.smallFile(ff, path.trimTo(rootLen).concat(TABLE_NAME_FILE).$(), MemoryTag.MMAP_DEFAULT);
             createTableNameFile(mem, getTableNameFromDirName(tableDir));
 
+            if (structure.isMatView()) {
+                createViewMetaFiles(ff, mem, path, rootLen, structure.getMatViewDefinition());
+            }
+
             // Create TXN file last, it's used to determine if table exists
             mem.smallFile(ff, path.trimTo(rootLen).concat(txnFileName).$(), MemoryTag.MMAP_DEFAULT);
             createTxn(mem, symbolMapCount, 0L, 0L, INITIAL_TXN, 0L, 0L, 0L, 0L);
@@ -578,6 +606,24 @@ public final class TableUtils {
         txMem.setTruncateSize(TX_BASE_HEADER_SIZE + TX_RECORD_HEADER_SIZE);
     }
 
+    public static void createViewMetaFiles(
+            FilesFacade ff,
+            MemoryMARW mem,
+            Path path,
+            int rootLen,
+            MaterializedViewDefinition matViewDefinition
+    ) {
+        mem.smallFile(ff, path.trimTo(rootLen).concat(MAT_VIEW_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+        createMatViewDefinitionFile(mem, matViewDefinition);
+        mem.sync(false);
+        mem.close(true, Vm.TRUNCATE_TO_POINTER);
+
+        mem.smallFile(ff, path.trimTo(rootLen).concat(MAT_VIEW_QUERY_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+        createMatViewQueryFile(mem, matViewDefinition);
+        mem.sync(false);
+        mem.close(true, Vm.TRUNCATE_TO_POINTER);
+    }
+
     public static LPSZ dFile(Path path, @NotNull CharSequence columnName, long columnTxn) {
         path.concat(columnName).put(FILE_SUFFIX_D);
         if (columnTxn > COLUMN_NAME_TXN_NONE) {
@@ -588,6 +634,11 @@ public final class TableUtils {
 
     public static LPSZ dFile(Path path, CharSequence columnName) {
         return dFile(path, columnName, COLUMN_NAME_TXN_NONE);
+    }
+
+    public static boolean doesMvFileExist(CairoConfiguration configuration, Path path, CharSequence dirName, FilesFacade ff) {
+        path.of(configuration.getRoot()).concat(dirName).concat(MAT_VIEW_FILE_NAME);
+        return ff.exists(path.$());
     }
 
     public static boolean equalColumnNamesAndTypes(RecordMetadata metadataA, RecordMetadata metadataB) {

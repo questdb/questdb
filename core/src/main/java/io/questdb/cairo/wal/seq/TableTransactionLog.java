@@ -106,6 +106,14 @@ public class TableTransactionLog implements Closeable {
         txnLogFile.fullSync();
     }
 
+    public long getLastRefreshBaseTxn() {
+        return txnLogFile.getLastRefreshBaseTxn();
+    }
+
+    public void setLastRefreshBaseTxn(long baseTxn) {
+        txnLogFile.setLastRefreshBaseTxn(baseTxn);
+    }
+
     public void open(Path path) {
         if (rootPath.size() == 0) {
             assert txnLogFile == null;

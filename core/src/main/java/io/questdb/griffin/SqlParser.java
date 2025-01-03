@@ -27,9 +27,12 @@ package io.questdb.griffin;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
+import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
+import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilderImpl;
 import io.questdb.griffin.model.CopyModel;
@@ -44,6 +47,7 @@ import io.questdb.griffin.model.RenameTableModel;
 import io.questdb.griffin.model.WindowColumn;
 import io.questdb.griffin.model.WithClauseModel;
 import io.questdb.std.BufferWindowCharSequence;
+import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntList;
@@ -63,6 +67,7 @@ import static io.questdb.cairo.SqlWalMode.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.std.GenericLexer.assertNoDotsAndSlashes;
 import static io.questdb.std.GenericLexer.unquote;
+import static io.questdb.std.datetime.microtime.TimestampFormatUtils.DAY_FORMAT;
 
 public class SqlParser {
     public static final int MAX_ORDER_BY_COLUMNS = 1560;
@@ -80,13 +85,15 @@ public class SqlParser {
     private final CharSequence column;
     private final CairoConfiguration configuration;
     private final ObjectPool<CopyModel> copyModelPool;
+    private final CreateMatViewOperationBuilder createMatViewOperationBuilder = new CreateMatViewOperationBuilder();
     private final ObjectPool<CreateTableColumnModel> createTableColumnModelPool;
-    private final CreateTableOperationBuilderImpl createTableOperationBuilder = new CreateTableOperationBuilderImpl();
+    private final CreateTableOperationBuilderImpl createTableOperationBuilder = createMatViewOperationBuilder.getCreateTableOperationBuilder();
     private final ObjectPool<ExplainModel> explainModelPool;
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final ExpressionParser expressionParser;
     private final ExpressionTreeBuilder expressionTreeBuilder;
     private final ObjectPool<InsertModel> insertModelPool;
+    private final CharSequenceHashSet matViewTables = new CharSequenceHashSet();
     private final SqlOptimiser optimiser;
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
@@ -163,6 +170,32 @@ public class SqlParser {
                 && (tok.charAt(3) | 32) == 'l'
                 && (tok.charAt(4) | 32) == 'i'
                 && (tok.charAt(5) | 32) == 'c';
+    }
+
+    private static void collectTables(QueryModel model, CharSequenceHashSet tableNames) {
+        QueryModel m = model;
+        do {
+            final CharSequence t = m.getTableName();
+            if (t != null) {
+                tableNames.add(t);
+            }
+
+            final ObjList<QueryModel> joinModels = m.getJoinModels();
+            for (int i = 0, n = joinModels.size(); i < n; i++) {
+                final QueryModel joinModel = joinModels.getQuick(i);
+                if (joinModel == m) {
+                    continue;
+                }
+                collectTables(joinModel, tableNames);
+            }
+
+            final QueryModel unionModel = m.getUnionModel();
+            if (unionModel != null) {
+                collectTables(unionModel, tableNames);
+            }
+
+            m = m.getNestedModel();
+        } while (m != null);
     }
 
     private static SqlException err(GenericLexer lexer, @Nullable CharSequence tok, @NotNull String msg) {
@@ -550,7 +583,7 @@ public class SqlParser {
                         tok = tok(lexer, "year month day hour");
                         int partitionBy = PartitionBy.fromString(tok);
                         if (partitionBy == -1) {
-                            throw SqlException.$(lexer.getPosition(), "'NONE', 'HOUR', 'DAY', 'MONTH' or 'YEAR' expected");
+                            throw SqlException.$(lexer.getPosition(), "'NONE', 'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected");
                         }
                         model.setPartitionBy(partitionBy);
                         tok = optTok(lexer);
@@ -604,8 +637,252 @@ public class SqlParser {
         throw SqlException.$(lexer.lastTokenPosition(), "'from' expected");
     }
 
+    private ExecutionModel parseCreate(
+            GenericLexer lexer,
+            SqlExecutionContext executionContext,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
+        final CharSequence tok = tok(lexer, "'atomic' or 'table' or 'batch' or 'materialized'");
+        if (SqlKeywords.isMaterializedKeyword(tok) && configuration.isMatViewEnabled()) {
+            return parseCreateMatView(lexer, executionContext, sqlParserCallback);
+        }
+        return parseCreateTable(lexer, tok, executionContext, sqlParserCallback);
+    }
+
+    private ExecutionModel parseCreateMatView(
+            GenericLexer lexer,
+            SqlExecutionContext executionContext,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
+        final CreateMatViewOperationBuilder builder = createMatViewOperationBuilder;
+        builder.clear();
+        builder.getCreateTableOperationBuilder().setDefaultSymbolCapacity(configuration.getDefaultSymbolCapacity());
+
+        expectTok(lexer, "view");
+        CharSequence tok = tok(lexer, "view name or 'if'");
+        if (SqlKeywords.isIfKeyword(tok)) {
+            if (SqlKeywords.isNotKeyword(tok(lexer, "'not'")) && SqlKeywords.isExistsKeyword(tok(lexer, "'exists'"))) {
+                createTableOperationBuilder.setIgnoreIfExists(true);
+                tok = tok(lexer, "view name");
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "'if not exists' expected");
+            }
+        }
+        assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+        createTableOperationBuilder.setTableNameExpr(
+                nextLiteral(assertNoDotsAndSlashes(unquote(tok), lexer.lastTokenPosition()), lexer.lastTokenPosition()));
+
+        CharSequence baseTableName = null;
+        tok = tok(lexer, "'as' or 'with' expected");
+        if (SqlKeywords.isWithKeyword(tok)) {
+            expectTok(lexer, "base");
+            baseTableName = tok(lexer, "base table expected").toString();
+            tok = tok(lexer, "'as' expected");
+        }
+
+        final QueryModel queryModel;
+        if (SqlKeywords.isAsKeyword(tok)) {
+            expectTok(lexer, '(');
+
+            final int queryStartPos = lexer.getPosition();
+
+            // parse mat view query
+            final QueryModel qm = parseDml(lexer, null, lexer.getPosition(), true, sqlParserCallback);
+            final QueryModel nestedModel = qm.getNestedModel();
+            if (nestedModel.getSampleByFrom() != null) {
+                try {
+                    builder.setFromMicros(
+                            DAY_FORMAT.parse(unquote(nestedModel.getSampleByFrom().token), configuration.getDefaultDateLocale()));
+                } catch (NumericException e) {
+                    throw SqlException.position(lexer.getPosition()).put("cannot parse sample by FROM date");
+                }
+            }
+            if (nestedModel.getSampleByTo() != null) {
+                try {
+                    builder.setToMicros(
+                            DAY_FORMAT.parse(unquote(nestedModel.getSampleByTo().token), configuration.getDefaultDateLocale()));
+                } catch (NumericException e) {
+                    throw SqlException.position(lexer.getPosition()).put("cannot parse sample by TO date");
+                }
+            }
+            if (nestedModel.getSampleByTimezoneName() != null) {
+                builder.setTimeZone(unquote(nestedModel.getSampleByTimezoneName().token).toString());
+            }
+            if (nestedModel.getSampleByOffset() != null) {
+                builder.setTimeZoneOffset(unquote(nestedModel.getSampleByOffset().token).toString());
+            }
+
+            // optimize mat view query
+            queryModel = optimiser.optimise(qm, executionContext, sqlParserCallback);
+            queryModel.setIsMatView(true);
+
+            // find mat view query
+            final String matViewSql = Chars.toString(lexer.getContent(), queryStartPos, lexer.getPosition() - 1);
+            builder.setViewSql(matViewSql);
+
+            // create view columns based on query
+            final ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
+            assert columns.size() > 0;
+
+            // we do not know types of columns at this stage
+            // compiler must put table together using query metadata.
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                CreateTableColumnModel model = newCreateTableColumnModel(columns.getQuick(i).getName(), i);
+                model.setColumnType(ColumnType.UNDEFINED);
+            }
+
+            createTableOperationBuilder.setQueryModel(queryModel);
+            expectTok(lexer, ')');
+        } else {
+            throw SqlException.position(lexer.getPosition()).put("'as' expected");
+        }
+
+        while ((tok = optTok(lexer)) != null && Chars.equals(tok, ',')) {
+            tok = tok(lexer, "'index'");
+            if (isIndexKeyword(tok)) {
+                parseCreateTableIndexDef(lexer, false);
+            } else {
+                throw errUnexpected(lexer, tok);
+            }
+        }
+
+        final ExpressionNode timestamp = parseTimestamp(lexer, tok);
+        if (timestamp != null) {
+            final CreateTableColumnModel timestampModel = getCreateTableColumnModel(timestamp.token);
+            if (timestampModel == null) {
+                throw SqlException.position(timestamp.position).put("TIMESTAMP column does not exist [name=").put(timestamp.token).put(']');
+            }
+            final int timestampType = timestampModel.getColumnType();
+            if (timestampType != ColumnType.TIMESTAMP && timestampType != ColumnType.UNDEFINED) { // type can be -1 for create table as select because types aren't known yet
+                throw SqlException.position(timestamp.position).put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(timestampType)).put(']');
+            }
+            createTableOperationBuilder.setTimestampExpr(timestamp);
+            timestampModel.setIsDedupKey(); // set dedup for timestamp column
+            tok = optTok(lexer);
+        }
+
+        final ExpressionNode partitionBy = parseCreateTablePartition(lexer, tok);
+        if (partitionBy == null) {
+            throw SqlException.position(lexer.getPosition()).put("'partition by' expected");
+        }
+        final int partition = PartitionBy.fromString(partitionBy.token);
+        if (partition == -1) {
+            throw SqlException.$(partitionBy.position, "'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected");
+        }
+        if (!PartitionBy.isPartitioned(partition)) {
+            throw SqlException.position(0).put("Materialized view has to be partitioned");
+        }
+        createTableOperationBuilder.setPartitionByExpr(partitionBy);
+        tok = optTok(lexer);
+
+        if (tok != null && isInKeyword(tok)) {
+            expectTok(lexer, "volume");
+            tok = tok(lexer, "path for volume");
+            if (Os.isWindows()) {
+                throw SqlException.position(lexer.getPosition()).put("'in volume' is not supported on Windows");
+            }
+            createTableOperationBuilder.setVolumeAlias(GenericLexer.unquote(tok));
+            tok = optTok(lexer);
+        }
+
+        if (tok != null && !Chars.equals(tok, ';')) {
+            throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
+        }
+
+        // mat view is always WAL enabled
+        createTableOperationBuilder.setWalEnabled(true);
+
+        // find base table if not set explicitly
+        if (baseTableName == null) {
+            matViewTables.clear();
+            collectTables(queryModel, matViewTables);
+            if (matViewTables.size() < 1) {
+                throw SqlException.$(lexer.lastTokenPosition(), "Missing base table, materialized views have to be based on a table");
+            }
+            if (matViewTables.size() > 1) {
+                throw SqlException.$(lexer.lastTokenPosition(), "More than one table used in query, base table has to be set using 'WITH BASE'");
+            }
+            baseTableName = matViewTables.get(0);
+        }
+        final TableToken baseTableToken = executionContext.getTableTokenIfExists(baseTableName);
+        if (baseTableToken == null) {
+            throw SqlException.tableDoesNotExist(lexer.lastTokenPosition(), baseTableName);
+        }
+        if (!baseTableToken.isWal()) {
+            throw SqlException.$(lexer.lastTokenPosition(), "The base table has to be WAL enabled");
+        }
+        builder.setBaseTableName(baseTableToken.getTableName());
+
+        // find sampling interval
+        CharSequence intervalExpr = null;
+        final ExpressionNode sampleBy = queryModel.getSampleBy();
+        if (sampleBy != null && sampleBy.type == ExpressionNode.CONSTANT) {
+            intervalExpr = sampleBy.token;
+        }
+
+        // GROUP BY timestamp_floor(ts) (optimized SAMPLE BY)
+        if (intervalExpr == null) {
+            final ObjList<QueryColumn> queryColumns = queryModel.getBottomUpColumns();
+            for (int i = 0, n = queryColumns.size(); i < n; i++) {
+                final QueryColumn queryColumn = queryColumns.getQuick(i);
+                final ExpressionNode ast = queryColumn.getAst();
+                if (ast.type == ExpressionNode.FUNCTION && Chars.equalsIgnoreCase("timestamp_floor", ast.token)) {
+                    intervalExpr = ast.paramCount == 3 ? ast.args.getQuick(2).token : ast.lhs.token;
+                    if (timestamp == null) {
+                        createTableOperationBuilder.setTimestampExpr(nextLiteral(queryColumn.getName(), ast.position));
+                        final CreateTableColumnModel timestampModel = getCreateTableColumnModel(queryColumn.getName());
+                        if (timestampModel == null) {
+                            throw SqlException.position(ast.position).put("TIMESTAMP column does not exist [name=").put(queryColumn.getName()).put(']');
+                        }
+                        timestampModel.setIsDedupKey(); // set dedup for timestamp column
+                    }
+                    break;
+                }
+            }
+        }
+        if (intervalExpr == null) {
+            throw SqlException.$(lexer.lastTokenPosition(), "Materialized view query requires a sampling interval");
+        }
+
+        // parse sampling interval expression
+        intervalExpr = GenericLexer.unquote(intervalExpr);
+        final int samplingIntervalEnd = TimestampSamplerFactory.findIntervalEndIndex(intervalExpr, lexer.lastTokenPosition());
+        assert samplingIntervalEnd < intervalExpr.length();
+        final long samplingInterval = TimestampSamplerFactory.parseInterval(intervalExpr, samplingIntervalEnd, lexer.lastTokenPosition());
+        assert samplingInterval > 0;
+        final char samplingIntervalUnit = intervalExpr.charAt(samplingIntervalEnd);
+        builder.setSamplingInterval(samplingInterval);
+        builder.setSamplingIntervalUnit(samplingIntervalUnit);
+
+        final ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn column = columns.getQuick(i);
+            final ExpressionNode ast = column.getAst();
+            switch (ast.type) {
+                case ExpressionNode.FUNCTION:
+                case ExpressionNode.CONSTANT:
+                case ExpressionNode.OPERATION:
+                    // allowed, nothing to do
+                    break;
+                case ExpressionNode.LITERAL:
+                    // aggregation key, add as dedup key
+                    final CreateTableColumnModel model = createTableOperationBuilder.getColumnModel(column.getName());
+                    if (model == null) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "Missing column [name=" + column.getName() + "]");
+                    }
+                    model.setIsDedupKey();
+                    break;
+                default:
+                    // TODO: any other type can be allowed?
+                    throw SqlException.$(lexer.lastTokenPosition(), "Unsupported materialized view query");
+            }
+        }
+        return builder;
+    }
+
     private ExecutionModel parseCreateTable(
             GenericLexer lexer,
+            CharSequence tok,
             SqlExecutionContext executionContext,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
@@ -614,7 +891,6 @@ public class SqlParser {
         builder.setDefaultSymbolCapacity(configuration.getDefaultSymbolCapacity());
         final CharSequence tableName;
         // default to non-atomic, batched, creation
-        CharSequence tok = tok(lexer, "'atomic' or 'table' or 'batch'");
         builder.setBatchSize(configuration.getInsertModelBatchSize());
         boolean atomicSpecified = false;
         boolean batchSpecified = false;
@@ -740,7 +1016,7 @@ public class SqlParser {
                 throw SqlException.$(partitionBy.position, "partitioning is possible only on tables with designated timestamps");
             }
             if (PartitionBy.fromString(partitionBy.token) == -1) {
-                throw SqlException.$(partitionBy.position, "'NONE', 'HOUR', 'DAY', 'MONTH' or 'YEAR' expected");
+                throw SqlException.$(partitionBy.position, "'NONE', 'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected");
             }
             builder.setPartitionByExpr(partitionBy);
             tok = optTok(lexer);
@@ -1412,7 +1688,7 @@ public class SqlParser {
         }
 
         if (isCreateKeyword(tok)) {
-            return parseCreateTable(lexer, executionContext, sqlParserCallback);
+            return parseCreate(lexer, executionContext, sqlParserCallback);
         }
 
         if (isUpdateKeyword(tok)) {
@@ -3032,6 +3308,7 @@ public class SqlParser {
         queryColumnPool.clear();
         expressionNodePool.clear();
         windowColumnPool.clear();
+        createMatViewOperationBuilder.clear();
         createTableOperationBuilder.clear();
         createTableColumnModelPool.clear();
         renameTableModelPool.clear();
@@ -3082,7 +3359,7 @@ public class SqlParser {
         }
 
         if (isCreateKeyword(tok)) {
-            return parseCreateTable(lexer, executionContext, sqlParserCallback);
+            return parseCreate(lexer, executionContext, sqlParserCallback);
         }
 
         if (isUpdateKeyword(tok)) {

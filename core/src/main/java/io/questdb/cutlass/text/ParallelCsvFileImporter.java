@@ -390,7 +390,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         clear();
         this.circuitBreaker = circuitBreaker;
         this.tableName = tableName;
-        this.tableToken = cairoEngine.lockTableName(tableName, false);
+        this.tableToken = cairoEngine.lockTableName(tableName);
         if (tableToken == null) {
             tableToken = cairoEngine.verifyTableName(tableName);
         }

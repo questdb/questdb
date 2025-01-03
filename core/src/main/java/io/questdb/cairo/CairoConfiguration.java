@@ -627,6 +627,8 @@ public interface CairoConfiguration {
 
     boolean isIOURingEnabled();
 
+    boolean isMatViewEnabled();
+
     boolean isMultiKeyDedupEnabled();
 
     boolean isO3QuickSortEnabled();
