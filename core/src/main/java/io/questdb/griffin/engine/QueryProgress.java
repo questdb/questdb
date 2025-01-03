@@ -308,7 +308,14 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     public void onResourceReturned(ReaderPool.R resource) {
         int index = readers.remove(resource);
         // do not freak out if reader is not in the list after our cursor has been closed
-        assert index > -1 || !cursor.isOpen;
+        if (index < 0 && cursor.isOpen) {
+            // when this happens it could be down to a race condition where
+            // readers list is cleared before borrowed resources are returned.
+            // Last time this occurred when pool entry was released before readers is cleared. In
+            // this scenario the returned pool entry got used by another query and
+            // readers.clear() came in tangentially to this query.
+            LOG.critical().$("returned reader is not in supervisor's list [tableName=").$(resource.getTableToken().getTableName()).I$();
+        }
     }
 
     @Override

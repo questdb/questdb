@@ -96,6 +96,10 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean freeLeakedReaders() {
+        // to override use overrides() system, the idea for the "false" here
+        // is not to hide reader leaks and continue to get errors in tests if
+        // reader is left behind by the cursor. The need to override should be rare,
+        // and only for testing the "supervisor" system itself.
         return false;
     }
 
