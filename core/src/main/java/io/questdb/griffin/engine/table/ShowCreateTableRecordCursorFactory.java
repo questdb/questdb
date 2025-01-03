@@ -50,9 +50,9 @@ import org.jetbrains.annotations.NotNull;
 public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFactory {
     public static final int N_DDL_COL = 0;
     private static final RecordMetadata METADATA;
-    private final ShowCreateTableCursor cursor = new ShowCreateTableCursor();
     protected final TableToken tableToken;
     protected final int tokenPosition;
+    private final ShowCreateTableCursor cursor = new ShowCreateTableCursor();
 
     public ShowCreateTableRecordCursorFactory(TableToken tableToken, int tokenPosition) {
         super(METADATA);
@@ -77,12 +77,11 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
     }
 
     public static class ShowCreateTableCursor implements NoRandomAccessRecordCursor {
-        private final ShowCreateTableRecord record = new ShowCreateTableRecord();
         protected final Utf8StringSink sink = new Utf8StringSink();
-
+        private final ShowCreateTableRecord record = new ShowCreateTableRecord();
         protected SqlExecutionContext executionContext;
-        private boolean hasRun;
         protected CairoTable table;
+        private boolean hasRun;
         private TableToken tableToken;
 
         @Override
