@@ -113,6 +113,9 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                     // PARTITION BY unit
                     putPartitionBy();
 
+                    // TTL n unit
+                    putTtl();
+
                     // (BYPASS) WAL
                     putWal();
                 }
@@ -162,6 +165,36 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
         public void toTop() {
             sink.clear();
             hasRun = false;
+        }
+
+        private void putTtl() {
+            int ttl = table.getTtlHoursOrMonths();
+            if (ttl == 0) {
+                return;
+            }
+            String unit;
+            if (ttl > 0) {
+                unit = "HOUR";
+                if (ttl % 24 == 0) {
+                    unit = "DAY";
+                    ttl /= 24;
+                    if (ttl % 7 == 0) {
+                        unit = "WEEK";
+                        ttl /= 7;
+                    }
+                }
+            } else {
+                ttl = -ttl;
+                unit = "MONTH";
+                if (ttl % 12 == 0) {
+                    unit = "YEAR";
+                    ttl /= 12;
+                }
+            }
+            sink.putAscii(" TTL ").put(ttl).put(' ').putAscii(unit);
+            if (ttl > 1) {
+                sink.put('S');
+            }
         }
 
         // placeholder, do not remove!
