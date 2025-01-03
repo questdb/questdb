@@ -477,14 +477,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             if (lastAttemptSeqTxn > -1) {
                 logRecord.$(", seqTxn=").$(lastAttemptSeqTxn);
             }
-            if (throwable instanceof CairoException) {
-                CairoException ex = (CairoException) throwable;
-                logRecord.$(", error=").$(ex.getFlyweightMessage())
-                        .$(", errno=").$(ex.getErrno())
-                        .I$();
-            } else {
-                logRecord.$(", error=").$(throwable).I$();
-            }
+            // These errors are important, so we want to always log the stacktrace (if we have it).
+            logRecord.$(", error=").$(throwable).I$();
             engine.getTableSequencerAPI().suspendTable(tableToken, errorTag, errorMessage);
         } catch (CairoException e) {
             LOG.critical().$("could not suspend table [table=").$(tableToken.getTableName()).$(", error=").$(e.getFlyweightMessage()).I$();

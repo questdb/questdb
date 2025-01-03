@@ -303,11 +303,10 @@ public final class Unsafe {
         COUNTERS[memoryTag].add(size);
         if (memoryTag >= MemoryTag.NATIVE_DEFAULT) {
             final long mem = UNSAFE.getAndAddLong(null, RSS_MEM_USED_ADDR, size) + size;
-            assert mem >= 0;
-        }
-        else {
+            assert mem >= 0 : "unexpected RSS mem: " + mem + ", size: " + size + ", memoryTag:" + memoryTag;
+        } else {
             final long mem = UNSAFE.getAndAddLong(null, NON_RSS_MEM_USED_ADDR, size) + size;
-            assert mem >= 0;
+            assert mem >= 0 : "unexpected non-RSS mem: " + mem + ", size: " + size + ", memoryTag:" + memoryTag;
         }
     }
 
