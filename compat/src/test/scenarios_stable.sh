@@ -71,6 +71,14 @@ fi
 
 if [[ $CLIENTS == 'ALL' || $CLIENTS == *'csharp'* ]]; then
   echo "starting csharp tests"
+
+  # check if dotnet is installed
+  if ! command -v dotnet &> /dev/null
+  then
+      echo "dotnet could not be found! Please install .NET 9.0 SDK from https://dotnet.microsoft.com/download/dotnet/9.0"
+      exit 1
+  fi
+
   echo "$base_dir/compat/src/test/csharp"
   cd "$base_dir/compat/src/test/csharp" || exit
 
