@@ -265,7 +265,9 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public long getPartitionFloor(long timestamp) {
-        return partitionFloorMethod != null ? (timestamp != Long.MIN_VALUE ? partitionFloorMethod.floor(timestamp) : Long.MIN_VALUE) : DEFAULT_PARTITION_TIMESTAMP;
+        return partitionFloorMethod != null
+                ? (timestamp != Long.MIN_VALUE ? partitionFloorMethod.floor(timestamp) : Long.MIN_VALUE)
+                : DEFAULT_PARTITION_TIMESTAMP;
     }
 
     public int getPartitionIndex(long ts) {

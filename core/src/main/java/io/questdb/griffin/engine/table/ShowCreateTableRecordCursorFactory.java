@@ -50,9 +50,9 @@ import org.jetbrains.annotations.NotNull;
 public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFactory {
     public static final int N_DDL_COL = 0;
     private static final RecordMetadata METADATA;
-    private final ShowCreateTableCursor cursor = new ShowCreateTableCursor();
     protected final TableToken tableToken;
     protected final int tokenPosition;
+    private final ShowCreateTableCursor cursor = new ShowCreateTableCursor();
 
     public ShowCreateTableRecordCursorFactory(TableToken tableToken, int tokenPosition) {
         super(METADATA);
@@ -77,12 +77,11 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
     }
 
     public static class ShowCreateTableCursor implements NoRandomAccessRecordCursor {
-        private final ShowCreateTableRecord record = new ShowCreateTableRecord();
         protected final Utf8StringSink sink = new Utf8StringSink();
-
+        private final ShowCreateTableRecord record = new ShowCreateTableRecord();
         protected SqlExecutionContext executionContext;
-        private boolean hasRun;
         protected CairoTable table;
+        private boolean hasRun;
         private TableToken tableToken;
 
         @Override
@@ -113,6 +112,9 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
 
                     // PARTITION BY unit
                     putPartitionBy();
+
+                    // TTL n unit
+                    putTtl();
 
                     // (BYPASS) WAL
                     putWal();
@@ -163,6 +165,36 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
         public void toTop() {
             sink.clear();
             hasRun = false;
+        }
+
+        private void putTtl() {
+            int ttl = table.getTtlHoursOrMonths();
+            if (ttl == 0) {
+                return;
+            }
+            String unit;
+            if (ttl > 0) {
+                unit = "HOUR";
+                if (ttl % 24 == 0) {
+                    unit = "DAY";
+                    ttl /= 24;
+                    if (ttl % 7 == 0) {
+                        unit = "WEEK";
+                        ttl /= 7;
+                    }
+                }
+            } else {
+                ttl = -ttl;
+                unit = "MONTH";
+                if (ttl % 12 == 0) {
+                    unit = "YEAR";
+                    ttl /= 12;
+                }
+            }
+            sink.putAscii(" TTL ").put(ttl).put(' ').putAscii(unit);
+            if (ttl > 1) {
+                sink.put('S');
+            }
         }
 
         // placeholder, do not remove!

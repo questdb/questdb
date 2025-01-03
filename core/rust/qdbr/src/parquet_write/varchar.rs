@@ -107,7 +107,7 @@ pub fn varchar_to_page(
             return Err(fmt_err!(
                 Unsupported,
                 "unsupported encoding {encoding:?} while writing a string column"
-            ))
+            ));
         }
     };
 

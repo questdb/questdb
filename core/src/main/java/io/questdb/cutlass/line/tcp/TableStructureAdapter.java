@@ -50,7 +50,12 @@ public class TableStructureAdapter implements TableStructure {
     private CharSequence tableName;
     private int timestampIndex = -1;
 
-    public TableStructureAdapter(CairoConfiguration configuration, DefaultColumnTypes defaultColumnTypes, int defaultPartitionBy, boolean walEnabledDefault) {
+    public TableStructureAdapter(
+            CairoConfiguration configuration,
+            DefaultColumnTypes defaultColumnTypes,
+            int defaultPartitionBy,
+            boolean walEnabledDefault
+    ) {
         this.cairoConfiguration = configuration;
         this.defaultColumnTypes = defaultColumnTypes;
         this.defaultPartitionBy = defaultPartitionBy;
@@ -136,6 +141,12 @@ public class TableStructureAdapter implements TableStructure {
     @Override
     public int getTimestampIndex() {
         return timestampIndex == -1 ? entities.size() : timestampIndex;
+    }
+
+    @Override
+    public int getTtlHoursOrMonths() {
+        // todo: pass configuration here as the default option
+        return 0;
     }
 
     @Override

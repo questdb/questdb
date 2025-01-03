@@ -812,8 +812,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
         }
 
         @Override
-        public long commit() {
-            return 0;
+        public void commit() {
         }
 
         @Override
