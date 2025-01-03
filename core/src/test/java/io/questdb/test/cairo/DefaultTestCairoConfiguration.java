@@ -24,12 +24,15 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import org.jetbrains.annotations.NotNull;
 
 public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
+    private final Metrics metrics = Metrics.ENABLED;
+
     public DefaultTestCairoConfiguration(CharSequence root) {
         super(root);
     }
@@ -47,6 +50,11 @@ public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
     @Override
     public @NotNull FilesFacade getFilesFacade() {
         return TestFilesFacadeImpl.INSTANCE;
+    }
+
+    @Override
+    public Metrics getMetrics() {
+        return metrics;
     }
 
     @Override

@@ -589,6 +589,11 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
         int baseIndex = getPrimaryColumnIndex(columnBase, 0);
         int newBaseIndex = getPrimaryColumnIndex(getColumnBase(partitionIndex + 1), 0);
+        for (int i = baseIndex, n = newBaseIndex - 1; i < n; i++) {
+            // Close columns before deleting the objects.
+            // FD leak caught by failing fuzz tests.
+            Misc.free(columns.get(i));
+        }
         columns.remove(baseIndex, newBaseIndex - 1);
 
         int colTopStart = columnBase / 2;
@@ -998,17 +1003,23 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void openPartitionColumns(int partitionIndex, Path path, int columnBase, long partitionRowCount) {
-        for (int i = 0; i < columnCount; i++) {
-            reloadColumnAt(
-                    partitionIndex,
-                    path,
-                    columns,
-                    columnTops,
-                    bitmapIndexes,
-                    columnBase,
-                    i,
-                    partitionRowCount
-            );
+        try {
+            for (int i = 0; i < columnCount; i++) {
+                reloadColumnAt(
+                        partitionIndex,
+                        path,
+                        columns,
+                        columnTops,
+                        bitmapIndexes,
+                        columnBase,
+                        i,
+                        partitionRowCount
+                );
+            }
+        } catch (Throwable th) {
+            closePartitionColumns(columnBase);
+            openPartitionInfo.setQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE, -1);
+            throw th;
         }
     }
 
