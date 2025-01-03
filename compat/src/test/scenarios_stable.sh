@@ -3,8 +3,11 @@
 PGPORT=${PGPORT:-8812}
 CLIENTS=${CLIENTS:-'ALL'}
 
+base_dir=$(dirname $0)
+
 if [[ $CLIENTS == 'ALL' || $CLIENTS == *'psycopg2'* ]]; then
     echo "starting psycopg2 tests"
+    cd "$base_dir"
     python3 -m venv venv/psycopg2_stable
     source venv/psycopg2_stable/bin/activate
     pip install -r compat/src/test/python/requirements_psycopg2_stable.txt
@@ -21,6 +24,7 @@ fi
 
 if [[ $CLIENTS == 'ALL' || $CLIENTS == *'psycopg3'* ]]; then
   echo "starting psycopg3 tests"
+  cd "$base_dir"
   python3 -m venv venv/psycopg3_stable
   source venv/psycopg3_stable/bin/activate
   pip install -r compat/src/test/python/requirements_psycopg3_stable.txt
@@ -37,6 +41,7 @@ fi
 
 if [[ $CLIENTS == 'ALL' || $CLIENTS == *'asyncpg'* ]]; then
   echo "starting asyncpg tests"
+  cd "$base_dir"
   python3 -m venv venv/asyncpg_stable
   source venv/asyncpg_stable/bin/activate
   pip install -r compat/src/test/python/requirements_asyncpg_stable.txt
@@ -53,6 +58,7 @@ fi
 
 if [[ $CLIENTS == 'ALL' || $CLIENTS == *'rust'* ]]; then
   echo "starting rust tests"
+  cd "$base_dir"
   cd compat/src/test/rust/scenarios
   # use well-known versions of dependencies
   cp ./Cargo.unlocked ./Cargo.lock
@@ -69,6 +75,7 @@ fi
 
 if [[ $CLIENTS == 'ALL' || $CLIENTS == *'csharp'* ]]; then
   echo "starting csharp tests"
+  cd "$base_dir"
   cd compat/src/test/csharp
 
   # restore dependencies
