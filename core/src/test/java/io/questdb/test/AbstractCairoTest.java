@@ -97,7 +97,6 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.MutableUtf16Sink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -339,10 +338,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
                                 Assert.assertNull(b);
                                 Assert.assertEquals(TableUtils.NULL_LEN, record.getStrLen(i));
                             } else {
-                                if (a instanceof AbstractCharSequence) {
-                                    // AbstractCharSequence are usually mutable. We cannot have same mutable instance for A and B
-                                    Assert.assertNotSame(a, b);
-                                }
                                 TestUtils.assertEquals(a, b);
                                 Assert.assertEquals(a.length(), record.getStrLen(i));
                             }
@@ -650,13 +645,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
                 switch (ColumnType.tagOf(metadata.getColumnType(i))) {
                     case ColumnType.STRING:
-                        CharSequence s = record.getStrA(i);
-                        if (s != null) {
+                        CharSequence a = record.getStrA(i);
+                        if (a != null) {
                             CharSequence b = record.getStrB(i);
-                            if (b instanceof AbstractCharSequence) {
-                                // AbstractCharSequence are usually mutable. We cannot have same mutable instance for A and B
-                                Assert.assertNotSame("Expected string instances to be different for getStr and getStrB", s, b);
-                            }
+                            TestUtils.assertEquals(a, b);
                         } else {
                             Assert.assertNull(record.getStrB(i));
                             Assert.assertEquals(TableUtils.NULL_LEN, record.getStrLen(i));
@@ -675,8 +667,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
                         Long256 l2 = record.getLong256B(i);
                         if (l1 == Long256Impl.NULL_LONG256) {
                             Assert.assertSame(l1, l2);
-                        } else {
-                            Assert.assertNotSame(l1, l2);
                         }
                         Assert.assertEquals(l1.getLong0(), l2.getLong0());
                         Assert.assertEquals(l1.getLong1(), l2.getLong1());

@@ -24,14 +24,30 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.RecordChain;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkFactory;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
-import io.questdb.std.*;
+import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.LongList;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
@@ -282,7 +298,6 @@ public class RecordChainTest extends AbstractCairoTest {
                     CharSequence cs1 = actual.getStrA(i);
                     CharSequence cs2 = actual.getStrB(i);
                     TestUtils.assertEquals(e, cs1);
-                    Assert.assertFalse(cs1 != null && cs1 == cs2);
                     TestUtils.assertEquals(e, cs2);
                     if (cs1 == null) {
                         Assert.assertEquals(TableUtils.NULL_LEN, actual.getStrLen(i));
@@ -295,7 +310,6 @@ public class RecordChainTest extends AbstractCairoTest {
                     Utf8Sequence us1 = actual.getVarcharA(i);
                     Utf8Sequence us2 = actual.getVarcharB(i);
                     TestUtils.assertEquals(us, us1);
-                    Assert.assertFalse(us1 != null && us1 == us2);
                     TestUtils.assertEquals(us, us2);
                     if (us1 == null) {
                         Assert.assertEquals(TableUtils.NULL_LEN, actual.getVarcharSize(i));
@@ -309,6 +323,16 @@ public class RecordChainTest extends AbstractCairoTest {
                     break;
                 case ColumnType.BINARY:
                     TestUtils.assertEquals(expected.getBin(i), actual.getBin(i), actual.getBinLen(i));
+                    break;
+                case ColumnType.LONG256:
+                    Long256 l = expected.getLong256A(i);
+                    Long256 l1 = actual.getLong256A(i);
+                    Long256 l2 = actual.getLong256B(i);
+                    if (l1 == Long256Impl.NULL_LONG256) {
+                        Assert.assertSame(l1, l2);
+                    }
+                    TestUtils.assertEquals(l, l1);
+                    TestUtils.assertEquals(l, l2);
                     break;
                 case ColumnType.UUID:
                     Assert.assertEquals(expected.getLong128Hi(i), actual.getLong128Hi(i));
@@ -330,7 +354,6 @@ public class RecordChainTest extends AbstractCairoTest {
 
             CreateTableTestUtils.createTestTable(N, rnd, new TestRecord.ArrayBinarySequence());
             try (TableReader reader = newOffPoolReader(configuration, "x")) {
-
                 entityColumnFilter.of(reader.getMetadata().getColumnCount());
                 RecordSink recordSink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter);
                 try (RecordChain chain = new RecordChain(reader.getMetadata(), recordSink, 4 * 1024 * 1024L, Integer.MAX_VALUE)) {
