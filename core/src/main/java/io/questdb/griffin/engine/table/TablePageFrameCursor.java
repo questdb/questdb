@@ -22,42 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.griffin.engine.table;
 
-import io.questdb.std.IntList;
-import io.questdb.std.QuietCloseable;
-import org.jetbrains.annotations.Nullable;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFrameCursor;
 
-public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
+public interface TablePageFrameCursor extends PageFrameCursor {
 
-    void calculateSize(RecordCursor.Counter counter);
+    TableReader getTableReader();
 
-    /**
-     * Returns local (query) to table reader index mapping.
-     * Used to map local column indexes to indexes from the Parquet file.
-     * Such mapping requires knowing the corresponding table reader indexes.
-     */
-    IntList getColumnIndexes();
-
-    @Override
-    StaticSymbolTable getSymbolTable(int columnIndex);
-
-    @Nullable
-    PageFrame next();
-
-    /**
-     * @return number of rows in all page frames
-     */
-    long size();
-
-    /**
-     * @return true if cursor supports fast size calculation,
-     * i.e. {@link #calculateSize(RecordCursor.Counter)} is properly implemented.
-     */
-    boolean supportsSizeCalculation();
-
-    /**
-     * Returns the cursor to the beginning of the page frame.
-     */
-    void toTop();
+    TablePageFrameCursor of(PartitionFrameCursor partitionFrameCursor);
 }

@@ -266,6 +266,8 @@ public interface CairoConfiguration {
 
     int getMetadataPoolCapacity();
 
+    Metrics getMetrics();
+
     @NotNull
     default MicrosecondClock getMicrosecondClock() {
         return MicrosecondClockImpl.INSTANCE;
@@ -653,6 +655,8 @@ public interface CairoConfiguration {
 
     boolean isSqlParallelGroupByEnabled();
 
+    boolean isSqlParallelReadParquetEnabled();
+
     boolean isTableTypeConversionEnabled();
 
     boolean isWalApplyEnabled();
@@ -675,6 +679,4 @@ public interface CairoConfiguration {
     }
 
     boolean useFastAsOfJoin();
-
-    Metrics getMetrics();
 }

@@ -62,7 +62,7 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
             int position,
             ObjList<Function> args,
             IntList argPos,
-            CairoConfiguration config,
+            CairoConfiguration configuration,
             SqlExecutionContext context
     ) throws SqlException {
         final CharSequence filePath;
@@ -74,8 +74,8 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
 
         try {
             final Path path = Path.getThreadLocal2("");
-            checkPathIsSafeToRead(path, filePath, argPos.getQuick(0), config);
-            final FilesFacade ff = config.getFilesFacade();
+            checkPathIsSafeToRead(path, filePath, argPos.getQuick(0), configuration);
+            final FilesFacade ff = configuration.getFilesFacade();
             final long fd = TableUtils.openRO(ff, path.$(), LOG);
             long addr = 0;
             long fileSize = 0;
@@ -86,7 +86,11 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
                 final GenericRecordMetadata metadata = new GenericRecordMetadata();
                 // `read_parquet` function will request symbols to be converted to varchar
                 decoder.metadata().copyTo(metadata, true);
-                return new CursorFunction(new ReadParquetRecordCursorFactory(path, metadata, config.getFilesFacade()));
+                if (configuration.isSqlParallelReadParquetEnabled()) {
+                    return new CursorFunction(new ReadParquetPageFrameRecordCursorFactory(configuration, path, metadata));
+                } else {
+                    return new CursorFunction(new ReadParquetRecordCursorFactory(path, metadata, ff));
+                }
             } finally {
                 ff.close(fd);
                 ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);

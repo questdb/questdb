@@ -25,48 +25,85 @@
 package io.questdb.griffin.engine.functions.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.FilesFacade;
+import io.questdb.griffin.engine.table.FwdPageFrameRowCursorFactory;
+import io.questdb.griffin.engine.table.PageFrameRecordCursorImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
+
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 
 /**
- * Factory for single-threaded read_parquet() SQL function.
+ * Factory for parallel read_parquet() SQL function.
  */
-public class ReadParquetRecordCursorFactory extends AbstractRecordCursorFactory {
-    private ReadParquetRecordCursor cursor;
+public class ReadParquetPageFrameRecordCursorFactory extends AbstractRecordCursorFactory {
+    private final PageFrameRecordCursorImpl cursor;
+    private final ReadParquetPageFrameCursor pageFrameCursor;
     private Path path;
 
-    public ReadParquetRecordCursorFactory(@Transient Path path, RecordMetadata metadata, FilesFacade ff) {
+    public ReadParquetPageFrameRecordCursorFactory(
+            @NotNull CairoConfiguration configuration,
+            @Transient Path path,
+            RecordMetadata metadata
+    ) {
         super(metadata);
         this.path = new Path().of(path);
-        this.cursor = new ReadParquetRecordCursor(ff, metadata);
+        this.cursor = new PageFrameRecordCursorImpl(
+                configuration,
+                metadata,
+                new FwdPageFrameRowCursorFactory(),
+                true,
+                null
+        );
+        this.pageFrameCursor = new ReadParquetPageFrameCursor(configuration.getFilesFacade(), metadata);
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        cursor.of(path.$());
-        return cursor;
+        pageFrameCursor.of(path.$());
+        try {
+            cursor.of(pageFrameCursor, executionContext);
+            return cursor;
+        } catch (Throwable e) {
+            pageFrameCursor.close();
+            throw e;
+        }
+    }
+
+    @Override
+    public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
+        assert order != ORDER_DESC;
+        pageFrameCursor.of(path.$());
+        return pageFrameCursor;
     }
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
-        return false;
+        return true;
+    }
+
+    @Override
+    public boolean supportsPageFrameCursor() {
+        return true;
     }
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("parquet file sequential scan");
+        sink.type("parquet page frame scan");
     }
 
     @Override
     protected void _close() {
-        cursor = Misc.free(cursor);
+        Misc.free(cursor);
+        Misc.free(pageFrameCursor);
         path = Misc.free(path);
     }
 }

@@ -26,13 +26,11 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.BitmapIndexReader;
-import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFormat;
-import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -295,16 +293,6 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public TableReader getTableReader() {
-            return baseCursor.getTableReader();
-        }
-
-        @Override
-        public long getUpdateRowId(long rowIndex) {
-            return baseCursor.getUpdateRowId(rowIndex);
-        }
-
-        @Override
         public SymbolTable newSymbolTable(int columnIndex) {
             return baseCursor.newSymbolTable(columnCrossIndex.getQuick(columnIndex));
         }
@@ -313,11 +301,6 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
         public @Nullable PageFrame next() {
             PageFrame baseFrame = baseCursor.next();
             return baseFrame != null ? pageFrame.of(baseFrame) : null;
-        }
-
-        @Override
-        public PageFrameCursor of(PartitionFrameCursor partitionFrameCursor) {
-            return baseCursor.of(partitionFrameCursor);
         }
 
         @Override
