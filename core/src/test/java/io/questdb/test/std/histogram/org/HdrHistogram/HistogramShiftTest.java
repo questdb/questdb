@@ -29,7 +29,11 @@
 
 package io.questdb.test.std.histogram.org.HdrHistogram;
 
-import io.questdb.std.histogram.org.HdrHistogram.*;
+import io.questdb.std.histogram.org.HdrHistogram.AbstractHistogram;
+import io.questdb.std.histogram.org.HdrHistogram.Histogram;
+import io.questdb.std.histogram.org.HdrHistogram.IntCountsHistogram;
+import io.questdb.std.histogram.org.HdrHistogram.PackedHistogram;
+import io.questdb.std.histogram.org.HdrHistogram.ShortCountsHistogram;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -47,7 +51,7 @@ public class HistogramShiftTest {
     };
 
     @Test
-    public void testHistogramShift() throws Exception {
+    public void testHistogramShift() {
         Class<?>[] testClasses = new Class[]{
                 Histogram.class,
                 PackedHistogram.class,

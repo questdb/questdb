@@ -1497,7 +1497,7 @@ public class TableReaderTest extends AbstractCairoTest {
         CreateTableTestUtils.createTableWithVersionAndId(model, engine, ColumnType.VERSION, 1);
 
         assertMemoryLeak(() -> {
-            try (TableWriter writer = newOffPoolWriter(configuration, "all", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "all")) {
                 TableWriter.Row r = writer.newRow(Numbers.LONG_NULL);
                 r.putInt(0, 100);
                 r.append();
@@ -1690,7 +1690,7 @@ public class TableReaderTest extends AbstractCairoTest {
             ).col("cc", ColumnType.STRING);
             AbstractCairoTest.create(model);
             char[] data = {'a', 'b', 'f', 'g'};
-            try (TableWriter writer = newOffPoolWriter(configuration, "char_test", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "char_test")) {
 
                 for (int i = 0, n = data.length; i < n; i++) {
                     TableWriter.Row r = writer.newRow();
@@ -1772,7 +1772,7 @@ public class TableReaderTest extends AbstractCairoTest {
             new Thread(() -> {
                 try {
                     startBarrier.await();
-                    try (TableWriter writer = newOffPoolWriter(configuration, "w", metrics)) {
+                    try (TableWriter writer = newOffPoolWriter(configuration, "w")) {
                         for (int i = 0; i < N * scale; i++) {
                             TableWriter.Row row = writer.newRow();
                             row.putLong(0, list.getQuick(i % N));
@@ -1836,14 +1836,14 @@ public class TableReaderTest extends AbstractCairoTest {
             TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.LONG256);
             AbstractCairoTest.create(model);
 
-            try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
                 TableWriter.Row r = writer.newRow();
                 r.putLong256(0, 1, 2, 3, 4);
                 r.append();
                 writer.commit();
             }
 
-            try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
                 TableWriter.Row r = writer.newRow();
                 r.putLong256(0, 5, 6, 7, 8);
                 r.append();
@@ -1895,6 +1895,7 @@ public class TableReaderTest extends AbstractCairoTest {
         String tableName = "testMetadataFileDoesNotExist";
         TableToken tableToken = createTable(tableName, PartitionBy.HOUR);
         node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 10);
+        spinLockTimeout = 10;
         AtomicInteger openCount = new AtomicInteger(1000);
 
         assertMemoryLeak(() -> {
@@ -1933,6 +1934,7 @@ public class TableReaderTest extends AbstractCairoTest {
         String tableName = "testMetadataFileDoesNotExist";
         TableToken tableToken = createTable(tableName, PartitionBy.HOUR);
         node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 10);
+        spinLockTimeout = 10;
         AtomicInteger openCount = new AtomicInteger(1000);
 
         assertMemoryLeak(() -> {
@@ -1989,6 +1991,7 @@ public class TableReaderTest extends AbstractCairoTest {
         String tableName = "testMetadataVersionDoesNotMatch";
         TableToken tableToken = createTable(tableName, PartitionBy.HOUR);
         node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 10);
+        spinLockTimeout = 10;
 
         assertMemoryLeak(() -> {
             try (TableReader reader = getReader(tableToken)) {
@@ -2035,7 +2038,7 @@ public class TableReaderTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE);
 
-            try (TableWriter writer = newOffPoolWriter(configuration, "all", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "all")) {
                 TableWriter.Row r = writer.newRow(1000000); // <-- higher timestamp
                 r.putInt(0, 10);
                 r.putByte(1, (byte) 56);
@@ -2070,7 +2073,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             long N = 280000000;
             Rnd rnd = new Rnd();
-            try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
                 for (int i = 0; i < N; i++) {
                     TableWriter.Row r = writer.newRow();
                     r.putLong(0, rnd.nextLong());
@@ -2100,7 +2103,7 @@ public class TableReaderTest extends AbstractCairoTest {
         CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE);
         int N = 10000;
         Rnd rnd = new Rnd();
-        try (TableWriter writer = newOffPoolWriter(configuration, "all", metrics)) {
+        try (TableWriter writer = newOffPoolWriter(configuration, "all")) {
             int col = writer.getMetadata().getColumnIndex("str");
             for (int i = 0; i < N; i++) {
                 TableWriter.Row r = writer.newRow();
@@ -2169,11 +2172,11 @@ public class TableReaderTest extends AbstractCairoTest {
     public void testReadEmptyTable() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE);
-            try (TableWriter ignored1 = newOffPoolWriter(configuration, "all", metrics)) {
+            try (TableWriter ignored1 = newOffPoolWriter(configuration, "all")) {
 
                 // open another writer, which should fail
                 try {
-                    try (TableWriter ignore = newOffPoolWriter(configuration, "all", metrics)) {
+                    try (TableWriter ignore = newOffPoolWriter(configuration, "all")) {
                         Assert.fail();
                     }
                 } catch (CairoException ignored) {
@@ -2198,7 +2201,7 @@ public class TableReaderTest extends AbstractCairoTest {
         final int N = 1_000_000;
         final Rnd rnd = new Rnd();
         long timestamp = 0;
-        try (TableWriter writer = newOffPoolWriter(configuration, "w", metrics)) {
+        try (TableWriter writer = newOffPoolWriter(configuration, "w")) {
             for (int i = 0; i < N; i++) {
                 TableWriter.Row row = writer.newRow(timestamp);
                 row.putLong256(0, "0x" + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()));
@@ -2233,7 +2236,7 @@ public class TableReaderTest extends AbstractCairoTest {
         final int N = 1_000_000;
         final Rnd rnd = new Rnd();
         long timestamp = 0;
-        try (TableWriter writer = newOffPoolWriter(configuration, "w", metrics)) {
+        try (TableWriter writer = newOffPoolWriter(configuration, "w")) {
             for (int i = 0; i < N; i++) {
                 TableWriter.Row row = writer.newRow(timestamp);
                 row.putLong256(0, "0x" + padHexLong(rnd.nextLong()));
@@ -2268,7 +2271,7 @@ public class TableReaderTest extends AbstractCairoTest {
         final int N = 1_000_000;
         final Rnd rnd = new Rnd();
         long timestamp = 0;
-        try (TableWriter writer = newOffPoolWriter(configuration, "w", metrics)) {
+        try (TableWriter writer = newOffPoolWriter(configuration, "w")) {
             for (int i = 0; i < N; i++) {
                 TableWriter.Row row = writer.newRow(timestamp);
                 row.putLong256(0, "0x" + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()));
@@ -2303,7 +2306,7 @@ public class TableReaderTest extends AbstractCairoTest {
         final int N = 1_000_000;
         final Rnd rnd = new Rnd();
         long timestamp = 0;
-        try (TableWriter writer = newOffPoolWriter(configuration, "w", metrics)) {
+        try (TableWriter writer = newOffPoolWriter(configuration, "w")) {
             for (int i = 0; i < N; i++) {
                 TableWriter.Row row = writer.newRow(timestamp);
                 row.putLong256(0, "0x" + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()));
@@ -2349,7 +2352,7 @@ public class TableReaderTest extends AbstractCairoTest {
             AtomicInteger errorCount = new AtomicInteger(0);
 
             try (
-                    TableWriter writer = newOffPoolWriter(configuration, "x", metrics);
+                    TableWriter writer = newOffPoolWriter(configuration, "x");
                     TableReader reader = newOffPoolReader(configuration, "x")
             ) {
                 new Thread(() -> {
@@ -2412,7 +2415,7 @@ public class TableReaderTest extends AbstractCairoTest {
             TableToken tableToken = AbstractCairoTest.create(model);
 
             int rowCount = 10;
-            try (TableWriter writer = newOffPoolWriter(configuration, tableName, metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
                 try (TableReader ignore = getReader(tableToken)) {
                     for (int i = 0; i < rowCount; i++) {
                         TableWriter.Row row = writer.newRow();
@@ -2441,7 +2444,7 @@ public class TableReaderTest extends AbstractCairoTest {
         TableModel model = new TableModel(configuration, "x", PartitionBy.HOUR).col("i", ColumnType.INT).timestamp();
         TestUtils.createTable(engine, model);
 
-        try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
+        try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
             for (int i = 0; i < rows; i++) {
                 TableWriter.Row row = writer.newRow(i * tsStep);
                 row.putInt(0, i);
@@ -2494,7 +2497,7 @@ public class TableReaderTest extends AbstractCairoTest {
             AbstractCairoTest.create(model);
 
             try (
-                    TableWriter writer = newOffPoolWriter(configuration, "w", metrics);
+                    TableWriter writer = newOffPoolWriter(configuration, "w");
                     TableReader reader = newOffPoolReader(configuration, "w");
                     TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
             ) {
@@ -2587,7 +2590,7 @@ public class TableReaderTest extends AbstractCairoTest {
             final int M = 1_000_000;
             final Rnd rnd = new Rnd();
 
-            try (TableWriter writer = newOffPoolWriter(configuration, tableName, metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
                 long timestamp = TimestampFormatUtils.parseUTCTimestamp("2019-01-31T10:00:00.000001Z");
                 long timestampStep = 500;
 
@@ -2652,7 +2655,7 @@ public class TableReaderTest extends AbstractCairoTest {
             TableModel model = new TableModel(configuration, "tab", PartitionBy.DAY).col("x", ColumnType.SYMBOL).col("y", ColumnType.LONG);
             AbstractCairoTest.create(model);
 
-            try (TableWriter writer = newOffPoolWriter(configuration, "tab", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "tab")) {
                 TableWriter.Row r = writer.newRow();
                 r.putSym(0, "hello");
                 r.append();
@@ -2703,7 +2706,7 @@ public class TableReaderTest extends AbstractCairoTest {
             TableModel model = new TableModel(configuration, "w", PartitionBy.NONE).col("l", ColumnType.LONG).timestamp();
             AbstractCairoTest.create(model);
 
-            try (TableWriter writer = newOffPoolWriter(configuration, "w", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "w")) {
                 for (int k = 0; k < N_PARTITIONS; k++) {
                     long band = k * bandStride;
                     for (int i = 0; i < N; i++) {
@@ -2855,7 +2858,7 @@ public class TableReaderTest extends AbstractCairoTest {
             TableModel model = new TableModel(configuration, "w", PartitionBy.DAY).col("l", ColumnType.LONG).timestamp();
             AbstractCairoTest.create(model);
 
-            try (TableWriter writer = newOffPoolWriter(configuration, "w", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "w")) {
                 for (int k = 0; k < N_PARTITIONS; k++) {
                     long band = k * bandStride;
                     for (int i = 0; i < N; i++) {
@@ -2955,7 +2958,7 @@ public class TableReaderTest extends AbstractCairoTest {
         CreateTableTestUtils.createTableWithVersionAndId(model, engine, ColumnType.VERSION, 1);
         assertMemoryLeak(() -> {
             try (TableReader ignore = getReader("all")) {
-                try (TableWriter writer = newOffPoolWriter(configuration, "all", metrics)) {
+                try (TableWriter writer = newOffPoolWriter(configuration, "all")) {
                     for (int i = 0; i < configuration.getTxnScoreboardEntryCount() + 1; i++) {
                         TableWriter.Row r = writer.newRow(1000);
                         r.putInt(0, 100);
@@ -2970,7 +2973,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     TestUtils.assertContains(ex.getFlyweightMessage(), "max txn-inflight limit reached");
                 }
 
-                try (TableWriter writer = newOffPoolWriter(configuration, "all", metrics)) {
+                try (TableWriter writer = newOffPoolWriter(configuration, "all")) {
                     TableWriter.Row r = writer.newRow(0);
                     r.putInt(0, 100);
                     r.append();
@@ -3062,7 +3065,7 @@ public class TableReaderTest extends AbstractCairoTest {
             int N = 1000;
             long ts = TimestampFormatUtils.parseTimestamp("2018-01-06T10:00:00.000Z");
             final Rnd rnd = new Rnd();
-            try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
                 sink.clear();
                 writer.getMetadata().toJson(sink);
                 TestUtils.assertEquals(expected, sink);
@@ -3840,7 +3843,7 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     private long testAppend(Rnd rnd, CairoConfiguration configuration, long ts, int count, long inc, long blob, int testPartitionSwitch) {
-        try (TableWriter writer = newOffPoolWriter(configuration, "all", metrics)) {
+        try (TableWriter writer = newOffPoolWriter(configuration, "all")) {
             return testAppend(writer, rnd, ts, count, inc, blob, testPartitionSwitch, TableReaderTest.BATCH1_GENERATOR);
         }
     }
@@ -3929,7 +3932,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 try {
                     startBarrier.await();
                     long timestampUs = TimestampFormatUtils.parseTimestamp("2017-12-11T00:00:00.000Z");
-                    try (TableWriter writer = newOffPoolWriter(configuration, "w", metrics)) {
+                    try (TableWriter writer = newOffPoolWriter(configuration, "w")) {
                         for (int i = 0; i < N; i++) {
                             TableWriter.Row row = writer.newRow(timestampUs);
                             row.putLong(0, i);
@@ -4072,7 +4075,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                     // writer will inflate last partition in order to optimise appends
                     // reader must be able to cope with that
-                    try (TableWriter writer = newOffPoolWriter(configuration, "all", metrics)) {
+                    try (TableWriter writer = newOffPoolWriter(configuration, "all")) {
                         // this is a bit of paranoid check, but make sure our reader doesn't flinch when new writer is open
                         assertCursor(cursor, ts, increment, blob, 2L * count, BATCH1_ASSERTER);
 
@@ -4217,7 +4220,7 @@ public class TableReaderTest extends AbstractCairoTest {
             TableModel model = new TableModel(configuration, tableName, partitionBy).col("l", ColumnType.LONG).timestamp();
             AbstractCairoTest.create(model);
 
-            try (TableWriter writer = newOffPoolWriter(configuration, tableName, metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
                 for (int k = 0; k < N_PARTITIONS; k++) {
                     long band = k * bandStride;
                     for (int i = 0; i < N; i++) {
@@ -4285,7 +4288,7 @@ public class TableReaderTest extends AbstractCairoTest {
             TableModel model = new TableModel(configuration, "w", partitionBy).col("l", ColumnType.LONG).timestamp();
             AbstractCairoTest.create(model);
 
-            try (TableWriter writer = newOffPoolWriter(configuration, "w", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "w")) {
                 for (int k = 0; k < N_PARTITIONS; k++) {
                     long band = k * bandStride;
                     for (int i = 0; i < N; i++) {
@@ -4354,7 +4357,7 @@ public class TableReaderTest extends AbstractCairoTest {
             TableModel model = new TableModel(configuration, "w", partitionBy).col("l", ColumnType.LONG).timestamp();
             AbstractCairoTest.create(model);
 
-            try (TableWriter writer = newOffPoolWriter(configuration, "w", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "w")) {
                 for (int k = 0; k < N_PARTITIONS; k++) {
                     long band = k * bandStride;
                     for (int i = 0; i < N; i++) {

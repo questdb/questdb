@@ -244,7 +244,7 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
             final FilesFacade filesFacade = new TestFilesFacadeImpl() {
 
                 @Override
-                public long append(long fd, long buf, int len) {
+                public long append(long fd, long buf, long len) {
                     if (fd == this.fd && counter.decrementAndGet() == 0) {
                         ping.await();
                         httpClientRef.get().disconnect();
@@ -359,7 +359,7 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
     @Test
     public void testPutAndGetAreNotSupported() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
                 put(DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), "5");
             }})
             ) {

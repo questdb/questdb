@@ -475,13 +475,13 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
 
     private static void executeWithPool(CustomisableRunnable runnable) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            WorkerPool pool = new WorkerPool(() -> 2);
             final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public long getPartitionO3SplitMinSize() {
                     return 1000;
                 }
             };
+            WorkerPool pool = new WorkerPool(() -> 2);
             TestUtils.execute(pool, runnable, configuration, LOG);
         });
     }

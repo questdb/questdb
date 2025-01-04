@@ -24,7 +24,11 @@
 
 package io.questdb.test.griffin.engine.functions.conditional;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class CaseFunctionFactoryTest extends AbstractCairoTest {

@@ -24,7 +24,13 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.std.ObjIntHashMap;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -478,7 +484,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 tableId = metadata.getTableId();
                 for (ColumnManipulator manipulator : manipulators) {
                     long structVersion;
-                    try (TableWriter writer = newOffPoolWriter(configuration, tableName, metrics)) {
+                    try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
                         manipulator.restructure(writer);
                         structVersion = writer.getMetadataVersion();
                     }

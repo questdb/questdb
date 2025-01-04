@@ -25,7 +25,11 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.griffin.SqlException;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Long256;
+import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import io.questdb.std.str.Utf8Sequence;
 
 /**
@@ -72,7 +76,6 @@ public interface BindVariableService extends Mutable {
      *                      that is not compatible with Binary
      */
     void setBin(int index) throws SqlException;
-
 
     /**
      * Set type of bind variable by index as binary and provide a value
@@ -294,10 +297,8 @@ public interface BindVariableService extends Mutable {
      *
      * @param index numeric index of the bind variable
      * @param value as integer
-     * @throws SqlException is thrown when variable has already been defined with type
-     *                      that is not compatible with Int
      */
-    void setIPv4(int index, int value) throws SqlException;
+    void setIPv4(int index, int value);
 
     /**
      * Set type of bind variable by index as ipv4 (CharSequence form) and provide a value
@@ -305,20 +306,16 @@ public interface BindVariableService extends Mutable {
      *
      * @param index numeric index of the bind variable
      * @param value as CharSequence
-     * @throws SqlException is thrown when variable has already been defined with type
-     *                      that is not compatible with CharSequence
      */
-    void setIPv4(int index, CharSequence value) throws SqlException;
+    void setIPv4(int index, CharSequence value);
 
     /**
      * Set type of bind variable by index as binary
      * Distinct from int because of different null values
      *
      * @param index numeric index of the bind variable
-     * @throws SqlException is thrown when variable has already been defined with type
-     *                      that is not compatible with Int
      */
-    void setIPv4(int index) throws SqlException;
+    void setIPv4(int index);
 
     /**
      * Set type of bind variable by name as integer and provide a value
@@ -491,35 +488,6 @@ public interface BindVariableService extends Mutable {
     void setStr(CharSequence name, CharSequence value) throws SqlException;
 
     /**
-     * Set type of bind variable by index as varchar
-     *
-     * @param index numeric index of the bind variable
-     * @throws SqlException is throw when variable has already been defined with type
-     *                      that is not compatible with UTF8 encoded String
-     */
-    void setVarchar(int index) throws SqlException;
-
-    /**
-     * Set type of bind variable by index as varchar and provide a value
-     *
-     * @param index numeric index of the bind variable
-     * @param value as Utf8Sequence
-     * @throws SqlException is throw when variable has already been defined with type
-     *                      that is not compatible with UTF8 encoded String
-     */
-    void setVarchar(int index, @Transient Utf8Sequence value) throws SqlException;
-
-    /**
-     * Set type of bind variable by name as varchar and provide a value
-     *
-     * @param name  of the bind variable
-     * @param value as Utf8Sequence
-     * @throws SqlException is throw when variable has already been defined with type
-     *                      that is not compatible with UTF8 encoded String
-     */
-    void setVarchar(CharSequence name, Utf8Sequence value) throws SqlException;
-
-    /**
      * Set type of bind variable by index as timestamp
      *
      * @param index numeric index of the bind variable
@@ -569,16 +537,31 @@ public interface BindVariableService extends Mutable {
     void setUuid(CharSequence name, long lo, long hi) throws SqlException;
 
     /**
-     * Checks if bind variable is defined. Bind variable will usually be defined by tge SQL compiler when
-     * the type of the variable can be inferred from the expression where this variable is used. However, in
-     * cases where bind variable is selected instead of a column, the type is ambiguous and the variable is
-     * left undefined.
-     * <p>
-     * The undefined variables will need to be assigned types (and values) but the client. For example a PostgresSQL
-     * client.
+     * Set type of bind variable by index as varchar
      *
-     * @param index the 0-based index of the bind variable in question.
-     * @return true when variable type is defined and false otherwise.
+     * @param index numeric index of the bind variable
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with UTF8 encoded String
      */
-    boolean isDefined(int index);
+    void setVarchar(int index) throws SqlException;
+
+    /**
+     * Set type of bind variable by index as varchar and provide a value
+     *
+     * @param index numeric index of the bind variable
+     * @param value as Utf8Sequence
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with UTF8 encoded String
+     */
+    void setVarchar(int index, @Transient Utf8Sequence value) throws SqlException;
+
+    /**
+     * Set type of bind variable by name as varchar and provide a value
+     *
+     * @param name  of the bind variable
+     * @param value as Utf8Sequence
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with UTF8 encoded String
+     */
+    void setVarchar(CharSequence name, Utf8Sequence value) throws SqlException;
 }

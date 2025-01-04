@@ -137,7 +137,7 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                     engine.execute("create table x (ts timestamp, a int) timestamp(ts) partition by day wal", sqlExecutionContext);
                 }
 
-                int port = serverMain.getConfiguration().getLineTcpReceiverConfiguration().getDispatcherConfiguration().getBindPort();
+                int port = serverMain.getConfiguration().getLineTcpReceiverConfiguration().getBindPort();
                 try (Sender sender = Sender.builder(Sender.Transport.TCP).address("localhost").port(port).build()) {
                     for (int i = 0; i < 1_000_000; i++) {
                         sender.table("x").stringColumn("a", "42").atNow();

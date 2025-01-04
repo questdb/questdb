@@ -67,10 +67,10 @@ import static java.nio.ByteOrder.BIG_ENDIAN;
 public class HistogramLogWriter {
     private static final String HISTOGRAM_LOG_FORMAT_VERSION = "1.3";
 
-    private static Pattern containsDelimeterPattern = Pattern.compile(".[, \\r\\n].");
+    private static final Pattern containsDelimeterPattern = Pattern.compile(".[, \\r\\n].");
     private final PrintStream log;
     private long baseTime = 0;
-    private Matcher containsDelimeterMatcher = containsDelimeterPattern.matcher("");
+    private final Matcher containsDelimeterMatcher = containsDelimeterPattern.matcher("");
     private ByteBuffer targetBuffer;
 
     /**
@@ -258,7 +258,7 @@ public class HistogramLogWriter {
     public void outputStartTime(final long startTimeMsec) {
         log.format(Locale.US, "#[StartTime: %.3f (seconds since epoch), %s]\n",
                 startTimeMsec / 1000.0,
-                (new Date(startTimeMsec)).toString());
+                (new Date(startTimeMsec)));
     }
 
     /**

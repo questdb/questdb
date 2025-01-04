@@ -93,6 +93,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     // types of set operations between this and union model
     public static final int SET_OPERATION_UNION_ALL = 0;
     public static final int SHOW_COLUMNS = 2;
+    public static final int SHOW_CREATE_TABLE = 14;
     public static final int SHOW_DATE_STYLE = 9;
     public static final int SHOW_MAX_IDENTIFIER_LENGTH = 6;
     public static final int SHOW_PARAMETERS = 11;
@@ -473,6 +474,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.bottomUpColumnAliases.clear();
         this.aliasToColumnMap.clear();
         this.bottomUpColumns.clear();
+        this.columnAliasIndexes.clear();
+        this.columnNameToAliasMap.clear();
     }
 
     public void clearOrderBy() {
@@ -801,8 +804,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return metadataVersion;
     }
 
-    public int getModelAliasIndex(CharSequence column, int start, int end) {
-        int index = modelAliasIndexes.keyIndex(column, start, end);
+    public int getModelAliasIndex(CharSequence modelAlias, int start, int end) {
+        if (modelAlias.charAt(start) == '"' && modelAlias.charAt(end - 1) == '"') {
+            start++;
+            end--;
+        }
+        int index = modelAliasIndexes.keyIndex(modelAlias, start, end);
         if (index < 0) {
             return modelAliasIndexes.valueAt(index);
         }

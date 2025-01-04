@@ -311,7 +311,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
 
                         for (int v = 0; v < partitionNameVersion + 5; v++) {
                             path.trimTo(len);
-                            TableUtils.setPathForPartition(path, partitionBy, partitionTs, v);
+                            TableUtils.setPathForNativePartition(path, partitionBy, partitionTs, v);
                             path.concat("x.d").$();
                             Assert.assertEquals(Utf8s.toString(path), v == partitionNameVersion, Files.exists(path.$()));
                         }
