@@ -31,33 +31,35 @@ import io.questdb.griffin.engine.functions.IntervalFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.Interval;
+import org.jetbrains.annotations.NotNull;
 
 class OffsetIntervalFunctionFromRules extends IntervalFunction implements UnaryFunction {
-    private final Function interval;
+    private final Interval interval = new Interval();
+    private final Function intervalFunction;
     private final int multiplier;
     private final TimeZoneRules rules;
 
-    public OffsetIntervalFunctionFromRules(Function interval, TimeZoneRules rules, int multiplier) {
-        this.interval = interval;
+    public OffsetIntervalFunctionFromRules(Function intervalFunction, TimeZoneRules rules, int multiplier) {
+        this.intervalFunction = intervalFunction;
         this.rules = rules;
         this.multiplier = multiplier;
     }
 
     @Override
     public Function getArg() {
+        return intervalFunction;
+    }
+
+    @Override
+    public @NotNull Interval getInterval(Record rec) {
+        long timestampLo = intervalFunction.getInterval(rec).getLo();
+        long timestampHi = intervalFunction.getInterval(rec).getHi();
+        interval.of(timestampLo + multiplier * rules.getOffset(timestampLo), timestampHi + multiplier * rules.getOffset(timestampHi));
         return interval;
     }
 
     @Override
-    public Interval getInterval(Record rec) {
-        return new Interval(
-                (interval.getInterval(rec).getLo() + multiplier * rules.getOffset(interval.getInterval(rec).getLo())),
-                (interval.getInterval(rec).getHi() + multiplier * rules.getOffset(interval.getInterval(rec).getHi()))
-        );
-    }
-
-    @Override
     public void toPlan(PlanSink sink) {
-        sink.val("to_utc(").val(interval).val(',').val(multiplier).val(')');
+        sink.val("to_utc(").val(intervalFunction).val(',').val(multiplier).val(')');
     }
 }

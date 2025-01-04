@@ -32,26 +32,30 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Interval;
 
 class OffsetIntervalFunctionFromOffset extends IntervalFunction implements UnaryFunction {
-    private final Function interval;
+    private final Interval interval = new Interval();
+    private final Function intervalFunction;
     private final long offset;
 
-    public OffsetIntervalFunctionFromOffset(Function interval, long offset) {
-        this.interval = interval;
+    public OffsetIntervalFunctionFromOffset(Function intervalFunction, long offset) {
+        this.intervalFunction = intervalFunction;
         this.offset = offset;
     }
 
     @Override
     public Function getArg() {
-        return interval;
+        return intervalFunction;
     }
 
     @Override
     public Interval getInterval(Record rec) {
-        return new Interval((interval.getInterval(rec).getLo() + offset), (interval.getInterval(rec).getHi() + offset));
+        final long timestampLo = intervalFunction.getInterval(rec).getLo();
+        final long timestampHi = intervalFunction.getInterval(rec).getHi();
+        interval.of(timestampLo + offset, timestampHi + offset);
+        return interval;
     }
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.val(interval).val('+').val(offset);
+        sink.val(intervalFunction).val('+').val(offset);
     }
 }

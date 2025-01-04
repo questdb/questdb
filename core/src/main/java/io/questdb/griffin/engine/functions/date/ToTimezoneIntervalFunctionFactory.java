@@ -98,36 +98,40 @@ public class ToTimezoneIntervalFunctionFactory implements FunctionFactory {
     }
 
     private static class ToTimezoneIntervalFunctionVar extends IntervalFunction implements BinaryFunction {
-        private final Function interval;
+        private final Interval interval = new Interval();
+        private final Function intervalFunction;
         private final Function timezone;
 
-        public ToTimezoneIntervalFunctionVar(Function interval, Function timezone) {
-            this.interval = interval;
+        public ToTimezoneIntervalFunctionVar(Function intervalFunction, Function timezone) {
+            this.intervalFunction = intervalFunction;
             this.timezone = timezone;
         }
 
         @Override
-        public Interval getInterval(Record rec) {
-            final Interval localInterval = new Interval(interval.getInterval(rec).getLo(), interval.getInterval(rec).getHi());
+        public @NotNull Interval getInterval(Record rec) {
+            final long timestampLo = intervalFunction.getInterval(rec).getLo();
+            final long timestampHi = intervalFunction.getInterval(rec).getHi();
+            interval.of(timestampLo, timestampHi);
+
             try {
                 final CharSequence tz = timezone.getStrA(rec);
                 if (tz != null) {
-                    localInterval.of(
-                            Timestamps.toTimezone(localInterval.getLo(), TimestampFormatUtils.EN_LOCALE, tz),
-                            Timestamps.toTimezone(localInterval.getHi(), TimestampFormatUtils.EN_LOCALE, tz)
+                    interval.of(
+                            Timestamps.toTimezone(timestampLo, TimestampFormatUtils.EN_LOCALE, tz),
+                            Timestamps.toTimezone(timestampHi, TimestampFormatUtils.EN_LOCALE, tz)
                     );
-                    return localInterval;
+                    return interval;
                 } else {
-                    return localInterval;
+                    return interval;
                 }
             } catch (NumericException e) {
-                return localInterval;
+                return interval;
             }
         }
 
         @Override
         public Function getLeft() {
-            return interval;
+            return intervalFunction;
         }
 
         @Override
