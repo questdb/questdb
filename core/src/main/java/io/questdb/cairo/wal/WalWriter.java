@@ -25,7 +25,27 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.Metrics;
-import io.questdb.cairo.*;
+import io.questdb.cairo.AlterTableContextException;
+import io.questdb.cairo.BitmapIndexUtils;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeDriver;
+import io.questdb.cairo.ColumnVersionReader;
+import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.DdlListener;
+import io.questdb.cairo.EmptySymbolMapReader;
+import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.SymbolMapReaderImpl;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.TxReader;
+import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -44,10 +64,34 @@ import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.AtomicIntList;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.BoolList;
+import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
+import io.questdb.std.Long256;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Utf8StringIntHashMap;
+import io.questdb.std.Uuid;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.*;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.SingleCharCharSequence;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.TableUtils.*;
@@ -117,8 +161,7 @@ public class WalWriter implements TableWriterAPI {
             TableToken tableToken,
             TableSequencerAPI tableSequencerAPI,
             DdlListener ddlListener,
-            WalDirectoryPolicy walDirectoryPolicy,
-            Metrics metrics
+            WalDirectoryPolicy walDirectoryPolicy
     ) {
         LOG.info().$("open '").utf8(tableToken.getDirName()).$('\'').$();
         this.sequencer = tableSequencerAPI;
@@ -135,7 +178,7 @@ public class WalWriter implements TableWriterAPI {
         this.pathRootSize = path.size();
         this.path.concat(tableToken).concat(walName);
         this.pathSize = path.size();
-        this.metrics = metrics;
+        this.metrics = configuration.getMetrics();
         this.open = true;
         this.symbolMapMem = Vm.getMARInstance(configuration);
 
@@ -1734,6 +1777,7 @@ public class WalWriter implements TableWriterAPI {
                 boolean isIndexed,
                 int indexValueBlockCapacity,
                 boolean isSequential,
+                boolean isDedupKey,
                 SecurityContext securityContext
         ) {
             validateNewColumnName(columnName);
@@ -1768,11 +1812,6 @@ public class WalWriter implements TableWriterAPI {
                 }
             }
             structureVersion++;
-        }
-
-        @Override
-        public long getMetaO3MaxLag() {
-            return 0;
         }
 
         @Override
@@ -1858,6 +1897,7 @@ public class WalWriter implements TableWriterAPI {
                 boolean isIndexed,
                 int indexValueBlockCapacity,
                 boolean isSequential,
+                boolean isDedupKey,
                 SecurityContext securityContext
         ) {
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
@@ -1871,7 +1911,13 @@ public class WalWriter implements TableWriterAPI {
 
                 if (currentTxnStartRowNum == 0 || segmentRowCount == currentTxnStartRowNum) {
                     long segmentRowCount = getUncommittedRowCount();
-                    metadata.addColumn(columnName, columnType);
+                    metadata.addColumn(
+                            columnName,
+                            columnType,
+                            isDedupKey,
+                            symbolCacheFlag,
+                            symbolCapacity
+                    );
                     columnCount = metadata.getColumnCount();
                     columnIndex = columnCount - 1;
                     // create column file
@@ -1915,8 +1961,15 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void changeColumnType(CharSequence columnName, int newType, int symbolCapacity, boolean symbolCacheFlag,
-                                     boolean isIndexed, int indexValueBlockCapacity, boolean isSequential, SecurityContext securityContext
+        public void changeColumnType(
+                CharSequence columnName,
+                int newType,
+                int symbolCapacity,
+                boolean symbolCacheFlag,
+                boolean isIndexed,
+                int indexValueBlockCapacity,
+                boolean isSequential,
+                SecurityContext securityContext
         ) {
             final int existingColumnIndex = metadata.getColumnIndexQuiet(columnName);
             if (existingColumnIndex > -1) {
@@ -1936,7 +1989,14 @@ public class WalWriter implements TableWriterAPI {
                         rollUncommittedToNewSegment(existingColumnIndex, newType);
 
                         if (currentTxnStartRowNum == 0 || segmentRowCount == currentTxnStartRowNum) {
-                            metadata.changeColumnType(columnName, newType);
+                            metadata.changeColumnType(
+                                    columnName,
+                                    newType,
+                                    symbolCapacity,
+                                    symbolCacheFlag,
+                                    isIndexed,
+                                    indexValueBlockCapacity
+                            );
                             path.trimTo(pathSize).slash().put(segmentId);
 
                             markColumnRemoved(existingColumnIndex, existingColumnType);
@@ -1963,10 +2023,6 @@ public class WalWriter implements TableWriterAPI {
                                     }
                                 }
                             }
-
-                            if (securityContext != null) {
-                                ddlListener.onColumnTypeChanged(securityContext, metadata.getTableToken(), columnName, existingColumnType, newType);
-                            }
                             path.trimTo(pathSize);
                         } else {
                             throw CairoException.critical(0).put("column '").put(columnName)
@@ -1989,7 +2045,7 @@ public class WalWriter implements TableWriterAPI {
 
         @Override
         public void enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
-            metadata.enableDeduplicationWithUpsertKeys(columnsIndexes);
+            metadata.enableDeduplicationWithUpsertKeys();
         }
 
         @Override

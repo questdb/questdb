@@ -26,13 +26,22 @@ package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
+import io.questdb.Metrics;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
-import io.questdb.cutlass.line.tcp.*;
+import io.questdb.cutlass.line.tcp.DefaultLineTcpReceiverConfiguration;
+import io.questdb.cutlass.line.tcp.LineTcpConnectionContext;
+import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler;
+import io.questdb.cutlass.line.tcp.LineTcpParser;
+import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
+import io.questdb.cutlass.line.tcp.NetworkIOJob;
+import io.questdb.cutlass.line.tcp.StaticChallengeResponseMatcher;
+import io.questdb.cutlass.line.tcp.SymbolCache;
+import io.questdb.cutlass.line.tcp.TableUpdateDetails;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
@@ -41,7 +50,13 @@ import io.questdb.network.IODispatcher;
 import io.questdb.network.IORequestProcessor;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Os;
+import io.questdb.std.Pool;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Utf8StringObjHashMap;
+import io.questdb.std.WeakClosableObjectPool;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -62,7 +77,7 @@ import java.util.concurrent.locks.LockSupport;
 abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     static final int FD = 1_000_000;
     static final Log LOG = LogFactory.getLog(BaseLineTcpContextTest.class);
-    protected final AtomicInteger netMsgBufferSize = new AtomicInteger();
+    protected final AtomicInteger recvBufferSize = new AtomicInteger();
     protected boolean autoCreateNewColumns = true;
     protected boolean autoCreateNewTables = true;
     protected LineTcpConnectionContext context;
@@ -89,7 +104,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         microSecondTicks = -1;
         recvBuffer = null;
         disconnected = true;
-        netMsgBufferSize.set(512);
+        recvBufferSize.set(512);
         disconnectOnError = false;
         floatDefaultColumnType = ColumnType.DOUBLE;
         integerDefaultColumnType = ColumnType.LONG;
@@ -100,7 +115,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         noNetworkIOJob = new NoNetworkIOJob(lineTcpConfiguration);
     }
 
-    private static WorkerPool createWorkerPool(final int workerCount, final boolean haltOnError) {
+    private static WorkerPool createWorkerPool(final int workerCount, final boolean haltOnError, Metrics metrics) {
         return new WorkerPool(new WorkerPoolConfiguration() {
             @Override
             public long getSleepTimeout() {
@@ -116,7 +131,12 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             public boolean haltOnError() {
                 return haltOnError;
             }
-        }, metrics);
+
+            @Override
+            public Metrics getMetrics() {
+                return metrics;
+            }
+        });
     }
 
     protected void assertTable(CharSequence expected, String tableName) {
@@ -209,13 +229,13 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
-            public int getNetMsgBufferSize() {
-                return netMsgBufferSize.get();
+            public NetworkFacade getNetworkFacade() {
+                return nf;
             }
 
             @Override
-            public NetworkFacade getNetworkFacade() {
-                return nf;
+            public int getRecvBufferSize() {
+                return recvBufferSize.get();
             }
 
             @Override
@@ -288,9 +308,9 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         scheduler = new LineTcpMeasurementScheduler(
                 lineTcpConfiguration,
                 engine,
-                createWorkerPool(1, true),
+                createWorkerPool(1, true, lineTcpConfiguration.getMetrics()),
                 null,
-                workerPool = createWorkerPool(nWriterThreads, false)
+                workerPool = createWorkerPool(nWriterThreads, false, lineTcpConfiguration.getMetrics())
         ) {
 
             @Override
@@ -313,8 +333,8 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
         };
         noNetworkIOJob.setScheduler(scheduler);
-        context = new LineTcpConnectionContext(lineTcpConfiguration, scheduler, metrics);
-        context.of(FD, new IODispatcher<LineTcpConnectionContext>() {
+        context = new LineTcpConnectionContext(lineTcpConfiguration, scheduler);
+        context.of(FD, new IODispatcher<>() {
             @Override
             public void close() {
             }
@@ -385,7 +405,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         private LineTcpMeasurementScheduler scheduler;
 
         NoNetworkIOJob(LineTcpReceiverConfiguration config) {
-            unusedSymbolCaches = new WeakClosableObjectPool<SymbolCache>(() -> new SymbolCache(config), 10, true);
+            unusedSymbolCaches = new WeakClosableObjectPool<>(() -> new SymbolCache(config), 10, true);
         }
 
         @Override

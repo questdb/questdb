@@ -34,16 +34,27 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
-import io.questdb.network.*;
-import io.questdb.std.*;
+import io.questdb.network.IOContextFactoryImpl;
+import io.questdb.network.IODispatcher;
+import io.questdb.network.IODispatchers;
+import io.questdb.network.IOOperation;
+import io.questdb.network.IORequestProcessor;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.PeerIsSlowToWriteException;
+import io.questdb.network.QueryPausedException;
+import io.questdb.std.AssociativeCache;
+import io.questdb.std.ConcurrentAssociativeCache;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.NoOpAssociativeCache;
+import io.questdb.std.ObjectFactory;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
-import java.io.Closeable;
-
 import static io.questdb.network.IODispatcher.*;
 
-public class PGWireServer implements Closeable {
+public class PGWireServer implements IPGWireServer {
     private static final Log LOG = LogFactory.getLog(PGWireServer.class);
     private static final NoOpAssociativeCache<TypesAndSelect> NO_OP_CACHE = new NoOpAssociativeCache<>();
     private final PGConnectionContextFactory contextFactory;
@@ -62,13 +73,7 @@ public class PGWireServer implements Closeable {
     ) {
         this.metrics = engine.getMetrics();
         if (configuration.isSelectCacheEnabled()) {
-            this.typesAndSelectCache = new ConcurrentAssociativeCache<>(
-                    configuration.getSelectCacheBlockCount(),
-                    configuration.getSelectCacheRowCount(),
-                    metrics.pgWire().cachedSelectsGauge(),
-                    metrics.pgWire().selectCacheHitCounter(),
-                    metrics.pgWire().selectCacheMissCounter()
-            );
+            this.typesAndSelectCache = new ConcurrentAssociativeCache<>(configuration.getConcurrentCacheConfiguration());
         } else {
             this.typesAndSelectCache = NO_OP_CACHE;
         }
@@ -79,7 +84,7 @@ public class PGWireServer implements Closeable {
                 executionContextObjectFactory,
                 typesAndSelectCache
         );
-        this.dispatcher = IODispatchers.create(configuration.getDispatcherConfiguration(), contextFactory);
+        this.dispatcher = IODispatchers.create(configuration, contextFactory);
         this.workerPool = workerPool;
         this.registry = registry;
 
@@ -115,7 +120,7 @@ public class PGWireServer implements Closeable {
                     } catch (Throwable e) { // must remain last in catch list!
                         LOG.critical().$("internal error [ex=").$(e).$(']').$();
                         // This is a critical error, so we treat it as an unhandled one.
-                        metrics.health().incrementUnhandledErrors();
+                        metrics.healthMetrics().incrementUnhandledErrors();
                         dispatcher.disconnect(context, DISCONNECT_REASON_SERVER_ERROR);
                     }
                     return false;
@@ -133,6 +138,7 @@ public class PGWireServer implements Closeable {
         }
     }
 
+    @Override
     public void clearSelectCache() {
         typesAndSelectCache.clear();
     }
@@ -145,15 +151,18 @@ public class PGWireServer implements Closeable {
         typesAndSelectCache = Misc.free(typesAndSelectCache);
     }
 
+    @Override
     public int getPort() {
         return dispatcher.getPort();
     }
 
     @TestOnly
+    @Override
     public WorkerPool getWorkerPool() {
         return workerPool;
     }
 
+    @Override
     public void resetQueryCache() {
         if (typesAndSelectCache != null) {
             typesAndSelectCache.clear();

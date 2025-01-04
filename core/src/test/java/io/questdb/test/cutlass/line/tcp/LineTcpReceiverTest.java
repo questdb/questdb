@@ -25,7 +25,11 @@
 package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.Record;
@@ -48,7 +52,14 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
@@ -61,7 +72,11 @@ import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.Before;
+import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
@@ -256,7 +271,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             // Pre-create a partitioned table, so we can wait until it's created.
             TableModel m = new TableModel(configuration, tablePartitioned, PartitionBy.DAY);
             m.timestamp("ts").wal();
-            TestUtils.create(m, engine);
+            TestUtils.createTable(engine, m);
 
             // Send non-partitioned table rows before the partitioned table ones.
             final String lineData = tableNonPartitioned + " windspeed=2.0 631150000000000000\n" +
@@ -799,39 +814,39 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testShutdownWithDedicatedPoolsCloseIoPoolFirst() throws Exception {
-        long preTestErrors = engine.getMetrics().health().unhandledErrorsCount();
+        long preTestErrors = engine.getMetrics().healthMetrics().unhandledErrorsCount();
 
         assertMemoryLeak(() -> {
             WorkerPool writerPool = new TestWorkerPool("writer", 2, engine.getMetrics());
             WorkerPool ioPool = new TestWorkerPool("io", 2, engine.getMetrics());
             shutdownReceiverWhileSenderIsSendingData(ioPool, writerPool);
 
-            Assert.assertEquals(0, engine.getMetrics().health().unhandledErrorsCount() - preTestErrors);
+            Assert.assertEquals(0, engine.getMetrics().healthMetrics().unhandledErrorsCount() - preTestErrors);
         });
     }
 
     @Test
     public void testShutdownWithDedicatedPoolsCloseWriterPoolFirst() throws Exception {
-        long preTestErrors = engine.getMetrics().health().unhandledErrorsCount();
+        long preTestErrors = engine.getMetrics().healthMetrics().unhandledErrorsCount();
 
         assertMemoryLeak(() -> {
             WorkerPool writerPool = new TestWorkerPool("writer", 2, engine.getMetrics());
             WorkerPool ioPool = new TestWorkerPool("io", 2, engine.getMetrics());
             shutdownReceiverWhileSenderIsSendingData(ioPool, writerPool);
 
-            Assert.assertEquals(0, engine.getMetrics().health().unhandledErrorsCount() - preTestErrors);
+            Assert.assertEquals(0, engine.getMetrics().healthMetrics().unhandledErrorsCount() - preTestErrors);
         });
     }
 
     @Test
     public void testShutdownWithSharedPool() throws Exception {
-        long preTestErrors = engine.getMetrics().health().unhandledErrorsCount();
+        long preTestErrors = engine.getMetrics().healthMetrics().unhandledErrorsCount();
 
         assertMemoryLeak(() -> {
             WorkerPool sharedPool = new TestWorkerPool("shared", 2, engine.getMetrics());
             shutdownReceiverWhileSenderIsSendingData(sharedPool, sharedPool);
 
-            Assert.assertEquals(0, engine.getMetrics().health().unhandledErrorsCount() - preTestErrors);
+            Assert.assertEquals(0, engine.getMetrics().healthMetrics().unhandledErrorsCount() - preTestErrors);
         });
     }
 
@@ -1034,7 +1049,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testTableTableIdChangedOnRecreate() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table weather as (" +
                             "select x as windspeed," +
                             "x*2 as timetocycle, " +
@@ -1050,7 +1065,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                             "2\t4\t1970-01-01T00:00:00.000002Z\n", sink);
                 }
 
-                drop("drop table weather");
+                execute("drop table weather");
 
                 runInContext((receiver) -> {
                     String lineData =
@@ -1077,7 +1092,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testTcpIPv4() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (" +
+            execute("create table test (" +
                     "col ipv4, " +
                     "ts timestamp " +
                     ") timestamp(ts) partition by day");
@@ -1108,7 +1123,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testTcpIPv4Duplicate() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (" +
+            execute("create table test (" +
                     "col ipv4, " +
                     "ts timestamp " +
                     ") timestamp(ts) partition by day");
@@ -1136,7 +1151,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testTcpIPv4MultiCol() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (" +
+            execute("create table test (" +
                     "col ipv4, " +
                     "coll ipv4, " +
                     "ts timestamp " +
@@ -1168,7 +1183,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testTcpIPv4NoMagicNumbers() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (" +
+            execute("create table test (" +
                     "col ipv4, " +
                     "ts timestamp " +
                     ") timestamp(ts) partition by day");
@@ -1197,7 +1212,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testTcpIPv4Null() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (" +
+            execute("create table test (" +
                     "col ipv4, " +
                     "ts timestamp " +
                     ") timestamp(ts) partition by day");
@@ -1228,7 +1243,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testTcpIPv4Null2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (" +
+            execute("create table test (" +
                     "col ipv4, " +
                     "ts timestamp " +
                     ") timestamp(ts) partition by day");
@@ -1357,7 +1372,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         if (walEnabled) {
             m.wal();
         }
-        TestUtils.create(m, engine);
+        TestUtils.createTable(engine, m);
 
         engine.releaseInactive();
         runInContext((receiver) -> {
@@ -1410,7 +1425,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             if (walEnabled) {
                 m.wal();
             }
-            TestUtils.create(m, engine);
+            TestUtils.createTable(engine, m);
 
             sendLinger(lineData, "table_a");
 
@@ -1537,7 +1552,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             if (walEnabled) {
                 m.wal();
             }
-            TestUtils.create(m, engine);
+            TestUtils.createTable(engine, m);
 
             send(lineData, "messages");
             String expected = "ts\tid\tauthor\tguild\tchannel\tflags\n" +
@@ -1812,7 +1827,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     private void dropWeatherTable() {
-        engine.drop(path, engine.verifyTableName("weather"));
+        engine.dropTable(path, engine.verifyTableName("weather"));
     }
 
     private void mayDrainWalQueue() {
@@ -1892,7 +1907,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     ioPool.halt();
 
                     long start = System.currentTimeMillis();
-                    while (engine.getMetrics().health().unhandledErrorsCount() == 0) {
+                    while (engine.getMetrics().healthMetrics().unhandledErrorsCount() == 0) {
                         Os.sleep(10);
                         if (System.currentTimeMillis() - start > 1000) {
                             break;
@@ -2058,6 +2073,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                                     Os.pause();
                                 }
                             }
+                            mayDrainWalQueue();
                         }
                     } while (nRowsWritten < nRows);
                     LOG.info().$(nRowsWritten).$(" rows written").$();

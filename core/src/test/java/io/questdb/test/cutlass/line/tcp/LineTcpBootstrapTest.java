@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.line.LineSenderException;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -59,7 +58,7 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 serverMain.start();
                 CairoEngine engine = serverMain.getEngine();
                 try (SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)) {
-                    engine.ddl(
+                    engine.execute(
                             "CREATE TABLE 'betfairRunners' (\n" +
                                     "  id INT,\n" +
                                     "  runner VARCHAR,\n" +
@@ -133,12 +132,12 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
             try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
                 serverMain.start();
                 CairoEngine engine = serverMain.getEngine();
-                try (SqlCompiler sqlCompiler = engine.getSqlCompiler();
-                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)) {
-                    sqlCompiler.compile("create table x (ts timestamp, a int) timestamp(ts) partition by day wal", sqlExecutionContext);
+                try (SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)) {
+
+                    engine.execute("create table x (ts timestamp, a int) timestamp(ts) partition by day wal", sqlExecutionContext);
                 }
 
-                int port = serverMain.getConfiguration().getLineTcpReceiverConfiguration().getDispatcherConfiguration().getBindPort();
+                int port = serverMain.getConfiguration().getLineTcpReceiverConfiguration().getBindPort();
                 try (Sender sender = Sender.builder(Sender.Transport.TCP).address("localhost").port(port).build()) {
                     for (int i = 0; i < 1_000_000; i++) {
                         sender.table("x").stringColumn("a", "42").atNow();

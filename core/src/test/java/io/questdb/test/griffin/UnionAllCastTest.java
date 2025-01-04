@@ -623,13 +623,13 @@ public class UnionAllCastTest extends AbstractCairoTest {
     @Test
     public void testExceptDoubleFloat() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table events1 (contact symbol, groupid float, eventid string)");
-            insert("insert into events1 values ('1', 1.5, 'flash')");
-            insert("insert into events1 values ('2', 1.5, 'stand')");
+            execute("create table events1 (contact symbol, groupid float, eventid string)");
+            execute("insert into events1 values ('1', 1.5, 'flash')");
+            execute("insert into events1 values ('2', 1.5, 'stand')");
 
-            ddl("create table events2 (contact symbol, groupid double, eventid string)");
-            insert("insert into events2 values ('1', 1.5, 'flash')");
-            insert("insert into events2 values ('2', 1.5, 'stand')");
+            execute("create table events2 (contact symbol, groupid double, eventid string)");
+            execute("insert into events2 values ('1', 1.5, 'flash')");
+            execute("insert into events2 values ('2', 1.5, 'stand')");
 
             assertQueryNoLeakCheck(
                     // Empty table expected
@@ -646,15 +646,15 @@ public class UnionAllCastTest extends AbstractCairoTest {
     @Test
     public void testExceptDoubleFloatSort() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table events1 (contact symbol, groupid float, eventid string)");
-            insert("insert into events1 values ('1', 1.5, 'flash')");
-            insert("insert into events1 values ('2', 1.5, 'stand')");
-            insert("insert into events1 values ('1', 1.6, 'stand')");
-            insert("insert into events1 values ('2', 1.6, 'stand')");
+            execute("create table events1 (contact symbol, groupid float, eventid string)");
+            execute("insert into events1 values ('1', 1.5, 'flash')");
+            execute("insert into events1 values ('2', 1.5, 'stand')");
+            execute("insert into events1 values ('1', 1.6, 'stand')");
+            execute("insert into events1 values ('2', 1.6, 'stand')");
 
-            ddl("create table events2 (contact symbol, groupid double, eventid string)");
-            insert("insert into events2 values ('1', 1.5, 'flash')");
-            insert("insert into events2 values ('2', 1.5, 'stand')");
+            execute("create table events2 (contact symbol, groupid double, eventid string)");
+            execute("insert into events2 values ('1', 1.5, 'flash')");
+            execute("insert into events2 values ('2', 1.5, 'stand')");
 
             assertQueryNoLeakCheck(
                     // Empty table expected
@@ -673,13 +673,13 @@ public class UnionAllCastTest extends AbstractCairoTest {
     @Test
     public void testExceptFloatDouble() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table events1 (contact symbol, groupid double, eventid string)");
-            insert("insert into events1 values ('1', 1.5, 'flash')");
-            insert("insert into events1 values ('2', 1.5, 'stand')");
+            execute("create table events1 (contact symbol, groupid double, eventid string)");
+            execute("insert into events1 values ('1', 1.5, 'flash')");
+            execute("insert into events1 values ('2', 1.5, 'stand')");
 
-            ddl("create table events2 (contact symbol, groupid float, eventid string)");
-            insert("insert into events2 values ('1', 1.5, 'flash')");
-            insert("insert into events2 values ('2', 1.5, 'stand')");
+            execute("create table events2 (contact symbol, groupid float, eventid string)");
+            execute("insert into events2 values ('1', 1.5, 'flash')");
+            execute("insert into events2 values ('2', 1.5, 'stand')");
 
             assertQueryNoLeakCheck(
                     // Empty table expected
@@ -696,15 +696,15 @@ public class UnionAllCastTest extends AbstractCairoTest {
     @Test
     public void testExceptSort() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table events1 (contact symbol, groupid double, eventid string)");
-            insert("insert into events1 values ('1', 1.5, 'flash')");
-            insert("insert into events1 values ('2', 1.5, 'stand')");
-            insert("insert into events1 values ('1', 1.6, 'stand')");
-            insert("insert into events1 values ('2', 1.6, 'stand')");
+            execute("create table events1 (contact symbol, groupid double, eventid string)");
+            execute("insert into events1 values ('1', 1.5, 'flash')");
+            execute("insert into events1 values ('2', 1.5, 'stand')");
+            execute("insert into events1 values ('1', 1.6, 'stand')");
+            execute("insert into events1 values ('2', 1.6, 'stand')");
 
-            ddl("create table events2 (contact symbol, groupid double, eventid string)");
-            insert("insert into events2 values ('1', 1.5, 'flash')");
-            insert("insert into events2 values ('2', 1.5, 'stand')");
+            execute("create table events2 (contact symbol, groupid double, eventid string)");
+            execute("insert into events2 values ('1', 1.5, 'flash')");
+            execute("insert into events2 values ('2', 1.5, 'stand')");
 
             assertQueryNoLeakCheck(
                     // Empty table expected
@@ -1327,6 +1327,77 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIPv4String() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "101.77.34.89\n" +
+                        "66.56.51.126\n" +
+                        "74.188.217.59\n" +
+                        "249.60.8.8\n" +
+                        "230.202.108.161\n" +
+                        "JWCPSWHYR\n" +
+                        "EHNRX\n" +
+                        "SXUXI\n" +
+                        "TGPGW\n" +
+                        "YUDEYYQEHB\n",
+                "create table x as (select rnd_ipv4() a from long_sequence(5))",
+                "create table y as (select rnd_str() b from long_sequence(5))",
+                true
+        );
+    }
+
+    @Test
+    public void testIPv4Symbol() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "199.122.166.85\n" +
+                        "79.15.250.138\n" +
+                        "35.86.82.23\n" +
+                        "111.98.117.250\n" +
+                        "205.123.179.216\n" +
+                        "aaa\n" +
+                        "aaa\n" +
+                        "bbb\n" +
+                        "bbb\n" +
+                        "bbb\n",
+                "create table x as (select rnd_ipv4() a from long_sequence(5))",
+                "create table y as (select rnd_symbol('aaa', 'bbb') a from long_sequence(5))",
+                false
+        );
+
+        testUnion(
+                "a\n" +
+                        "199.122.166.85\n" +
+                        "79.15.250.138\n" +
+                        "35.86.82.23\n" +
+                        "111.98.117.250\n" +
+                        "205.123.179.216\n" +
+                        "aaa\n" +
+                        "bbb\n"
+        );
+    }
+
+    @Test
+    public void testIPv4Varchar() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "49.254.54.230\n" +
+                        "89.207.251.208\n" +
+                        "66.9.11.179\n" +
+                        "50.89.42.43\n" +
+                        "219.41.127.7\n" +
+                        "&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\n" +
+                        "8#3TsZ\n" +
+                        "zV衞͛Ԉ龘и\uDA89\uDFA4~\n" +
+                        "ṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\n" +
+                        "\uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46OF\n",
+                "create table x as (select rnd_ipv4() a from long_sequence(5))",
+                "create table y as (select rnd_varchar() b from long_sequence(5))",
+                true
+        );
+    }
+
+    @Test
     public void testIntBool() throws Exception {
         // this is cast to STRING, both columns
         testUnionAll(
@@ -1457,15 +1528,15 @@ public class UnionAllCastTest extends AbstractCairoTest {
     @Test
     public void testIntersectDoubleFloatSort() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table events1 (contact symbol, groupid float, eventid string)");
-            insert("insert into events1 values ('1', 1.5, 'flash')");
-            insert("insert into events1 values ('2', 1.5, 'stand')");
-            insert("insert into events1 values ('1', 1.6, 'stand')");
-            insert("insert into events1 values ('2', 1.6, 'stand')");
+            execute("create table events1 (contact symbol, groupid float, eventid string)");
+            execute("insert into events1 values ('1', 1.5, 'flash')");
+            execute("insert into events1 values ('2', 1.5, 'stand')");
+            execute("insert into events1 values ('1', 1.6, 'stand')");
+            execute("insert into events1 values ('2', 1.6, 'stand')");
 
-            ddl("create table events2 (contact symbol, groupid double, eventid string)");
-            insert("insert into events2 values ('1', 1.5, 'flash')");
-            insert("insert into events2 values ('2', 1.5, 'stand')");
+            execute("create table events2 (contact symbol, groupid double, eventid string)");
+            execute("insert into events2 values ('1', 1.5, 'flash')");
+            execute("insert into events2 values ('2', 1.5, 'stand')");
 
             assertQueryNoLeakCheck(
                     // Empty table expected
@@ -1484,15 +1555,15 @@ public class UnionAllCastTest extends AbstractCairoTest {
     @Test
     public void testIntersectSort() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table events1 (contact symbol, groupid double, eventid string)");
-            insert("insert into events1 values ('1', 1.5, 'flash')");
-            insert("insert into events1 values ('2', 1.5, 'stand')");
-            insert("insert into events1 values ('1', 1.6, 'stand')");
-            insert("insert into events1 values ('2', 1.6, 'stand')");
+            execute("create table events1 (contact symbol, groupid double, eventid string)");
+            execute("insert into events1 values ('1', 1.5, 'flash')");
+            execute("insert into events1 values ('2', 1.5, 'stand')");
+            execute("insert into events1 values ('1', 1.6, 'stand')");
+            execute("insert into events1 values ('2', 1.6, 'stand')");
 
-            ddl("create table events2 (contact symbol, groupid double, eventid string)");
-            insert("insert into events2 values ('1', 1.5, 'flash')");
-            insert("insert into events2 values ('2', 1.5, 'stand')");
+            execute("create table events2 (contact symbol, groupid double, eventid string)");
+            execute("insert into events2 values ('1', 1.5, 'flash')");
+            execute("insert into events2 values ('2', 1.5, 'stand')");
 
             assertQueryNoLeakCheck(
                     // Empty table expected
@@ -1998,6 +2069,26 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStringIPv4() throws Exception {
+        testUnionAll(
+                "b\n" +
+                        "JWCPSWHYR\n" +
+                        "EHNRX\n" +
+                        "SXUXI\n" +
+                        "TGPGW\n" +
+                        "YUDEYYQEHB\n" +
+                        "101.77.34.89\n" +
+                        "66.56.51.126\n" +
+                        "74.188.217.59\n" +
+                        "249.60.8.8\n" +
+                        "230.202.108.161\n",
+                "create table y as (select rnd_ipv4() a from long_sequence(5))",
+                "create table x as (select rnd_str() b from long_sequence(5))",
+                true
+        );
+    }
+
+    @Test
     public void testStringNull() throws Exception {
         testUnionAllWithNull(
                 "a\tc\n" +
@@ -2116,7 +2207,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
         // we expect this column to be ignored by optimiser, and also
         // we expect optimiser to correctly select column "b" from Y as
         // a match against column "a" in the union
-        compile("create table y as (select rnd_double() u, rnd_byte() b, rnd_symbol('x','y') c from long_sequence(5))");
+        execute("create table y as (select rnd_double() u, rnd_byte() b, rnd_symbol('x','y') c from long_sequence(5))");
         engine.releaseAllWriters();
         assertQuery(
                 "u\ta\tc\n" +
@@ -2380,8 +2471,8 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     private static void testUnionAllWithNull(String expected, String function, boolean testUnion) throws Exception {
-        ddl("create table y as (select " + function + " c from long_sequence(5))");
-        ddl("create table x as (select " + function + " a from long_sequence(5))");
+        execute("create table y as (select " + function + " c from long_sequence(5))");
+        execute("create table x as (select " + function + " a from long_sequence(5))");
         engine.releaseAllWriters();
 
         assertQuery(
@@ -2410,7 +2501,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     private void assertFailure(String ddlX, String ddlY, int pos) throws Exception {
-        compile(ddlY);
+        execute(ddlY);
         engine.releaseAllWriters();
         assertException(
                 "x union all y",
@@ -2442,7 +2533,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     private void testUnionAll(String expected, String sql, String ddlX, String ddlY) throws Exception {
-        compile(ddlY);
+        execute(ddlY);
         engine.releaseAllWriters();
         assertQuery(expected, sql, ddlX, null, false, true);
     }

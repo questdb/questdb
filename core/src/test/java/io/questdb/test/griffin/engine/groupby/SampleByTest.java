@@ -96,8 +96,19 @@ public class SampleByTest extends AbstractCairoTest {
             "x::timestamp as n," +
             "FROM long_sequence(480)\n" +
             ") timestamp(ts)";
-
     private static final Log LOG = LogFactory.getLog(SampleByTest.class);
+    final String sysTelemetryWalDdl = "CREATE TABLE IF NOT EXISTS 'sys.telemetry_wal' ( " +
+            "created TIMESTAMP, " +
+            "event SHORT, " +
+            "tableId INT, " +
+            "walId INT, " +
+            "seqTxn LONG, " +
+            "rowCount LONG, " +
+            "physicalRowCount LONG, " +
+            "latency FLOAT " +
+            ") timestamp(created) " +
+            "PARTITION BY MONTH BYPASS WAL " +
+            "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;";
 
     @Test
     public void testBadFunction() throws Exception {
@@ -542,7 +553,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testGroupByFail() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as " +
                             "(" +
                             "select" +
@@ -641,13 +652,13 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testGroupByWithProjection() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE 'trades' (\n" +
+            execute("CREATE TABLE 'trades' (\n" +
                     "  symbol SYMBOL capacity 256 CACHE,\n" +
                     "  price DOUBLE,\n" +
                     "  amount DOUBLE,\n" +
                     "  timestamp TIMESTAMP\n" +
                     ") timestamp (timestamp) PARTITION BY DAY;");
-            insert("insert into trades \n" +
+            execute("insert into trades \n" +
                     "select \n" +
                     "rnd_symbol('a', 'b', 'c'),\n" +
                     "rnd_double(),\n" +
@@ -1287,7 +1298,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testIndexSampleByAlignToCalendarBindVariables() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as " +
                             "(" +
                             "select" +
@@ -1385,7 +1396,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testIndexSampleByAlignToCalendarBindVariablesWrongTypes() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as " +
                             "(" +
                             "select" +
@@ -2034,7 +2045,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testIndexSampleByIndexNoTimestampColSelected() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table xx (lat double, lon double, s symbol, k timestamp)" +
+            execute("create table xx (lat double, lon double, s symbol, k timestamp)" +
                     ", index(s capacity 256) timestamp(k) partition by DAY");
 
             assertQueryNoLeakCheck(
@@ -2061,8 +2072,8 @@ public class SampleByTest extends AbstractCairoTest {
                     false
             );
 
-            ddl("alter table xx drop column s", sqlExecutionContext);
-            ddl("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
+            execute("alter table xx drop column s", sqlExecutionContext);
+            execute("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
 
             TestUtils.assertSqlCursors(
                     engine,
@@ -2082,7 +2093,7 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleByIndexWithIrregularEmptyPeriods() throws Exception {
-        assertMemoryLeak(() -> ddl("create table xx (s symbol, k timestamp)" +
+        assertMemoryLeak(() -> execute("create table xx (s symbol, k timestamp)" +
                 ", index(s capacity 256) timestamp(k) partition by DAY"));
 
         assertSampleByIndexQuery(
@@ -2558,15 +2569,15 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testIndexSampleIndexNoRowsInIndex() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table xx (k timestamp)\n" +
+            execute("create table xx (k timestamp)\n" +
                     " timestamp(k) partition by DAY");
-            insert(
+            execute(
                     "insert into xx " +
                             "select " +
                             "timestamp_sequence(0, 1 * 60 * 1000000L) k\n" +
                             "from\n" +
                             "long_sequence(100)\n");
-            ddl("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
+            execute("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
 
             String expected = "fk\tlk\tk\ts\n" +
                     "1970-01-01T00:00:00.000000Z\t1970-01-01T00:59:00.000000Z\t1970-01-01T00:00:00.000000Z\t\n" +
@@ -2590,7 +2601,7 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleLatestRestrictedByWhere() throws Exception {
-        assertMemoryLeak(() -> ddl("create table xx (s symbol, k timestamp)" +
+        assertMemoryLeak(() -> execute("create table xx (s symbol, k timestamp)" +
                 ", index(s capacity 256) timestamp(k) partition by DAY"));
 
         assertSampleByIndexQuery(
@@ -2612,16 +2623,16 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testIndexSampleMainIndexHasColumnTop() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table xx (k timestamp)\n" +
+            execute("create table xx (k timestamp)\n" +
                     " timestamp(k) partition by DAY");
-            insert(
+            execute(
                     "insert into xx " +
                             "select " +
                             "timestamp_sequence('1970-01-01T12', 2 * 60 * 60 * 1000000L) k\n" +
                             "from\n" +
                             "long_sequence(8)\n");
-            ddl("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
-            insert("insert into xx " +
+            execute("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
+            execute("insert into xx " +
                     "select " +
                     "timestamp_sequence('1970-01-03', 1 * 60 * 1000000L),\n" +
                     "(case when x % 2 = 0 then 'a' else 'b' end) sk\n" +
@@ -2655,10 +2666,10 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testIndexSampleWithColumnTops() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table xx (s symbol, k timestamp)" +
+            execute("create table xx (s symbol, k timestamp)" +
                     ", index(s capacity 256) timestamp(k) partition by DAY");
 
-            insert(
+            execute(
                     "insert into xx " +
                             "select " +
                             "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
@@ -2666,11 +2677,11 @@ public class SampleByTest extends AbstractCairoTest {
                             "from\n" +
                             "long_sequence(100)\n");
 
-            ddl("alter table xx add i1 int", sqlExecutionContext);
-            ddl("alter table xx add c1 char", sqlExecutionContext);
-            ddl("alter table xx add l1 long", sqlExecutionContext);
+            execute("alter table xx add i1 int", sqlExecutionContext);
+            execute("alter table xx add c1 char", sqlExecutionContext);
+            execute("alter table xx add l1 long", sqlExecutionContext);
 
-            insert(
+            execute(
                     "insert into xx " +
                             "select " +
                             "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
@@ -2681,13 +2692,13 @@ public class SampleByTest extends AbstractCairoTest {
                             "from\n" +
                             "long_sequence(100)");
 
-            ddl("alter table xx add f1 float", sqlExecutionContext);
-            ddl("alter table xx add d1 double", sqlExecutionContext);
-            ddl("alter table xx add s1 symbol", sqlExecutionContext);
-            ddl("alter table xx add ss1 short", sqlExecutionContext);
-            ddl("alter table xx add b1 byte", sqlExecutionContext);
-            ddl("alter table xx add t1 timestamp", sqlExecutionContext);
-            ddl("alter table xx add dt date", sqlExecutionContext);
+            execute("alter table xx add f1 float", sqlExecutionContext);
+            execute("alter table xx add d1 double", sqlExecutionContext);
+            execute("alter table xx add s1 symbol", sqlExecutionContext);
+            execute("alter table xx add ss1 short", sqlExecutionContext);
+            execute("alter table xx add b1 byte", sqlExecutionContext);
+            execute("alter table xx add t1 timestamp", sqlExecutionContext);
+            execute("alter table xx add dt date", sqlExecutionContext);
         });
 
         assertSampleByIndexQuery(
@@ -2732,10 +2743,10 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testIndexSampleWithColumnTopsGeo() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table xx (s symbol, k timestamp)" +
+            execute("create table xx (s symbol, k timestamp)" +
                     ", index(s capacity 256) timestamp(k) partition by DAY");
 
-            insert(
+            execute(
                     "insert into xx " +
                             "select " +
                             "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
@@ -2743,11 +2754,11 @@ public class SampleByTest extends AbstractCairoTest {
                             "from\n" +
                             "long_sequence(100)\n");
 
-            ddl("alter table xx add i1 int", sqlExecutionContext);
-            ddl("alter table xx add c1 char", sqlExecutionContext);
-            ddl("alter table xx add l1 long", sqlExecutionContext);
+            execute("alter table xx add i1 int", sqlExecutionContext);
+            execute("alter table xx add c1 char", sqlExecutionContext);
+            execute("alter table xx add l1 long", sqlExecutionContext);
 
-            insert(
+            execute(
                     "insert into xx " +
                             "select " +
                             "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
@@ -2758,17 +2769,17 @@ public class SampleByTest extends AbstractCairoTest {
                             "from\n" +
                             "long_sequence(100)");
 
-            ddl("alter table xx add f1 float", sqlExecutionContext);
-            ddl("alter table xx add d1 double", sqlExecutionContext);
-            ddl("alter table xx add s1 symbol", sqlExecutionContext);
-            ddl("alter table xx add ss1 short", sqlExecutionContext);
-            ddl("alter table xx add b1 byte", sqlExecutionContext);
-            ddl("alter table xx add t1 timestamp", sqlExecutionContext);
-            ddl("alter table xx add dt date", sqlExecutionContext);
-            ddl("alter table xx add ge1 geohash(3b)", sqlExecutionContext);
-            ddl("alter table xx add ge2 geohash(2c)", sqlExecutionContext);
-            ddl("alter table xx add ge4 geohash(5c)", sqlExecutionContext);
-            ddl("alter table xx add ge8 geohash(9c)", sqlExecutionContext);
+            execute("alter table xx add f1 float", sqlExecutionContext);
+            execute("alter table xx add d1 double", sqlExecutionContext);
+            execute("alter table xx add s1 symbol", sqlExecutionContext);
+            execute("alter table xx add ss1 short", sqlExecutionContext);
+            execute("alter table xx add b1 byte", sqlExecutionContext);
+            execute("alter table xx add t1 timestamp", sqlExecutionContext);
+            execute("alter table xx add dt date", sqlExecutionContext);
+            execute("alter table xx add ge1 geohash(3b)", sqlExecutionContext);
+            execute("alter table xx add ge2 geohash(2c)", sqlExecutionContext);
+            execute("alter table xx add ge4 geohash(5c)", sqlExecutionContext);
+            execute("alter table xx add ge8 geohash(9c)", sqlExecutionContext);
         });
 
         assertSampleByIndexQuery(
@@ -2841,10 +2852,10 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testNoSampleByWithDeferredSingleSymbolFilterPageFrameRecordCursorFactory() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table xx (k timestamp, d DOUBLE, s SYMBOL)" +
+            execute("create table xx (k timestamp, d DOUBLE, s SYMBOL)" +
                     ", index(s capacity 345) timestamp(k) partition by DAY \n");
 
-            insert("insert into xx " +
+            execute("insert into xx " +
                     "select " +
                     "timestamp_sequence(25 * 60 * 60 * 1000000L, 1 * 60 * 1000000L),\n" +
                     "rnd_double() d,\n" +
@@ -2857,6 +2868,82 @@ public class SampleByTest extends AbstractCairoTest {
                     "from xx " +
                     "where s in ('a')"
             );
+        });
+    }
+
+    @Test
+    public void testPrefixedTableNames() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(sysTelemetryWalDdl);
+            assertSql("created\tcommit_rate\n" +
+                    "2024-12-08T00:00:00.000000Z\t0\n" +
+                    "2024-12-08T08:00:00.000000Z\t0\n" +
+                    "2024-12-08T16:00:00.000000Z\t0\n", "select created, count() commit_rate\n" +
+                    "from sys.telemetry_wal\n" +
+                    "where tableId = 1017 and event = 103\n" +
+                    "and created >= '2024-12-08' and created < '2024-12-09'\n" +
+                    "sample by 8h from\n" +
+                    "'2024-12-08' to '2024-12-09'\n" +
+                    "fill(0)");
+            assertSql(
+                    "created\tcommit_rate\n" +
+                            "2024-12-08T00:00:00.000000Z\t0\n" +
+                            "2024-12-08T08:00:00.000000Z\t0\n" +
+                            "2024-12-08T16:00:00.000000Z\t0\n",
+                    "select created, count() commit_rate\n" +
+                            "from \"sys.telemetry_wal\"\n" +
+                            "where tableId = 1017 and event = 103\n" +
+                            "and \"sys.telemetry_wal\".created >= '2024-12-08' and created < '2024-12-09'\n" +
+                            "sample by 8h from\n" +
+                            "'2024-12-08' to '2024-12-09'\n" +
+                            "fill(0)"
+            );
+        });
+    }
+
+    @Test
+    public void testQueryCorrectlyFillsSides() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(sysTelemetryWalDdl);
+            drainWalQueue();
+            assertSql("created\twriteAmplification\n" +
+                            "2024-12-10T23:31:02.000000Z\tnull\n" +
+                            "2024-12-11T00:31:02.000000Z\tnull\n" +
+                            "2024-12-11T01:31:02.000000Z\tnull\n" +
+                            "2024-12-11T02:31:02.000000Z\tnull\n" +
+                            "2024-12-11T03:31:02.000000Z\tnull\n" +
+                            "2024-12-11T04:31:02.000000Z\tnull\n" +
+                            "2024-12-11T05:31:02.000000Z\tnull\n" +
+                            "2024-12-11T06:31:02.000000Z\tnull\n" +
+                            "2024-12-11T07:31:02.000000Z\tnull\n" +
+                            "2024-12-11T08:31:02.000000Z\tnull\n" +
+                            "2024-12-11T09:31:02.000000Z\tnull\n" +
+                            "2024-12-11T10:31:02.000000Z\tnull\n",
+                    "select \n" +
+                            "  created,\n" +
+                            "  -- coars, actual write amplification bucketed in 1s buckets\n" +
+                            "  phy_row_count/row_count writeAmplification\n" +
+                            "from (  \n" +
+                            "  select \n" +
+                            "    created, \n" +
+                            "    sum(phy_row_count) over (order by created rows between 59 PRECEDING and CURRENT row) phy_row_count,\n" +
+                            "    sum(row_count) over (order by created rows between 59 PRECEDING and CURRENT row) row_count\n" +
+                            "    from (\n" +
+                            "      select \n" +
+                            "        created, \n" +
+                            "        sum(rowcount) row_count,\n" +
+                            "        sum(physicalRowCount) phy_row_count,\n" +
+                            "      from sys.telemetry_wal\n" +
+                            "      where tableId = 10 and \n" +
+                            "         event = 105\n" +
+                            "         and rowCount > 0 -- this is fixed clause, we have rows with - rowCount logged\n" +
+                            "      sample by 1h\n" +
+                            "      FROM '2024-12-11T00:31:02+01:00' TO '2024-12-11T12:31:02+01:00'\n" +
+                            "      -- fill with null to avoid spurious values and division by 0\n" +
+                            "      fill(null)\n" +
+                            "      \n" +
+                            "  )\n" +
+                            ");");
         });
     }
 
@@ -3200,7 +3287,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByAllowsPredicatePushDownWhenTsIsNotIncludedInColumnList() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            execute("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
             assertPlanNoLeakCheck(
                     "select * from (" +
                             "select ts2 as tstmp, sym, first(val), avg(val), last(val), max(val) " +
@@ -3407,7 +3494,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByDoesntAllowNonTimestampPredicatePushdown() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table tab as (\n" +
+            execute("create table tab as (\n" +
                     "select dateadd('m', 11*x::int, '2022-12-01T01:00:00.000000Z') ts, x v, rnd_str('A', 'B') s\n" +
                     "from long_sequence(6) ) timestamp(ts)");
 
@@ -3451,7 +3538,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByDoesntAllowTimestampPredicatePushdown() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table tab as (\n" +
+            execute("create table tab as (\n" +
                     "select dateadd('m', 10*x::int, '2022-12-01T01:00:00.000000Z') ts, x v\n" +
                     "from long_sequence(6) ) timestamp(ts)");
 
@@ -3526,7 +3613,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByFirstLastFactoryIsChosenIfNotKeyedByFilteredSymbol() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE pos (" +
+            execute("CREATE TABLE pos (" +
                     "  time TIMESTAMP," +
                     "  ts TIMESTAMP," +
                     "  id SYMBOL INDEX," +
@@ -3555,7 +3642,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByFirstLastFactoryIsNotChosenIfKeyedByNonDesignatedTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE pos (" +
+            execute("CREATE TABLE pos (" +
                     "  time TIMESTAMP," +
                     "  ts TIMESTAMP," +
                     "  id SYMBOL INDEX," +
@@ -3584,7 +3671,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByFirstLastFactoryIsNotChosenIfKeyedByNonFilteredSymbol() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE pos (" +
+            execute("CREATE TABLE pos (" +
                     "  time TIMESTAMP," +
                     "  id SYMBOL INDEX," +
                     "  lat DOUBLE," +
@@ -3628,7 +3715,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByFirstLastFactoryIsNotChosenIfKeyedByNonSymbol() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE pos (" +
+            execute("CREATE TABLE pos (" +
                     "  time TIMESTAMP," +
                     "  id SYMBOL INDEX," +
                     "  lat DOUBLE," +
@@ -3810,7 +3897,7 @@ public class SampleByTest extends AbstractCairoTest {
     public void testSampleByFromToBindVariables() throws Exception {
         assertMemoryLeak(() -> {
 
-            ddl(DDL_FROMTO, sqlExecutionContext);
+            execute(DDL_FROMTO, sqlExecutionContext);
 
             snapshotMemoryUsage();
             try (
@@ -3856,7 +3943,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByFromToFillNull() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(DDL_FROMTO);
+            execute(DDL_FROMTO);
             drainWalQueue();
             assertSql(
                     "ts\tavg\n" +
@@ -3896,7 +3983,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByFromToIsDisallowedForKeyedQueries() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(DDL_FROMTO);
+            execute(DDL_FROMTO);
             assertException("select ts, avg(x), first(x), last(x), x from fromto\n" +
                             "where s != '5'\n" +
                             "sample by 5d from '2017-12-20' to '2018-01-31' fill(42)",
@@ -3910,7 +3997,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByFromToNoFill() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(DDL_FROMTO);
+            execute(DDL_FROMTO);
             drainWalQueue();
             assertSql(
                     "ts\tavg\n" +
@@ -3948,7 +4035,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByFromToPlans() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tbl (\n" +
+            execute("create table tbl (\n" +
                     "  ts timestamp,\n" +
                     "  price double\n" +
                     ") timestamp(ts) partition by day wal;");
@@ -4002,7 +4089,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByFromToSampleByMonthWithFill() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(DDL_FROMTO);
+            execute(DDL_FROMTO);
             assertSql(
                     "ts\tavg\n" +
                             "2017-01-01T00:00:00.000000Z\tnull\n" +
@@ -4020,7 +4107,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByFromToSampleByYearWithFill() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(DDL_FROMTO);
+            execute(DDL_FROMTO);
             assertSql(
                     "ts\tavg\n" +
                             "2000-01-01T00:00:00.000000Z\tnull\n" +
@@ -4486,7 +4573,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByNoFillNotKeyedAlignToCalendarTimezoneVariable() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as " +
                             "(" +
                             "select" +
@@ -4625,7 +4712,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByRewriteJoinNoTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            execute("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
             assertPlanNoLeakCheck(
                     "select * from " +
                             "(select sym, first(val), avg(val), last(val), max(val) " +
@@ -4666,7 +4753,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByRewriteJoinTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            execute("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
             assertPlanNoLeakCheck(
                     "select * from " +
                             "(select ts1, sym, first(val), avg(val), last(val), max(val) " +
@@ -4741,7 +4828,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByRewriteMultipleTimestamps1() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            execute("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
             assertPlanNoLeakCheck(
                     "select ts1 a, ts1 b, sym, first(val), avg(val), last(val), max(val) " +
                             "from x " +
@@ -4763,7 +4850,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByRewriteMultipleTimestamps1NotKeyed() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            execute("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
             assertPlanNoLeakCheck(
                     "select ts1 a, ts1 b, first(val), avg(val), last(val), max(val) " +
                             "from x " +
@@ -4785,7 +4872,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByRewriteMultipleTimestamps2() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            execute("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
             assertPlanNoLeakCheck(
                     "select ts1 a, ts1 b, sym, first(val), avg(val), ts1 e, last(val), max(val), ts1 c, ts1 d " +
                             "from x " +
@@ -4807,7 +4894,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByRewriteUTCOffset() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            execute("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
             assertPlanNoLeakCheck(
                     "select ts1, sym, min(val), avg(val), max(val) " +
                             "from x " +
@@ -4828,7 +4915,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByRewriteUnionNoTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            execute("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
             assertPlanNoLeakCheck(
                     "select sym, first(val), avg(val), last(val), max(val) " +
                             "from x " +
@@ -4865,7 +4952,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByRewriteUnionTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            execute("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
             assertPlanNoLeakCheck(
                     "select ts1 as tstmp, sym, first(val), avg(val), last(val), max(val) " +
                             "from x " +
@@ -4898,7 +4985,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByRewriteWith() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            execute("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
             assertPlanNoLeakCheck(
                     "with y as (select ts1 a, ts1 b, sym, first(val), avg(val), ts1 e, last(val), max(val), ts1 c, ts1 d " +
                             "from x " +
@@ -4920,7 +5007,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByRunsSequentiallyWithNonConstantFrom() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE 'trades' (\n" +
+            execute("CREATE TABLE 'trades' (\n" +
                     "  symbol SYMBOL capacity 256 CACHE,\n" +
                     "  side SYMBOL capacity 256 CACHE,\n" +
                     "  price DOUBLE,\n" +
@@ -4950,20 +5037,20 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByWithAsofJoin() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE 'trades1' (\n" +
+            execute("CREATE TABLE 'trades1' (\n" +
                     "  symbol SYMBOL capacity 256 CACHE,\n" +
                     "  price DOUBLE,\n" +
                     "  amount DOUBLE,\n" +
                     "  timestamp TIMESTAMP\n" +
                     ") timestamp (timestamp) PARTITION BY DAY;");
-            ddl("CREATE TABLE 'trades2' (\n" +
+            execute("CREATE TABLE 'trades2' (\n" +
                     "  symbol SYMBOL capacity 256 CACHE,\n" +
                     "  price DOUBLE,\n" +
                     "  amount DOUBLE,\n" +
                     "  timestamp TIMESTAMP\n" +
                     ") timestamp (timestamp) PARTITION BY DAY;");
 
-            insert("insert into trades1 \n" +
+            execute("insert into trades1 \n" +
                     "select \n" +
                     "rnd_symbol('a', 'b', 'c'),\n" +
                     "rnd_double(),\n" +
@@ -4971,7 +5058,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "timestamp_sequence('2022-02-24', 60* 1000000L)\n" +
                     "from long_sequence(10)\n");
 
-            insert("insert into trades2 \n" +
+            execute("insert into trades2 \n" +
                     "select \n" +
                     "rnd_symbol('a', 'b', 'c'),\n" +
                     "rnd_double(),\n" +
@@ -5154,7 +5241,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByWithFullDoesNotReferenceMutableCharSequence() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(DDL_FROMTO);
+            execute(DDL_FROMTO);
 
             String expected = "ts\tavg\n" +
                     "2000-01-01T00:00:00.000000Z\tnull\n" +
@@ -5221,7 +5308,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByWithPredicate() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table tab as (\n" +
+            execute("create table tab as (\n" +
                     "select dateadd('m', 11*x::int, '2022-12-01T01:00:00.000000Z') ts, x v, rnd_str('A', 'B') s\n" +
                     "from long_sequence(6) ) timestamp(ts)");
 
@@ -5265,13 +5352,13 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByWithProjection() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE 'trades' (\n" +
+            execute("CREATE TABLE 'trades' (\n" +
                     "  symbol SYMBOL capacity 256 CACHE,\n" +
                     "  price DOUBLE,\n" +
                     "  amount DOUBLE,\n" +
                     "  timestamp TIMESTAMP\n" +
                     ") timestamp (timestamp) PARTITION BY DAY;");
-            insert("insert into trades \n" +
+            execute("insert into trades \n" +
                     "select \n" +
                     "rnd_symbol('a', 'b', 'c'),\n" +
                     "rnd_double(),\n" +
@@ -5354,13 +5441,13 @@ public class SampleByTest extends AbstractCairoTest {
     // arithmetic
     public void testSampleByWithProjection2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE 'trades' (\n" +
+            execute("CREATE TABLE 'trades' (\n" +
                     "  symbol SYMBOL capacity 256 CACHE,\n" +
                     "  price DOUBLE,\n" +
                     "  amount DOUBLE,\n" +
                     "  timestamp TIMESTAMP\n" +
                     ") timestamp (timestamp) PARTITION BY DAY;");
-            insert("insert into trades \n" +
+            execute("insert into trades \n" +
                     "select \n" +
                     "rnd_symbol('a', 'b', 'c'),\n" +
                     "rnd_double(),\n" +
@@ -5399,7 +5486,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByWithSubQueryAndFromToNoFill() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(DDL_FROMTO);
+            execute(DDL_FROMTO);
             drainWalQueue();
             assertSql(
                     "ts1\tavg\n" +
@@ -5510,7 +5597,7 @@ public class SampleByTest extends AbstractCairoTest {
                 "HYRX\t1\t1970-01-03T14:00:00.000000Z\n" +
                 "CPSW\t14\t1970-01-03T14:00:00.000000Z\n", true, true, false);
 
-        drop("drop table x");
+        execute("drop table x");
 
         assertQuery("b\tcount\tk\n" +
                 "\t6\t1970-01-03T00:00:00.000000Z\n" +
@@ -5763,7 +5850,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "ZNFK\tnull\t1970-01-04T08:24:00.000000Z\n" +
                         "PEVM\tnull\t1970-01-04T08:24:00.000000Z\n", true, true, false);
 
-        drop("drop table x");
+        execute("drop table x");
 
         assertQuery("b\tcount\tk\n" +
                         "PVKN\t1\t1970-01-03T06:00:00.000000Z\n" +
@@ -6215,7 +6302,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "DEYY\t29.313718795776367\t16.47436916993191\t66297136\t4\t3428\t9036423629723776443\t1970-01-04T08:00:00.000000Z\n" +
                         "\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-04T08:00:00.000000Z\n", true, true, false);
 
-        drop("drop table x");
+        execute("drop table x");
 
         assertQuery("b\tsum_t\tsum\tsum1\tsum2\tsum3\tsum4\tk\n",
                 "select b, sum_t(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(linear) align to calendar", "create table x as " +
@@ -6513,7 +6600,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleFillLinearConstructorFail() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as " +
+            execute("create table x as " +
                     "(" +
                     "select" +
                     " rnd_double(0)*100 a," +
@@ -6544,7 +6631,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleFillLinearFail() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as " +
+            execute("create table x as " +
                     "(" +
                     "select" +
                     " rnd_double(0)*100 a," +
@@ -6583,11 +6670,11 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleFillLinearWithAlignment() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (\n" +
+            execute("create table x (\n" +
                     "  ts timestamp\n" +
                     ") timestamp(ts) partition by day wal;");
 
-            insert("\n" +
+            execute("\n" +
                     "insert into x (ts) values \n" +
                     "('2024-03-30T12:24:01.000000Z'),\n" +
                     "('2024-03-30T12:24:31.000000Z'),\n" +
@@ -8459,7 +8546,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleFillNullNotKeyedValid() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as " +
+            execute("create table x as " +
                     "(" +
                     "select" +
                     " rnd_int() a," +
@@ -11151,7 +11238,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleFillValueAllTypesAndTruncate() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as " +
                             "(" +
                             "select" +
@@ -11215,7 +11302,7 @@ public class SampleByTest extends AbstractCairoTest {
                 // make sure strings, binary fields and symbols are compliant with expected record behaviour
                 assertVariableColumns(factory, sqlExecutionContext);
 
-                ddl("truncate table x");
+                execute("truncate table x");
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     println(factory, cursor);
                     assertEquals("b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n", sink);
@@ -12289,7 +12376,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleFillWithWeekStride() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(DDL_FROMTO);
+            execute(DDL_FROMTO);
 
             String query1 = "select ts, avg(x) from fromto\n" +
                     "sample by 1w from '2017-12-20' to '2018-01-31' fill(null)";
@@ -12443,8 +12530,8 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testTimestampColumnAliasPosFirst() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
-            ddl("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
+            execute("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
+            execute("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
             assertQueryNoLeakCheck(
                     "time\tsum\tsum1\tsum2\n" +
@@ -12475,8 +12562,8 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testTimestampColumnAliasPosLast() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
-            ddl("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
+            execute("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
+            execute("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
             assertQueryNoLeakCheck(
                     "sum\tsum1\tsum2\ttime\n" +
@@ -12507,8 +12594,8 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testTimestampColumnAliasPosMid() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
-            ddl("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
+            execute("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
+            execute("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
             assertQueryNoLeakCheck(
                     "sum\ttime\tsum1\tsum2\n" +
@@ -12539,8 +12626,8 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testTimestampColumnJoinTableAliasFirst() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
-            ddl("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
+            execute("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
+            execute("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
             assertQueryNoLeakCheck(
                     "ts\tsum\tsum1\tsum2\n" +
@@ -12571,8 +12658,8 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testTimestampColumnJoinTableAliasLast() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
-            ddl("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
+            execute("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
+            execute("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
             assertQueryNoLeakCheck(
                     "sum\tsum1\tsum2\tts\n" +
@@ -12603,8 +12690,8 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testTimestampColumnJoinTableAliasMid() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
-            ddl("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
+            execute("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
+            execute("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
             assertQueryNoLeakCheck(
                     "sum\tsum1\tsum2\ttime\n" +
@@ -13004,8 +13091,8 @@ public class SampleByTest extends AbstractCairoTest {
 
     private void assertWithSymbolColumnTop(String expected, String query, boolean supportsRandomAccess, boolean expectSize) throws Exception {
         assertMemoryLeak(() -> {
-            ddl("alter table xx drop column s", sqlExecutionContext);
-            ddl("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
+            execute("alter table xx drop column s", sqlExecutionContext);
+            execute("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
 
             String forceNoIndexQuery = query.replace("and s = null", " ");
 
@@ -13055,11 +13142,11 @@ public class SampleByTest extends AbstractCairoTest {
         final int threadCount = 4;
         final int workerCount = 2;
 
-        WorkerPool pool = new WorkerPool((() -> workerCount));
+        WorkerPool pool = new WorkerPool(() -> workerCount);
         assertMemoryLeak(() -> TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
-                    engine.ddl(
+                    engine.execute(
                             "create table x (d1 double, d2 double, s symbol index, kms long, k timestamp) timestamp(k) partition by day;",
                             sqlExecutionContext
                     );
@@ -13123,7 +13210,7 @@ public class SampleByTest extends AbstractCairoTest {
 
     private void testSampleByPeriodFails(String query, int errorPosition, String errorContains) throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as " +
                             "(" +
                             "select" +
@@ -13151,7 +13238,7 @@ public class SampleByTest extends AbstractCairoTest {
 
     private void testSampleByPushdownWithDesignatedTs(String fill, String alignTo, String plan) throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table if not exists x (  ts timestamp, sym symbol, val long ) timestamp(ts) partition by DAY");
+            execute("create table if not exists x (  ts timestamp, sym symbol, val long ) timestamp(ts) partition by DAY");
             String fillOpt = fill.isEmpty() ? "" : "fill(" + fill + ")";
             String query = "select * from (" +
                     "select ts as tstmp, sym, first(val), avg(val), last(val), max(val) " +
@@ -13165,7 +13252,7 @@ public class SampleByTest extends AbstractCairoTest {
 
     private void testSampleByPushdownWithoutDesignatedTs(String fill, String alignTo, String plan) throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table if not exists y (  ts timestamp, sym symbol, val long ) ");
+            execute("create table if not exists y (  ts timestamp, sym symbol, val long ) ");
             String fillOpt = fill.isEmpty() ? "" : "fill(" + fill + ")";
             String query = "select * from (" +
                     "select ts as tstmp, sym, first(val), avg(val), last(val), max(val) " +

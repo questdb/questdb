@@ -24,27 +24,98 @@
 
 package io.questdb.griffin;
 
+import java.util.ArrayDeque;
+
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
-import io.questdb.griffin.engine.functions.cast.*;
-import io.questdb.griffin.engine.functions.columns.*;
-import io.questdb.griffin.engine.functions.constants.*;
+import io.questdb.griffin.engine.functions.cast.CastCharToSymbolFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastGeoHashToGeoHashFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastIntervalToStrFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastStrToTimestampFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastStrToUuidFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastUuidToStrFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastUuidToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastVarcharToGeoHashFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastVarcharToTimestampFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastVarcharToUuidFunctionFactory;
+import io.questdb.griffin.engine.functions.columns.BinColumn;
+import io.questdb.griffin.engine.functions.columns.BooleanColumn;
+import io.questdb.griffin.engine.functions.columns.ByteColumn;
+import io.questdb.griffin.engine.functions.columns.CharColumn;
+import io.questdb.griffin.engine.functions.columns.DateColumn;
+import io.questdb.griffin.engine.functions.columns.DoubleColumn;
+import io.questdb.griffin.engine.functions.columns.FloatColumn;
+import io.questdb.griffin.engine.functions.columns.GeoByteColumn;
+import io.questdb.griffin.engine.functions.columns.GeoIntColumn;
+import io.questdb.griffin.engine.functions.columns.GeoLongColumn;
+import io.questdb.griffin.engine.functions.columns.GeoShortColumn;
+import io.questdb.griffin.engine.functions.columns.IPv4Column;
+import io.questdb.griffin.engine.functions.columns.IntColumn;
+import io.questdb.griffin.engine.functions.columns.IntervalColumn;
+import io.questdb.griffin.engine.functions.columns.Long128Column;
+import io.questdb.griffin.engine.functions.columns.Long256Column;
+import io.questdb.griffin.engine.functions.columns.LongColumn;
+import io.questdb.griffin.engine.functions.columns.RecordColumn;
+import io.questdb.griffin.engine.functions.columns.ShortColumn;
+import io.questdb.griffin.engine.functions.columns.StrColumn;
+import io.questdb.griffin.engine.functions.columns.SymbolColumn;
+import io.questdb.griffin.engine.functions.columns.TimestampColumn;
+import io.questdb.griffin.engine.functions.columns.UuidColumn;
+import io.questdb.griffin.engine.functions.columns.VarcharColumn;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.griffin.engine.functions.constants.ByteConstant;
+import io.questdb.griffin.engine.functions.constants.CharConstant;
+import io.questdb.griffin.engine.functions.constants.CharTypeConstant;
+import io.questdb.griffin.engine.functions.constants.ConstantFunction;
+import io.questdb.griffin.engine.functions.constants.Constants;
+import io.questdb.griffin.engine.functions.constants.DateConstant;
+import io.questdb.griffin.engine.functions.constants.DoubleConstant;
+import io.questdb.griffin.engine.functions.constants.FloatConstant;
+import io.questdb.griffin.engine.functions.constants.GeoByteConstant;
+import io.questdb.griffin.engine.functions.constants.GeoHashTypeConstant;
+import io.questdb.griffin.engine.functions.constants.GeoIntConstant;
+import io.questdb.griffin.engine.functions.constants.GeoLongConstant;
+import io.questdb.griffin.engine.functions.constants.GeoShortConstant;
+import io.questdb.griffin.engine.functions.constants.IPv4Constant;
+import io.questdb.griffin.engine.functions.constants.IntConstant;
+import io.questdb.griffin.engine.functions.constants.Long256Constant;
+import io.questdb.griffin.engine.functions.constants.LongConstant;
+import io.questdb.griffin.engine.functions.constants.NullConstant;
+import io.questdb.griffin.engine.functions.constants.ShortConstant;
+import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.griffin.engine.functions.constants.SymbolConstant;
+import io.questdb.griffin.engine.functions.constants.TimestampConstant;
+import io.questdb.griffin.engine.functions.constants.UuidConstant;
+import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.IntStack;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-
-import java.util.ArrayDeque;
 
 import static io.questdb.griffin.SqlKeywords.*;
 
@@ -711,7 +782,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
             // this is no-arg function, match right away
             if (argCount == 0 && sigArgCount == 0) {
-                return checkAndCreateFunction(factory, args, argPositions, node, configuration);
+                if (factory.isWindow() == isWindowContext || n == 1) {
+                    return checkAndCreateFunction(factory, args, argPositions, node, configuration);
+                }
+                continue;
             }
 
             // otherwise, is number of arguments the same?
@@ -811,15 +885,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     continue;
                 }
 
-                if (factory.isWindow()) {
-                    // prefer window functions in window context, otherwise non-window functions
-                    if (isWindowContext) {
-                        // choose window-ed avg(D) over group by implementation that matches arg type better
-                        match = MATCH_EXACT_MATCH;
-                        sigArgTypeScore -= 10;
-                    } else {
-                        sigArgTypeScore += 10;
-                    }
+                if (isWindowContext != factory.isWindow()) {
+                    match = MATCH_FUZZY_MATCH;
+                } else if (factory.isWindow()) { // make windowFunction high priority when isWindowContext
+                    sigArgTypeScore -= 20;
                 }
 
                 if (match == MATCH_EXACT_MATCH || match >= bestMatch) {
@@ -876,14 +945,18 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 }
             }
         }
-
-        // it is possible that we have more undefined variables than
-        // args in the descriptor, in case of vararg for example
+        // resolve previously UNDEFINED function types
         for (int i = 0, n = undefinedVariables.size(); i < n; i++) {
             final int pos = undefinedVariables.getQuick(i);
             if (pos < candidateSigArgCount) {
+                // assign arguments based on the candidate function descriptor
                 final int sigArgType = FunctionFactoryDescriptor.toType(candidateDescriptor.getArgTypeMask(pos));
                 args.getQuick(pos).assignType(sigArgType, sqlExecutionContext.getBindVariableService());
+            } else {
+                // in case of vararg it is possible that we have more undefined variables than args in the function descriptor,
+                // assign type to all remaining undefined variables based on the preference of the candidate function factory
+                int type = candidate.resolvePreferredVariadicType(argPositions.getQuick(pos), pos, args);
+                args.getQuick(pos).assignType(type, sqlExecutionContext.getBindVariableService());
             }
         }
 

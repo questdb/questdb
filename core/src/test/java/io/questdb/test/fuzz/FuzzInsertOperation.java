@@ -66,7 +66,7 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
     private final double nullSet;
     private final long s0;
     private final long s1;
-    private final int strLen;
+    private final double strLen;
     private final String[] symbols;
     private final long timestamp;
 
@@ -201,17 +201,17 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
                                     break;
                                 }
                                 utf8StringSink.clear();
-                                int varcharLen = strLen > 0 ? rnd.nextInt(strLen) : 0;
+                                int varcharLen = strLen > 0 ? nextVariableColumnLen(rnd) : 0;
                                 rnd.nextUtf8Str(varcharLen, utf8StringSink);
                                 row.putVarchar(index, utf8StringSink);
                                 break;
 
                             case ColumnType.STRING:
-                                row.putStr(index, isNull ? null : strLen == 0 ? "" : rnd.nextString(rnd.nextInt(strLen)));
+                                row.putStr(index, isNull ? null : strLen == 0 ? "" : rnd.nextString(nextVariableColumnLen(rnd)));
                                 break;
 
                             case ColumnType.BINARY:
-                                int len = strLen > 0 ? rnd.nextInt(strLen) : 0;
+                                int len = strLen > 0 ? nextVariableColumnLen(rnd) : 0;
                                 row.putBin(index, isNull ? null : binarySequence.of(len == 0 ? new byte[0] : rnd.nextBytes(len)));
                                 break;
 
@@ -241,7 +241,7 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
     }
 
     public int getStrLen() {
-        return strLen;
+        return (int) strLen;
     }
 
     public String[] getSymbols() {
@@ -250,5 +250,9 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
 
     public long getTimestamp() {
         return timestamp;
+    }
+
+    private int nextVariableColumnLen(Rnd rnd) {
+        return (int) Math.pow(strLen, rnd.nextDouble());
     }
 }

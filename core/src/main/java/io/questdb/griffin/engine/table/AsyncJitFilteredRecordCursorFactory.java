@@ -29,7 +29,14 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemory;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
 import io.questdb.cairo.sql.async.PageFrameReducer;
@@ -42,7 +49,11 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.CompiledFilterSymbolBindVariable;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
-import io.questdb.std.*;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -86,8 +97,8 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         this.base = base;
         this.compiledFilter = compiledFilter;
         this.filter = filter;
-        this.cursor = new AsyncFilteredRecordCursor(filter, base.getScanDirection());
-        this.negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor(base.getScanDirection());
+        this.cursor = new AsyncFilteredRecordCursor(configuration, filter, base.getScanDirection());
+        this.negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor(configuration, base.getScanDirection());
         this.bindVarMemory = Vm.getCARWInstance(
                 configuration.getSqlJitBindVarsMemoryPageSize(),
                 configuration.getSqlJitBindVarsMemoryMaxPages(),
@@ -298,7 +309,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
 
         rows.clear();
 
-        if (frameSequence.getPageFrameAddressCache().hasColumnTops(task.getFrameIndex())) {
+        if (frameMemory.hasColumnTops()) {
             // Use Java-based filter in case of a page frame with column tops.
             final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
             final int filterId = atom.maybeAcquireFilter(workerId, owner, circuitBreaker);
@@ -335,7 +346,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         rows.setPos(hi);
 
         // Pre-touch native columns, if asked.
-        if (frameMemory.getFrameFormat() == PageFrame.NATIVE_FORMAT) {
+        if (frameMemory.getFrameFormat() == PartitionFormat.NATIVE) {
             atom.preTouchColumns(record, rows);
         }
     }

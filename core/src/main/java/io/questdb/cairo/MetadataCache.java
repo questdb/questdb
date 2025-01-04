@@ -25,13 +25,23 @@
 package io.questdb.cairo;
 
 import io.questdb.TelemetryConfigLogger;
-import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
+import io.questdb.std.SimpleReadWriteLock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
@@ -51,6 +61,7 @@ public class MetadataCache implements QuietCloseable {
     private final CairoEngine engine;
     private final SimpleReadWriteLock rwlock = new SimpleReadWriteLock();
     private final CharSequenceObjHashMap<CairoTable> tableMap = new CharSequenceObjHashMap<>();
+    private ColumnVersionReader columnVersionReader;
     private MemoryCMR metaMem = Vm.getCMRInstance();
     private long version;
 
@@ -80,7 +91,7 @@ public class MetadataCache implements QuietCloseable {
             for (int i = 0, n = tableTokens.size(); i < n; i++) {
                 // acquire a write lock for each table
                 try (MetadataCacheWriter ignore = writeLock()) {
-                    hydrateTable0(tableTokens.getQuick(i));
+                    hydrateTableStartup(tableTokens.getQuick(i), false);
                 }
             }
 
@@ -123,7 +134,14 @@ public class MetadataCache implements QuietCloseable {
         return cacheWriter;
     }
 
-    private void hydrateTable0(@NotNull TableToken token) {
+    private ColumnVersionReader getColumnVersionReader() {
+        if (columnVersionReader != null) {
+            return columnVersionReader;
+        }
+        return columnVersionReader = new ColumnVersionReader();
+    }
+
+    private void hydrateTableStartup(@NotNull TableToken token, boolean throwError) {
         if (engine.isTableDropped(token)) {
             // Table writer can still process some transactions when DROP table has already
             // been executed, essentially updating dropped table. We should ignore such updates.
@@ -182,6 +200,16 @@ public class MetadataCache implements QuietCloseable {
 
             TableUtils.buildWriterOrderMap(metaMem, table.columnOrderMap, metaMem, columnCount);
 
+            // Check that metadata minor version is up-to-date
+            int metadataMinorVersion = metaMem.getInt(TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION);
+            // metadataMinorVersion is 2 shorts
+            // Low short is metadataVersion + column count and it is effectively a signature that changes with every update to _meta.
+            // If Low short mismatches it means we cannot rely on High short value.
+            // High short is TableUtils.META_MINOR_VERSION_LATEST.
+            boolean symbolCapacitiesUpToDate =
+                    Numbers.decodeLowShort(metadataMinorVersion) == Numbers.decodeLowShort(Numbers.decodeLowInt(table.getMetadataVersion()) + columnCount)
+                            && Numbers.decodeHighShort(metadataMinorVersion) >= TableUtils.META_MINOR_VERSION_LATEST;
+
             // populate columns
             for (int i = 0, n = table.columnOrderMap.size(); i < n; i += 3) {
 
@@ -204,12 +232,8 @@ public class MetadataCache implements QuietCloseable {
                     column.setName(columnName);
                     table.upsertColumn(column);
 
-                    // this corresponds to either the latest entry
-                    // or to the slot of a tombstoned entry (a column altered)
-                    int existingIndex = TableUtils.getReplacingColumnIndex(metaMem, writerIndex);
-                    int position = existingIndex > -1 ? existingIndex : (int) (table.getColumnCount() - 1);
-
-                    column.setPosition(position);
+                    // Column positions already determined
+                    column.setPosition(table.getColumnCount() - 1);
                     column.setType(columnType);
 
                     if (column.getType() < 0) {
@@ -224,8 +248,14 @@ public class MetadataCache implements QuietCloseable {
                     column.setWriterIndex(writerIndex);
                     column.setIsDesignated(writerIndex == table.getTimestampIndex());
                     if (columnType == ColumnType.SYMBOL) {
-                        column.setSymbolCapacity(TableUtils.getSymbolCapacity(metaMem, writerIndex));
-                        column.setSymbolCached(TableUtils.isSymbolCached(metaMem, writerIndex));
+                        if (symbolCapacitiesUpToDate) {
+                            column.setSymbolCapacity(TableUtils.getSymbolCapacity(metaMem, writerIndex));
+                            column.setSymbolCached(TableUtils.isSymbolCached(metaMem, writerIndex));
+                        } else {
+                            LOG.debug().$("updating symbol capacity [table=").$(token).$(", column=").$(columnName).I$();
+                            loadCapacities(column, token, path, engine.getConfiguration(), getColumnVersionReader());
+
+                        }
                     }
                     if (column.getIsDedupKey()) {
                         table.setIsDedup(true);
@@ -234,7 +264,7 @@ public class MetadataCache implements QuietCloseable {
             }
 
             tableMap.put(table.getTableName(), table);
-            LOG.info().$("hydrated metadata [table=").$(token).I$();
+            LOG.debug().$("hydrated metadata [table=").$(token).I$();
         } catch (Throwable e) {
             // get rid of stale metadata
             tableMap.remove(token.getTableName());
@@ -243,6 +273,7 @@ public class MetadataCache implements QuietCloseable {
             try {
                 log
                         .$("could not hydrate metadata [table=").$(token)
+                        .$(", errno=").$(e instanceof CairoException ? ((CairoException) e).errno : 0)
                         .$(", message=");
 
                 if (e instanceof FlyweightMessageContainer) {
@@ -253,8 +284,60 @@ public class MetadataCache implements QuietCloseable {
             } finally {
                 log.I$();
             }
+            if (throwError) {
+                throw e;
+            }
         } finally {
             Misc.free(metaMem);
+        }
+    }
+
+    private void loadCapacities(CairoColumn column, TableToken token, Path path, CairoConfiguration configuration, ColumnVersionReader columnVersionReader) {
+        var columnName = column.getName();
+        var writerIndex = column.getWriterIndex();
+
+        try (columnVersionReader) {
+            LOG.debug().$("hydrating symbol metadata [table=").$(token.getTableName()).$(", column=").$(columnName).I$();
+
+            // get column version
+            path.trimTo(configuration.getRoot().length()).concat(token);
+            int rootLen = path.size();
+            path.concat(TableUtils.COLUMN_VERSION_FILE_NAME);
+
+            final long columnNameTxn;
+            FilesFacade ff = configuration.getFilesFacade();
+            try (columnVersionReader) {
+                columnVersionReader.ofRO(ff, path.$());
+
+                columnVersionReader.readUnsafe();
+                columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerIndex);
+            }
+
+            // use txn to find correct symbol entry
+            final var offsetFileName = TableUtils.offsetFileName(path.trimTo(rootLen), columnName, columnNameTxn);
+            var fd = TableUtils.openRO(ff, offsetFileName, LOG);
+
+            // initialise symbol map memory
+            final long capacityOffset = SymbolMapWriter.HEADER_CAPACITY;
+            int capacity = ff.readNonNegativeInt(fd, capacityOffset);
+            byte isCached = ff.readNonNegativeByte(fd, SymbolMapWriter.HEADER_CACHE_ENABLED);
+
+            // get symbol properties
+            if (capacity > 0 && isCached >= 0) {
+                column.setSymbolCapacity(capacity);
+                column.setSymbolCached(isCached != 0);
+            } else {
+                if (capacity <= 0) {
+                    throw CairoException.nonCritical().put("invalid capacity [table=").put(token.getTableName()).put(", column=").put(columnName)
+                            .put(", capacityOffset=").put(capacityOffset).put(", capacity=").put(capacity).put(']');
+                }
+                throw CairoException.nonCritical().put("invalid cache flag [table=").put(token.getTableName()).put(", column=").put(columnName)
+                        .put(", cacheFlagOffset=").put(SymbolMapWriter.HEADER_CACHE_ENABLED).put(", cacheFlag=").put(isCached).put(']');
+            }
+        } catch (CairoException ex) {
+            // Don't stall startup.
+            LOG.error().$("could not load symbol metadata [table=")
+                    .$(token.getTableName()).$(", column=").$(columnName).$(", errno=").$(ex.getErrno()).$(", message=").$(ex.getMessage()).I$();
         }
     }
 
@@ -411,38 +494,6 @@ public class MetadataCache implements QuietCloseable {
         }
 
         /**
-         * Rehydrates all tables in the database.
-         */
-        @Override
-        public void hydrateAllTables() {
-            clearCache();
-            ObjHashSet<TableToken> tableTokensSet = new ObjHashSet<>();
-            engine.getTableTokens(tableTokensSet, false);
-            ObjList<TableToken> tableTokens = tableTokensSet.getList();
-
-            if (tableTokens.size() == 0) {
-                LOG.error().$("could not hydrate, there are no table tokens").$();
-                return;
-            }
-
-            for (int i = 0, n = tableTokens.size(); i < n; i++) {
-                hydrateTable(tableTokens.getQuick(i));
-            }
-        }
-
-        /**
-         * @see MetadataCacheWriter#hydrateTable(CharSequence)
-         */
-        @Override
-        public void hydrateTable(@NotNull CharSequence tableName) throws TableReferenceOutOfDateException {
-            final TableToken token = engine.getTableTokenIfExists(tableName);
-            if (token == null) {
-                throw TableReferenceOutOfDateException.of(tableName);
-            }
-            hydrateTable(token);
-        }
-
-        /**
          * @see MetadataCacheWriter#hydrateTable(TableToken)
          */
         @Override
@@ -483,13 +534,14 @@ public class MetadataCache implements QuietCloseable {
 
             int timestampIndex = tableMetadata.getTimestampIndex();
             table.setTimestampIndex(timestampIndex);
-            table.setIsSoftLink(tableMetadata.isSoftLink());
+            Path tempPath = Path.getThreadLocal(engine.getConfiguration().getRoot());
+            table.setIsSoftLink(engine.getConfiguration().getFilesFacade().isSoftLink(tempPath.concat(tableToken.getDirNameUtf8()).$()));
 
             for (int i = 0; i < columnCount; i++) {
                 final TableColumnMetadata columnMetadata = tableMetadata.getColumnMetadata(i);
-                CharSequence columnName = columnMetadata.getName();
+                CharSequence columnName = columnMetadata.getColumnName();
 
-                int columnType = columnMetadata.getType();
+                int columnType = columnMetadata.getColumnType();
 
                 if (columnType < 0) {
                     continue; // marked for deletion
@@ -501,11 +553,12 @@ public class MetadataCache implements QuietCloseable {
 
                 column.setName(columnName); // check this, not sure the char sequence is preserved
                 column.setType(columnType);
-                column.setPosition(columnMetadata.getReplacingIndex() > 0 ? columnMetadata.getReplacingIndex() - 1 : i);
-                column.setIsIndexed(columnMetadata.isIndexed());
+                int replacingIndex = columnMetadata.getReplacingIndex();
+                column.setPosition(replacingIndex > -1 ? replacingIndex : i);
+                column.setIsIndexed(columnMetadata.isSymbolIndexFlag());
                 column.setIndexBlockCapacity(columnMetadata.getIndexValueBlockCapacity());
                 column.setIsSymbolTableStatic(columnMetadata.isSymbolTableStatic());
-                column.setIsDedupKey(columnMetadata.isDedupKey());
+                column.setIsDedupKey(columnMetadata.isDedupKeyFlag());
                 column.setWriterIndex(columnMetadata.getWriterIndex());
                 column.setIsDesignated(column.getWriterIndex() == timestampIndex);
 
@@ -525,6 +578,9 @@ public class MetadataCache implements QuietCloseable {
             table.columns.sort(comparator);
 
             for (int i = 0, n = table.columns.size(); i < n; i++) {
+                // Update column positions after sort
+                table.columns.getQuick(i).setPosition(i);
+                // Update column name index map
                 table.columnNameIndexMap.put(table.columns.getQuick(i).getName(), i);
             }
 
@@ -534,13 +590,16 @@ public class MetadataCache implements QuietCloseable {
 
         @Override
         public void hydrateTable(@NotNull TableToken token) {
-            hydrateTable0(token);
+            hydrateTableStartup(token, true);
         }
 
         @Override
         public void renameTable(@NotNull TableToken fromTableToken, @NotNull TableToken toTableToken) {
-            dropTable(fromTableToken);
-            hydrateTable(toTableToken);
+            String tableName = fromTableToken.getTableName();
+            final int index = tableMap.keyIndex(tableName);
+            CairoTable fromTab = tableMap.valueAt(index);
+            tableMap.removeAt(index);
+            tableMap.put(toTableToken.getTableName(), new CairoTable(toTableToken, fromTab));
         }
     }
 }

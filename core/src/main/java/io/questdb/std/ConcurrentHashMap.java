@@ -67,7 +67,15 @@ import java.io.Serializable;
 import java.lang.ThreadLocal;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
-import java.util.*;
+import java.util.AbstractMap;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.Hashtable;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.NoSuchElementException;
+import java.util.Set;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -826,7 +834,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
             if (tab == null || (n = tab.length) == 0)
                 tab = initTable();
             else if ((f = tabAt(tab, i = (n - 1) & h)) == null) {
-                Node<V> r = new ReservationNode<V>(ics);
+                Node<V> r = new ReservationNode<>(ics);
                 synchronized (r) {
                     if (casTabAt(tab, i, r)) {
                         binCount = 1;
@@ -834,7 +842,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                         try {
                             if ((val = remappingFunction.apply(key, null)) != null) {
                                 delta = 1;
-                                node = new Node<V>(h, key, val, null, ics);
+                                node = new Node<>(h, key, val, null, ics);
                             }
                         } finally {
                             setTabAt(tab, i, node);
@@ -873,7 +881,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                                     if (val != null) {
                                         delta = 1;
                                         pred.next =
-                                                new Node<V>(h, key, val, null, ics);
+                                                new Node<>(h, key, val, null, ics);
                                     }
                                     break;
                                 }
@@ -950,14 +958,14 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
             if (tab == null || (n = tab.length) == 0)
                 tab = initTable();
             else if ((f = tabAt(tab, i = (n - 1) & h)) == null) {
-                Node<V> r = new ReservationNode<V>(ics);
+                Node<V> r = new ReservationNode<>(ics);
                 synchronized (r) {
                     if (casTabAt(tab, i, r)) {
                         binCount = 1;
                         Node<V> node = null;
                         try {
                             if ((val = mappingFunction.apply(key, token)) != null)
-                                node = new Node<V>(h, key, val, null, ics);
+                                node = new Node<>(h, key, val, null, ics);
                         } finally {
                             setTabAt(tab, i, node);
                         }
@@ -975,7 +983,6 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                             binCount = 1;
                             for (Node<V> e = f; ; ++binCount) {
                                 CharSequence ek;
-                                V ev;
                                 if (e.hash == h &&
                                         ((ek = e.key) == key || (keyEquals(key, ek)))) {
                                     val = e.val;
@@ -1052,14 +1059,14 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
             if (tab == null || (n = tab.length) == 0)
                 tab = initTable();
             else if ((f = tabAt(tab, i = (n - 1) & h)) == null) {
-                Node<V> r = new ReservationNode<V>(ics);
+                Node<V> r = new ReservationNode<>(ics);
                 synchronized (r) {
                     if (casTabAt(tab, i, r)) {
                         binCount = 1;
                         Node<V> node = null;
                         try {
                             if ((val = mappingFunction.apply(key)) != null)
-                                node = new Node<V>(h, key, val, null, ics);
+                                node = new Node<>(h, key, val, null, ics);
                         } finally {
                             setTabAt(tab, i, node);
                         }
@@ -1077,7 +1084,6 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                             binCount = 1;
                             for (Node<V> e = f; ; ++binCount) {
                                 CharSequence ek;
-                                V ev;
                                 if (e.hash == h &&
                                         ((ek = e.key) == key || (keyEquals(key, ek)))) {
                                     val = e.val;
@@ -1087,7 +1093,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                                 if ((e = e.next) == null) {
                                     if ((val = mappingFunction.apply(key)) != null) {
                                         added = true;
-                                        pred.next = new Node<V>(h, key, val, null, ics);
+                                        pred.next = new Node<>(h, key, val, null, ics);
                                     }
                                     break;
                                 }
@@ -1945,7 +1951,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
      */
     private void treeifyBin(Node<V>[] tab, int index) {
         Node<V> b;
-        int n, sc;
+        int n;
         if (tab != null) {
             if ((n = tab.length) < MIN_TREEIFY_CAPACITY)
                 tryPresize(n << 1);

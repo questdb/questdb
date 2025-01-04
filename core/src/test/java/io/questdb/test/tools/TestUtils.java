@@ -26,7 +26,6 @@ package io.questdb.test.tools;
 
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
-import io.questdb.Metrics;
 import io.questdb.ServerMain;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
@@ -40,6 +39,7 @@ import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
@@ -175,19 +175,19 @@ public final class TestUtils {
         }
     }
 
-    public static void assertContains(String message, CharSequence actual, CharSequence expected) {
+    public static void assertContains(String message, CharSequence sequence, CharSequence term) {
         // Assume that "" is contained in any string.
-        if (expected.length() == 0) {
+        if (term.length() == 0) {
             return;
         }
-        if (Chars.contains(actual, expected)) {
+        if (Chars.contains(sequence, term)) {
             return;
         }
-        Assert.fail((message != null ? message + ": '" : "'") + actual + "' does not contain: " + expected);
+        Assert.fail((message != null ? message + ": '" : "'") + sequence + "' does not contain: " + term);
     }
 
-    public static void assertContains(CharSequence actual, CharSequence expected) {
-        assertContains(null, actual, expected);
+    public static void assertContains(CharSequence sequence, CharSequence term) {
+        assertContains(null, sequence, term);
     }
 
     public static void assertCursor(
@@ -661,7 +661,12 @@ public final class TestUtils {
 
     public static void assertMemoryLeak(LeakProneCode runnable) throws Exception {
         try (LeakCheck ignore = new LeakCheck()) {
-            runnable.run();
+            try {
+                runnable.run();
+            } catch (Throwable e) {
+                ignore.skipChecks();
+                throw e;
+            }
         }
     }
 
@@ -855,34 +860,36 @@ public final class TestUtils {
         }
     }
 
-    public static TableToken create(TableModel model, CairoEngine engine) {
-        int tableId = engine.getNextTableId();
-        TableToken tableToken = engine.lockTableName(model.getTableName(), tableId, model.isWalEnabled());
-        if (tableToken == null) {
-            throw new RuntimeException("table already exists: " + model.getTableName());
-        }
-        createTable(model, engine.getConfiguration(), ColumnType.VERSION, tableId, tableToken);
-        engine.registerTableToken(tableToken);
-        if (model.isWalEnabled()) {
-            engine.getTableSequencerAPI().registerTable(tableId, model, tableToken);
-        }
-        return tableToken;
-    }
-
     public static void createPopulateTable(
             SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, TableModel tableModel,
             int totalRows, String startDate, int partitionCount
     ) throws NumericException, SqlException {
-        createPopulateTable(tableModel.getTableName(), compiler, sqlExecutionContext,
-                tableModel, totalRows, startDate, partitionCount);
+        createPopulateTable(
+                tableModel.getTableName(),
+                compiler,
+                sqlExecutionContext,
+                tableModel,
+                totalRows,
+                startDate,
+                partitionCount
+        );
     }
 
     public static void createPopulateTable(
-            CharSequence tableName, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext,
-            TableModel tableModel, int totalRows, String startDate, int partitionCount
+            CharSequence tableName,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            TableModel tableModel,
+            int totalRows,
+            String startDate,
+            int partitionCount
     ) throws NumericException, SqlException {
-        compiler.compile(createPopulateTableStmt(tableName, tableModel, totalRows, startDate, partitionCount),
-                sqlExecutionContext);
+        CairoEngine.execute(
+                compiler,
+                createPopulateTableStmt(tableName, tableModel, totalRows, startDate, partitionCount),
+                sqlExecutionContext,
+                null
+        );
     }
 
     public static String createPopulateTableStmt(
@@ -1010,12 +1017,47 @@ public final class TestUtils {
                 );
     }
 
+    public static TableToken createTable(CairoEngine engine, TableStructure structure) {
+        return createTable(engine, structure, engine.getNextTableId());
+    }
+
     public static void createTable(
-            TableModel model, CairoConfiguration configuration, int tableVersion, int tableId, TableToken tableToken
+            TableModel model,
+            CairoConfiguration configuration,
+            int tableVersion,
+            int tableId,
+            TableToken tableToken
     ) {
         try (Path path = new Path(); MemoryMARW mem = Vm.getMARWInstance()) {
             TableUtils.createTable(configuration, mem, path, model, tableVersion, tableId, tableToken.getDirName());
         }
+    }
+
+    public static TableToken createTable(CairoEngine engine, TableStructure structure, int tableId) {
+        try (MemoryMARW mem = Vm.getMARWInstance(); Path path = new Path()) {
+            return TestUtils.createTable(engine, mem, path, structure, tableId, structure.getTableName());
+        }
+    }
+
+    public static TableToken createTable(
+            CairoEngine engine,
+            MemoryMARW memory,
+            Path path,
+            TableStructure structure,
+            int tableId,
+            CharSequence tableName
+    ) {
+        TableToken token = engine.lockTableName(tableName, tableId, structure.isWalEnabled());
+        if (token == null) {
+            throw new RuntimeException("table already exists: " + tableName);
+        }
+        path.of(engine.getConfiguration().getRoot()).concat(token);
+        TableUtils.createTable(engine.getConfiguration(), memory, path, structure, ColumnType.VERSION, tableId, token.getDirName());
+        engine.registerTableToken(token);
+        if (structure.isWalEnabled()) {
+            engine.getTableSequencerAPI().registerTable(tableId, structure, token);
+        }
+        return token;
     }
 
     public static void createTestPath(CharSequence root) {
@@ -1089,13 +1131,12 @@ public final class TestUtils {
             @Nullable WorkerPool pool,
             CustomisableRunnable runnable,
             CairoConfiguration configuration,
-            Metrics metrics,
             Log log
     ) throws Exception {
         final int workerCount = pool != null ? pool.getWorkerCount() : 1;
         final BindVariableServiceImpl bindVariableService = new BindVariableServiceImpl(configuration);
         try (
-                final CairoEngine engine = new CairoEngine(configuration, metrics);
+                final CairoEngine engine = new CairoEngine(configuration);
                 final SqlCompiler compiler = engine.getSqlCompiler();
                 final SqlExecutionContext sqlExecutionContext = createSqlExecutionCtx(engine, bindVariableService, workerCount)
         ) {
@@ -1114,12 +1155,6 @@ public final class TestUtils {
             Assert.assertEquals(0, engine.getBusyWriterCount());
             Assert.assertEquals(0, engine.getBusyReaderCount());
         }
-    }
-
-    public static void execute(
-            @Nullable WorkerPool pool, CustomisableRunnable runner, CairoConfiguration configuration, Log log
-    ) throws Exception {
-        execute(pool, runner, configuration, Metrics.disabled(), log);
     }
 
     @NotNull
@@ -1355,22 +1390,13 @@ public final class TestUtils {
         }
     }
 
-    public static TableWriter newOffPoolWriter(
-            CairoConfiguration configuration, TableToken tableToken, CairoEngine engine
-    ) {
-        return newOffPoolWriter(configuration, tableToken, Metrics.disabled(), engine);
-    }
-
-    public static TableWriter newOffPoolWriter(
-            CairoConfiguration configuration, TableToken tableToken, Metrics metrics, CairoEngine engine
-    ) {
-        return newOffPoolWriter(configuration, tableToken, metrics, new MessageBusImpl(configuration), engine);
+    public static TableWriter newOffPoolWriter(CairoConfiguration configuration, TableToken tableToken, CairoEngine engine) {
+        return newOffPoolWriter(configuration, tableToken, new MessageBusImpl(configuration), engine);
     }
 
     public static TableWriter newOffPoolWriter(
             CairoConfiguration configuration,
             TableToken tableToken,
-            Metrics metrics,
             MessageBus messageBus,
             CairoEngine engine
     ) {
@@ -1384,7 +1410,6 @@ public final class TestUtils {
                 configuration.getRoot(),
                 DefaultDdlListener.INSTANCE,
                 () -> Numbers.LONG_NULL,
-                metrics,
                 engine
         );
     }
@@ -1937,6 +1962,7 @@ public final class TestUtils {
         private final long mem;
         private final long[] memoryUsageByTag = new long[MemoryTag.SIZE];
         private final int sockAddrCount;
+        private boolean skipChecksOnClose;
 
         public LeakCheck() {
             Path.clearThreadLocals();
@@ -1959,6 +1985,10 @@ public final class TestUtils {
 
         @Override
         public void close() {
+            if (skipChecksOnClose) {
+                return;
+            }
+
             Path.clearThreadLocals();
             if (fileCount != Files.getOpenFileCount()) {
                 Assert.assertEquals("file descriptors, expected: " + fileDebugInfo + ", actual: "
@@ -2001,6 +2031,10 @@ public final class TestUtils {
                 Assert.fail("SockAddr allocation count before the test: " + sockAddrCount
                         + ", after the test: " + sockAddrCountAfter);
             }
+        }
+
+        public void skipChecks() {
+            skipChecksOnClose = true;
         }
     }
 }

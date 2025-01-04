@@ -187,7 +187,7 @@ public class RetryIODispatcherTest extends AbstractTest {
                                 .withNetwork(getSendDelayNetworkFacade(startDelay))
                                 .withRerunProcessingQueueSize(rerunProcessingQueueSize)
                 )
-                .run(engine -> {
+                .run((engine, sqlExecutionContext) -> {
                     // create table and do 1 import
                     new SendAndReceiveRequestBuilder().execute(ValidImportRequest, ValidImportResponse);
                     TableWriter writer = lockWriter(engine, "fhv_tripdata_2017-02.csv");
@@ -258,7 +258,7 @@ public class RetryIODispatcherTest extends AbstractTest {
     ) throws Exception {
         final int parallelCount = httpQueryTestBuilder.getWorkerCount();
         httpQueryTestBuilder
-                .run((engine) -> {
+                .run((engine, sqlExecutionContext) -> {
                     // create table and do 1 import
                     new SendAndReceiveRequestBuilder().execute(ValidImportRequest, ValidImportResponse);
 
@@ -376,7 +376,7 @@ public class RetryIODispatcherTest extends AbstractTest {
                 .withWorkerCount(4)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
-                .run((engine) -> {
+                .run((engine, sqlExecutionContext) -> {
                     for (int i = 0; i < 10; i++) {
                         System.out.println("*************************************************************************************");
                         System.out.println("**************************         Run " + i + "            ********************************");
@@ -414,7 +414,7 @@ public class RetryIODispatcherTest extends AbstractTest {
                 .withHttpServerConfigBuilder(
                         new HttpServerConfigurationBuilder()
                                 .withReceiveBufferSize(50)
-                ).run((engine) -> new SendAndReceiveRequestBuilder()
+                ).run((engine, sqlExecutionContext) -> new SendAndReceiveRequestBuilder()
                         .execute(
                                 ValidImportRequest,
                                 "HTTP/1.1 200 OK\r\n" +
@@ -484,6 +484,7 @@ public class RetryIODispatcherTest extends AbstractTest {
             assertInsertsIsPerformedWhenWriterLockedAndDisconnected();
             TestUtils.removeTestPath(root);
             TestUtils.createTestPath(root);
+            Metrics.ENABLED.clear();
         }
     }
 
@@ -495,7 +496,7 @@ public class RetryIODispatcherTest extends AbstractTest {
                 .withWorkerCount(parallelCount)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
-                .run(engine -> {
+                .run((engine, sqlExecutionContext) -> {
                     // create table
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                             "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n",
@@ -543,7 +544,7 @@ public class RetryIODispatcherTest extends AbstractTest {
                 .withWorkerCount(2)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
-                .run((engine) -> {
+                .run((engine, sqlExecutionContext) -> {
                     // create table and do 1 import
                     new SendAndReceiveRequestBuilder().execute(ValidImportRequest, ValidImportResponse);
 
@@ -577,7 +578,7 @@ public class RetryIODispatcherTest extends AbstractTest {
                     assertNRowsInserted(validRequestRecordCount);
 
                     for (long fd : fds) {
-                        Assert.assertNotEquals(fd, -1);
+                        Assert.assertNotEquals(-1, fd);
                         NetworkFacadeImpl.INSTANCE.close(fd);
                     }
 
@@ -609,7 +610,7 @@ public class RetryIODispatcherTest extends AbstractTest {
                 .withWorkerCount(parallelCount)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withRerunProcessingQueueSize(rerunProcessingQueueSize))
                 .withTelemetry(false)
-                .run(engine -> {
+                .run((engine, sqlExecutionContext) -> {
                     // create table
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                             "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n",
@@ -673,7 +674,7 @@ public class RetryIODispatcherTest extends AbstractTest {
                 .withWorkerCount(parallelCount)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
-                .run(engine -> {
+                .run((engine, sqlExecutionContext) -> {
                     // create table
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                             "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n",
@@ -730,14 +731,12 @@ public class RetryIODispatcherTest extends AbstractTest {
 
     private void assertInsertsIsPerformedWhenWriterLockedAndDisconnected() throws Exception {
         final int parallelCount = 4;
-        final Metrics metrics = Metrics.enabled();
         new HttpQueryTestBuilder()
                 .withTempFolder(root)
                 .withWorkerCount(parallelCount)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .withMetrics(metrics)
                 .withTelemetry(false)
-                .run(engine -> {
+                .run((engine, sqlExecutionContext) -> {
                     long nonInsertQueries = 0;
 
                     // create table
@@ -790,23 +789,24 @@ public class RetryIODispatcherTest extends AbstractTest {
                     final int maxWaitTimeMillis = 3000;
                     final int sleepMillis = 10;
 
+                    final Metrics metrics = engine.getMetrics();
                     // wait for all insert queries to be initially handled
                     long startedInserts;
                     for (int i = 0; i < maxWaitTimeMillis / sleepMillis; i++) {
-                        startedInserts = metrics.jsonQuery().startedQueriesCount() - nonInsertQueries;
+                        startedInserts = metrics.jsonQueryMetrics().startedQueriesCount() - nonInsertQueries;
                         if (startedInserts >= parallelCount) {
                             break;
                         }
                         Os.sleep(sleepMillis);
                     }
-                    startedInserts = metrics.jsonQuery().startedQueriesCount() - nonInsertQueries;
+                    startedInserts = metrics.jsonQueryMetrics().startedQueriesCount() - nonInsertQueries;
                     Assert.assertTrue(
                             "expected at least " + parallelCount + "insert attempts, but got: " + startedInserts,
                             startedInserts >= parallelCount
                     );
 
                     for (int n = 0; n < fds.length; n++) {
-                        Assert.assertNotEquals(fds[n], -1);
+                        Assert.assertNotEquals(-1, fds[n]);
                         NetworkFacadeImpl.INSTANCE.close(fds[n]);
                     }
 
@@ -815,13 +815,13 @@ public class RetryIODispatcherTest extends AbstractTest {
                     // wait for all insert queries to be executed
                     long completeInserts;
                     for (int i = 0; i < maxWaitTimeMillis / sleepMillis; i++) {
-                        completeInserts = metrics.jsonQuery().completedQueriesCount() - nonInsertQueries;
+                        completeInserts = metrics.jsonQueryMetrics().completedQueriesCount() - nonInsertQueries;
                         if (completeInserts == parallelCount) {
                             break;
                         }
                         Os.sleep(sleepMillis);
                     }
-                    completeInserts = metrics.jsonQuery().completedQueriesCount() - nonInsertQueries;
+                    completeInserts = metrics.jsonQueryMetrics().completedQueriesCount() - nonInsertQueries;
                     Assert.assertEquals("expected all inserts to succeed", parallelCount, completeInserts);
 
                     // check that we have all the records inserted

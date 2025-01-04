@@ -34,7 +34,7 @@ public class InSymbolTest extends AbstractCairoTest {
 
     @Test
     public void testBindVarTypeChange2() throws SqlException {
-        ddl("create table test as (select x, rnd_symbol(20, 2, 5, 1) a from long_sequence(100))");
+        execute("create table test as (select x, rnd_symbol(20, 2, 5, 1) a from long_sequence(100))");
 
         // when more than one argument supplied, the function will match exact values from the list
         final ObjList<BindVariableTestTuple> tuples = new ObjList<>();

@@ -39,7 +39,7 @@ public class VarGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testVarAllSameValues() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tbl1 as (select 17.2151921 x from long_sequence(100))");
+            execute("create table tbl1 as (select 17.2151921 x from long_sequence(100))");
             assertSql(
                     "variance\n0.0\n", "select variance(x) from tbl1"
             );
@@ -49,7 +49,7 @@ public class VarGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testVarDoubleValues() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tbl1 as (select cast(x as double) x from long_sequence(100))");
+            execute("create table tbl1 as (select cast(x as double) x from long_sequence(100))");
             assertSql(
                     "variance\n841.6666666666666\n", "select variance(x) from tbl1"
             );
@@ -59,9 +59,9 @@ public class VarGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testVarFirstNull() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tbl1(x double)");
-            insert("insert into 'tbl1' VALUES (null)");
-            insert("insert into 'tbl1' select x from long_sequence(100)");
+            execute("create table tbl1(x double)");
+            execute("insert into 'tbl1' VALUES (null)");
+            execute("insert into 'tbl1' select x from long_sequence(100)");
             assertSql(
                     "variance\n841.6666666666666\n", "select variance(x) from tbl1"
             );
@@ -71,7 +71,7 @@ public class VarGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testVarFloatValues() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tbl1 as (select cast(x as float) x from long_sequence(100))");
+            execute("create table tbl1 as (select cast(x as float) x from long_sequence(100))");
             assertSql(
                     "variance\n841.6666666666666\n", "select variance(x) from tbl1"
             );
@@ -81,7 +81,7 @@ public class VarGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testVarIntValues() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tbl1 as (select cast(x as int) x from long_sequence(100))");
+            execute("create table tbl1 as (select cast(x as int) x from long_sequence(100))");
             assertSql(
                     "variance\n841.6666666666666\n", "select variance(x) from tbl1"
             );
@@ -91,7 +91,7 @@ public class VarGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testVarLong256Values() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tbl1 as (select x cast(x as long256) from long_sequence(100))");
+            execute("create table tbl1 as (select x cast(x as long256) from long_sequence(100))");
             assertSql(
                     "variance\n841.6666666666666\n", "select variance(x) from tbl1"
             );
@@ -101,7 +101,7 @@ public class VarGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testVarNoValues() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tbl1(x int)");
+            execute("create table tbl1(x int)");
             assertSql(
                     "variance\nnull\n", "select variance(x) from tbl1"
             );
@@ -111,8 +111,8 @@ public class VarGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testVarOneValue() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tbl1(x int)");
-            insert("insert into 'tbl1' VALUES " +
+            execute("create table tbl1(x int)");
+            execute("insert into 'tbl1' VALUES " +
                     "(17.2151920)");
             assertSql(
                     "variance\nnull\n", "select variance(x) from tbl1"
@@ -123,7 +123,7 @@ public class VarGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testVarOverflow() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tbl1 as (select 100000000 x from long_sequence(1000000))");
+            execute("create table tbl1 as (select 100000000 x from long_sequence(1000000))");
             assertSql(
                     "variance\n0.0\n", "select variance(x) from tbl1"
             );
@@ -133,8 +133,8 @@ public class VarGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testVarSomeNull() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tbl1 as (select cast(x as double) x from long_sequence(100))");
-            insert("insert into 'tbl1' VALUES (null)");
+            execute("create table tbl1 as (select cast(x as double) x from long_sequence(100))");
+            execute("insert into 'tbl1' VALUES (null)");
             assertSql(
                     "variance\n841.6666666666666\n", "select variance(x) from tbl1"
             );

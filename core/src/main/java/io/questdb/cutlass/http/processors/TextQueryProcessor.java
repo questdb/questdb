@@ -291,9 +291,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         }
     }
 
-    private static void putStringOrNull(HttpChunkedResponse r, CharSequence cs) {
+    private static void putStringOrNull(HttpChunkedResponse response, CharSequence cs) {
         if (cs != null) {
-            r.putQuote().escapeJsonStr(cs).putQuote();
+            response.putQuote().escapeCsvStr(cs).putQuote();
         }
     }
 
@@ -304,9 +304,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         Numbers.appendUuid(lo, hi, response);
     }
 
-    private static void putVarcharOrNull(HttpChunkedResponse r, Utf8Sequence us) {
+    private static void putVarcharOrNull(HttpChunkedResponse response, Utf8Sequence us) {
         if (us != null) {
-            r.putQuote().escapeJsonStr(us).putQuote();
+            response.putQuote().escapeCsvStr(us).putQuote();
         }
     }
 
@@ -360,7 +360,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                                 if (state.columnIndex > 0) {
                                     response.putAscii(state.delimiter);
                                 }
-                                response.putQuote().escapeJsonStr(state.metadata.getColumnName(state.columnIndex)).putQuote();
+                                response.putQuote().escapeCsvStr(state.metadata.getColumnName(state.columnIndex)).putQuote();
                                 state.columnIndex++;
                                 response.bookmark();
                             }
@@ -496,7 +496,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                     .$(", q=`").utf8(state.query)
                     .$("`]").$();
             // This is a critical error, so we treat it as an unhandled one.
-            metrics.health().incrementUnhandledErrors();
+            metrics.healthMetrics().incrementUnhandledErrors();
         }
     }
 

@@ -39,7 +39,7 @@ public class LastUuidGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAllNull() throws SqlException {
-        ddl("create table tab (f uuid)");
+        execute("create table tab (f uuid)");
 
         try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
@@ -62,7 +62,7 @@ public class LastUuidGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNonNull() throws SqlException {
-        ddl("create table tab (f uuid)");
+        execute("create table tab (f uuid)");
 
         final Rnd rnd = new Rnd();
         try (TableWriter w = getWriter("tab")) {
@@ -87,7 +87,7 @@ public class LastUuidGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSomeNull() throws SqlException {
-        ddl("create table tab (f uuid)");
+        execute("create table tab (f uuid)");
 
         try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {

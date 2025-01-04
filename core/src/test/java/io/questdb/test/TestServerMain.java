@@ -62,16 +62,29 @@ public class TestServerMain extends ServerMain {
 
     public void assertSql(String sql, String expected) {
         try {
-            if (sqlExecutionContext == null) {
-                sqlExecutionContext = new SqlExecutionContextImpl(getEngine(), 1).with(
-                        getEngine().getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),
-                        null,
-                        null,
-                        -1,
-                        null
-                );
-            }
+            ensureContext();
             TestUtils.assertSql(getEngine(), sqlExecutionContext, sql, sink, expected);
+        } catch (SqlException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    public void ddl(String sql) {
+        try {
+            ensureContext();
+            getEngine().execute(sql, sqlExecutionContext);
+        } catch (SqlException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    public void compile(String sql) {
+        try {
+            if (sqlExecutionContext == null) {
+                getEngine().execute(sql);
+            } else {
+                getEngine().execute(sql, sqlExecutionContext);
+            }
         } catch (SqlException e) {
             throw new AssertionError(e);
         }
@@ -94,15 +107,15 @@ public class TestServerMain extends ServerMain {
         engine.setUp();
     }
 
-    public void compile(String sql) {
-        try {
-            if (sqlExecutionContext == null) {
-                getEngine().compile(sql);
-            } else {
-                getEngine().compile(sql, sqlExecutionContext);
-            }
-        } catch (SqlException e) {
-            throw new AssertionError(e);
+    private void ensureContext() {
+        if (sqlExecutionContext == null) {
+            sqlExecutionContext = new SqlExecutionContextImpl(getEngine(), 1).with(
+                    getEngine().getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                    null,
+                    null,
+                    -1,
+                    null
+            );
         }
     }
 }

@@ -29,10 +29,20 @@ import io.questdb.std.str.StringSink;
 
 // ColumnType layout - 32bit
 //
-// | PGWire format | Extra type information | Type discriminant (tag) |
+// | Handling bit  | Extra type information | Type discriminant (tag) |
 // +---------------+------------------------+-------------------------+
 // |    1 bit      |        23 bits         |         8 bits          |
 // +---------------+------------------------+-------------------------+
+//
+// Handling bit:
+//   Skip column use case:
+//       The top bit is set for columns that should be skipped.
+//       I.e. `if (columnType < 0) { skip }`.
+//   PG Wire Format use case:
+//       Reserved for bit-shifting operations as part of `PGOids` to
+//       determine if a PG Wire column should be handled as text or binary.
+//       Also see `bindSelectColumnFormats` and `bindVariableTypes` in
+//       `PGConnectionContext`.
 
 /**
  * Column types as numeric (integer) values
@@ -172,7 +182,8 @@ public final class ColumnType {
                 || (fromType == CHAR && toType == SHORT)
                 // Same with bytes and bools
                 || (fromType == BYTE && toType == BOOLEAN)
-                || (fromType == TIMESTAMP && toType == LONG);
+                || (fromType == TIMESTAMP && toType == LONG)
+                || (fromType == STRING && (toType >= BYTE && toType <= DOUBLE));
     }
 
     public static boolean isChar(int columnType) {
@@ -278,6 +289,10 @@ public final class ColumnType {
 
     public static boolean isVarchar(int columnType) {
         return columnType == VARCHAR;
+    }
+
+    public static boolean isVarcharOrString(int columnType) {
+        return columnType == VARCHAR || columnType == STRING;
     }
 
     public static void makeUtf16DefaultString() {
@@ -515,6 +530,7 @@ public final class ColumnType {
         typeNameMap.put(ARRAY_STRING, "text[]");
         typeNameMap.put(IPv4, "IPv4");
         typeNameMap.put(INTERVAL, "INTERVAL");
+        typeNameMap.put(NULL, "NULL");
 
         nameTypeMap.put("boolean", BOOLEAN);
         nameTypeMap.put("byte", BYTE);

@@ -24,7 +24,13 @@
 
 package io.questdb.cairo;
 
-import io.questdb.*;
+import io.questdb.BuildInformation;
+import io.questdb.ConfigPropertyKey;
+import io.questdb.ConfigPropertyValue;
+import io.questdb.FactoryProvider;
+import io.questdb.Metrics;
+import io.questdb.TelemetryConfiguration;
+import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.CharSequenceObjHashMap;
@@ -32,22 +38,27 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.LongSupplier;
 
 public class CairoConfigurationWrapper implements CairoConfiguration {
-    private final CairoConfiguration delegate;
+    private final AtomicReference<CairoConfiguration> delegate = new AtomicReference<>();
+    private final Metrics metrics;
 
-    protected CairoConfigurationWrapper() {
-        delegate = null;
+    public CairoConfigurationWrapper(Metrics metrics) {
+        this.metrics = metrics;
+        delegate.set(null);
     }
 
     public CairoConfigurationWrapper(@NotNull CairoConfiguration delegate) {
-        this.delegate = delegate;
+        this.delegate.set(delegate);
+        this.metrics = delegate.getMetrics();
     }
 
     @Override
@@ -126,11 +137,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getColumnCastModelPoolCapacity() {
-        return getDelegate().getColumnCastModelPoolCapacity();
-    }
-
-    @Override
     public int getColumnIndexerQueueCapacity() {
         return getDelegate().getColumnIndexerQueueCapacity();
     }
@@ -196,13 +202,13 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getCreateTableModelBatchSize() {
-        return getDelegate().getCreateTableModelBatchSize();
+    public int getCreateTableColumnModelPoolCapacity() {
+        return getDelegate().getCreateTableColumnModelPoolCapacity();
     }
 
     @Override
-    public int getCreateTableModelPoolCapacity() {
-        return getDelegate().getCreateTableModelPoolCapacity();
+    public long getCreateTableModelBatchSize() {
+        return getDelegate().getCreateTableModelBatchSize();
     }
 
     @Override
@@ -316,13 +322,13 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getGroupByPresizeMaxHeapSize() {
-        return getDelegate().getGroupByPresizeMaxHeapSize();
+    public long getGroupByPresizeMaxCapacity() {
+        return getDelegate().getGroupByPresizeMaxCapacity();
     }
 
     @Override
-    public long getGroupByPresizeMaxCapacity() {
-        return getDelegate().getGroupByPresizeMaxCapacity();
+    public long getGroupByPresizeMaxHeapSize() {
+        return getDelegate().getGroupByPresizeMaxHeapSize();
     }
 
     @Override
@@ -391,6 +397,26 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public DateFormat getLogTimestampFormat() {
+        return getDelegate().getLogTimestampFormat();
+    }
+
+    @Override
+    public String getLogTimestampTimezone() {
+        return getDelegate().getLogTimestampTimezone();
+    }
+
+    @Override
+    public DateLocale getLogTimestampTimezoneLocale() {
+        return getDelegate().getLogTimestampTimezoneLocale();
+    }
+
+    @Override
+    public TimeZoneRules getLogTimestampTimezoneRules() {
+        return getDelegate().getLogTimestampTimezoneRules();
+    }
+
+    @Override
     public int getMaxCrashFiles() {
         return getDelegate().getMaxCrashFiles();
     }
@@ -423,6 +449,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getMetadataPoolCapacity() {
         return getDelegate().getMetadataPoolCapacity();
+    }
+
+    @Override
+    public Metrics getMetrics() {
+        return metrics;
     }
 
     @Override
@@ -816,6 +847,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlParquetFrameCacheCapacity() {
+        return getDelegate().getSqlParquetFrameCacheCapacity();
+    }
+
+    @Override
     public int getSqlSmallMapKeyCapacity() {
         return getDelegate().getSqlSmallMapKeyCapacity();
     }
@@ -1131,8 +1167,13 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public boolean getPartitionO3OverwriteControlEnabled() {
-        return getDelegate().getPartitionO3OverwriteControlEnabled();
+    public boolean isPartitionEncoderParquetStatisticsEnabled() {
+        return getDelegate().isPartitionEncoderParquetStatisticsEnabled();
+    }
+
+    @Override
+    public boolean isPartitionO3OverwriteControlEnabled() {
+        return getDelegate().isPartitionO3OverwriteControlEnabled();
     }
 
     @Override
@@ -1190,13 +1231,12 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public boolean isPartitionEncoderParquetStatisticsEnabled() {
-        return getDelegate().isPartitionEncoderParquetStatisticsEnabled();
-    }
-
-    @Override
     public void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
         getDelegate().populateSettings(settings);
+    }
+
+    public void setDelegate(CairoConfiguration delegate) {
+        this.delegate.set(delegate);
     }
 
     @Override
@@ -1205,6 +1245,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     protected CairoConfiguration getDelegate() {
-        return delegate;
+        return delegate.get();
     }
 }

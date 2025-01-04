@@ -26,8 +26,9 @@ package io.questdb.cairo.pool;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableToken;
+import org.jetbrains.annotations.Nullable;
 
-public class TableMetadataPool extends AbstractMultiTenantPool<MetadataPoolTenant> {
+public class TableMetadataPool extends AbstractMultiTenantPool<TableReaderMetadataTenantImpl> {
 
     public TableMetadataPool(CairoConfiguration configuration) {
         super(configuration, configuration.getMetadataPoolCapacity(), configuration.getInactiveReaderTTL());
@@ -39,7 +40,12 @@ public class TableMetadataPool extends AbstractMultiTenantPool<MetadataPoolTenan
     }
 
     @Override
-    protected MetadataPoolTenant newTenant(TableToken tableToken, Entry<MetadataPoolTenant> entry, int index) {
+    protected TableReaderMetadataTenantImpl newTenant(
+            TableToken tableToken,
+            Entry<TableReaderMetadataTenantImpl> entry,
+            int index,
+            @Nullable ResourcePoolSupervisor<TableReaderMetadataTenantImpl> supervisor
+    ) {
         return new TableReaderMetadataTenantImpl(this, entry, index, tableToken, false);
     }
 }

@@ -26,8 +26,11 @@ package io.questdb.test.std;
 
 import io.questdb.std.IntList;
 import io.questdb.std.Rnd;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.Arrays;
 
 public class IntListTest {
 
@@ -149,6 +152,92 @@ public class IntListTest {
             list.remove(i);
         }
         Assert.assertEquals(0, list.size());
+    }
+
+    @Test
+    public void testSortGroups() {
+        Rnd rnd = TestUtils.generateRandom(null);
+        int n = 1 + rnd.nextInt(20);
+        sortGroupsRandom(n, rnd.nextInt(10000), rnd);
+    }
+
+    @Test
+    public void testSortGroupsEqualElements() {
+        Rnd rnd = TestUtils.generateRandom(null);
+        int n = 1 + rnd.nextInt(20);
+        checkSortGroupsEqualElements(n, rnd.nextInt(10000), rnd);
+    }
+
+    @Test
+    public void testSortGroupsNotSupported() {
+        IntList l = new IntList();
+
+        l.add(1);
+        try {
+            l.sortGroups(2);
+            Assert.fail();
+        } catch (IllegalStateException e) {
+            // expected
+        }
+        l.sortGroups(1);
+
+        try {
+            l.sortGroups(-1);
+            Assert.fail();
+        } catch (IllegalStateException e) {
+            // expected
+        }
+    }
+
+    private static void checkSortGroupsEqualElements(int n, int elements, Rnd rnd) {
+        IntList list = new IntList(elements * n);
+        int[][] arrays = new int[elements][];
+
+        for (int i = 0; i < elements; i++) {
+            arrays[i] = new int[n];
+            int equalValue = rnd.nextInt(5);
+            for (int j = 0; j < n; j++) {
+                arrays[i][j] = equalValue;
+                list.add(arrays[i][j]);
+            }
+        }
+
+        sortAndCompare(n, elements, arrays, list);
+    }
+
+    private static void sortAndCompare(int n, int elements, int[][] arrays, IntList list) {
+        Arrays.sort(arrays, (int[] a, int[] b) -> {
+            for (int i = 0; i < n; i++) {
+                int comparison = Integer.compare(a[i], b[i]);
+                if (comparison != 0) {
+                    return comparison;
+                }
+            }
+            return 0;
+        });
+
+        list.sortGroups(n);
+
+        for (int i = 0; i < elements; i++) {
+            for (int j = 0; j < n; j++) {
+                Assert.assertEquals(arrays[i][j], list.get(i * n + j));
+            }
+        }
+    }
+
+    private static void sortGroupsRandom(int n, int elements, Rnd rnd) {
+        IntList list = new IntList(elements * n);
+        int[][] arrays = new int[elements][];
+
+        for (int i = 0; i < elements; i++) {
+            arrays[i] = new int[n];
+            for (int j = 0; j < n; j++) {
+                arrays[i][j] = rnd.nextInt();
+                list.add(arrays[i][j]);
+            }
+        }
+
+        sortAndCompare(n, elements, arrays, list);
     }
 
     private void testBinarySearchFuzz0(int N, int skipRate) {

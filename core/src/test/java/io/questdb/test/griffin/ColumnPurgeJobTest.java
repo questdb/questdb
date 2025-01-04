@@ -68,7 +68,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                         update("UPDATE up_part_o3_2 SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-03'");
                         drainWalQueue();
 
-                        drop("drop table up_part_o3");
+                        execute("drop table up_part_o3");
 
                         runPurgeJob(purgeJob);
                         rdr.openPartition(0);
@@ -110,7 +110,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
     public void testManyUpdatesInserts() throws Exception {
         assertMemoryLeak(() -> {
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                ddl("create table up_part_o3_many as" +
+                execute("create table up_part_o3_many as" +
                         " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
@@ -120,7 +120,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                         " timestamp(ts) PARTITION BY DAY");
 
                 try (TableReader rdr1 = getReader("up_part_o3_many")) {
-                    compile("insert into up_part_o3_many " +
+                    execute("insert into up_part_o3_many " +
                             " select timestamp_sequence('1970-01-02T01', 24 * 60 * 60 * 1000000L) ts," +
                             " x," +
                             " rnd_str('a', 'b', 'c', 'd') str," +
@@ -247,7 +247,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
             };
 
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                ddl("create table up_part as" +
+                execute("create table up_part as" +
                         " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
@@ -291,7 +291,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(Timestamps.DAY_MICROS * 30);
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                ddl("create table up_part_o3 as" +
+                execute("create table up_part_o3 as" +
                         " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
@@ -300,7 +300,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                         " from long_sequence(5)), index(sym2)" +
                         " timestamp(ts) PARTITION BY DAY");
 
-                compile("insert into up_part_o3 " +
+                execute("insert into up_part_o3 " +
                         " select timestamp_sequence('1970-01-02T01', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
@@ -380,7 +380,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
             };
 
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                ddl("create table up_part as" +
+                execute("create table up_part as" +
                         " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
@@ -444,7 +444,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(0);
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                ddl("create table up_part_o3 as" +
+                execute("create table up_part_o3 as" +
                         " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
@@ -453,7 +453,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                         " from long_sequence(5)), index(sym2)" +
                         " timestamp(ts) PARTITION BY DAY");
 
-                compile("insert into up_part_o3 " +
+                execute("insert into up_part_o3 " +
                         " select timestamp_sequence('1970-01-02T01', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
@@ -500,7 +500,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(0);
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                ddl("create table up_part as" +
+                execute("create table up_part as" +
                         " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
@@ -555,7 +555,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
     public void testPurgeRespectsOpenReaderNonPartitioned() throws Exception {
         assertMemoryLeak(() -> {
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                ddl("create table up as" +
+                execute("create table up as" +
                         " (select timestamp_sequence(0, 1000000) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
@@ -599,7 +599,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
     public void testPurgeRespectsTableRecreate() throws Exception {
         assertMemoryLeak(() -> {
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                ddl("create table up as" +
+                execute("create table up as" +
                         " (select timestamp_sequence(0, 1000000) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
@@ -616,9 +616,9 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 }
                 engine.releaseInactive();
 
-                drop("drop table up");
+                execute("drop table up");
 
-                ddl("create table up as" +
+                execute("create table up as" +
                         " (select timestamp_sequence(0, 1000000) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
@@ -645,7 +645,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
     public void testPurgeRespectsTableTruncates() throws Exception {
         assertMemoryLeak(() -> {
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                ddl("create table testPurgeRespectsTableTruncates as" +
+                execute("create table testPurgeRespectsTableTruncates as" +
                         " (select timestamp_sequence(0, 1000000) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
@@ -662,9 +662,9 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 }
                 engine.releaseInactive();
 
-                ddl("truncate table testPurgeRespectsTableTruncates");
+                execute("truncate table testPurgeRespectsTableTruncates");
 
-                ddl("insert into testPurgeRespectsTableTruncates " +
+                execute("insert into testPurgeRespectsTableTruncates " +
                         " select timestamp_sequence(0, 1000000) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
@@ -691,7 +691,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(0);
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                ddl("create table up_part_o3 as" +
+                execute("create table up_part_o3 as" +
                         " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
@@ -700,7 +700,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                         " from long_sequence(5)), index(sym2)" +
                         " timestamp(ts) PARTITION BY DAY");
 
-                compile("insert into up_part_o3 " +
+                execute("insert into up_part_o3 " +
                         " select timestamp_sequence('1970-01-02T01', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
@@ -751,7 +751,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_TASK_POOL_CAPACITY, 1);
         assertMemoryLeak(() -> {
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                ddl("create table up_part_o3_many as" +
+                execute("create table up_part_o3_many as" +
                         " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
@@ -787,7 +787,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(0);
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                ddl("create table up_part_o3 as" +
+                execute("create table up_part_o3 as" +
                         " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
@@ -796,7 +796,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                         " from long_sequence(5)), index(sym2)" +
                         " timestamp(ts) PARTITION BY DAY");
 
-                compile("insert into up_part_o3 " +
+                execute("insert into up_part_o3 " +
                         " select timestamp_sequence('1970-01-02T01', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
@@ -882,7 +882,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
     }
 
     private static void createTable(String upPartO3) throws SqlException {
-        ddl("create table " + upPartO3 + " as" +
+        execute("create table " + upPartO3 + " as" +
                 " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L) ts," +
                 " x," +
                 " rnd_str('a', 'b', 'c', 'd') str," +
@@ -905,10 +905,10 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
         }
     }
 
-    private void assertFilesExist(String[] partitions, Path path, String up_part, String colSuffix, boolean exist) {
+    private void assertFilesExist(String[] partitions, Path path, String tableName, String colSuffix, boolean exist) {
         for (int i = 0; i < partitions.length; i++) {
             String partition = partitions[i];
-            assertFilesExist(path, up_part, partition, colSuffix, exist);
+            assertFilesExist(path, tableName, partition, colSuffix, exist);
         }
     }
 
@@ -963,6 +963,6 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
     }
 
     private void update(String updateSql) throws SqlException {
-        ddl(updateSql);
+        execute(updateSql);
     }
 }

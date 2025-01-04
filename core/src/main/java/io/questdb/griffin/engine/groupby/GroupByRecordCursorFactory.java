@@ -24,26 +24,36 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.DirectLongLongHeap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
-
-    protected final RecordCursorFactory base;
+    private final RecordCursorFactory base;
     private final GroupByRecordCursor cursor;
     private final ObjList<GroupByFunction> groupByFunctions;
     private final ObjList<Function> keyFunctions;
@@ -118,6 +128,11 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public boolean recordCursorSupportsLongTopK() {
+        return true;
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }
@@ -149,7 +164,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         Misc.free(cursor);
     }
 
-    class GroupByRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {
+    private class GroupByRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {
         private final GroupByAllocator allocator;
         private final Map dataMap;
         private final GroupByFunctionsUpdater groupByFunctionsUpdater;
@@ -204,6 +219,14 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 buildDataMap();
             }
             return super.hasNext();
+        }
+
+        @Override
+        public void longTopK(DirectLongLongHeap heap, int columnIndex) {
+            if (!isDataMapBuilt) {
+                buildDataMap();
+            }
+            ((MapRecordCursor) baseCursor).longTopK(heap, recordFunctions.getQuick(columnIndex));
         }
 
         public void of(RecordCursor managedCursor, SqlExecutionContext executionContext) throws SqlException {

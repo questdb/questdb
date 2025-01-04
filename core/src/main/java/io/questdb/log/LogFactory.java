@@ -25,8 +25,27 @@
 package io.questdb.log;
 
 import io.questdb.Metrics;
-import io.questdb.mp.*;
-import io.questdb.std.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.mp.FanOut;
+import io.questdb.mp.Job;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SCSequence;
+import io.questdb.mp.Sequence;
+import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.IntObjHashMap;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -37,7 +56,12 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
-import java.io.*;
+import java.io.Closeable;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.Serializable;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.nio.file.Paths;
@@ -86,6 +110,11 @@ public class LogFactory implements Closeable {
         this.clock = clock;
         workerPool = new WorkerPool(new WorkerPoolConfiguration() {
             @Override
+            public Metrics getMetrics() {
+                return Metrics.DISABLED;
+            }
+
+            @Override
             public String getPoolName() {
                 return "logging";
             }
@@ -99,7 +128,7 @@ public class LogFactory implements Closeable {
             public boolean isDaemonPool() {
                 return true;
             }
-        }, Metrics.disabled());
+        });
     }
 
     public static synchronized void closeInstance() {
@@ -609,6 +638,11 @@ public class LogFactory implements Closeable {
             }
         }
 
+        // ensure that file location is set, so the env var can be picked up later
+        if (properties.getProperty("w.file.location") == null) {
+            properties.put("w.file.location", "");
+        }
+
         for (String w : writers.split(",")) {
             LogWriterConfig conf = createWriter(properties, w.trim());
             if (conf != null) {
@@ -1064,6 +1098,9 @@ public class LogFactory implements Closeable {
                 // all bits in level mask will point to the same queue,
                 // so we just get most significant bit number
                 // and dereference queue on its index
+                if (c.getLevel() < 1) {
+                    throw CairoException.nonCritical().put("logging level not set"); // when `QDB_LOG_W_FILE_LEVEL` is missing (or on another driver)
+                }
                 Holder h = holderMap.get(channels[Numbers.msb(c.getLevel())]);
                 // check if this queue was used by another writer
                 if (h.wSeq != null) {

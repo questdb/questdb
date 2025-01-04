@@ -29,30 +29,22 @@ import io.questdb.FactoryProvider;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
-import io.questdb.network.IODispatcherConfiguration;
-import io.questdb.network.NetworkFacade;
-import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.ConcurrentCacheConfiguration;
+import io.questdb.std.DefaultConcurrentCacheConfiguration;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 
-public class DefaultPGWireConfiguration implements PGWireConfiguration {
-
+public class DefaultPGWireConfiguration extends DefaultIODispatcherConfiguration implements PGWireConfiguration {
     private final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration();
-    private final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
-        @Override
-        public int getBindPort() {
-            return 8812;
-        }
-
-        @Override
-        public String getDispatcherLogName() {
-            return "pg-server";
-        }
-    };
 
     @Override
     public int getBinParamCountCapacity() {
         return 4;
+    }
+
+    @Override
+    public int getBindPort() {
+        return 8812;
     }
 
     @Override
@@ -68,6 +60,11 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     @Override
     public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
         return circuitBreakerConfiguration;
+    }
+
+    @Override
+    public ConcurrentCacheConfiguration getConcurrentCacheConfiguration() {
+        return DefaultConcurrentCacheConfiguration.DEFAULT;
     }
 
     @Override
@@ -91,8 +88,8 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     }
 
     @Override
-    public IODispatcherConfiguration getDispatcherConfiguration() {
-        return ioDispatcherConfiguration;
+    public String getDispatcherLogName() {
+        return "pg-server";
     }
 
     @Override
@@ -132,13 +129,13 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     }
 
     @Override
-    public int getNamesStatementPoolCapacity() {
-        return 32;
+    public int getNamedStatementLimit() {
+        return 10_000;
     }
 
     @Override
-    public NetworkFacade getNetworkFacade() {
-        return NetworkFacadeImpl.INSTANCE;
+    public int getNamesStatementPoolCapacity() {
+        return 32;
     }
 
     @Override
@@ -164,16 +161,6 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     @Override
     public int getRecvBufferSize() {
         return 1024 * 1024;
-    }
-
-    @Override
-    public int getSelectCacheBlockCount() {
-        return 2;
-    }
-
-    @Override
-    public int getSelectCacheRowCount() {
-        return 8;
     }
 
     @Override
@@ -204,6 +191,11 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     @Override
     public boolean isInsertCacheEnabled() {
         return true;
+    }
+
+    @Override
+    public boolean isLegacyModeEnabled() {
+        return false;
     }
 
     @Override

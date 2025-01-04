@@ -24,7 +24,6 @@
 
 package io.questdb.test.cutlass.http;
 
-import io.questdb.Metrics;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.test.AbstractTest;
 import org.junit.Rule;
@@ -49,8 +48,7 @@ public class HttpAlterTableTest extends AbstractTest {
 
     @Test
     public void testAlterTableSetType() throws Exception {
-        Metrics metrics = Metrics.enabled();
-        testJsonQuery(metrics, engine -> {
+        testJsonQuery((engine, sqlExecutionContext) -> {
             // create table
             sendAndReceiveDdl("CREATE TABLE test\n" +
                     "AS(\n" +
@@ -75,8 +73,7 @@ public class HttpAlterTableTest extends AbstractTest {
 
     @Test
     public void testAlterTableSquashPartition() throws Exception {
-        Metrics metrics = Metrics.enabled();
-        testJsonQuery(metrics, engine -> {
+        testJsonQuery((engine, sqlExecutionContext) -> {
             // create table
             sendAndReceiveDdl("CREATE TABLE test\n" +
                     "AS(\n" +
@@ -93,8 +90,7 @@ public class HttpAlterTableTest extends AbstractTest {
 
     @Test
     public void testAlterTableSuspendResume() throws Exception {
-        Metrics metrics = Metrics.enabled();
-        testJsonQuery(metrics, engine -> {
+        testJsonQuery((engine, sqlExecutionContext) -> {
             // create table
             sendAndReceiveDdl("CREATE TABLE test\n" +
                     "AS(\n" +
@@ -104,6 +100,7 @@ public class HttpAlterTableTest extends AbstractTest {
                     "    FROM long_sequence(1000) x)\n" +
                     "TIMESTAMP(ts)\n" +
                     "PARTITION BY DAY WAL");
+
             drainWalQueue(engine);
 
             // execute a SELECT query
@@ -180,12 +177,11 @@ public class HttpAlterTableTest extends AbstractTest {
         );
     }
 
-    private void testJsonQuery(Metrics metrics, HttpQueryTestBuilder.HttpClientCode code) throws Exception {
+    private void testJsonQuery(HttpQueryTestBuilder.HttpClientCode code) throws Exception {
         new HttpQueryTestBuilder()
                 .withWorkerCount(2)
                 .withTempFolder(root)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .withMetrics(metrics)
                 .run(code);
     }
 }

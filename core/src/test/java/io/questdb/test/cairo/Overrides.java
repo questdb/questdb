@@ -24,9 +24,14 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.*;
+import io.questdb.BuildInformationHolder;
+import io.questdb.DefaultFactoryProvider;
+import io.questdb.FactoryProvider;
+import io.questdb.FreeOnExit;
+import io.questdb.PropServerConfiguration;
+import io.questdb.PropertyKey;
+import io.questdb.ServerConfigurationException;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
@@ -34,6 +39,7 @@ import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.test.AbstractCairoTest;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -46,7 +52,6 @@ public class Overrides {
     private final Properties defaultProperties = new Properties();
     private final Properties properties = new Properties();
     private boolean changed = true;
-    private SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration;
     private long currentMicros = -1;
     private final MicrosecondClock defaultMicrosecondClock = () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
     private MicrosecondClock testMicrosClock = defaultMicrosecondClock;
@@ -54,17 +59,15 @@ public class Overrides {
     private Map<String, String> env = null;
     private FactoryProvider factoryProvider = null;
     private FilesFacade ff;
+    private boolean freeLeakedReaders = false;
     private boolean isHiddenTelemetryTable = false;
     private boolean mangleTableDirNames = true;
     private CairoConfiguration propsConfig;
     private RostiAllocFacade rostiAllocFacade = null;
+    private long spinLockTimeout = AbstractCairoTest.DEFAULT_SPIN_LOCK_TIMEOUT;
 
     public Overrides() {
         resetToDefaultTestProperties(defaultProperties);
-    }
-
-    public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
-        return circuitBreakerConfiguration;
     }
 
     public CairoConfiguration getConfiguration(String root) {
@@ -77,10 +80,6 @@ public class Overrides {
         } else {
             return getDefaultConfiguration(root);
         }
-    }
-
-    public long getCurrentMicros() {
-        return currentMicros;
     }
 
     public Map<String, String> getEnv() {
@@ -107,6 +106,10 @@ public class Overrides {
         return rostiAllocFacade;
     }
 
+    public long getSpinLockTimeout() {
+        return spinLockTimeout;
+    }
+
     public MicrosecondClock getTestMicrosClock() {
         return testMicrosClock;
     }
@@ -117,6 +120,14 @@ public class Overrides {
 
     public boolean mangleTableDirNames() {
         return mangleTableDirNames;
+    }
+
+    public void freeLeakedReaders(boolean freeLeakedReaders) {
+        this.freeLeakedReaders = freeLeakedReaders;
+    }
+
+    public boolean freeLeakedReaders() {
+        return freeLeakedReaders;
     }
 
     public void reset() {
@@ -130,6 +141,8 @@ public class Overrides {
         isHiddenTelemetryTable = false;
         properties.clear();
         changed = true;
+        spinLockTimeout = AbstractCairoTest.DEFAULT_SPIN_LOCK_TIMEOUT;
+        freeLeakedReaders = false;
     }
 
     public void setCurrentMicros(long currentMicros) {
@@ -208,14 +221,13 @@ public class Overrides {
         properties.setProperty(PropertyKey.DEBUG_ALLOW_TABLE_REGISTRY_SHARED_WRITE.getPropertyPath(), "true");
         properties.setProperty(PropertyKey.CIRCUIT_BREAKER_THROTTLE.getPropertyPath(), "5");
         properties.setProperty(PropertyKey.QUERY_TIMEOUT_SEC.getPropertyPath(), "0");
-        properties.setProperty(PropertyKey.CAIRO_SQL_COLUMN_CAST_MODEL_POOL_CAPACITY.getPropertyPath(), "32");
+        properties.setProperty(PropertyKey.CAIRO_SQL_CREATE_TABLE_COLUMN_MODEL_POOL_CAPACITY.getPropertyPath(), "32");
         properties.setProperty(PropertyKey.CAIRO_COLUMN_INDEXER_QUEUE_CAPACITY.getPropertyPath(), "1024");
         properties.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY.getPropertyPath(), "64");
         properties.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER.getPropertyPath(), "2");
         properties.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY.getPropertyPath(), "10");
         properties.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_TASK_POOL_CAPACITY.getPropertyPath(), "64");
         properties.setProperty(PropertyKey.CAIRO_SQL_COPY_MODEL_POOL_CAPACITY.getPropertyPath(), "16");
-        properties.setProperty(PropertyKey.CAIRO_SQL_CREATE_TABLE_MODEL_POOL_CAPACITY.getPropertyPath(), "32");
         properties.setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE.getPropertyPath(), "2097152");
         properties.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_KEY_APPEND_PAGE_SIZE.getPropertyPath(), "16384");
         properties.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE.getPropertyPath(), "1048576");

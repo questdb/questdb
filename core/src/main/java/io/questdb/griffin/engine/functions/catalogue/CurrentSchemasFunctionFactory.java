@@ -60,7 +60,7 @@ public class CurrentSchemasFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStrA(Record rec, int arrayIndex) {
-            return "public";
+            return Constants.PUBLIC_SCHEMA;
         }
 
         @Override

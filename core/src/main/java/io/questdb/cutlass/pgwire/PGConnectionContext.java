@@ -64,6 +64,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.SqlTimeoutException;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -245,7 +246,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private boolean sendParameterDescription;
     private boolean sendRNQ = true; /* send ReadyForQuery message */
     private SqlExecutionContextImpl sqlExecutionContext;
-    private long statementTimeout = -1L;
+    private long sqlTimeout = -1L;
     private SuspendEvent suspendEvent;
     private boolean tlsSessionStarting = false;
     private long totalReceived = 0;
@@ -281,8 +282,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         super(
                 configuration.getFactoryProvider().getPGWireSocketFactory(),
                 configuration.getNetworkFacade(),
-                LOG,
-                engine.getMetrics().pgWire().connectionCountGauge()
+                LOG
         );
 
         try {
@@ -290,8 +290,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             this.engine = engine;
             this.maxRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
             this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
-            this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
-            this.sendBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
+            this.recvBufferSize = configuration.getRecvBufferSize();
+            this.sendBufferSize = configuration.getSendBufferSize();
             this.forceSendFragmentationChunkSize = configuration.getForceSendFragmentationChunkSize();
             this.forceRecvFragmentationChunkSize = configuration.getForceRecvFragmentationChunkSize();
             this.characterStore = new CharacterStore(configuration.getCharacterStoreCapacity(), configuration.getCharacterStorePoolCapacity());
@@ -314,7 +314,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             final boolean enabledUpdateCache = configuration.isUpdateCacheEnabled();
             final int updateBlockCount = enabledUpdateCache ? configuration.getUpdateCacheBlockCount() : 1;
             final int updateRowCount = enabledUpdateCache ? configuration.getUpdateCacheRowCount() : 1;
-            this.typesAndUpdateCache = new SimpleAssociativeCache<>(updateBlockCount, updateRowCount, metrics.pgWire().cachedUpdatesGauge());
+            this.typesAndUpdateCache = new SimpleAssociativeCache<>(updateBlockCount, updateRowCount, metrics.pgWireMetrics().cachedUpdatesGauge());
             this.typesAndUpdatePool = new WeakSelfReturningObjectPool<>(parent -> new TypesAndUpdate(parent, engine), updateBlockCount * updateRowCount);
 
             final boolean enableInsertCache = configuration.isInsertCacheEnabled();
@@ -436,7 +436,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         rowCount = 0;
         sendParameterDescription = false;
         sendRNQ = false;
-        statementTimeout = -1L;
+        sqlTimeout = -1L;
         suspendEvent = null;
         tlsSessionStarting = false;
         totalReceived = 0;
@@ -518,7 +518,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             // BAU, not error metric
             throw e;
         } catch (Throwable th) {
-            metrics.pgWire().getErrorCounter().inc();
+            metrics.pgWireMetrics().getErrorCounter().inc();
             throw th;
         }
 
@@ -667,10 +667,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     @Override
-    public void setStatementTimeout(long statementTimeout) {
-        this.statementTimeout = statementTimeout;
-        if (statementTimeout > 0) {
-            circuitBreaker.setTimeout(statementTimeout);
+    public void setSqlTimeout(long sqlTimeout) {
+        this.sqlTimeout = sqlTimeout;
+        if (sqlTimeout > 0) {
+            circuitBreaker.setTimeout(sqlTimeout);
         }
     }
 
@@ -1177,7 +1177,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    //replace column formats in activeSelectColumnTypes with those from latest bind call
+    // replace column formats in activeSelectColumnTypes with those from latest bind call
     private void applyLatestBindColumnFormats() {
         for (int i = 0; i < bindSelectColumnFormats.size(); i++) {
             int newValue = toColumnBinaryType((short) bindSelectColumnFormats.get(i), toColumnType(activeSelectColumnTypes.getQuick(2 * i)));
@@ -1675,9 +1675,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // check if there is pending writer, which would be pending if there is active transaction
         // when we have writer, execution is synchronous
         TableToken tableToken = op.getTableToken();
-        if (tableToken == null) {
-            throw CairoException.critical(0).put("invalid update operation plan cached, table token is null");
-        }
         final int index = pendingWriters.keyIndex(tableToken);
         if (index < 0) {
             op.withContext(sqlExecutionContext);
@@ -1688,18 +1685,18 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         } else {
             // execute against writer from the engine, or async
             try (OperationFuture fut = cq.execute(sqlExecutionContext, tempSequence, false)) {
-                if (statementTimeout > 0) {
+                if (sqlTimeout > 0) {
                     // Timeout is explicitly enforced here as during async execution we cannot rely on CircuitBreaker
                     // to enforce it. Why? When a TableWriter in unavailable then an async task will be put into
                     // TableWriter's task queue and will be executed when TableWriter becomes available. However, during this
                     // queueing there is nothing enforcing timeout. So we have to do it here.
                     // Alternatively, we could introduce timeout enforcement in the tasks queue. But it's not clear if it's worth the effort.
-                    if (fut.await(statementTimeout) != QUERY_COMPLETE) {
+                    if (fut.await(sqlTimeout) != QUERY_COMPLETE) {
                         if (op.isWriterClosePending()) {
                             // Writer has not tried to execute the command
                             freeUpdateCommand(op);
                         }
-                        throw SqlException.$(0, "UPDATE query timeout ").put(statementTimeout).put(" ms");
+                        throw SqlException.$(0, "UPDATE query timeout ").put(sqlTimeout).put(" ms");
                     }
                 } else {
                     // Default timeouts, can be different for select and update part
@@ -1828,7 +1825,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void handleException(int position, CharSequence message, boolean critical, int errno, boolean interruption) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        metrics.pgWire().getErrorCounter().inc();
+        metrics.pgWireMetrics().getErrorCounter().inc();
         clearCursorAndFactory();
         if (interruption) {
             prepareErrorResponse(position, message);
@@ -2216,7 +2213,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
             short columnFormatCodeCount = getShort(lo, msgLimit, "could not read result set column format codes");
             if (columnFormatCodeCount > 0) {
-
                 final RecordMetadata m = typesAndSelect.getFactory().getMetadata();
                 final int columnCount = m.getColumnCount();
                 // apply format codes to the cursor column types
@@ -2307,8 +2303,14 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 isEmptyQuery = true;
                 break;
             case CompiledQuery.CREATE_TABLE_AS_SELECT:
+                try (
+                        Operation op = cq.getOperation();
+                        OperationFuture fut = op.execute(sqlExecutionContext, tempSequence)
+                ) {
+                    fut.await();
+                    rowCount = fut.getAffectedRowsCount();
+                }
                 queryTag = TAG_CTAS;
-                rowCount = cq.getAffectedRowsCount();
                 break;
             case CompiledQuery.EXPLAIN:
                 // explain results should not be cached
@@ -2380,6 +2382,16 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             case CompiledQuery.CREATE_USER:
                 queryTag = TAG_CREATE_ROLE;
                 queryContainsSecret = sqlExecutionContext.containsSecret();
+                break;
+            case CompiledQuery.CREATE_TABLE:
+            case CompiledQuery.DROP:
+                try (
+                        Operation op = cq.getOperation();
+                        OperationFuture fut = op.execute(sqlExecutionContext, tempSequence)
+                ) {
+                    fut.await();
+                }
+                queryTag = TAG_OK;
                 break;
             case CompiledQuery.ALTER:
                 // future-proofing ALTER execution
@@ -2464,7 +2476,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             executeUpdate();
         } else { // this must be an OK/SET/COMMIT/ROLLBACK or empty query
             executeTag();
-            prepareCommandComplete(false);
+            prepareCommandComplete(queryTag == TAG_INSERT_AS_SELECT);
         }
     }
 
@@ -2494,8 +2506,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         lo = hi + 1;
         hi = getStringLength(lo, msgLimit, "bad query text length");
 
-        // clear currentCursor and factory if they weren't cleared by previous execute with maxRows
-        if (currentCursor != null) {
+        // clear currentCursor and factory if they weren't cleared by previous execute, e.g. due to maxRows
+        if (currentCursor != null || typesAndSelect != null) {
             clearCursorAndFactory();
         }
         // and clear TypesAndUpdate too
@@ -3074,7 +3086,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
 
         @Override
-        public void preCompile(SqlCompiler compiler) {
+        public boolean preCompile(SqlCompiler compiler, CharSequence sqlText) {
             sendRNQ = true;
             prepareForNewBatchQuery();
             PGConnectionContext.this.typesAndInsert = null;
@@ -3082,6 +3094,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             PGConnectionContext.this.typesAndSelect = null;
             circuitBreaker.resetTimer();
             sqlExecutionContext.initNow();
+            return true;
         }
     }
 
@@ -3208,7 +3221,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             if (sendBufferPtr + size < sendBufferLimit) {
                 return;
             }
-            throw NoSpaceLeftInResponseBufferException.INSTANCE;
+            throw NoSpaceLeftInResponseBufferException.instance(size);
         }
 
         void putZ(CharSequence value) {

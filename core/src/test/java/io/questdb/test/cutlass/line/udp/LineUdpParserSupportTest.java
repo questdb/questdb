@@ -144,7 +144,8 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
                             .field(targetColumnName, 5)
                             .$(4000000000L);
                     sender.flush();
-                });
+                }
+        );
     }
 
     @Test
@@ -169,7 +170,8 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
                             .field(targetColumnName, 5)
                             .$(4000000000L);
                     sender.flush();
-                });
+                }
+        );
     }
 
     @Test
@@ -199,7 +201,8 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
                             .field(targetColumnName, 5.0)
                             .$(5000000000L);
                     sender.flush();
-                });
+                }
+        );
     }
 
     @Test
@@ -227,7 +230,8 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
                             .field(targetColumnName, "null")
                             .$(4000000000L);
                     sender.flush();
-                });
+                }
+        );
     }
 
     @Test
@@ -253,7 +257,8 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
                             .field(targetColumnName, 5)
                             .$(4000000000L);
                     sender.flush();
-                });
+                }
+        );
     }
 
     @Test
@@ -277,7 +282,8 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
                             .field(targetColumnName, 5)
                             .$(4000000000L);
                     sender.flush();
-                });
+                }
+        );
     }
 
     @Test
@@ -304,7 +310,8 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
                             .field(targetColumnName, 5)
                             .$(4000000000L);
                     sender.flush();
-                });
+                }
+        );
     }
 
     private void testColumnType(
@@ -313,7 +320,7 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
             Consumer<AbstractLineSender> senderConsumer
     ) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration, metrics)) {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
                 final SOCountDownLatch waitForData = new SOCountDownLatch(1);
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                     if (event == PoolListener.EV_RETURN && name.getTableName().equals(tableName)
@@ -323,11 +330,11 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
                 });
                 try (AbstractLineProtoUdpReceiver receiver = createLineProtoReceiver(engine)) {
                     TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE);
-                    TestUtils.create(model
-                                    .col(targetColumnName, columnType)
-                                    .col(locationColumnName, ColumnType.getGeoHashTypeWithBits(30))
-                                    .timestamp(),
-                            engine);
+                    TestUtils.createTable(engine, model
+                            .col(targetColumnName, columnType)
+                            .col(locationColumnName, ColumnType.getGeoHashTypeWithBits(30))
+                            .timestamp()
+                    );
                     receiver.start();
                     try (AbstractLineSender sender = createLineProtoSender()) {
                         senderConsumer.accept(sender);

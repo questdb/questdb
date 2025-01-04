@@ -25,7 +25,6 @@
 package io.questdb.std.datetime.microtime;
 
 import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Os;
@@ -83,20 +82,11 @@ public class TimestampFormatUtils {
     }
 
     public static void append0(@NotNull CharSink<?> sink, int val) {
-        if (Math.abs(val) < 10) {
-            sink.putAscii('0');
-        }
-        sink.put(val);
+        DateFormatUtils.append0(sink, val);
     }
 
     public static void append00(@NotNull CharSink<?> sink, int val) {
-        int v = Math.abs(val);
-        if (v < 10) {
-            sink.putAscii('0').putAscii('0');
-        } else if (v < 100) {
-            sink.putAscii('0');
-        }
-        sink.put(val);
+        DateFormatUtils.append00(sink, val);
     }
 
     public static void append00000(@NotNull CharSink<?> sink, int val) {
@@ -152,8 +142,7 @@ public class TimestampFormatUtils {
     }
 
     public static void appendHour121(@NotNull CharSink<?> sink, int hour) {
-        int h12 = (hour + 11) % 12 + 1;
-        Numbers.append(sink, h12);
+        DateFormatUtils.appendHour121(sink, hour);
     }
 
     public static void appendHour121Padded(@NotNull CharSink<?> sink, int hour) {
@@ -166,8 +155,7 @@ public class TimestampFormatUtils {
     }
 
     public static void appendHour241(@NotNull CharSink<?> sink, int hour) {
-        int h24 = (hour + 23) % 24 + 1;
-        Numbers.append(sink, h24);
+        DateFormatUtils.appendHour241(sink, hour);
     }
 
     public static void appendHour241Padded(@NotNull CharSink<?> sink, int hour) {
@@ -222,26 +210,11 @@ public class TimestampFormatUtils {
     }
 
     public static void assertRemaining(int pos, int hi) throws NumericException {
-        if (pos < hi) {
-            return;
-        }
-        throw NumericException.INSTANCE;
+        DateFormatUtils.assertRemaining(pos, hi);
     }
 
     public static int assertString(@NotNull CharSequence delimiter, int len, @NotNull CharSequence in, int pos, int hi) throws NumericException {
-        if (delimiter.charAt(0) == '\'' && delimiter.charAt(len - 1) == '\'') {
-            assertRemaining(pos + len - 3, hi);
-            if (!Chars.equals(delimiter, 1, len - 1, in, pos, pos + len - 2)) {
-                throw NumericException.INSTANCE;
-            }
-            return pos + len - 2;
-        } else {
-            assertRemaining(pos + len - 1, hi);
-            if (!Chars.equals(delimiter, in, pos, pos + len)) {
-                throw NumericException.INSTANCE;
-            }
-            return pos + len;
-        }
+        return DateFormatUtils.assertString(delimiter, len, in, pos, hi);
     }
 
     public static long compute(
@@ -369,6 +342,8 @@ public class TimestampFormatUtils {
         return referenceYear;
     }
 
+    // may be used to initialize calendar indexes ahead of using them
+    @TestOnly
     public static void init() {
     }
 

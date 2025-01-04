@@ -29,6 +29,7 @@ import io.questdb.BuildInformationHolder;
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.DefaultTelemetryConfiguration;
 import io.questdb.FactoryProvider;
+import io.questdb.Metrics;
 import io.questdb.PropServerConfiguration;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
@@ -48,9 +49,11 @@ import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.function.LongSupplier;
 
@@ -89,6 +92,15 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean enableTestFactories() {
         return true;
+    }
+
+    @Override
+    public boolean freeLeakedReaders() {
+        // to override use overrides() system, the idea for the "false" here
+        // is not to hide reader leaks and continue to get errors in tests if
+        // reader is left behind by the cursor. The need to override should be rare,
+        // and only for testing the "supervisor" system itself.
+        return false;
     }
 
     @Override
@@ -149,11 +161,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
         return circuitBreakerConfiguration;
-    }
-
-    @Override
-    public int getColumnCastModelPoolCapacity() {
-        return 32;
     }
 
     @Override
@@ -222,13 +229,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getCreateTableModelBatchSize() {
-        return 1_000_000;
+    public int getCreateTableColumnModelPoolCapacity() {
+        return 32;
     }
 
     @Override
-    public int getCreateTableModelPoolCapacity() {
-        return 32;
+    public long getCreateTableModelBatchSize() {
+        return 1_000_000;
     }
 
     @Override
@@ -342,13 +349,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getGroupByPresizeMaxHeapSize() {
-        return 128 * Numbers.SIZE_1MB;
+    public long getGroupByPresizeMaxCapacity() {
+        return 1_000_000;
     }
 
     @Override
-    public long getGroupByPresizeMaxCapacity() {
-        return 1_000_000;
+    public long getGroupByPresizeMaxHeapSize() {
+        return 128 * Numbers.SIZE_1MB;
     }
 
     @Override
@@ -417,6 +424,26 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public DateFormat getLogTimestampFormat() {
+        return null;
+    }
+
+    @Override
+    public @Nullable String getLogTimestampTimezone() {
+        return null;
+    }
+
+    @Override
+    public DateLocale getLogTimestampTimezoneLocale() {
+        return null;
+    }
+
+    @Override
+    public TimeZoneRules getLogTimestampTimezoneRules() {
+        return null;
+    }
+
+    @Override
     public int getMaxCrashFiles() {
         return 1;
     }
@@ -449,6 +476,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getMetadataPoolCapacity() {
         return getSqlModelPoolCapacity();
+    }
+
+    @Override
+    public Metrics getMetrics() {
+        return Metrics.ENABLED;
     }
 
     @Override
@@ -835,6 +867,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlParquetFrameCacheCapacity() {
+        return 3;
+    }
+
+    @Override
     public int getSqlSmallMapKeyCapacity() {
         return 64;
     }
@@ -1154,6 +1191,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isPartitionO3OverwriteControlEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isReadOnlyInstance() {
         return false;
     }
@@ -1205,11 +1247,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean mangleTableDirNames() {
-        return false;
-    }
-
-    @Override
-    public boolean getPartitionO3OverwriteControlEnabled() {
         return false;
     }
 

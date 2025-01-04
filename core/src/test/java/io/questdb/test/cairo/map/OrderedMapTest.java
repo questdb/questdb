@@ -24,11 +24,46 @@
 
 package io.questdb.test.cairo.map;
 
-import io.questdb.cairo.*;
-import io.questdb.cairo.map.*;
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkFactory;
+import io.questdb.cairo.SingleColumnType;
+import io.questdb.cairo.SymbolAsIntTypes;
+import io.questdb.cairo.SymbolAsStrTypes;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapRecord;
+import io.questdb.cairo.map.MapRecordCursor;
+import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.map.MapValueMergeFunction;
+import io.questdb.cairo.map.OrderedMap;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.std.*;
+import io.questdb.griffin.engine.functions.columns.LongColumn;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.BitSet;
+import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.Chars;
+import io.questdb.std.DirectLongLongHeap;
+import io.questdb.std.DirectLongLongMinHeap;
+import io.questdb.std.Interval;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -872,7 +907,7 @@ public class OrderedMapTest extends AbstractCairoTest {
             model.col("a", ColumnType.LONG).col("b", geohashType);
             AbstractCairoTest.create(model);
 
-            try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
                 for (int i = 0; i < N; i++) {
                     TableWriter.Row row = writer.newRow();
                     long rndGeohash = GeoHashes.fromCoordinatesDeg(rnd.nextDouble() * 180 - 90, rnd.nextDouble() * 360 - 180, precisionBits);
@@ -1664,6 +1699,76 @@ public class OrderedMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTopKFixedSizeKey() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int heapCapacity = 10;
+            SingleColumnType keyTypes = new SingleColumnType(ColumnType.LONG);
+            SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);
+
+            try (
+                    OrderedMap map = new OrderedMap(Numbers.SIZE_1MB, keyTypes, valueTypes, 64, 0.8, Integer.MAX_VALUE);
+                    DirectLongLongHeap heap = new DirectLongLongMinHeap(heapCapacity, MemoryTag.NATIVE_DEFAULT)
+            ) {
+                for (int i = 0; i < 100; i++) {
+                    MapKey key = map.withKey();
+                    key.putLong(i);
+
+                    MapValue value = key.createValue();
+                    value.putLong(0, i);
+                }
+
+                MapRecordCursor mapCursor = map.getCursor();
+                mapCursor.longTopK(heap, new LongColumn(0));
+
+                Assert.assertEquals(heapCapacity, heap.size());
+
+                MapRecord mapRecord = mapCursor.getRecord();
+                DirectLongLongHeap.Cursor heapCursor = heap.getCursor();
+                for (int i = 0; i < heapCapacity; i++) {
+                    Assert.assertTrue(heapCursor.hasNext());
+                    mapCursor.recordAt(mapRecord, heapCursor.index());
+                    Assert.assertEquals(heapCursor.value(), mapRecord.getLong(0));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testTopKVarSizeKey() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int heapCapacity = 10;
+            SingleColumnType keyTypes = new SingleColumnType(ColumnType.STRING);
+            SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);
+
+            try (
+                    OrderedMap map = new OrderedMap(Numbers.SIZE_1MB, keyTypes, valueTypes, 64, 0.8, Integer.MAX_VALUE);
+                    DirectLongLongHeap heap = new DirectLongLongMinHeap(heapCapacity, MemoryTag.NATIVE_DEFAULT)
+            ) {
+                for (int i = 0; i < 100; i++) {
+                    MapKey key = map.withKey();
+                    key.putStr(String.valueOf(i));
+
+                    MapValue value = key.createValue();
+                    value.putLong(0, i);
+                }
+
+                MapRecordCursor mapCursor = map.getCursor();
+                mapCursor.longTopK(heap, new LongColumn(0));
+
+                Assert.assertEquals(heapCapacity, heap.size());
+
+                MapRecord mapRecord = mapCursor.getRecord();
+                DirectLongLongHeap.Cursor heapCursor = heap.getCursor();
+                for (int i = 0; i < heapCapacity; i++) {
+                    Assert.assertTrue(heapCursor.hasNext());
+                    mapCursor.recordAt(mapRecord, heapCursor.index());
+                    Assert.assertEquals(heapCursor.value(), mapRecord.getLong(0));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testValueAccess() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final int N = 1000;
@@ -2107,7 +2212,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                 .col("m", ColumnType.UUID);
         AbstractCairoTest.create(model);
 
-        try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
+        try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
             for (int i = 0; i < n; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.putByte(0, rnd.nextByte());

@@ -24,7 +24,11 @@
 
 package io.questdb.test.griffin.engine.functions.conditional;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class CaseFunctionFactoryTest extends AbstractCairoTest {
@@ -361,7 +365,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testByteToVarcharCast() throws Exception {
-        ddl(
+        execute(
                 "create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_varchar() a," +
@@ -761,7 +765,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testDoubleToVarcharCast() throws Exception {
-        ddl(
+        execute(
                 "create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_varchar() a," +
@@ -886,7 +890,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testFloatToVarcharCast() throws Exception {
-        ddl(
+        execute(
                 "create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_varchar() a," +
@@ -913,7 +917,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testIPv4ToVarcharCast() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table tanc as (" +
                             "select rnd_int() % 1000 x," +
                             " rnd_varchar() a," +
@@ -1116,7 +1120,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testIntToStringCast() throws Exception {
-        ddl(
+        execute(
                 "create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_str() a," +
@@ -1141,7 +1145,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testIntToStringCastOnBranch() throws Exception {
-        ddl(
+        execute(
                 "create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_str() a," +
@@ -1165,7 +1169,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testIntToVarcharCast() throws Exception {
-        ddl(
+        execute(
                 "create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_varchar() a," +
@@ -1191,7 +1195,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testIntToVarcharCastOnBranch() throws Exception {
-        ddl(
+        execute(
                 "create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_varchar() a," +
@@ -1220,7 +1224,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
             String[] types = {"INT", "LONG", "SHORT", "STRING", "TIMESTAMP", "BOOLEAN"};
 
             for (String type : types) {
-                ddl("create table tt as (" +
+                execute("create table tt as (" +
                         "select cast(x as TIMESTAMP) as ts, cast(x as " + type + ") as x from long_sequence(10)" +
                         ") timestamp(ts)");
 
@@ -1231,7 +1235,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         "from tt"
                 );
 
-                drop("drop table tt");
+                execute("drop table tt");
             }
         });
     }
@@ -1416,7 +1420,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testLongToVarcharCast() throws Exception {
-        ddl(
+        execute(
                 "create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_varchar() a," +
@@ -1552,7 +1556,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testShortToVarcharCast() throws Exception {
-        ddl(
+        execute(
                 "create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_varchar() a," +
@@ -1816,7 +1820,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testUuidToVarcharCast() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table tanc as (" +
                             "select rnd_int() % 1000 x," +
                             " rnd_varchar() a," +

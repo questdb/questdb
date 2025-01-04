@@ -91,6 +91,7 @@ public class CopyCancelFactory extends AbstractRecordCursorFactory {
                 }
             }
         }
+        cursor.toTop();
         return cursor;
     }
 
