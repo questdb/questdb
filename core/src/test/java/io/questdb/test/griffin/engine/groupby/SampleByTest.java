@@ -3999,8 +3999,8 @@ public class SampleByTest extends AbstractCairoTest {
             );
             assertException(
                     "select ts, avg(x), first(x), last(x), x from fromto\n" +
-                    "where s != '5'\n" +
-                    "sample by 5d from '2017-12-20' to '2018-01-31' fill(42)",
+                            "where s != '5'\n" +
+                            "sample by 5d from '2017-12-20' to '2018-01-31' fill(42)",
                     85,
                     "FROM-TO intervals are not supported for keyed SAMPLE BY queries"
             );
