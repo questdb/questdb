@@ -108,20 +108,20 @@ public class ToTimezoneIntervalFunctionFactory implements FunctionFactory {
 
         @Override
         public Interval getInterval(Record rec) {
-            final long timestampLo = interval.getInterval(rec).getLo();
-            final long timestampHi = interval.getInterval(rec).getHi();
+            final Interval localInterval = new Interval(interval.getInterval(rec).getLo(), interval.getInterval(rec).getHi());
             try {
                 final CharSequence tz = timezone.getStrA(rec);
                 if (tz != null) {
-                    return new Interval(
-                            Timestamps.toTimezone(timestampLo, TimestampFormatUtils.EN_LOCALE, tz),
-                            Timestamps.toTimezone(timestampHi, TimestampFormatUtils.EN_LOCALE, tz)
+                    localInterval.of(
+                            Timestamps.toTimezone(localInterval.getLo(), TimestampFormatUtils.EN_LOCALE, tz),
+                            Timestamps.toTimezone(localInterval.getHi(), TimestampFormatUtils.EN_LOCALE, tz)
                     );
+                    return localInterval;
                 } else {
-                    return new Interval(timestampLo, timestampHi);
+                    return localInterval;
                 }
             } catch (NumericException e) {
-                return new Interval(timestampLo, timestampHi);
+                return localInterval;
             }
         }
 

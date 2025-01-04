@@ -47,9 +47,7 @@ class OffsetIntervalFunctionFromOffset extends IntervalFunction implements Unary
 
     @Override
     public Interval getInterval(Record rec) {
-        final long timestampLo = interval.getInterval(rec).getLo();
-        final long timestampHi = interval.getInterval(rec).getHi();
-        return new Interval((timestampLo + offset), (timestampHi + offset));
+        return new Interval((interval.getInterval(rec).getLo() + offset), (interval.getInterval(rec).getHi() + offset));
     }
 
     @Override

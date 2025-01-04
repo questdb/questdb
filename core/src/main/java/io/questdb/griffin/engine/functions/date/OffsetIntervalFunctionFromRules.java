@@ -50,9 +50,10 @@ class OffsetIntervalFunctionFromRules extends IntervalFunction implements UnaryF
 
     @Override
     public Interval getInterval(Record rec) {
-        final long utcLo = interval.getInterval(rec).getLo();
-        final long utcHi = interval.getInterval(rec).getHi();
-        return new Interval((utcLo + multiplier * rules.getOffset(utcLo)), (utcHi + multiplier * rules.getOffset(utcHi)));
+        return new Interval(
+                (interval.getInterval(rec).getLo() + multiplier * rules.getOffset(interval.getInterval(rec).getLo())),
+                (interval.getInterval(rec).getHi() + multiplier * rules.getOffset(interval.getInterval(rec).getHi()))
+        );
     }
 
     @Override
