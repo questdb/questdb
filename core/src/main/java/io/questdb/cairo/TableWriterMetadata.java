@@ -42,9 +42,8 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     private TableToken tableToken;
     private boolean walEnabled;
 
-    public TableWriterMetadata(TableToken tableToken, MemoryMR metaMem) {
+    public TableWriterMetadata(TableToken tableToken) {
         this.tableToken = tableToken;
-        reload(metaMem);
     }
 
     @Override
@@ -75,6 +74,11 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     @Override
     public int getPartitionBy() {
         return partitionBy;
+    }
+
+    public int getReplacingColumnIndex(int columnIndex) {
+        WriterTableColumnMetadata columnMeta = (WriterTableColumnMetadata) columnMetadata.get(columnIndex);
+        return columnMeta.getReplacingIndex();
     }
 
     @Override
@@ -187,39 +191,6 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
             int columnIndex,
             int symbolCapacity,
             boolean isDedupKey,
-            boolean isSymbolCached
-    ) {
-        String str = name.toString();
-        columnNameIndexMap.put(str, columnMetadata.size());
-        columnMetadata.add(
-                new WriterTableColumnMetadata(
-                        str,
-                        type,
-                        indexFlag,
-                        indexValueBlockCapacity,
-                        true,
-                        null,
-                        columnIndex,
-                        symbolCapacity,
-                        isDedupKey,
-                        0,
-                        isSymbolCached
-                )
-        );
-        columnCount++;
-        if (ColumnType.isSymbol(type)) {
-            symbolMapCount++;
-        }
-    }
-
-    void addColumn(
-            CharSequence name,
-            int type,
-            boolean indexFlag,
-            int indexValueBlockCapacity,
-            int columnIndex,
-            int symbolCapacity,
-            boolean isDedupKey,
             int replacingIndex,
             boolean isSymbolCached
     ) {
@@ -268,9 +239,8 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         oldColumnMetadata.rename(newNameStr);
     }
 
-    public static class WriterTableColumnMetadata extends TableColumnMetadata {
+    protected static class WriterTableColumnMetadata extends TableColumnMetadata {
 
-        // todo: remove this class
         public WriterTableColumnMetadata(
                 String nameStr,
                 int type,

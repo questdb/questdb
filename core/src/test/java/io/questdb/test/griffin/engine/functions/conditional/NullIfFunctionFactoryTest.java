@@ -243,4 +243,29 @@ public class NullIfFunctionFactoryTest extends AbstractCairoTest {
         );
     }
 
+    @Test
+    public void testVarcharSimple() throws Exception {
+        assertQuery(
+                "str1\tstr2\tnullif\n" +
+                        "cat\tcat\t\n" +
+                        "dog\t\tdog\n" +
+                        "\t\t\n" +
+                        "\tdog\t\n" +
+                        "cat\tdog\tcat\n" +
+                        "dog\t\tdog\n" +
+                        "dog\tdog\t\n" +
+                        "dog\tcat\tdog\n" +
+                        "cat\tdog\tcat\n" +
+                        "cat\tdog\tcat\n",
+                "select str1,str2,nullif(str1,str2) from x",
+                "create table x as (" +
+                        "select rnd_varchar('cat','dog',NULL) as str1\n" +
+                        ", rnd_varchar('cat','dog',NULL) as str2\n" +
+                        "from long_sequence(10)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
 }

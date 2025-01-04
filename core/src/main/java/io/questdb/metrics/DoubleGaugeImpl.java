@@ -28,7 +28,7 @@ import io.questdb.std.str.BorrowableUtf8Sink;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
-public class DoubleGaugeImpl implements Scrapable, DoubleGauge {
+public class DoubleGaugeImpl implements Target, DoubleGauge {
     private final CharSequence name;
     private volatile double value;
 
