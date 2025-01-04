@@ -3931,7 +3931,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByFromToFillMismatchedTypes() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(DDL_FROMTO);
+            execute(DDL_FROMTO);
             drainWalQueue();
             assertException("select ts, count from fromto\n" +
                     "sample by 5d from '2005' to '2006' fill(1.0)", 0, "invalid fill value");

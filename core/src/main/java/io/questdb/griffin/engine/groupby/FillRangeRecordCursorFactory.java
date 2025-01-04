@@ -99,7 +99,6 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         this.timestampIndex = timestampIndex;
         this.valueFuncs = fillValues;
         this.valueFuncsPos = fillValuesPos;
-        this.metadata = metadata;
 
         // only do this for value fill
         if (!(valueFuncs.size() == 1 && valueFuncs.get(0).isNullConstant())) {
