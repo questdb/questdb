@@ -2024,14 +2024,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         int fillValuesExprsSize = fillValuesExprs.size();
 
         try {
-            if (fillValuesExprs == null) {
-                throw SqlException.$(-1, "fill values were null");
-            }
-
             IntList fillValuesPos = new IntList(fillValuesExprsSize);
 
             for (int i = 0; i < fillValuesExprsSize; i++) {
-                fillValuesPos.set(i, fillValuesExprs.getQuick(i).position);
+                fillValuesPos.add(fillValuesExprs.getQuick(i).position);
             }
 
             fillValues = new ObjList<>(fillValuesExprs.size());
@@ -3334,8 +3330,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             sampleToFuncPos = 0;
         }
 
-        final boolean isFromTo = sampleFromFunc != TimestampConstant.NULL || sampleToFunc != TimestampConstant.NULL;
-
         RecordCursorFactory factory = null;
         // We require timestamp with asc order.
         final int timestampIndex;
@@ -3509,7 +3503,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     );
                 }
 
-                guardAgainstFromToWithKeyedSampleBy(isFromTo);
+                guardAgainstFromToWithKeyedSampleBy(model);
 
                 return new SampleByFillPrevRecordCursorFactory(
                         asm,
@@ -3558,7 +3552,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     );
                 }
 
-                guardAgainstFromToWithKeyedSampleBy(isFromTo);
+                guardAgainstFromToWithKeyedSampleBy(model);
 
                 return new SampleByFillNoneRecordCursorFactory(
                         asm,
@@ -3607,7 +3601,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     );
                 }
 
-                guardAgainstFromToWithKeyedSampleBy(isFromTo);
+                guardAgainstFromToWithKeyedSampleBy(model);
 
                 return new SampleByFillNullRecordCursorFactory(
                         asm,
@@ -3659,7 +3653,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
             }
 
-            guardAgainstFromToWithKeyedSampleBy(isFromTo);
+            guardAgainstFromToWithKeyedSampleBy(model);
 
             return new SampleByFillValueRecordCursorFactory(
                     asm,
@@ -5962,9 +5956,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         throw SqlException.$(0, "cannot use FILL with a keyed GROUP BY");
     }
 
-    private void guardAgainstFromToWithKeyedSampleBy(boolean isFromTo) throws SqlException {
-        if (isFromTo) {
-            throw SqlException.$(0, "FROM-TO intervals are not supported for keyed SAMPLE BY queries");
+    private void guardAgainstFromToWithKeyedSampleBy(QueryModel model) throws SqlException {
+        if (model.getSampleByFrom() != null || model.getSampleByTo() != null) {
+            int pos = model.getSampleByFrom() != null ? model.getSampleByFrom().position : model.getSampleByTo().position;
+            throw SqlException.$(pos, "FROM-TO intervals are not supported for keyed SAMPLE BY queries");
         }
     }
 

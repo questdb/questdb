@@ -3933,10 +3933,16 @@ public class SampleByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(DDL_FROMTO);
             drainWalQueue();
-            assertException("select ts, count from fromto\n" +
-                    "sample by 5d from '2005' to '2006' fill(1.0)", 0, "invalid fill value");
-            assertException("select ts, count, 0::timestamp from fromto\n" +
-                    "sample by 5d from '2005' to '2006' fill(1.0)", 0, "not supported for keyed");
+            assertException(
+                    "select ts, count from fromto sample by 5d from '2005' to '2006' fill(1.0)",
+                    69,
+                    "invalid fill value, cannot cast DOUBLE to LONG"
+            );
+            assertException(
+                    "select ts, count, 0::timestamp from fromto sample by 5d from '2005' to '2006' fill(1.0)",
+                    61,
+                    "FROM-TO intervals are not supported for keyed SAMPLE BY queries"
+            );
         });
     }
 
@@ -3984,13 +3990,20 @@ public class SampleByTest extends AbstractCairoTest {
     public void testSampleByFromToIsDisallowedForKeyedQueries() throws Exception {
         assertMemoryLeak(() -> {
             execute(DDL_FROMTO);
-            assertException("select ts, avg(x), first(x), last(x), x from fromto\n" +
+            assertException(
+                    "select ts, avg(x), first(x), last(x), x from fromto\n" +
                             "where s != '5'\n" +
                             "sample by 5d from '2017-12-20' to '2018-01-31' fill(42)",
-                    0, "supported");
-            assertException("select ts, avg(x), first(x), last(x), x from fromto\n" +
+                    85,
+                    "FROM-TO intervals are not supported for keyed SAMPLE BY queries"
+            );
+            assertException(
+                    "select ts, avg(x), first(x), last(x), x from fromto\n" +
                     "where s != '5'\n" +
-                    "sample by 5d from '2017-12-20' to '2018-01-31' fill(42)", 0, "supported");
+                    "sample by 5d from '2017-12-20' to '2018-01-31' fill(42)",
+                    85,
+                    "FROM-TO intervals are not supported for keyed SAMPLE BY queries"
+            );
         });
     }
 

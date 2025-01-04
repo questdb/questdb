@@ -3097,10 +3097,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     public void testSampleByFromToDisallowedQueryWithKey() throws Exception {
         assertMemoryLeak(() -> {
             execute(SampleByTest.DDL_FROMTO);
-            assertException("SELECT ts, count, s\n" +
-                    "FROM fromto\n" +
-                    "SAMPLE BY 5d FROM '2018-01-01' TO '2019-01-01'\n" +
-                    "LIMIT 6", 0, "are not supported for keyed SAMPLE BY");
+            assertException(
+                    "SELECT ts, count, s FROM fromto SAMPLE BY 5d FROM '2018-01-01' TO '2019-01-01' LIMIT 6",
+                    50,
+                    "are not supported for keyed SAMPLE BY"
+            );
         });
     }
 
@@ -3569,10 +3570,10 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String shouldFail2b = "select ts, avg(x), sum(x), concat('1', s) from fromto\n" +
                     "sample by 5d from '2017-12-20' fill(null) align to calendar with offset '10:00'";
 
-            assertException(shouldFail1a, 0, "FROM-TO");
-            assertException(shouldFail1b, 0, "FROM-TO");
-            assertException(shouldFail2a, 0, "FROM-TO");
-            assertException(shouldFail2b, 0, "FROM-TO");
+            assertException(shouldFail1a, 51, "FROM-TO intervals are not supported for keyed SAMPLE BY queries");
+            assertException(shouldFail1b, 51, "FROM-TO intervals are not supported for keyed SAMPLE BY queries");
+            assertException(shouldFail2a, 72, "FROM-TO intervals are not supported for keyed SAMPLE BY queries");
+            assertException(shouldFail2b, 72, "FROM-TO intervals are not supported for keyed SAMPLE BY queries");
 
             final String shouldSucceedParallel = "select ts, avg(x), sum(x) from fromto\n" +
                     "sample by 5d from '2017-12-20' fill(null) ";
