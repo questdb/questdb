@@ -25,9 +25,11 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
@@ -37,6 +39,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Numbers;
 import io.questdb.std.Misc;
+import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.Interval;
@@ -62,40 +65,52 @@ public class ToTimezoneIntervalFunctionFactory implements FunctionFactory {
         Function timezone = args.getQuick(1);
 
         if (timezone.isConstant()) {
-            return getIntervalFunction(argPositions, interval, timezone, 1);
+            final TimeZoneRules timeZoneRules;
+            try {
+                final CharSequence tz = timezone.getStrA(null);
+                if (tz != null) {
+                    timeZoneRules = Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, tz);
+                    return new OffsetIntervalFromRulesFunction(interval, timeZoneRules);
+
+                } else {
+                    throw SqlException.$(argPositions.getQuick(1), "timezone must not be null");
+                }
+
+            } catch (NumericException e) {
+                throw SqlException.$(argPositions.getQuick(1), "invalid timezone name");
+            }
         } else {
             return new ToTimezoneIntervalFunctionVar(interval, timezone);
         }
     }
 
-    @NotNull
-    static IntervalFunction getIntervalFunction(IntList argPositions, Function interval, Function timezone, int multiplier) throws SqlException {
-        final CharSequence tz = timezone.getStrA(null);
-        if (tz != null) {
-            final int hi = tz.length();
-            final long l = Timestamps.parseOffset(tz, 0, hi);
-            if (l == Long.MIN_VALUE) {
-                try {
-                    return new OffsetIntervalFunctionFromRules(
-                            interval,
-                            TimestampFormatUtils.EN_LOCALE.getZoneRules(
-                                    Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
-                            ),
-                            multiplier
-                    );
-                } catch (NumericException e) {
-                    Misc.free(interval);
-                    throw SqlException.$(argPositions.getQuick(1), "invalid timezone name");
-                }
-            } else {
-                return new OffsetIntervalFunctionFromOffset(
-                        interval,
-                        multiplier * Numbers.decodeLowInt(l) * Timestamps.MINUTE_MICROS
-                );
-            }
-        }
-        throw SqlException.$(argPositions.getQuick(1), "timezone must not be null");
-    }
+//    @NotNull
+//    static IntervalFunction getIntervalFunction(IntList argPositions, Function interval, Function timezone) throws SqlException {
+//        final CharSequence tz = timezone.getStrA(null);
+//        if (tz != null) {
+//            final int hi = tz.length();
+//            final long l = Timestamps.parseOffset(tz, 0, hi);
+//            if (l == Long.MIN_VALUE) {
+//                try {
+//                    return new OffsetIntervalFromRulesFunction(
+//                            interval,
+//                            TimestampFormatUtils.EN_LOCALE.getZoneRules(
+//                                    Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
+//                            )
+//                    );
+//                } catch (NumericException e) {
+//                    Misc.free(interval);
+//                    throw SqlException.$(argPositions.getQuick(1), "invalid timezone name");
+//                }
+//            } else {
+//                return new OffsetIntervalFunctionFromOffset(
+//                        interval,
+//                        Numbers.decodeLowInt(l) * Timestamps.MINUTE_MICROS
+//                );
+//            }
+//        }
+//        throw SqlException.$(argPositions.getQuick(1), "timezone must not be null");
+//    }
 
     private static class ToTimezoneIntervalFunctionVar extends IntervalFunction implements BinaryFunction {
         private final Interval interval = new Interval();
@@ -111,21 +126,21 @@ public class ToTimezoneIntervalFunctionFactory implements FunctionFactory {
         public @NotNull Interval getInterval(Record rec) {
             final long timestampLo = intervalFunction.getInterval(rec).getLo();
             final long timestampHi = intervalFunction.getInterval(rec).getHi();
-            interval.of(timestampLo, timestampHi);
 
             try {
+                final TimeZoneRules timeZoneRules;
                 final CharSequence tz = timezone.getStrA(rec);
                 if (tz != null) {
+                    timeZoneRules = Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, tz);
                     interval.of(
-                            Timestamps.toTimezone(timestampLo, TimestampFormatUtils.EN_LOCALE, tz),
-                            Timestamps.toTimezone(timestampHi, TimestampFormatUtils.EN_LOCALE, tz)
+                            timestampLo + timeZoneRules.getOffset(timestampLo), timestampHi + timeZoneRules.getOffset(timestampHi)
                     );
                     return interval;
                 } else {
-                    return interval;
+                    throw CairoException.nonCritical().put("timezone must not be null");
                 }
             } catch (NumericException e) {
-                return interval;
+                throw CairoException.nonCritical().put("invalid timezone name");
             }
         }
 
@@ -142,6 +157,11 @@ public class ToTimezoneIntervalFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return timezone;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("to_timezone(").val(intervalFunction).val(',').val(timezone).val(')');
         }
     }
 }

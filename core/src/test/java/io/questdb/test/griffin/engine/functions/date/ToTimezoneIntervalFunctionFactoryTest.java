@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.date;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -38,6 +39,14 @@ public class ToTimezoneIntervalFunctionFactoryTest extends AbstractCairoTest {
     public void testAreaName() throws Exception {
         assertToTimezoneInterval("select to_timezone(interval(0,0), 'Europe/Prague')",
                 "('1970-01-01T01:00:00.000Z', '1970-01-01T01:00:00.000Z')\n");
+    }
+
+    @Test
+    public void testDaylightSavings() throws Exception {
+        assertToTimezoneInterval(
+                "SELECT to_timezone(interval('2023-03-01T17:00:00.000000Z', '2023-03-15T17:00:00.000000Z'),'America/New_York')",
+                "('2023-03-01T12:00:00.000Z', '2023-03-15T13:00:00.000Z')\n"
+        );
     }
 
     @Test
