@@ -648,6 +648,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     ) throws SqlException {
         // add columns to table
         CharSequence tok = SqlUtil.fetchNext(lexer);
+
         // ignore `column`
         if (tok != null && !SqlKeywords.isColumnKeyword(tok)) {
             lexer.unparseLast();
@@ -662,6 +663,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         int semicolonPos = -1;
         do {
             tok = maybeExpectToken(lexer, "'column' or column name", semicolonPos < 0);
+
             if (semicolonPos >= 0) {
                 if (tok != null) {
                     throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
@@ -669,9 +671,27 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 break;
             }
 
-            int index = tableMetadata.getColumnIndexQuiet(tok);
-            if (index != -1) {
-                throw SqlException.$(lexer.lastTokenPosition(), "column '").put(tok).put("' already exists");
+            if (SqlKeywords.isIfKeyword(tok)) {
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok != null && SqlKeywords.isNotKeyword(tok)) {
+                    tok = SqlUtil.fetchNext(lexer);
+                    if (tok != null && SqlKeywords.isExistsKeyword(tok)) {
+                        tok = SqlUtil.fetchNext(lexer); // captured column name
+                        if (tableMetadata.getColumnIndexQuiet(tok) != -1) {
+                            break;
+                        }
+                    } else {
+                        throw SqlException.$(lexer.lastTokenPosition(), "unexpected token '").put(tok)
+                                .put("' for if not exists");
+                    }
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'not' expected");
+                }
+            } else {
+                int index = tableMetadata.getColumnIndexQuiet(tok);
+                if (index != -1) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "column '").put(tok).put("' already exists");
+                }
             }
 
             CharSequence columnName = GenericLexer.immutableOf(GenericLexer.unquote(tok));
@@ -2420,6 +2440,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         long beginNanos = configuration.getMicrosecondClock().getTicks();
         QueryProgress.logStart(sqlId, createTableOp.getSqlText(), executionContext, false);
         try {
+            executionContext.setUseSimpleCircuitBreaker(true);
 
             // Fast path for CREATE TABLE IF NOT EXISTS in scenario when the table already exists
             final int status = executionContext.getTableStatus(path, createTableOp.getTableName());
@@ -2447,7 +2468,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (createTableOp.getRecordCursorFactory() != null) {
                     this.insertCount = -1;
                     int position = createTableOp.getTableNamePosition();
-                    executionContext.setUseSimpleCircuitBreaker(true);
                     RecordCursorFactory factory = createTableOp.getRecordCursorFactory();
                     RecordCursor newCursor;
                     for (int retryCount = 0; ; retryCount++) {
@@ -2506,8 +2526,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             engine.unlockTableName(tableToken);
                             throw e;
                         }
-                    } finally {
-                        executionContext.setUseSimpleCircuitBreaker(false);
                     }
                     createTableOp.updateOperationFutureTableToken(tableToken);
                     createTableOp.updateOperationFutureAffectedRowsCount(insertCount);
@@ -2570,6 +2588,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             QueryProgress.logError(e, sqlId, createTableOp.getSqlText(), executionContext, beginNanos);
             throw e;
         } finally {
+            executionContext.setUseSimpleCircuitBreaker(false);
             queryRegistry.unregister(sqlId, executionContext);
         }
     }
@@ -2968,10 +2987,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         TableToken tableToken = tableExistsOrFail(tableNameExpr.position, tableNameExpr.token, executionContext);
         long insertCount;
 
-        executionContext.setUseSimpleCircuitBreaker(true);
-        try (
-                TableWriterAPI writer = engine.getTableWriterAPI(tableToken, "insertAsSelect")
-        ) {
+        try (TableWriterAPI writer = engine.getTableWriterAPI(tableToken, "insertAsSelect")) {
+            executionContext.setUseSimpleCircuitBreaker(true);
+
             QueryModel queryModel = model.getQueryModel();
             try (
                     RecordCursorFactory factory = generateSelectOneShot(queryModel, executionContext, false);
