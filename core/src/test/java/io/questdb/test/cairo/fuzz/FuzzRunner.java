@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.fuzz;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DebugUtils;
@@ -35,6 +36,7 @@ import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.ex.EntryLockedException;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.api.MemoryR;
@@ -51,6 +53,7 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjHashSet;
@@ -89,7 +92,10 @@ public class FuzzRunner {
     private double dataAddProb;
     private CairoEngine engine;
     private double equalTsRowsProb;
+    private FailureFileFacade ff;
     private int fuzzRowCount;
+    private int ioFailureCount;
+    private int ioFailureCreatedCount;
     private boolean isO3;
     private double notSetProb;
     private double nullSetProb;
@@ -220,43 +226,87 @@ public class FuzzRunner {
         TableWriter writer = TestUtils.getWriter(engine, tableName);
         TableReader rdr1 = getReader(tableName);
         TableReader rdr2 = getReader(tableName);
+
         try (
                 O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)
         ) {
             int transactionSize = transactions.size();
             Rnd rnd = new Rnd();
+            int failuresObserved = 0;
             for (int i = 0; i < transactionSize; i++) {
-                FuzzTransaction transaction = transactions.getQuick(i);
-                TableWriter writerCopy = writer;
-                if (transaction.reopenTable) {
-                    rdr1 = Misc.free(rdr1);
-                    rdr2 = Misc.free(rdr2);
-                    writer = Misc.free(writer);
-                }
-
-                int size = transaction.operationList.size();
-                for (int operationIndex = 0; operationIndex < size; operationIndex++) {
-                    FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
-                    operation.apply(rnd, engine, writerCopy, -1);
-                }
-
-                if (transaction.reopenTable) {
-                    writer = TestUtils.getWriter(engine, tableName);
-                    rdr1 = getReader(tableName);
-                    rdr2 = getReader(tableName);
-                } else {
-                    if (transaction.rollback) {
-                        writer.rollback();
-                    } else {
-                        writer.commit();
+                if (ioFailureCreatedCount < ioFailureCount && failuresObserved == ff.failureGenerated()) {
+                    // Maybe it's time to plant an IO failure
+                    int nextFailureInTransactions = (transactions.size() - i) / (ioFailureCount - ioFailureCreatedCount);
+                    if (nextFailureInTransactions == 0 || rnd.nextInt(nextFailureInTransactions) == 0) {
+                        ff.setToFailAfter(rnd.nextInt((int) (writer.getColumnCount() * 1.5)));
+                        ioFailureCreatedCount++;
                     }
                 }
-                purgeAndReloadReaders(reloadRnd, rdr1, rdr2, purgeJob, 0.25);
+
+                FuzzTransaction transaction = transactions.getQuick(i);
+                TableWriter writerCopy = writer;
+
+                try {
+                    if (transaction.reopenTable) {
+                        rdr1 = Misc.free(rdr1);
+                        rdr2 = Misc.free(rdr2);
+                        writer = Misc.free(writer);
+                    }
+
+                    int size = transaction.operationList.size();
+                    for (int operationIndex = 0; operationIndex < size; operationIndex++) {
+                        FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
+                        operation.apply(rnd, engine, writerCopy, -1);
+                    }
+
+                    if (transaction.reopenTable) {
+                        writer = TestUtils.getWriter(engine, tableName);
+                        rdr1 = getReader(tableName);
+                        rdr2 = getReader(tableName);
+                    } else {
+                        if (transaction.rollback) {
+                            writer.rollback();
+                        } else {
+                            writer.commit();
+                        }
+                    }
+                } catch (CairoException | CairoError e) {
+                    int failures = ff.failureGenerated();
+                    if (failures > failuresObserved) {
+                        failuresObserved = failures;
+                        LOG.info().$("expected IO failure observed: ").$(e).$();
+                        writer = Misc.free(writer);
+
+                        writer = TestUtils.getWriter(engine, tableName);
+                        i--;
+                    } else {
+                        throw e;
+                    }
+                }
+
+                try {
+                    purgeAndReloadReaders(reloadRnd, rdr1, rdr2, purgeJob, 0.25);
+                } catch (CairoException | CairoError e) {
+                    int failures = ff.failureGenerated();
+                    if (failures > failuresObserved) {
+                        failuresObserved = failures;
+                        LOG.info().$("expected IO failure observed: ").$(e).$();
+                        rdr1 = Misc.free(rdr1);
+                        rdr2 = Misc.free(rdr2);
+                        rdr1 = getReader(tableName);
+                        rdr2 = getReader(tableName);
+                    } else {
+                        throw e;
+                    }
+                }
             }
         } finally {
             Misc.free(rdr1);
             Misc.free(rdr2);
             Misc.free(writer);
+            if (ff != null) {
+                ff.clearFailures();
+            }
         }
     }
 
@@ -425,15 +475,32 @@ public class FuzzRunner {
         }
     }
 
+    public FilesFacade getFileFacade() {
+        return ff;
+    }
+
     public int getTransactionCount() {
         return transactionCount;
     }
 
-    public void setFuzzCounts(boolean isO3, int fuzzRowCount, int transactionCount, int strLen, int symbolStrLenMax, int symbolCountMax, int initialRowCount, int partitionCount) {
-        setFuzzCounts(isO3, fuzzRowCount, transactionCount, strLen, symbolStrLenMax, symbolCountMax, initialRowCount, partitionCount, -1);
+    public int randomiseStringLengths(Rnd rnd, int maxLen) {
+        // Make extremely long strings rare
+        // but still possible
+        double randomDriver = rnd.nextDouble();
+
+        // Linear up to 20 chars, then exponential
+        if (20 < maxLen) {
+            return (int) (20 * randomDriver + Math.round(Math.pow(maxLen - 20, randomDriver)));
+        } else {
+            return (int) (20 * randomDriver);
+        }
     }
 
-    public void setFuzzCounts(boolean isO3, int fuzzRowCount, int transactionCount, int strLen, int symbolStrLenMax, int symbolCountMax, int initialRowCount, int partitionCount, int parallelWalCount) {
+    public void setFuzzCounts(boolean isO3, int fuzzRowCount, int transactionCount, int strLen, int symbolStrLenMax, int symbolCountMax, int initialRowCount, int partitionCount) {
+        setFuzzCounts(isO3, fuzzRowCount, transactionCount, strLen, symbolStrLenMax, symbolCountMax, initialRowCount, partitionCount, -1, 1);
+    }
+
+    public void setFuzzCounts(boolean isO3, int fuzzRowCount, int transactionCount, int strLen, int symbolStrLenMax, int symbolCountMax, int initialRowCount, int partitionCount, int parallelWalCount, int ioFailureCount) {
         this.isO3 = isO3;
         this.fuzzRowCount = fuzzRowCount;
         this.transactionCount = transactionCount;
@@ -443,6 +510,7 @@ public class FuzzRunner {
         this.initialRowCount = initialRowCount;
         this.partitionCount = partitionCount;
         this.parallelWalCount = parallelWalCount;
+        this.ioFailureCount = ioFailureCount;
     }
 
     public void setFuzzProbabilities(
@@ -478,6 +546,7 @@ public class FuzzRunner {
     public void withDb(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
         this.engine = engine;
         this.sqlExecutionContext = sqlExecutionContext;
+        this.ff = new FailureFileFacade(engine.getConfiguration().getFilesFacade());
     }
 
     private static void reloadPartitions(TableReader rdr1) {
@@ -790,16 +859,18 @@ public class FuzzRunner {
                 if (ColumnType.isVarSize(columnType)) {
                     for (int partitionIndex = 0; partitionIndex < reader.getPartitionCount(); partitionIndex++) {
                         reader.openPartition(partitionIndex);
-                        int columnBase = reader.getColumnBase(partitionIndex);
-                        MemoryR dCol = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, i));
-                        MemoryR iCol = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, i) + 1);
+                        if (PartitionFormat.NATIVE == reader.getPartitionFormat(partitionIndex)) {
+                            int columnBase = reader.getColumnBase(partitionIndex);
+                            MemoryR dCol = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, i));
+                            MemoryR iCol = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, i) + 1);
 
-                        long colTop = reader.getColumnTop(columnBase, i);
-                        long rowCount = reader.getPartitionRowCount(partitionIndex) - colTop;
-                        long dColAddress = dCol == null ? 0 : dCol.getPageAddress(0);
-                        if (DebugUtils.isSparseVarCol(rowCount, iCol.getPageAddress(0), dColAddress, columnType)) {
-                            Assert.fail("var column " + reader.getMetadata().getColumnName(i)
-                                    + " is not dense, .i file record size is different from .d file record size");
+                            long colTop = reader.getColumnTop(columnBase, i);
+                            long rowCount = reader.getPartitionRowCount(partitionIndex) - colTop;
+                            long dColAddress = dCol == null ? 0 : dCol.getPageAddress(0);
+                            if (DebugUtils.isSparseVarCol(rowCount, iCol.getPageAddress(0), dColAddress, columnType)) {
+                                Assert.fail("var column " + reader.getMetadata().getColumnName(i)
+                                        + " is not dense, .i file record size is different from .d file record size");
+                            }
                         }
                     }
                 }
@@ -902,7 +973,7 @@ public class FuzzRunner {
                         rnd.nextBoolean(),
                         rnd.nextInt(2_000_000),
                         rnd.nextInt(1000),
-                        rnd.nextInt(1000),
+                        randomiseStringLengths(rnd, 1000),
                         rnd.nextInt(1000),
                         rnd.nextInt(1000),
                         rnd.nextInt(1_000_000),

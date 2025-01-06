@@ -228,7 +228,7 @@ public class CairoMemoryTest extends AbstractTest {
                 mem.detachFdClose();
 
                 MemoryCMORImpl memR = new MemoryCMORImpl();
-                memR.ofOffset(FF, fd, null, 0, 8 * N, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
+                memR.ofOffset(FF, fd, false, null, 0, 8 * N, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
                 for (int i = 0; i < N; i++) {
                     Assert.assertEquals(i, memR.getLong(i * 8));
                 }
@@ -253,7 +253,7 @@ public class CairoMemoryTest extends AbstractTest {
                 mem.detachFdClose();
 
                 MemoryCMORImpl memR = new MemoryCMORImpl();
-                memR.ofOffset(FF, fd, null, 0, 8 * N, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
+                memR.ofOffset(FF, fd, false, null, 0, 8 * N, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
                 for (int i = 0; i < N; i++) {
                     Assert.assertEquals(i, memR.getLong(i * 8));
                 }

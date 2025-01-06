@@ -175,7 +175,7 @@ public class PGOids {
         PG_TYPE_OIDS.add(PG_INTERNAL);
         PG_TYPE_OIDS.add(PG_OID);
 
-        // these values are taken from PostgresSQL pg_proc view
+        // these values are taken from PostgreSQL pg_proc view
         PG_TYPE_PROC_OIDS.add(2432);
         PG_TYPE_PROC_OIDS.add(2474);
         PG_TYPE_PROC_OIDS.add(2426);

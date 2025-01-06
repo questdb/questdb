@@ -28,11 +28,10 @@ import io.questdb.FactoryProvider;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
-import io.questdb.network.NetworkFacade;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.DateLocale;
 
-public interface PGWireConfiguration extends WorkerPoolConfiguration {
+public interface PGWireConfiguration extends IODispatcherConfiguration, WorkerPoolConfiguration {
 
     int getBinParamCountCapacity();
 
@@ -49,8 +48,6 @@ public interface PGWireConfiguration extends WorkerPoolConfiguration {
     String getDefaultPassword();
 
     String getDefaultUsername();
-
-    IODispatcherConfiguration getDispatcherConfiguration();
 
     default boolean getDumpNetworkTraffic() {
         return false;
@@ -74,8 +71,6 @@ public interface PGWireConfiguration extends WorkerPoolConfiguration {
 
     int getNamesStatementPoolCapacity();
 
-    NetworkFacade getNetworkFacade();
-
     int getPendingWritersCacheSize();
 
     // this is used in tests to fix pseudo-random generator
@@ -87,13 +82,9 @@ public interface PGWireConfiguration extends WorkerPoolConfiguration {
 
     String getReadOnlyUsername();
 
-    int getRecvBufferSize();
-
     int getSelectCacheBlockCount();
 
     int getSelectCacheRowCount();
-
-    int getSendBufferSize();
 
     String getServerVersion();
 

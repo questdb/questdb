@@ -130,18 +130,18 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                 rnd.nextBoolean(),
                 rnd.nextInt(2_000_000),
                 rnd.nextInt(1000),
-                rnd.nextInt(1000),
+                fuzzer.randomiseStringLengths(rnd, 1000),
                 rnd.nextInt(1000),
                 rnd.nextInt(1000),
                 rnd.nextInt(1_000_000),
                 5 + rnd.nextInt(10)
         );
 
-        assertMemoryLeak(() -> fuzzer.runFuzz(getTestName(), rnd));
+        assertMemoryLeak(fuzzer.getFileFacade(), () -> fuzzer.runFuzz(getTestName(), rnd));
     }
 
     protected void fullRandomFuzz(Rnd rnd, int tableCount) throws Exception {
-        assertMemoryLeak(() -> fuzzer.runFuzz(rnd, getTestName(), tableCount, true, true));
+        assertMemoryLeak(fuzzer.getFileFacade(), () -> fuzzer.runFuzz(rnd, getTestName(), tableCount, true, true));
     }
 
     protected String[] generateSymbols(Rnd rnd, int totalSymbols, int strLen, String baseSymbolTableName) {
@@ -180,11 +180,14 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     }
 
     protected String getTestName() {
-        return testName.getMethodName().replace('[', '_').replace(']', '_');
+        return testName.getMethodName()
+                .replace('[', '_')
+                .replace(']', '_')
+                .replace('=', '_');
     }
 
     protected void runFuzz(Rnd rnd) throws Exception {
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(fuzzer.getFileFacade(), () -> {
             try {
                 WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
                 sharedWorkerPool.start(LOG);
@@ -200,7 +203,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     }
 
     protected void runFuzz(Rnd rnd, String tableNameBase, int tableCount) throws Exception {
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(fuzzer.getFileFacade(), () -> {
             try {
                 WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
                 sharedWorkerPool.start(LOG);
@@ -278,9 +281,12 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         long walChunk = Math.max(0, rnd.nextInt((int) (3.5 * txnCount)) - txnCount);
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, walChunk);
 
-        boolean mixedIOSupported = configuration.getFilesFacade().allowMixedIO(root);
-        if (mixedIOSupported) {
-            node1.setProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, rnd.nextBoolean());
+        // Make call to move random even if will not be used
+        // To avoid zfs runs being very different to the non-zfs
+        // with the same seeds
+        boolean allowMixedIO = rnd.nextBoolean();
+        if (configuration.getFilesFacade().allowMixedIO(root)) {
+            node1.setProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, allowMixedIO);
         }
     }
 

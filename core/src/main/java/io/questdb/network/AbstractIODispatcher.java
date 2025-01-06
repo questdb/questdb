@@ -27,8 +27,20 @@ package io.questdb.network;
 import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.*;
-import io.questdb.std.*;
+import io.questdb.metrics.LongGauge;
+import io.questdb.mp.EagerThreadSetup;
+import io.questdb.mp.MCSequence;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.QueueConsumer;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SCSequence;
+import io.questdb.mp.SPSequence;
+import io.questdb.mp.SynchronizedJob;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjLongMatrix;
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -55,7 +67,6 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     protected static final int OPM_OPERATION = 2;
     private static final String[] DISCONNECT_SOURCES;
     protected final Log LOG;
-    protected final int activeConnectionLimit;
     protected final MillisecondClock clock;
     protected final MPSequence disconnectPubSeq;
     protected final RingQueue<IOEvent<C>> disconnectQueue;
@@ -74,10 +85,9 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     protected final ObjLongMatrix<C> pendingHeartbeats = new ObjLongMatrix<>(OPM_COLUMN_COUNT);
     private final IODispatcherConfiguration configuration;
     private final AtomicInteger connectionCount = new AtomicInteger();
+    private final LongGauge connectionCountGauge;
     private final boolean peerNoLinger;
     private final long queuedConnectionTimeoutMs;
-    private final int rcvBufSize;
-    private final int sndBufSize;
     private final int testConnectionBufSize;
     protected boolean closed = false;
     protected long heartbeatIntervalMs;
@@ -90,10 +100,12 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
 
     public AbstractIODispatcher(
             IODispatcherConfiguration configuration,
-            IOContextFactory<C> ioContextFactory
+            IOContextFactory<C> ioContextFactory,
+            LongGauge connectionCountGauge
     ) {
         this.LOG = LogFactory.getLog(configuration.getDispatcherLogName());
         this.configuration = configuration;
+        this.connectionCountGauge = connectionCountGauge;
         this.nf = configuration.getNetworkFacade();
 
         this.testConnectionBufSize = configuration.getTestConnectionBufferSize();
@@ -105,8 +117,8 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         this.interestPubSeq.then(interestSubSeq).then(interestPubSeq);
 
         this.ioEventQueue = new RingQueue<>(IOEvent::new, configuration.getIOQueueCapacity());
-        this.ioEventPubSeq = new SPSequence(configuration.getIOQueueCapacity());
-        this.ioEventSubSeq = new MCSequence(configuration.getIOQueueCapacity());
+        this.ioEventPubSeq = new SPSequence(ioEventQueue.getCycle());
+        this.ioEventSubSeq = new MCSequence(ioEventQueue.getCycle());
         this.ioEventPubSeq.then(ioEventSubSeq).then(ioEventPubSeq);
 
         this.disconnectQueue = new RingQueue<>(IOEvent::new, configuration.getIOQueueCapacity());
@@ -115,13 +127,10 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         this.disconnectPubSeq.then(disconnectSubSeq).then(disconnectPubSeq);
 
         this.clock = configuration.getClock();
-        this.activeConnectionLimit = configuration.getLimit();
         this.ioContextFactory = ioContextFactory;
         this.initialBias = configuration.getInitialBias();
         this.idleConnectionTimeout = configuration.getTimeout() > 0 ? configuration.getTimeout() : Long.MIN_VALUE;
         this.queuedConnectionTimeoutMs = configuration.getQueueTimeout() > 0 ? configuration.getQueueTimeout() : 0;
-        this.sndBufSize = configuration.getSndBufSize();
-        this.rcvBufSize = configuration.getRcvBufSize();
         this.peerNoLinger = configuration.getPeerNoLinger();
         this.port = 0;
         this.heartbeatIntervalMs = configuration.getHeartbeatInterval() > 0 ? configuration.getHeartbeatInterval() : Long.MIN_VALUE;
@@ -299,8 +308,8 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     }
 
     protected void accept(long timestamp) {
-        int tlConCount = this.connectionCount.get();
-        while (tlConCount < activeConnectionLimit) {
+        int tlConCount = connectionCount.get();
+        while (tlConCount < configuration.getLimit()) {
             // this 'accept' is greedy, rather than to rely on epoll (or similar) to
             // fire accept requests at us one at a time we will be actively accepting
             // until nothing left.
@@ -330,10 +339,12 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
                 nf.configureNoLinger(fd);
             }
 
+            final int sndBufSize = configuration.getNetSendBufferSize();
             if (sndBufSize > 0) {
                 nf.setSndBuf(fd, sndBufSize);
             }
 
+            final int rcvBufSize = configuration.getNetRecvBufferSize();
             if (rcvBufSize > 0) {
                 nf.setRcvBuf(fd, rcvBufSize);
             }
@@ -342,15 +353,14 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
             LOG.info().$("connected [ip=").$ip(nf.getPeerIP(fd)).$(", fd=").$(fd).I$();
             tlConCount = connectionCount.incrementAndGet();
             addPending(fd, timestamp);
+            connectionCountGauge.inc();
         }
 
-        if (tlConCount >= activeConnectionLimit) {
-            if (connectionCount.get() >= activeConnectionLimit) {
-                unregisterListenerFd();
-                listening = false;
-                closeListenFdEpochMs = timestamp + queuedConnectionTimeoutMs;
-                LOG.advisory().$("max connection limit reached, unregistered listener [serverFd=").$(serverFd).I$();
-            }
+        if (tlConCount >= configuration.getLimit() && connectionCount.get() >= configuration.getLimit()) {
+            unregisterListenerFd();
+            listening = false;
+            closeListenFdEpochMs = timestamp + queuedConnectionTimeoutMs;
+            LOG.advisory().$("max connection limit reached, unregistered listener [serverFd=").$(serverFd).I$();
         }
     }
 
@@ -370,6 +380,8 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         } else {
             ioContextFactory.done(context);
         }
+
+        final int activeConnectionLimit = configuration.getLimit();
         if (connectionCount.getAndDecrement() >= activeConnectionLimit) {
             if (connectionCount.get() < activeConnectionLimit) {
                 if (serverFd < 0) {
@@ -380,6 +392,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
                 LOG.advisory().$("below maximum connection limit, registered listener [serverFd=").$(serverFd).I$();
             }
         }
+        connectionCountGauge.dec();
     }
 
     protected abstract void pendingAdded(int index);
@@ -388,7 +401,8 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         disconnectSubSeq.consumeAll(disconnectQueue, disconnectContextRef);
         if (!listening && serverFd >= 0 && epochMs >= closeListenFdEpochMs) {
             LOG.error().$("been unable to accept connections for ").$(queuedConnectionTimeoutMs)
-                    .$("ms, closing listener [serverFd=").$(serverFd).I$();
+                    .$("ms, closing listener [serverFd=").$(serverFd)
+                    .I$();
             nf.close(serverFd);
             serverFd = -1;
         }
@@ -402,7 +416,8 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         ioEventPubSeq.done(cursor);
         LOG.debug().$("fired [fd=").$(context.getFd())
                 .$(", op=").$(operation)
-                .$(", pos=").$(cursor).I$();
+                .$(", pos=").$(cursor)
+                .I$();
     }
 
     protected abstract void registerListenerFd();

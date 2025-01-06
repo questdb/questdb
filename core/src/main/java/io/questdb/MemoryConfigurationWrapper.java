@@ -22,13 +22,36 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.bool;
+package io.questdb;
 
-public final class InTimestampVarcharFunctionFactory extends InTimestampStrFunctionFactory {
+public class MemoryConfigurationWrapper implements MemoryConfiguration {
+    private final MemoryConfiguration delegate;
+
+    protected MemoryConfigurationWrapper() {
+        delegate = null;
+    }
 
     @Override
-    public String getSignature() {
-        // we have explicit in(NØ) otherwise the function parser would match in(NV) instead
-        return "in(NØ)";
+    public long getRamUsageLimitBytes() {
+        return getDelegate().getRamUsageLimitBytes();
+    }
+
+    @Override
+    public long getRamUsageLimitPercent() {
+        return getDelegate().getRamUsageLimitPercent();
+    }
+
+    @Override
+    public long getResolvedRamUsageLimitBytes() {
+        return getDelegate().getResolvedRamUsageLimitBytes();
+    }
+
+    @Override
+    public long getTotalSystemMemory() {
+        return getDelegate().getTotalSystemMemory();
+    }
+
+    protected MemoryConfiguration getDelegate() {
+        return delegate;
     }
 }

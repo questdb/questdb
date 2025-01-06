@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.ConfigReloader;
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
@@ -56,6 +57,7 @@ import io.questdb.cairo.wal.WalListener;
 import io.questdb.cairo.wal.WalReader;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SequencerMetadata;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cutlass.text.CopyContext;
 import io.questdb.griffin.CompiledQuery;
@@ -139,6 +141,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
+    private @NotNull ConfigReloader configReloader = () -> false; // no-op
     private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
     private @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
@@ -271,6 +274,7 @@ public class CairoEngine implements Closeable, WriterSource {
         awaitTxn(tableName, -1, timeout, timeoutUnit);
     }
 
+    @TestOnly
     public void awaitTxn(String tableName, long txn, long timeout, TimeUnit timeoutUnit) {
         final long startTime = configuration.getMillisecondClock().getTicks();
         long maxWait = timeoutUnit.toMillis(timeout);
@@ -472,6 +476,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public long getCommandCorrelationId() {
         return asyncCommandCorrelationId.incrementAndGet();
+    }
+
+    public @NotNull ConfigReloader getConfigReloader() {
+        return configReloader;
     }
 
     public CairoConfiguration getConfiguration() {
@@ -825,12 +833,12 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableNameRegistry.isTableDropped(tableToken);
     }
 
-    public boolean isWalTableDropped(CharSequence tableDir) {
-        return tableNameRegistry.isWalTableDropped(tableDir);
-    }
-
     public boolean isWalTable(TableToken tableToken) {
         return tableToken.isWal();
+    }
+
+    public boolean isWalTableDropped(CharSequence tableDir) {
+        return tableNameRegistry.isWalTableDropped(tableDir);
     }
 
     public void load() {
@@ -957,8 +965,14 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    /**
+     * This is a workaround for notification queue full and other off-piste events. It includes a hack to
+     * prevent repeated notifications by uninitializing the writer's transaction tracker.
+     *
+     * @param tableToken the destination table for the notification.
+     */
     public void notifyWalTxnRepublisher(TableToken tableToken) {
-        tableSequencerAPI.notifyCommitReadable(tableToken, -1);
+        tableSequencerAPI.updateWriterTxns(tableToken, SeqTxnTracker.UNINITIALIZED_TXN, SeqTxnTracker.UNINITIALIZED_TXN);
         unpublishedWalTxnCount.incrementAndGet();
     }
 
@@ -1144,6 +1158,10 @@ public class CairoEngine implements Closeable, WriterSource {
         try (SqlCompiler compiler = getSqlCompiler()) {
             return select(compiler, selectSql, sqlExecutionContext);
         }
+    }
+
+    public void setConfigReloader(@NotNull ConfigReloader configReloader) {
+        this.configReloader = configReloader;
     }
 
     @SuppressWarnings("unused")
