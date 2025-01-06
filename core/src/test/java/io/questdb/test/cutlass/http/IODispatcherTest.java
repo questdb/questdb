@@ -7856,10 +7856,10 @@ public class IODispatcherTest extends AbstractTest {
                         engine.execute(QUERY_TIMEOUT_TABLE_DDL, executionContext);
                         testHttpClient.assertGetRegexp(
                                 "/exp",
-                                "\\{\"query\":\"select i, avg\\(l\\), max\\(l\\) from t group by i order by i asc limit 3\",\"error\":\"\\[-1\\] timeout, query aborted \\[fd=\\d+\\]\",\"position\":0\\}",
+                                "\\{\"query\":\"select i, avg\\(l\\), max\\(l\\) from t group by i order by i asc limit 3\",\"error\":\"\\[-1\\] timeout, query aborted \\[fd=\\d+, runtime=\\d+us, timeout=-100us\\]\",\"position\":0\\}",
                                 QUERY_TIMEOUT_SELECT,
                                 null, null, null, null,
-                                "408"
+                                "400"
                         );
                     }
                 });

@@ -336,13 +336,24 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             try {
                 doResumeSend(state, context, sqlExecutionContext);
             } catch (CairoError e) {
-                internalError(context.getChunkedResponse(), context.getLastRequestBytesSent(), e.getFlyweightMessage(),
-                        HTTP_INTERNAL_ERROR, e, state, context.getMetrics()
+                internalError(
+                        context.getChunkedResponse(),
+                        context.getLastRequestBytesSent(),
+                        e.getFlyweightMessage(),
+                        HTTP_INTERNAL_ERROR,
+                        e,
+                        state,
+                        context.getMetrics()
                 );
             } catch (CairoException e) {
-                int statusCode = e.isInterruption() && !e.isCancellation() ? HTTP_CLIENT_TIMEOUT : HTTP_BAD_REQUEST;
-                internalError(context.getChunkedResponse(), context.getLastRequestBytesSent(), e.getFlyweightMessage(),
-                        statusCode, e, state, context.getMetrics()
+                internalError(
+                        context.getChunkedResponse(),
+                        context.getLastRequestBytesSent(),
+                        e.getFlyweightMessage(),
+                        HTTP_BAD_REQUEST,
+                        e,
+                        state,
+                        context.getMetrics()
                 );
             }
         }
