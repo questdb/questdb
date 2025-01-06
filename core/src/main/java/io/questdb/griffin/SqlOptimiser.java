@@ -3562,7 +3562,7 @@ public class SqlOptimiser implements Mutable {
         if (model.getGroupBy().size() != 0
                 || model.getSampleBy() != null
                 || model.getSelectModelType() == QueryModel.SELECT_MODEL_DISTINCT
-                || model.windowStopPropagate(orderByAdvice, orderByDirectionAdvice)) {
+                || model.windowStopPropagate()) {
             model.setAllowPropagationOfOrderByAdvice(false);
             return;
         }
