@@ -392,9 +392,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         if (e.isAuthorizationError()) {
             return HTTP_FORBIDDEN;
         }
-        if (e.isInterruption()) {
-            return HTTP_CLIENT_TIMEOUT;
-        }
         return HTTP_BAD_REQUEST;
     }
 

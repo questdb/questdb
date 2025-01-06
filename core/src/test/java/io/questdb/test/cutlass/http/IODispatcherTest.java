@@ -5166,7 +5166,7 @@ public class IODispatcherTest extends AbstractTest {
                                 "\\{\"query\":\"select i, avg\\(l\\), max\\(l\\) from t group by i order by i asc limit 3\",\"error\":\"timeout, query aborted \\[fd=\\d+\\]\",\"position\":0\\}",
                                 "select i, avg(l), max(l) from t group by i order by i asc limit 3",
                                 null, null, null, null,
-                                "408"
+                                "400"
                         );
                     }
                 });
