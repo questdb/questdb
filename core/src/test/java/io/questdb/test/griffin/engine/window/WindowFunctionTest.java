@@ -1950,13 +1950,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testFrameFunctionResolvesSymbolTablesInPartitionByCachedWindow() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (sym symbol, i int);");
+            execute("insert into x values ('aaa', NULL);");
             execute("insert into x values ('aaa', 1);");
             execute("insert into x values ('aaa', 2);");
 
             assertQueryNoLeakCheck(
                     "sym\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tmax\tmin\n" +
-                            "aaa\t1.5\t3.0\t1.0\t1.0\t2\t2\t2.0\t1.0\n" +
-                            "aaa\t1.5\t3.0\t1.0\t1.0\t2\t2\t2.0\t1.0\n",
+                            "aaa\t1.5\t3.0\tnull\t1.0\t2\t3\t2.0\t1.0\n" +
+                            "aaa\t1.5\t3.0\tnull\t1.0\t2\t3\t2.0\t1.0\n" +
+                            "aaa\t1.5\t3.0\tnull\t1.0\t2\t3\t2.0\t1.0\n",
                     "SELECT sym, " +
                             "avg(i) OVER(PARTITION BY sym LIKE '%aaa%'), " +
                             "sum(i) OVER(PARTITION BY sym LIKE '%aaa%'), " +
@@ -1978,13 +1980,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testFrameFunctionResolvesSymbolTablesInPartitionByNonCachedWindow() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (sym symbol, i int, ts timestamp) timestamp(ts) partition by day;");
-            execute("insert into x values ('aaa', 1, '2023-11-09T00:00:00.000000');");
-            execute("insert into x values ('aaa', 2, '2023-11-09T01:00:00.000000');");
+            execute("insert into x values ('aaa', NULL, '2023-11-09T00:00:00.000000');");
+            execute("insert into x values ('aaa', 1, '2023-11-09T01:00:00.000000');");
+            execute("insert into x values ('aaa', 2, '2023-11-09T02:00:00.000000');");
 
             assertQueryNoLeakCheck(
                     "ts\tsym\tavg\tsum\tfirst_value\tfirst_not_null_value\tcount\tcount1\tmax\tmin\n" +
-                            "2023-11-09T00:00:00.000000Z\taaa\t1.0\t1.0\t1.0\t1.0\t1\t1\t1.0\t1.0\n" +
-                            "2023-11-09T01:00:00.000000Z\taaa\t1.5\t3.0\t1.0\t1.0\t2\t2\t2.0\t1.0\n",
+                            "2023-11-09T00:00:00.000000Z\taaa\tnull\tnull\tnull\tnull\t0\t1\tnull\tnull\n" +
+                            "2023-11-09T01:00:00.000000Z\taaa\t1.0\t1.0\tnull\t1.0\t1\t2\t1.0\t1.0\n" +
+                            "2023-11-09T02:00:00.000000Z\taaa\t1.5\t3.0\tnull\t1.0\t2\t3\t2.0\t1.0\n",
                     "SELECT ts, sym, " +
                             "avg(i) OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts), " +
                             "sum(i) OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts), " +
