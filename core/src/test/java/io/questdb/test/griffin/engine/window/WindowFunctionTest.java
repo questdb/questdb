@@ -2007,6 +2007,27 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFirstNotNullValue2Pass() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (sym symbol, i int, ts timestamp) timestamp(ts) partition by day;");
+            execute("insert into x values ('aaa', NULL, '2024-01-06T00:00:00.000000');");
+            execute("insert into x values ('aaa', 1, '2024-01-06T01:00:00.000000');");
+            execute("insert into x values ('aaa', 2, '2024-01-06T02:00:00.000000');");
+
+            assertQueryNoLeakCheck(
+                    "sym\tts\ti\tfirst_not_null_value\n" +
+                            "aaa\t2024-01-06T00:00:00.000000Z\tnull\t1.0\n" +
+                            "aaa\t2024-01-06T01:00:00.000000Z\t1\t1.0\n" +
+                            "aaa\t2024-01-06T02:00:00.000000Z\t2\t1.0\n",
+                    "SELECT sym, ts, i, first_not_null_value(i) OVER(partition by sym) FROM x",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testFrameFunctionsDontSupportGroupFrames() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab (ts timestamp, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)");
@@ -2065,8 +2086,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "min(d) over (order by ts rows unbounded preceding) " +
                             "from tab",
                     "ts",
-                    false,
-                    true
+                    true,
+                    false
             );
 
             assertQueryNoLeakCheck(
@@ -3733,15 +3754,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "max(j) over (order by ts), " +
                             "min(j) over (order by ts) " +
                             "from tab",
-                    "Window\n" +
-                            "  functions: [first_value(j) over (),first_not_null_value(j) over (),avg(j) over (rows between unbounded preceding and current row),sum(j) over (rows between unbounded preceding and current row),count(*) over (rows between unbounded preceding and current row),count(j) over (rows between unbounded preceding and current row),count(sym) over (rows between unbounded preceding and current row),count(c) over (rows between unbounded preceding and current row),max(j) over (rows between unbounded preceding and current row),min(j) over (rows between unbounded preceding and current row)]\n" +
+                    "CachedWindow\n" +
+                            "  unorderedFunctions: [first_value(j) over (),first_not_null_value(j) over (),avg(j) over (rows between unbounded preceding and current row),sum(j) over (rows between unbounded preceding and current row),count(*) over (rows between unbounded preceding and current row),count(j) over (rows between unbounded preceding and current row),count(sym) over (rows between unbounded preceding and current row),count(c) over (rows between unbounded preceding and current row),max(j) over (rows between unbounded preceding and current row),min(j) over (rows between unbounded preceding and current row)]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n",
                     "ts\ti\tj\tfirst_value\tfirst_not_null_value\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n",
                     "ts",
-                    false,
-                    true
+                    true,
+                    false
             );
 
             assertQueryAndPlan(
@@ -3757,15 +3778,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "max(j) over (order by ts desc), " +
                             "min(j) over (order by ts desc) " +
                             "from tab order by ts desc",
-                    "Window\n" +
-                            "  functions: [first_value(j) over (),first_not_null_value(j) over (),avg(j) over (rows between unbounded preceding and current row),sum(j) over (rows between unbounded preceding and current row),count(*) over (rows between unbounded preceding and current row),count(j) over (rows between unbounded preceding and current row),count(sym) over (rows between unbounded preceding and current row),count(c) over (rows between unbounded preceding and current row),max(j) over (rows between unbounded preceding and current row),min(j) over (rows between unbounded preceding and current row)]\n" +
+                    "CachedWindow\n" +
+                            "  unorderedFunctions: [first_value(j) over (),first_not_null_value(j) over (),avg(j) over (rows between unbounded preceding and current row),sum(j) over (rows between unbounded preceding and current row),count(*) over (rows between unbounded preceding and current row),count(j) over (rows between unbounded preceding and current row),count(sym) over (rows between unbounded preceding and current row),count(c) over (rows between unbounded preceding and current row),max(j) over (rows between unbounded preceding and current row),min(j) over (rows between unbounded preceding and current row)]\n" +
                             "    PageFrame\n" +
                             "        Row backward scan\n" +
                             "        Frame backward scan on: tab\n",
                     "ts\ti\tj\tfirst_value\tfirst_not_null_value\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n",
                     "ts",
-                    false,
-                    true
+                    true,
+                    false
             );
 
             assertQueryAndPlan(

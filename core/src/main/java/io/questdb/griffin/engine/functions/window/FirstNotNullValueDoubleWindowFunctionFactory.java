@@ -215,22 +215,12 @@ public class FirstNotNullValueDoubleWindowFunctionFactory extends AbstractWindow
             if (framingMode == WindowColumn.FRAMING_RANGE) {
                 // if there's no order by then all elements are equal in range mode, thus calculation is done on whole result set
                 if (!windowContext.isOrdered() && windowContext.isDefaultFrame()) {
-                    return new FirstValueDoubleWindowFunctionFactory.FirstValueOverWholeResultSetFunction(args.get(0), true) {
-                        @Override
-                        public String getName() {
-                            return NAME;
-                        }
-                    };
+                    return new FirstNotNullValueOverWholeResultSetFunction(args.get(0));
                 } // between unbounded preceding and current row
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     // same as for rows because calculation stops at current rows even if there are 'equal' following rows
                     // if lower bound is unbounded then it's the same as over ()
-                    return new FirstValueDoubleWindowFunctionFactory.FirstValueOverWholeResultSetFunction(args.get(0), true) {
-                        @Override
-                        public String getName() {
-                            return NAME;
-                        }
-                    };
+                    return new FirstNotNullValueOverWholeResultSetFunction(args.get(0));
                 } // range between [unbounded | x] preceding and [y preceding | current row]
                 else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
@@ -251,12 +241,7 @@ public class FirstNotNullValueDoubleWindowFunctionFactory extends AbstractWindow
             } else if (framingMode == WindowColumn.FRAMING_ROWS) {
                 // between unbounded preceding and [current row | unbounded following]
                 if (rowsLo == Long.MIN_VALUE && (rowsHi == 0 || rowsHi == Long.MAX_VALUE)) {
-                    return new FirstValueDoubleWindowFunctionFactory.FirstValueOverWholeResultSetFunction(args.get(0), true) {
-                        @Override
-                        public String getName() {
-                            return NAME;
-                        }
-                    };
+                    return new FirstNotNullValueOverWholeResultSetFunction(args.get(0));
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsLo == rowsHi) {
                     return new FirstValueDoubleWindowFunctionFactory.FirstValueOverCurrentRowFunction(args.get(0));
@@ -761,6 +746,67 @@ public class FirstNotNullValueDoubleWindowFunctionFactory extends AbstractWindow
         @Override
         public String getName() {
             return NAME;
+        }
+    }
+
+    // handles:
+    // first_not_null_value() over () - empty clause, no partition by no order by, no frame == default frame
+    // first_not_null_value() over (rows between unbounded preceding and current row); there's no partition by.
+    public static class FirstNotNullValueOverWholeResultSetFunction extends FirstValueDoubleWindowFunctionFactory.FirstValueOverWholeResultSetFunction {
+
+        public FirstNotNullValueOverWholeResultSetFunction(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            if (!found) {
+                double d = arg.getDouble(record);
+                if (Numbers.isFinite(d)) {
+                    this.value = d;
+                    this.found = true;
+                }
+            }
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.TWO_PASS;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            if (!found) {
+                double d = arg.getDouble(record);
+                if (Numbers.isFinite(d)) {
+                    this.value = d;
+                    this.found = true;
+                }
+            }
+        }
+
+        @Override
+        public void pass2(Record record, long recordOffset, WindowSPI spi) {
+            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), value);
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            found = false;
+            value = Double.NaN;
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            found = false;
+            value = Double.NaN;
         }
     }
 }

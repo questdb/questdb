@@ -156,7 +156,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 rnd -> -rnd.nextLong(1024),
                 (rangeLo, rangeHi) -> {
                     if (rangeLo == Long.MIN_VALUE && rangeHi == 0) {
-                        return new FirstValueDoubleWindowFunctionFactory.FirstValueOverWholeResultSetFunction(TestDefaults.createLongFunction(x -> x.getLong(2)), false);
+                        return new FirstValueDoubleWindowFunctionFactory.FirstValueOverWholeResultSetFunction(TestDefaults.createLongFunction(x -> x.getLong(2)));
                     }
                     return new FirstValueDoubleWindowFunctionFactory.FirstValueOverRowsFrameFunction(
                             TestDefaults.createLongFunction(x -> x.getLong(2)),
@@ -179,7 +179,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 rnd -> -rnd.nextLong(1024),
                 (rangeLo, rangeHi) -> {
                     if (rangeLo == Long.MIN_VALUE && rangeHi == 0) {
-                        return new FirstValueDoubleWindowFunctionFactory.FirstValueOverWholeResultSetFunction(TestDefaults.createLongFunction(x -> x.getLong(2)), true);
+                        return new FirstNotNullValueDoubleWindowFunctionFactory.FirstNotNullValueOverWholeResultSetFunction(TestDefaults.createLongFunction(x -> x.getLong(2)));
                     }
                     return new FirstNotNullValueDoubleWindowFunctionFactory.FirstNotNullValueOverRowsFrameFunction(
                             TestDefaults.createLongFunction(x -> x.getLong(2)),
