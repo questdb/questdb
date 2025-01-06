@@ -142,10 +142,10 @@ public final class LineHttpSender implements Sender {
         this.baseTimeoutMillis = clientConfiguration.getTimeout();
         if (tlsConfig != null) {
             this.client = HttpClientFactory.newTlsInstance(clientConfiguration, tlsConfig);
-            this.url = "https://" + host + ":" + port + path;
+            this.url = "https://" + host + ":" + port + this.path;
         } else {
             this.client = HttpClientFactory.newPlainTextInstance(clientConfiguration);
-            this.url = "http://" + host + ":" + port + path;
+            this.url = "http://" + host + ":" + port + this.path;
         }
         this.questdbVersion = new BuildInformationHolder().getSwVersion();
         this.request = newRequest();
