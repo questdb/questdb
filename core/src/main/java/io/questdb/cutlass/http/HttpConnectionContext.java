@@ -477,7 +477,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private HttpRequestProcessor checkConnectionLimit(HttpRequestProcessor processor) {
         final int connectionLimit = processor.getConnectionLimit(configuration.getHttpContextConfiguration());
         if (connectionLimit > -1) {
-            connectionCounter = processor.getConnectionCounter(metrics);
+            final AtomicCounter connectionCounter = processor.getConnectionCounter(metrics);
             long numOfConnections;
             do {
                 numOfConnections = connectionCounter.get();
@@ -488,6 +488,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     return rejectRequest(HTTP_BAD_REQUEST, "non-admin user exceeded HTTP connection soft limit [name=" + connectionCounter.getName() + ']');
                 }
             } while (!connectionCounter.compareAndSet(numOfConnections, numOfConnections + 1));
+            this.connectionCounter = connectionCounter;
         }
         return processor;
     }
