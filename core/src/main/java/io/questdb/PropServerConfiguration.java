@@ -727,7 +727,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         this.dbDirectory = getString(properties, env, PropertyKey.CAIRO_ROOT, DB_DIRECTORY);
         String tmpRoot;
-        boolean absDbDir = new File(this.dbDirectory).isAbsolute();
+        boolean absDbDir = new File(dbDirectory).isAbsolute();
         if (absDbDir) {
             this.root = this.dbDirectory;
             this.confRoot = rootSubdir(this.root, CONFIG_DIRECTORY); // ../conf
