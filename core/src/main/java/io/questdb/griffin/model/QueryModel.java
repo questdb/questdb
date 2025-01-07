@@ -478,6 +478,13 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.columnNameToAliasMap.clear();
     }
 
+    public void clearFill() {
+        fillStride = null;
+        fillValues = null;
+        fillFrom = null;
+        fillTo = null;
+    }
+
     public void clearOrderBy() {
         orderBy.clear();
         orderByDirection.clear();
@@ -656,6 +663,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && Objects.equals(fillFrom, that.fillFrom)
                 && Objects.equals(fillTo, that.fillTo)
                 && Objects.equals(fillStride, that.fillStride)
+                && Objects.equals(fillValues, that.fillValues)
                 && Objects.equals(context, that.context)
                 && Objects.equals(joinCriteria, that.joinCriteria)
                 && Objects.equals(orderedJoinModels, that.orderedJoinModels)
@@ -1137,6 +1145,18 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             limitAdviceLo = nested.limitAdviceLo;
             limitAdviceHi = nested.limitAdviceHi;
         }
+    }
+
+    public void moveFillFrom(QueryModel model) {
+        this.fillStride = model.fillStride;
+        this.fillValues = model.fillValues;
+        this.fillFrom = model.fillFrom;
+        this.fillTo = model.fillTo;
+
+        model.clearFill();
+
+        // clear the source
+        model.clearSampleBy();
     }
 
     public void moveGroupByFrom(QueryModel model) {

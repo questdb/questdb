@@ -25,8 +25,6 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
@@ -45,10 +43,8 @@ import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.BinarySequence;
-import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
@@ -117,8 +113,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             // validate metadata
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
                 int columnType = metadata.getColumnType(i);
-                if (i == metadata.getTimestampIndex() ||
-                        (columnType == ColumnType.TIMESTAMP && metadata.getTimestampIndex() == -1)) {
+                if (i == metadata.getTimestampIndex()) {
                     passedTimestamp = 1;
                     continue;
                 }
@@ -166,6 +161,11 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             cursor.close();
             throw th;
         }
+    }
+
+    @Override
+    public boolean implementsFill() {
+        return true;
     }
 
     @Override
@@ -228,16 +228,12 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         private final ObjList<Function> valueFuncs;
         private RecordCursor baseCursor;
         private Record baseRecord;
+        private long currTimestamp;
+        private long fillTimestamp;
         private boolean gapFilling;
-        private boolean hasNegative;
-        private long lastTimestamp = Long.MIN_VALUE;
+        private boolean initialised = false;
         private long maxTimestamp;
         private long minTimestamp;
-        private boolean needsSorting = false;
-        private long nextBucketTimestamp;
-        private DirectLongList presentTimestamps;
-        private long presentTimestampsIndex;
-        private long presentTimestampsSize;
 
         private FillRangeRecordCursor(
                 TimestampSampler timestampSampler,
@@ -256,8 +252,8 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public void close() {
             baseCursor = Misc.free(baseCursor);
-            presentTimestamps = Misc.free(presentTimestamps);
         }
+
 
         @Override
         public Record getRecord() {
@@ -271,61 +267,83 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            // We rely on the fact this cursor is allowed to return result set
-            // that is not ordered on time. For that reason all the filling is done at the end
+
+            if (!initialised) {
+                return initLoop();
+            }
+
+            fillTimestamp = timestampSampler.nextTimestamp(fillTimestamp);
+
+            // bounds check
+            if (fillTimestamp >= maxTimestamp) {
+                return false;
+            }
+
+
             if (gapFilling) {
-                nextBucketTimestamp = timestampSampler.nextTimestamp(nextBucketTimestamp);
-                return foundGapToFill();
-            } else if (baseCursor.hasNext()) {
-                // Scan base cursor and return all the records
-                // Also save all the timestamps already returned by the base cursor
-                // to determine the gaps later.
-                long timestamp = baseRecord.getTimestamp(timestampIndex);
-                needsSorting |= lastTimestamp > timestamp;
-                hasNegative = hasNegative || timestamp < 0;
-                if (hasNegative && needsSorting) {
-                    throw CairoException.nonCritical().put("cannot FILL for the timestamps before 1970");
+
+                // we cannot overshoot
+                assert fillTimestamp <= currTimestamp;
+
+                // we must have had fill < curr
+
+                if (fillTimestamp == currTimestamp) {
+                    // no more to fill
+                    gapFilling = false;
                 }
-                // Start saving timestamps to determine the gaps
-                presentTimestamps.add(lastTimestamp = timestamp);
+
+                // either we fill, or use the existing record
                 return true;
             }
-            gapFilling = true;
-            prepareGapFilling();
-            return foundGapToFill();
+
+            // if not filling, we get the next record
+            if (baseCursor.hasNext()) {
+
+                // get next record timestamp
+                currTimestamp = baseRecord.getTimestamp(timestampIndex);
+
+                // we cannot overshoot
+                assert fillTimestamp <= currTimestamp;
+
+                if (fillTimestamp < currTimestamp) {
+                    gapFilling = true;
+                }
+
+                return true;
+            }
+
+            // no more records
+            if (maxTimestamp != Long.MAX_VALUE && fillTimestamp < maxTimestamp) {
+                currTimestamp = maxTimestamp;
+                gapFilling = true;
+                return true;
+            }
+
+            return false;
         }
 
         @Override
         public long size() {
             // Can be improved, potentially we know the size if both TO and FROM are set
+            if (minTimestamp != Long.MIN_VALUE && maxTimestamp != Long.MAX_VALUE) {
+                timestampSampler.setStart(minTimestamp);
+                long ts = minTimestamp, n = 0;
+                while (ts <= maxTimestamp) {
+                    timestampSampler.nextTimestamp(ts);
+                    n++;
+                }
+                return n;
+            }
             return -1;
         }
 
         @Override
         public void toTop() {
             baseCursor.toTop();
-            presentTimestamps.clear();
             gapFilling = false;
-            needsSorting = false;
-            lastTimestamp = Long.MIN_VALUE;
-        }
-
-        private boolean foundGapToFill() {
-            // Scroll presentTimestampsIndex and nextBucketTimestamp until we find a gap
-            // or until we reach the end of the presentTimestamps.
-            for (; presentTimestampsIndex < presentTimestampsSize; presentTimestampsIndex++) {
-                if (presentTimestamps.get(presentTimestampsIndex) == nextBucketTimestamp) {
-                    nextBucketTimestamp = timestampSampler.nextTimestamp(nextBucketTimestamp);
-                } else {
-                    // A potential gap found.
-                    break;
-                }
-            }
-
-            return nextBucketTimestamp < maxTimestamp;
-            // Do not return true if nextBucketTimestamp == maxTimestamp
-            // If maxTimestamp is coming from TO clause, it's exclusive,
-            // and if it's coming from the base cursor, it already returned.
+            initialised = false;
+            fillTimestamp = minTimestamp;
+            currTimestamp = Long.MIN_VALUE;
         }
 
         private Function getFillFunction(int col) {
@@ -335,9 +353,53 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             return valueFuncs.getQuick(col);
         }
 
+        private boolean initLoop() {
+
+            initialised = true;
+
+            // if we have a min timestamp, we should start the fill from there
+            if (minTimestamp != Long.MIN_VALUE) {
+                timestampSampler.setStart(minTimestamp);
+                fillTimestamp = minTimestamp;
+            }
+
+            // if there is real data
+            if (baseCursor.hasNext()) {
+                // set that as our current timestamp
+                currTimestamp = baseRecord.getTimestamp(timestampIndex);
+
+                // if we didn't have a min timestamp, then we set min to be the first entry
+                if (minTimestamp == Long.MIN_VALUE) {
+                    fillTimestamp = currTimestamp;
+                    minTimestamp = currTimestamp;
+                    timestampSampler.setStart(fillTimestamp);
+                }
+
+                if (fillTimestamp < currTimestamp) {
+                    gapFilling = true;
+                }
+
+                return true;
+            } else {
+                // if we have a suitable range to fill
+                if (minTimestamp != Long.MIN_VALUE && maxTimestamp != Long.MIN_VALUE) {
+                    assert minTimestamp <= maxTimestamp;
+
+                    // we fill from min up to max
+                    fillTimestamp = minTimestamp;
+                    currTimestamp = maxTimestamp;
+                    gapFilling = true;
+                    return true;
+                }
+
+                // no real data, no valid fill, so nothing to return
+                return false;
+            }
+        }
+
         private void initTimestamps(Function fromFunc, Function toFunc) {
-            minTimestamp = fromFunc == TimestampConstant.NULL ? Long.MAX_VALUE : fromFunc.getTimestamp(null);
-            maxTimestamp = toFunc == TimestampConstant.NULL ? Long.MIN_VALUE : toFunc.getTimestamp(null);
+            minTimestamp = fromFunc == TimestampConstant.NULL ? Long.MIN_VALUE : fromFunc.getTimestamp(null);
+            maxTimestamp = toFunc == TimestampConstant.NULL ? Long.MAX_VALUE : toFunc.getTimestamp(null);
         }
 
         private void initValueFuncs(ObjList<Function> valueFuncs) {
@@ -367,38 +429,9 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             fromFunc.init(baseCursor, executionContext);
             toFunc.init(baseCursor, executionContext);
             initTimestamps(fromFunc, toFunc);
-            if (presentTimestamps == null) {
-                long capacity = 8;
-                try {
-                    capacity = baseCursor.size();
-                    if (capacity < 0) {
-                        capacity = 8;
-                    }
-                } catch (DataUnavailableException ex) {
-                    // That's ok, we'll just use the default capacity
-                }
-                presentTimestamps = new DirectLongList(capacity, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
-            }
             initValueFuncs(valueFuncs);
             baseRecord = baseCursor.getRecord();
             toTop();
-        }
-
-        private void prepareGapFilling() {
-            // Cache the size of the present timestamps for loop optimization
-            presentTimestampsSize = presentTimestamps.size();
-
-            if (needsSorting && presentTimestampsSize > 1) {
-                presentTimestamps.sortAsUnsigned();
-            }
-
-            if (presentTimestampsSize > 0) {
-                minTimestamp = Math.min(minTimestamp, presentTimestamps.get(0));
-                maxTimestamp = Math.max(maxTimestamp, presentTimestamps.get(presentTimestampsSize - 1));
-            }
-            timestampSampler.setStart(minTimestamp);
-            nextBucketTimestamp = minTimestamp;
-            presentTimestampsIndex = 0;
         }
 
         private class FillRangeRecord implements Record {
@@ -638,9 +671,9 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             public long getTimestamp(int col) {
                 if (gapFilling) {
                     if (col == timestampIndex) {
-                        return nextBucketTimestamp;
+                        return fillTimestamp;
                     } else {
-                        return getFillFunction(col).getLong(null);
+                        return getFillFunction(col).getTimestamp(null);
                     }
                 } else {
                     return baseRecord.getTimestamp(col);
@@ -678,7 +711,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         private class FillRangeTimestampConstant extends TimestampFunction implements ConstantFunction {
             @Override
             public long getTimestamp(Record rec) {
-                return nextBucketTimestamp;
+                return fillTimestamp;
             }
         }
     }

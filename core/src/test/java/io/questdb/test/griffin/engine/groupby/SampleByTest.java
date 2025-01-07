@@ -5189,70 +5189,7 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSampleByWithFilterAndOrderByAndLimit() throws Exception {
-        assertQuery(
-                "open\thigh\tlow\tclose\tvolume\ttimestamp\n" +
-                        "22.463013424972587\t90.75843364017028\t16.381374773748515\t75.88175403454873\t440.2232295756601\t1970-01-03T00:00:00.000000Z\n",
-                "select * from (" +
-                        "  select" +
-                        "    first(price) AS open," +
-                        "    max(price) AS high," +
-                        "    min(price) AS low," +
-                        "    last(price) AS close," +
-                        "    sum(amount) AS volume," +
-                        "    created_at as timestamp" +
-                        "  from trades" +
-                        "  where market_id = 'btcusdt' AND created_at > dateadd('m', -60, 172800000000)" +
-                        "  sample by 60m" +
-                        "  fill(null, null, null, null, 0) align to calendar" +
-                        ") order by timestamp desc limit 0, 1",
-                "create table trades as " +
-                        "(" +
-                        "select" +
-                        " rnd_str('btcusdt', 'ethusdt') market_id," +
-                        " rnd_double(0) * 100 price," +
-                        " rnd_double(0) * 100 amount," +
-                        " timestamp_sequence(172800000000, 3600000) created_at" +
-                        " from long_sequence(20)" +
-                        ") timestamp(created_at) partition by day",
-                "timestamp###DESC",
-                true,
-                false
-        );
-
-        assertQuery(
-                "open\thigh\tlow\tclose\tvolume\ttimestamp\n" +
-                        "65.51335839796312\t94.55893004802432\t18.336217509438512\t77.0079809007092\t519.2795145577336\t1970-01-03T00:00:00.000000Z\n",
-                "select * from (" +
-                        "  select" +
-                        "    first(price) AS open," +
-                        "    max(price) AS high," +
-                        "    min(price) AS low," +
-                        "    last(price) AS close," +
-                        "    sum(amount) AS volume," +
-                        "    created_at as timestamp" +
-                        "  from trades_varchar" +
-                        "  where market_id = 'btcusdt' AND created_at > dateadd('m', -60, 172800000000)" +
-                        "  sample by 60m" +
-                        "  fill(null, null, null, null, 0) align to calendar" +
-                        ") order by timestamp desc limit 0, 1",
-                "create table trades_varchar as " +
-                        "(" +
-                        "select" +
-                        " rnd_varchar('btcusdt', 'ethusdt') market_id," +
-                        " rnd_double(0) * 100 price," +
-                        " rnd_double(0) * 100 amount," +
-                        " timestamp_sequence(172800000000, 3600000) created_at" +
-                        " from long_sequence(20)" +
-                        ") timestamp(created_at) partition by day",
-                "timestamp###DESC",
-                true,
-                false
-        );
-    }
-
-    @Test
-    public void testSampleByWithFullDoesNotReferenceMutableCharSequence() throws Exception {
+    public void testSampleByWithFillDoesNotReferenceMutableCharSequence() throws Exception {
         assertMemoryLeak(() -> {
             execute(DDL_FROMTO);
 
@@ -5290,6 +5227,69 @@ public class SampleByTest extends AbstractCairoTest {
                 assertEquals(expected, sink);
             }
         });
+    }
+
+    @Test
+    public void testSampleByWithFilterAndOrderByAndLimit() throws Exception {
+        assertQuery(
+                "open\thigh\tlow\tclose\tvolume\ttimestamp\n" +
+                        "22.463013424972587\t90.75843364017028\t16.381374773748515\t75.88175403454873\t440.2232295756601\t1970-01-03T00:00:00.000000Z\n",
+                "select * from (" +
+                        "  select" +
+                        "    first(price) AS open," +
+                        "    max(price) AS high," +
+                        "    min(price) AS low," +
+                        "    last(price) AS close," +
+                        "    sum(amount) AS volume," +
+                        "    created_at as timestamp" +
+                        "  from trades" +
+                        "  where market_id = 'btcusdt' AND created_at > dateadd('m', -60, 172800000000)" +
+                        "  sample by 60m" +
+                        "  fill(null, null, null, null, 0) align to calendar" +
+                        ") order by timestamp desc limit 0, 1",
+                "create table trades as " +
+                        "(" +
+                        "select" +
+                        " rnd_str('btcusdt', 'ethusdt') market_id," +
+                        " rnd_double(0) * 100 price," +
+                        " rnd_double(0) * 100 amount," +
+                        " timestamp_sequence(172800000000, 3600000) created_at" +
+                        " from long_sequence(20)" +
+                        ") timestamp(created_at) partition by day",
+                "timestamp###DESC",
+                true,
+                true
+        );
+
+        assertQuery(
+                "open\thigh\tlow\tclose\tvolume\ttimestamp\n" +
+                        "65.51335839796312\t94.55893004802432\t18.336217509438512\t77.0079809007092\t519.2795145577336\t1970-01-03T00:00:00.000000Z\n",
+                "select * from (" +
+                        "  select" +
+                        "    first(price) AS open," +
+                        "    max(price) AS high," +
+                        "    min(price) AS low," +
+                        "    last(price) AS close," +
+                        "    sum(amount) AS volume," +
+                        "    created_at as timestamp" +
+                        "  from trades_varchar" +
+                        "  where market_id = 'btcusdt' AND created_at > dateadd('m', -60, 172800000000)" +
+                        "  sample by 60m" +
+                        "  fill(null, null, null, null, 0) align to calendar" +
+                        ") order by timestamp desc limit 0, 1",
+                "create table trades_varchar as " +
+                        "(" +
+                        "select" +
+                        " rnd_varchar('btcusdt', 'ethusdt') market_id," +
+                        " rnd_double(0) * 100 price," +
+                        " rnd_double(0) * 100 amount," +
+                        " timestamp_sequence(172800000000, 3600000) created_at" +
+                        " from long_sequence(20)" +
+                        ") timestamp(created_at) partition by day",
+                "timestamp###DESC",
+                true,
+                true
+        );
     }
 
     @Test
@@ -8327,7 +8327,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                true
+                false
         );
     }
 
@@ -8586,11 +8586,11 @@ public class SampleByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select last(z) s from x sample by 30m fill(null)",
                     "SelectedRecord\n" +
-                            "    Sort\n" +
-                            "      keys: [k]\n" +
-                            "        Fill Range\n" +
-                            "          stride: '30m'\n" +
-                            "          values: [null]\n" +
+                            "    Fill Range\n" +
+                            "      stride: '30m'\n" +
+                            "      values: [null]\n" +
+                            "        Radix sort light\n" +
+                            "          keys: [k]\n" +
                             "            Async Group By workers: 1\n" +
                             "              keys: [k]\n" +
                             "              values: [last(z)]\n" +
@@ -11829,7 +11829,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(10)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                true
+                false
         );
     }
 
@@ -11922,7 +11922,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(40)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                true
+                false
         );
     }
 
@@ -12765,15 +12765,32 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampFillValueUnquoted() throws Exception {
-        assertException(
+        assertQuery(
+                "ts\tfirst\tlast\n" +
+                        "2021-03-28T00:00:00.000000Z\t2021-03-28T01:59:00.000000Z\t2021-03-28T01:59:00.000000Z\n" +
+                        "2021-03-29T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                        "2021-03-30T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                        "2021-03-31T00:00:00.000000Z\t2021-03-31T01:59:00.000000Z\t2021-03-31T01:59:00.000000Z\n" +
+                        "2021-04-01T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                        "2021-04-02T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                        "2021-04-03T00:00:00.000000Z\t2021-04-03T01:59:00.000000Z\t2021-04-03T01:59:00.000000Z\n" +
+                        "2021-04-04T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                        "2021-04-05T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                        "2021-04-06T00:00:00.000000Z\t2021-04-06T01:59:00.000000Z\t2021-04-06T01:59:00.000000Z\n" +
+                        "2021-04-07T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                        "2021-04-08T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                        "2021-04-09T00:00:00.000000Z\t2021-04-09T01:59:00.000000Z\t2021-04-09T01:59:00.000000Z\n" +
+                        "2021-04-10T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                        "2021-04-11T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                        "2021-04-12T00:00:00.000000Z\t2021-04-12T01:59:00.000000Z\t2021-04-12T01:59:00.000000Z\n",
                 "select ts, first(ts), last(ts) " +
                         "from trade " +
                         "sample by 1d fill(null, 1236) align to CALENDAR;",
                 "create table trade as (" +
                         "select timestamp_sequence('2021-03-28T01:59:00.00000Z', 3*24*3600*1000000L) ts from long_sequence(6)" +
                         ") timestamp(ts)",
-                66,
-                "Invalid fill value: '1236'. Timestamp fill value must be in quotes."
+                "ts",
+                false
         );
     }
 

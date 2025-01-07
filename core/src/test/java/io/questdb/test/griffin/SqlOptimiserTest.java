@@ -1856,6 +1856,35 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testOrderByNotChooseByParent() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (f1 float, f2 float, ts timestamp) timestamp(ts)");
+            execute("insert into tab VALUES(1, 10, '2024-12-24T00:11:00.000Z'), (2, 20, '2024-12-24T00:11:00.000Z')");
+            String q1 = "select f2 - f1 as p1, f1, f2 from tab order by ts desc";
+            assertPlanNoLeakCheck(q1, "SelectedRecord\n" +
+                    "    VirtualRecord\n" +
+                    "      functions: [f2-f1,f1,f2,ts]\n" +
+                    "        PageFrame\n" +
+                    "            Row backward scan\n" +
+                    "            Frame backward scan on: tab\n");
+            assertQueryNoLeakCheck("p1\tf1\tf2\n" +
+                    "18.0\t2.0000\t20.0000\n" +
+                    "9.0\t1.0000\t10.0000\n", q1);
+
+            String q2 = "select f2 - f1, f1, f2 from tab order by ts desc";
+            assertPlanNoLeakCheck(q2, "SelectedRecord\n" +
+                    "    VirtualRecord\n" +
+                    "      functions: [f2-f1,f1,f2,ts]\n" +
+                    "        PageFrame\n" +
+                    "            Row backward scan\n" +
+                    "            Frame backward scan on: tab\n");
+            assertQueryNoLeakCheck("column\tf1\tf2\n" +
+                    "18.0\t2.0000\t20.0000\n" +
+                    "9.0\t1.0000\t10.0000\n", q2);
+        });
+    }
+
+    @Test
     public void testOrderingOfSortsInSingleTimestampCase() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
@@ -1904,35 +1933,6 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "order by ts desc",
                     "ts"
             );
-        });
-    }
-
-    @Test
-    public void testOrderByNotChooseByParent() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tab (f1 float, f2 float, ts timestamp) timestamp(ts)");
-            execute("insert into tab VALUES(1, 10, '2024-12-24T00:11:00.000Z'), (2, 20, '2024-12-24T00:11:00.000Z')");
-            String q1 = "select f2 - f1 as p1, f1, f2 from tab order by ts desc";
-            assertPlanNoLeakCheck(q1, "SelectedRecord\n" +
-                    "    VirtualRecord\n" +
-                    "      functions: [f2-f1,f1,f2,ts]\n" +
-                    "        PageFrame\n" +
-                    "            Row backward scan\n" +
-                    "            Frame backward scan on: tab\n");
-            assertQueryNoLeakCheck("p1\tf1\tf2\n" +
-                    "18.0\t2.0000\t20.0000\n" +
-                    "9.0\t1.0000\t10.0000\n", q1);
-
-            String q2 = "select f2 - f1, f1, f2 from tab order by ts desc";
-            assertPlanNoLeakCheck(q2, "SelectedRecord\n" +
-                    "    VirtualRecord\n" +
-                    "      functions: [f2-f1,f1,f2,ts]\n" +
-                    "        PageFrame\n" +
-                    "            Row backward scan\n" +
-                    "            Frame backward scan on: tab\n");
-            assertQueryNoLeakCheck("column\tf1\tf2\n" +
-                    "18.0\t2.0000\t20.0000\n" +
-                    "9.0\t1.0000\t10.0000\n", q2);
         });
     }
 
@@ -2949,6 +2949,53 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSampleByExpressionDependOtherColumn() throws Exception {
+        execute("create table t (\n" +
+                "  timestamp TIMESTAMP,\n" +
+                "  symbol SYMBOL capacity 256 CACHE,\n" +
+                "  side SYMBOL CAPACITY 256 CACHE,\n" +
+                "  price double\n" +
+                ") timestamp(timestamp) partition by day;");
+
+        execute("INSERT INTO t (timestamp, symbol, side, price) VALUES" +
+                " ('2023-09-01T00:00:00.000Z', 'ETH-USD', 'buyer', 3240.0)," +
+                " ('2023-09-01T01:00:00.000Z', 'ETH-USD', 'buyer', 3241.0)," +
+                " ('2023-09-01T02:00:00.000Z', 'ETH-USD', 'buyer', 3242.0)," +
+                " ('2023-09-01T03:00:00.000Z', 'ETH-USD', 'buyer', 3243.0)," +
+                " ('2023-09-01T04:00:00.000Z', 'ETH-USD', 'buyer', 3244.0)," +
+                " ('2023-09-01T05:00:00.000Z', 'ETH-USD', 'seller', 5.0)");
+        assertMemoryLeak(() -> {
+            final String query = "select timestamp, symbol, side, CASE WHEN price > 3240  THEN avg(price) END as price_today, CASE WHEN price < 3240  THEN avg(price) END as price_yesterday " +
+                    "from t where timestamp >= '2023-09-01T00:00:00.000Z' and symbol = 'ETH-USD' sample by 1h";
+
+            final String result = "timestamp\tsymbol\tside\tprice_today\tprice_yesterday\n" +
+                    "2023-09-01T00:00:00.000000Z\tETH-USD\tbuyer\tnull\tnull\n" +
+                    "2023-09-01T01:00:00.000000Z\tETH-USD\tbuyer\t3241.0\tnull\n" +
+                    "2023-09-01T02:00:00.000000Z\tETH-USD\tbuyer\t3242.0\tnull\n" +
+                    "2023-09-01T03:00:00.000000Z\tETH-USD\tbuyer\t3243.0\tnull\n" +
+                    "2023-09-01T04:00:00.000000Z\tETH-USD\tbuyer\t3244.0\tnull\n" +
+                    "2023-09-01T05:00:00.000000Z\tETH-USD\tseller\tnull\t5.0\n";
+
+            assertSql(result, query);
+        });
+
+        assertMemoryLeak(() -> {
+            final String query = "select timestamp, symbol, side, CASE WHEN extract('day', timestamp) =14  THEN avg(price) END as price_today, CASE WHEN true  THEN avg(price) END as price_yesterday " +
+                    "from t where timestamp >= '2023-09-01T00:00:00.000Z' and symbol = 'ETH-USD' sample by 1h";
+
+            final String result = "timestamp\tsymbol\tside\tprice_today\tprice_yesterday\n" +
+                    "2023-09-01T00:00:00.000000Z\tETH-USD\tbuyer\tnull\t3240.0\n" +
+                    "2023-09-01T01:00:00.000000Z\tETH-USD\tbuyer\tnull\t3241.0\n" +
+                    "2023-09-01T02:00:00.000000Z\tETH-USD\tbuyer\tnull\t3242.0\n" +
+                    "2023-09-01T03:00:00.000000Z\tETH-USD\tbuyer\tnull\t3243.0\n" +
+                    "2023-09-01T04:00:00.000000Z\tETH-USD\tbuyer\tnull\t3244.0\n" +
+                    "2023-09-01T05:00:00.000000Z\tETH-USD\tseller\tnull\t5.0\n";
+
+            assertSql(result, query);
+        });
+    }
+
+    @Test
     public void testSampleByFromToBasicWhereOptimisationBetween() throws Exception {
         assertMemoryLeak(() -> {
             execute(SampleByTest.DDL_FROMTO);
@@ -3112,12 +3159,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String query = "select ts, avg(x), sum(x) from fromto\n" +
                     "sample by 5d from '2017-12-20' to '2018-01-31' fill(null)\n";
 
-            assertPlanNoLeakCheck(query, "Sort\n" +
-                    "  keys: [ts]\n" +
-                    "    Fill Range\n" +
-                    "      range: ('2017-12-20','2018-01-31')\n" +
-                    "      stride: '5d'\n" +
-                    "      values: [null,null]\n" +
+            assertPlanNoLeakCheck(query, "Fill Range\n" +
+                    "  range: ('2017-12-20','2018-01-31')\n" +
+                    "  stride: '5d'\n" +
+                    "  values: [null,null]\n" +
+                    "    Radix sort light\n" +
+                    "      keys: [ts]\n" +
                     "        Async Group By workers: 1\n" +
                     "          keys: [ts]\n" +
                     "          values: [avg(x),sum(x)]\n" +
@@ -3163,18 +3210,92 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSampleByFromToParallelDeduceTimeStampColumn() throws Exception {
+        execute("CREATE TABLE 't' (\n" +
+                "  name SYMBOL capacity 256 CACHE,\n" +
+                "  timestamp TIMESTAMP\n" +
+                ") timestamp (timestamp) PARTITION BY DAY;");
+        execute("INSERT INTO t (name, timestamp) VALUES" +
+                " ('a', '2023-09-01T00:00:00.000Z')," +
+                " ('a', '2023-09-01T00:10:00.000Z')");
+
+        assertMemoryLeak(() -> {
+            final String query = "SELECT timestamp+60000000 as 'timestamp', 0 AS extra_column, 0 AS extra_column2 \n" +
+                    "FROM t\n" +
+                    "WHERE name = 'a'\n" +
+                    "SAMPLE BY (1m);\n";
+
+            final String result = "timestamp\textra_column\textra_column2\n" +
+                    "2023-09-01T00:01:00.000000Z\t0\t0\n" +
+                    "2023-09-01T00:11:00.000000Z\t0\t0\n";
+
+            assertSql(result, query);
+        });
+
+        assertMemoryLeak(() -> {
+            final String query = "select dateadd('d', 1, timestamp) timestamp, name from t sample by 10m";
+
+            final String result = "timestamp\tname\n" +
+                    "2023-09-02T00:00:00.000000Z\ta\n" +
+                    "2023-09-02T00:10:00.000000Z\ta\n";
+
+            assertSql(result, query);
+        });
+
+        assertMemoryLeak(() -> {
+            final String query = "select dateadd('d', 1, timestamp) timestamp, dateadd('d', 2, timestamp) timestamp2, name from t sample by 10m";
+
+            final String result = "timestamp\ttimestamp2\tname\n" +
+                    "2023-09-02T00:00:00.000000Z\t2023-09-03T00:00:00.000000Z\ta\n" +
+                    "2023-09-02T00:10:00.000000Z\t2023-09-03T00:10:00.000000Z\ta\n";
+
+            assertSql(result, query);
+        });
+
+        assertMemoryLeak(() -> {
+            final String query = "select timestamp + 60000000 as 'timestamp', timestamp  from t where name = 'a' sample by (1m)";
+
+            final String result = "timestamp\ttimestamp1\n" +
+                    "2023-09-01T00:01:00.000000Z\t2023-09-01T00:00:00.000000Z\n" +
+                    "2023-09-01T00:11:00.000000Z\t2023-09-01T00:10:00.000000Z\n";
+
+            assertSql(result, query);
+        });
+
+        assertMemoryLeak(() -> {
+            final String query = "select timestamp + 60000000 as 'timestamp1', timestamp  from t where name = 'a' sample by (1m)";
+
+            final String result = "timestamp1\ttimestamp\n" +
+                    "2023-09-01T00:01:00.000000Z\t2023-09-01T00:00:00.000000Z\n" +
+                    "2023-09-01T00:11:00.000000Z\t2023-09-01T00:10:00.000000Z\n";
+
+            assertSql(result, query);
+        });
+
+        assertMemoryLeak(() -> {
+            final String query = "select timestamp + 60000000 as 'timestamp', timestamp as 'timestamp1'  from t where name = 'a' sample by (1m)";
+
+            final String result = "timestamp\ttimestamp1\n" +
+                    "2023-09-01T00:01:00.000000Z\t2023-09-01T00:00:00.000000Z\n" +
+                    "2023-09-01T00:11:00.000000Z\t2023-09-01T00:10:00.000000Z\n";
+
+            assertSql(result, query);
+        });
+    }
+
+    @Test
     public void testSampleByFromToParallelSampleByRewrite() throws Exception {
         assertMemoryLeak(() -> {
             execute(SampleByTest.DDL_FROMTO);
             final String query = "select ts, avg(x) from fromto\n" +
                     "sample by 5d from '2017-12-20' to '2018-01-31' fill(null)\n";
 
-            assertPlanNoLeakCheck(query, "Sort\n" +
-                    "  keys: [ts]\n" +
-                    "    Fill Range\n" +
-                    "      range: ('2017-12-20','2018-01-31')\n" +
-                    "      stride: '5d'\n" +
-                    "      values: [null]\n" +
+            assertPlanNoLeakCheck(query, "Fill Range\n" +
+                    "  range: ('2017-12-20','2018-01-31')\n" +
+                    "  stride: '5d'\n" +
+                    "  values: [null]\n" +
+                    "    Radix sort light\n" +
+                    "      keys: [ts]\n" +
                     "        Async Group By workers: 1\n" +
                     "          keys: [ts]\n" +
                     "          values: [avg(x)]\n" +
@@ -3203,14 +3324,20 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String query = "select ts, avg(x), sum(x) from fromto\n" +
                     "sample by 5d from '2017-12-20' to '2018-01-31' fill(42, 41)";
 
-            assertPlanNoLeakCheck(query, "Sample By\n" +
-                    "  fill: value\n" +
+            assertPlanNoLeakCheck(query, "Fill Range\n" +
                     "  range: ('2017-12-20','2018-01-31')\n" +
-                    "  values: [avg(x),sum(x)]\n" +
-                    "    PageFrame\n" +
-                    "        Row forward scan\n" +
-                    "        Interval forward scan on: fromto\n" +
-                    "          intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
+                    "  stride: '5d'\n" +
+                    "  values: [42,41]\n" +
+                    "    Radix sort light\n" +
+                    "      keys: [ts]\n" +
+                    "        Async Group By workers: 1\n" +
+                    "          keys: [ts]\n" +
+                    "          values: [avg(x),sum(x)]\n" +
+                    "          filter: null\n" +
+                    "            PageFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Interval forward scan on: fromto\n" +
+                    "                  intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
             assertSql("ts\tavg\tsum\n" +
                     "2017-12-20T00:00:00.000000Z\t42.0\t41\n" +
                     "2017-12-25T00:00:00.000000Z\t42.0\t41\n" +
@@ -3231,12 +3358,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String query = "select ts, avg(x) from fromto\n" +
                     "sample by 5d to '2018-01-31' fill(null)";
 
-            assertPlanNoLeakCheck(query, "Sort\n" +
-                    "  keys: [ts]\n" +
-                    "    Fill Range\n" +
-                    "      range: (null,'2018-01-31')\n" +
-                    "      stride: '5d'\n" +
-                    "      values: [null]\n" +
+            assertPlanNoLeakCheck(query, "Fill Range\n" +
+                    "  range: (null,'2018-01-31')\n" +
+                    "  stride: '5d'\n" +
+                    "  values: [null]\n" +
+                    "    Radix sort light\n" +
+                    "      keys: [ts]\n" +
                     "        Async Group By workers: 1\n" +
                     "          keys: [ts]\n" +
                     "          values: [avg(x)]\n" +
@@ -3263,12 +3390,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String query = "select ts, avg(x) from fromto\n" +
                     "sample by 5d from '2017-12-20' fill(null) ";
 
-            assertPlanNoLeakCheck(query, "Sort\n" +
-                    "  keys: [ts]\n" +
-                    "    Fill Range\n" +
-                    "      range: ('2017-12-20',null)\n" +
-                    "      stride: '5d'\n" +
-                    "      values: [null]\n" +
+            assertPlanNoLeakCheck(query, "Fill Range\n" +
+                    "  range: ('2017-12-20',null)\n" +
+                    "  stride: '5d'\n" +
+                    "  values: [null]\n" +
+                    "    Radix sort light\n" +
+                    "      keys: [ts]\n" +
                     "        Async Group By workers: 1\n" +
                     "          keys: [ts]\n" +
                     "          values: [avg(x)]\n" +
@@ -3468,12 +3595,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "asof join fromto2\n" +
                     "sample by 5d from '2017-12-20' to '2018-01-31' fill(null)\n";
 
-            assertPlanNoLeakCheck(query, "Sort\n" +
-                    "  keys: [ts]\n" +
-                    "    Fill Range\n" +
-                    "      range: ('2017-12-20','2018-01-31')\n" +
-                    "      stride: '5d'\n" +
-                    "      values: [null]\n" +
+            assertPlanNoLeakCheck(query, "Fill Range\n" +
+                    "  range: ('2017-12-20','2018-01-31')\n" +
+                    "  stride: '5d'\n" +
+                    "  values: [null]\n" +
+                    "    Radix sort light\n" +
+                    "      keys: [ts]\n" +
                     "        GroupBy vectorized: false\n" +
                     "          keys: [ts]\n" +
                     "          values: [avg(x)]\n" +
@@ -3511,12 +3638,13 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertPlanNoLeakCheck(query, "SelectedRecord\n" +
                     "    AsOf Join\n" +
-                    "        Sort\n" +
-                    "          keys: [five_days]\n" +
-                    "            Fill Range\n" +
-                    "              range: ('2017-12-20','2018-01-31')\n" +
-                    "              stride: '5d'\n" +
-                    "              values: [null]\n" +
+                    "      condition: \n" +
+                    "        Fill Range\n" +
+                    "          range: ('2017-12-20','2018-01-31')\n" +
+                    "          stride: '5d'\n" +
+                    "          values: [null]\n" +
+                    "            Radix sort light\n" +
+                    "              keys: [five_days]\n" +
                     "                Async Group By workers: 1\n" +
                     "                  keys: [five_days]\n" +
                     "                  values: [avg(x)]\n" +
@@ -3525,12 +3653,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "                        Row forward scan\n" +
                     "                        Interval forward scan on: fromto\n" +
                     "                          intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n" +
-                    "        Sort\n" +
-                    "          keys: [ten_days]\n" +
-                    "            Fill Range\n" +
-                    "              range: ('2017-12-20','2018-01-31')\n" +
-                    "              stride: '10d'\n" +
-                    "              values: [null]\n" +
+                    "        Fill Range\n" +
+                    "          range: ('2017-12-20','2018-01-31')\n" +
+                    "          stride: '10d'\n" +
+                    "          values: [null]\n" +
+                    "            Radix sort light\n" +
+                    "              keys: [ten_days]\n" +
                     "                Async Group By workers: 1\n" +
                     "                  keys: [ten_days]\n" +
                     "                  values: [avg(x)]\n" +
@@ -3588,12 +3716,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "2018-01-04T00:00:00.000000Z\t264.5\t63480\n" +
                     "2018-01-09T00:00:00.000000Z\t432.5\t41520\n";
 
-            assertPlanNoLeakCheck(shouldSucceedParallel, "Sort\n" +
-                    "  keys: [ts]\n" +
-                    "    Fill Range\n" +
-                    "      range: ('2017-12-20',null)\n" +
-                    "      stride: '5d'\n" +
-                    "      values: [null,null]\n" +
+            assertPlanNoLeakCheck(shouldSucceedParallel, "Fill Range\n" +
+                    "  range: ('2017-12-20',null)\n" +
+                    "  stride: '5d'\n" +
+                    "  values: [null,null]\n" +
+                    "    Radix sort light\n" +
+                    "      keys: [ts]\n" +
                     "        Async Group By workers: 1\n" +
                     "          keys: [ts]\n" +
                     "          values: [avg(x),sum(x)]\n" +
@@ -3742,127 +3870,6 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testSampleByFromToParallelDeduceTimeStampColumn() throws Exception {
-        execute("CREATE TABLE 't' (\n" +
-                "  name SYMBOL capacity 256 CACHE,\n" +
-                "  timestamp TIMESTAMP\n" +
-                ") timestamp (timestamp) PARTITION BY DAY;");
-        execute("INSERT INTO t (name, timestamp) VALUES" +
-                " ('a', '2023-09-01T00:00:00.000Z')," +
-                " ('a', '2023-09-01T00:10:00.000Z')");
-
-        assertMemoryLeak(() -> {
-            final String query = "SELECT timestamp+60000000 as 'timestamp', 0 AS extra_column, 0 AS extra_column2 \n" +
-                    "FROM t\n" +
-                    "WHERE name = 'a'\n" +
-                    "SAMPLE BY (1m);\n";
-
-            final String result = "timestamp\textra_column\textra_column2\n" +
-                    "2023-09-01T00:01:00.000000Z\t0\t0\n" +
-                    "2023-09-01T00:11:00.000000Z\t0\t0\n";
-
-            assertSql(result, query);
-        });
-
-        assertMemoryLeak(() -> {
-            final String query = "select dateadd('d', 1, timestamp) timestamp, name from t sample by 10m";
-
-            final String result = "timestamp\tname\n" +
-                    "2023-09-02T00:00:00.000000Z\ta\n" +
-                    "2023-09-02T00:10:00.000000Z\ta\n";
-
-            assertSql(result, query);
-        });
-
-        assertMemoryLeak(() -> {
-            final String query = "select dateadd('d', 1, timestamp) timestamp, dateadd('d', 2, timestamp) timestamp2, name from t sample by 10m";
-
-            final String result = "timestamp\ttimestamp2\tname\n" +
-                    "2023-09-02T00:00:00.000000Z\t2023-09-03T00:00:00.000000Z\ta\n" +
-                    "2023-09-02T00:10:00.000000Z\t2023-09-03T00:10:00.000000Z\ta\n";
-
-            assertSql(result, query);
-        });
-
-        assertMemoryLeak(() -> {
-            final String query = "select timestamp + 60000000 as 'timestamp', timestamp  from t where name = 'a' sample by (1m)";
-
-            final String result = "timestamp\ttimestamp1\n" +
-                    "2023-09-01T00:01:00.000000Z\t2023-09-01T00:00:00.000000Z\n" +
-                    "2023-09-01T00:11:00.000000Z\t2023-09-01T00:10:00.000000Z\n";
-
-            assertSql(result, query);
-        });
-
-        assertMemoryLeak(() -> {
-            final String query = "select timestamp + 60000000 as 'timestamp1', timestamp  from t where name = 'a' sample by (1m)";
-
-            final String result = "timestamp1\ttimestamp\n" +
-                    "2023-09-01T00:01:00.000000Z\t2023-09-01T00:00:00.000000Z\n" +
-                    "2023-09-01T00:11:00.000000Z\t2023-09-01T00:10:00.000000Z\n";
-
-            assertSql(result, query);
-        });
-
-        assertMemoryLeak(() -> {
-            final String query = "select timestamp + 60000000 as 'timestamp', timestamp as 'timestamp1'  from t where name = 'a' sample by (1m)";
-
-            final String result = "timestamp\ttimestamp1\n" +
-                    "2023-09-01T00:01:00.000000Z\t2023-09-01T00:00:00.000000Z\n" +
-                    "2023-09-01T00:11:00.000000Z\t2023-09-01T00:10:00.000000Z\n";
-
-            assertSql(result, query);
-        });
-    }
-
-    @Test
-    public void testSampleByExpressionDependOtherColumn() throws Exception {
-        execute("create table t (\n" +
-                "  timestamp TIMESTAMP,\n" +
-                "  symbol SYMBOL capacity 256 CACHE,\n" +
-                "  side SYMBOL CAPACITY 256 CACHE,\n" +
-                "  price double\n" +
-                ") timestamp(timestamp) partition by day;");
-
-        execute("INSERT INTO t (timestamp, symbol, side, price) VALUES" +
-                " ('2023-09-01T00:00:00.000Z', 'ETH-USD', 'buyer', 3240.0)," +
-                " ('2023-09-01T01:00:00.000Z', 'ETH-USD', 'buyer', 3241.0)," +
-                " ('2023-09-01T02:00:00.000Z', 'ETH-USD', 'buyer', 3242.0)," +
-                " ('2023-09-01T03:00:00.000Z', 'ETH-USD', 'buyer', 3243.0)," +
-                " ('2023-09-01T04:00:00.000Z', 'ETH-USD', 'buyer', 3244.0)," +
-                " ('2023-09-01T05:00:00.000Z', 'ETH-USD', 'seller', 5.0)");
-        assertMemoryLeak(() -> {
-            final String query = "select timestamp, symbol, side, CASE WHEN price > 3240  THEN avg(price) END as price_today, CASE WHEN price < 3240  THEN avg(price) END as price_yesterday " +
-                    "from t where timestamp >= '2023-09-01T00:00:00.000Z' and symbol = 'ETH-USD' sample by 1h";
-
-            final String result = "timestamp\tsymbol\tside\tprice_today\tprice_yesterday\n" +
-                    "2023-09-01T00:00:00.000000Z\tETH-USD\tbuyer\tnull\tnull\n" +
-                    "2023-09-01T01:00:00.000000Z\tETH-USD\tbuyer\t3241.0\tnull\n" +
-                    "2023-09-01T02:00:00.000000Z\tETH-USD\tbuyer\t3242.0\tnull\n" +
-                    "2023-09-01T03:00:00.000000Z\tETH-USD\tbuyer\t3243.0\tnull\n" +
-                    "2023-09-01T04:00:00.000000Z\tETH-USD\tbuyer\t3244.0\tnull\n" +
-                    "2023-09-01T05:00:00.000000Z\tETH-USD\tseller\tnull\t5.0\n";
-
-            assertSql(result, query);
-        });
-
-        assertMemoryLeak(() -> {
-            final String query = "select timestamp, symbol, side, CASE WHEN extract('day', timestamp) =14  THEN avg(price) END as price_today, CASE WHEN true  THEN avg(price) END as price_yesterday " +
-                    "from t where timestamp >= '2023-09-01T00:00:00.000Z' and symbol = 'ETH-USD' sample by 1h";
-
-            final String result = "timestamp\tsymbol\tside\tprice_today\tprice_yesterday\n" +
-                    "2023-09-01T00:00:00.000000Z\tETH-USD\tbuyer\tnull\t3240.0\n" +
-                    "2023-09-01T01:00:00.000000Z\tETH-USD\tbuyer\tnull\t3241.0\n" +
-                    "2023-09-01T02:00:00.000000Z\tETH-USD\tbuyer\tnull\t3242.0\n" +
-                    "2023-09-01T03:00:00.000000Z\tETH-USD\tbuyer\tnull\t3243.0\n" +
-                    "2023-09-01T04:00:00.000000Z\tETH-USD\tbuyer\tnull\t3244.0\n" +
-                    "2023-09-01T05:00:00.000000Z\tETH-USD\tseller\tnull\t5.0\n";
-
-            assertSql(result, query);
-        });
-    }
-
-    @Test
     public void testSampleByFromToPlansWithRewrite() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl (\n" +
@@ -3932,12 +3939,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String query = "select ts as five_days, avg(x) as five_days_avg from fromto \n" +
                     "sample by 5d from '2017-12-20' to '2018-01-31' fill(null)";
 
-            assertPlanNoLeakCheck(query, "Sort\n" +
-                    "  keys: [five_days]\n" +
-                    "    Fill Range\n" +
-                    "      range: ('2017-12-20','2018-01-31')\n" +
-                    "      stride: '5d'\n" +
-                    "      values: [null]\n" +
+            assertPlanNoLeakCheck(query, "Fill Range\n" +
+                    "  range: ('2017-12-20','2018-01-31')\n" +
+                    "  stride: '5d'\n" +
+                    "  values: [null]\n" +
+                    "    Radix sort light\n" +
+                    "      keys: [five_days]\n" +
                     "        Async Group By workers: 1\n" +
                     "          keys: [five_days]\n" +
                     "          values: [avg(x)]\n" +

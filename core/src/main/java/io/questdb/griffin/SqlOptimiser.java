@@ -121,6 +121,7 @@ public class SqlOptimiser implements Mutable {
     private final CharSequenceObjHashMap<CharSequence> constNameToToken = new CharSequenceObjHashMap<>();
     private final ObjectPool<JoinContext> contextPool;
     private final IntHashSet deletedContexts = new IntHashSet();
+    private final CharSequenceHashSet existsDependedTokens = new CharSequenceHashSet();
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final FunctionParser functionParser;
     //list of group-by-model-level expressions with prefixes
@@ -138,6 +139,7 @@ public class SqlOptimiser implements Mutable {
     private final ObjList<CharSequence> literalCollectorBNames = new ObjList<>();
     private final LiteralRewritingVisitor literalRewritingVisitor = new LiteralRewritingVisitor();
     private final int maxRecursion;
+    private final CharSequenceHashSet missingDependedTokens = new CharSequenceHashSet();
     private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
     private final IntPriorityQueue orderingStack = new IntPriorityQueue();
     private final Path path;
@@ -149,12 +151,10 @@ public class SqlOptimiser implements Mutable {
     private final ObjList<RecordCursorFactory> tableFactoriesInFlight = new ObjList<>();
     private final FlyweightCharSequence tableLookupSequence = new FlyweightCharSequence();
     private final IntHashSet tablesSoFar = new IntHashSet();
+    private final ObjList<QueryColumn> tempColumns = new ObjList<>();
     private final IntList tempCrossIndexes = new IntList();
     private final IntList tempCrosses = new IntList();
     private final IntList tempList = new IntList();
-    private final ObjList<QueryColumn> tempColumns = new ObjList<>();
-    private final CharSequenceHashSet existsDependedTokens = new CharSequenceHashSet();
-    private final CharSequenceHashSet missingDependedTokens = new CharSequenceHashSet();
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> tmpCursorAliases = new LowerCaseCharSequenceObjHashMap<>();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
     private int defaultAliasCount = 0;
@@ -300,6 +300,34 @@ public class SqlOptimiser implements Mutable {
 
     private static void unlinkDependencies(QueryModel model, int parent, int child) {
         model.getJoinModels().getQuick(parent).removeDependency(child);
+    }
+
+    private void addColumnToSelectModel(QueryModel model, IntList insertColumnIndexes, ObjList<QueryColumn> insertColumnAliases, CharSequence timestampAlias) {
+        tempColumns.clear();
+        tempColumns.addAll(model.getBottomUpColumns());
+        model.clearColumnMapStructs();
+
+        // These are merged columns, the assumption is that the insetColumnIndexes are ordered.
+        // This loop will fail miserably in indexes are unordered.
+        int src1ColumnCount = tempColumns.size();
+        int src2ColumnCount = insertColumnIndexes.size();
+        for (int i = 0, k = 0, m = 0; i < src1ColumnCount || k < src2ColumnCount; m++) {
+            if (k < src2ColumnCount && insertColumnIndexes.getQuick(k) == m) {
+                QueryColumn column = insertColumnAliases.get(k);
+                // insert column at this position, this column must reference our timestamp, that
+                // comes out of the group-by result set, but with user-provided aliases.
+                if (column.getAst().type == LITERAL) {
+                    model.addBottomUpColumnIfNotExists(nextColumn(column.getAlias(), timestampAlias));
+                } else {
+                    model.addBottomUpColumnIfNotExists(column);
+                }
+                k++;
+            } else {
+                QueryColumn qcFrom = tempColumns.getQuick(i);
+                model.addBottomUpColumnIfNotExists(nextColumn(qcFrom.getAlias()));
+                i++;
+            }
+        }
     }
 
     /*
@@ -2185,6 +2213,42 @@ public class SqlOptimiser implements Mutable {
         return null;
     }
 
+    private void fixAndCollectExprToken(ExpressionNode node, CharSequence old, CharSequence newToken, CharSequenceHashSet set, CharSequenceHashSet set2) {
+        sqlNodeStack.clear();
+        while (node != null) {
+            if (node.type == LITERAL) {
+                if (Chars.equalsIgnoreCase(node.token, old)) {
+                    node.token = newToken;
+                } else if (!set.contains(node.token)) {
+                    set2.add(node.token);
+                }
+            }
+
+            if (node.paramCount < 3) {
+                if (node.lhs != null) {
+                    sqlNodeStack.push(node.lhs);
+                }
+
+                if (node.rhs != null) {
+                    node = node.rhs;
+                    continue;
+                }
+            } else {
+                for (int i = 1, k = node.paramCount; i < k; i++) {
+                    sqlNodeStack.push(node.args.getQuick(i));
+                }
+                node = node.args.getQuick(0);
+                continue;
+            }
+
+            if (!sqlNodeStack.isEmpty()) {
+                node = this.sqlNodeStack.poll();
+            } else {
+                node = null;
+            }
+        }
+    }
+
     private Function getLoFunction(ExpressionNode limit, SqlExecutionContext executionContext) throws SqlException {
         final Function func = functionParser.parseFunction(limit, EmptyRecordMetadata.INSTANCE, executionContext);
         final int type = func.getType();
@@ -2843,42 +2907,6 @@ public class SqlOptimiser implements Mutable {
         }
 
         return false;
-    }
-
-    private void fixAndCollectExprToken(ExpressionNode node, CharSequence old, CharSequence newToken, CharSequenceHashSet set, CharSequenceHashSet set2) {
-        sqlNodeStack.clear();
-        while (node != null) {
-            if (node.type == LITERAL) {
-                if (Chars.equalsIgnoreCase(node.token, old)) {
-                    node.token = newToken;
-                } else if (!set.contains(node.token)) {
-                    set2.add(node.token);
-                }
-            }
-
-            if (node.paramCount < 3) {
-                if (node.lhs != null) {
-                    sqlNodeStack.push(node.lhs);
-                }
-
-                if (node.rhs != null) {
-                    node = node.rhs;
-                    continue;
-                }
-            } else {
-                for (int i = 1, k = node.paramCount; i < k; i++) {
-                    sqlNodeStack.push(node.args.getQuick(i));
-                }
-                node = node.args.getQuick(0);
-                continue;
-            }
-
-            if (!sqlNodeStack.isEmpty()) {
-                node = this.sqlNodeStack.poll();
-            } else {
-                node = null;
-            }
-        }
     }
 
     private void openReaderAndEnumerateColumns(
@@ -4746,8 +4774,9 @@ public class SqlOptimiser implements Mutable {
             if (
                     sampleBy != null
                             && timestamp != null
-                            && (sampleByOffset != null && SqlKeywords.isZeroOffset(sampleByOffset.token) && (sampleByTimezoneName == null || SqlKeywords.isUTC(sampleByTimezoneName.token)))
-                            && (sampleByFillSize == 0 || (sampleByFillSize == 1 && !SqlKeywords.isPrevKeyword(sampleByFill.getQuick(0).token) && !SqlKeywords.isLinearKeyword(sampleByFill.getQuick(0).token)))
+                            && (sampleByOffset != null && SqlKeywords.isZeroOffset(sampleByOffset.token)
+                            && (sampleByTimezoneName == null || SqlKeywords.isUTC(sampleByTimezoneName.token)))
+                            && (sampleByFillSize == 0 || thereAreNoPrevOrLinearFills(sampleByFill))
                             && sampleByUnit == null
                             && (sampleByFrom == null || ((sampleByFrom.type != BIND_VARIABLE) && (sampleByFrom.type != FUNCTION) && (sampleByFrom.type != OPERATION)))
             ) {
@@ -4990,10 +5019,10 @@ public class SqlOptimiser implements Mutable {
                     nested.setTimestamp(nextLiteral(timestamp.token));
                 }
 
-                nested.setFillFrom(sampleByFrom);
-                nested.setFillTo(sampleByTo);
-                nested.setFillStride(sampleBy);
-                nested.setFillValues(sampleByFill);
+                model.setFillFrom(sampleByFrom);
+                model.setFillTo(sampleByTo);
+                model.setFillStride(sampleBy);
+                model.setFillValues(sampleByFill);
 
                 // clear sample by (but keep FILL and FROM-TO)
                 nested.setSampleBy(null);
@@ -5298,7 +5327,7 @@ public class SqlOptimiser implements Mutable {
                     } else if (functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
                         useGroupByModel = true;
 
-                        if (groupByModel.getSampleByFill().size() > 0) { // fill breaks if column is de-duplicated
+                        if (groupByModel.getSampleByFill().size() > 0 || (groupByModel.getFillValues() != null && groupByModel.getFillValues().size() > 0)) { // fill breaks if column is de-duplicated
                             continue;
                         }
 
@@ -5879,6 +5908,7 @@ public class SqlOptimiser implements Mutable {
             root.setUnionModel(model.getUnionModel());
             root.setSetOperationType(model.getSetOperationType());
             root.setModelPosition(model.getModelPosition());
+            root.moveFillFrom(model);
             if (model.isUpdate()) {
                 root.setIsUpdate(true);
                 root.copyUpdateTableMetadata(model);
@@ -6099,6 +6129,18 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private boolean thereAreNoPrevOrLinearFills(ObjList<ExpressionNode> sampleByFill) {
+        for (int i = 0; i < sampleByFill.size(); i++) {
+            final ExpressionNode expr = sampleByFill.get(i);
+            if (
+                    SqlKeywords.isPrevKeyword(expr.token)
+                            || SqlKeywords.isLinearKeyword(expr.token)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private void traverseNamesAndIndices(QueryModel parent, ExpressionNode node) throws SqlException {
         literalCollectorAIndexes.clear();
         literalCollectorBIndexes.clear();
@@ -6295,34 +6337,6 @@ public class SqlOptimiser implements Mutable {
         }
 
         return _model;
-    }
-
-    private void addColumnToSelectModel(QueryModel model, IntList insertColumnIndexes, ObjList<QueryColumn> insertColumnAliases, CharSequence timestampAlias) {
-        tempColumns.clear();
-        tempColumns.addAll(model.getBottomUpColumns());
-        model.clearColumnMapStructs();
-
-        // These are merged columns, the assumption is that the insetColumnIndexes are ordered.
-        // This loop will fail miserably in indexes are unordered.
-        int src1ColumnCount = tempColumns.size();
-        int src2ColumnCount = insertColumnIndexes.size();
-        for (int i = 0, k = 0, m = 0; i < src1ColumnCount || k < src2ColumnCount; m++) {
-            if (k < src2ColumnCount && insertColumnIndexes.getQuick(k) == m) {
-                QueryColumn column = insertColumnAliases.get(k);
-                // insert column at this position, this column must reference our timestamp, that
-                // comes out of the group-by result set, but with user-provided aliases.
-                if (column.getAst().type == LITERAL) {
-                    model.addBottomUpColumnIfNotExists(nextColumn(column.getAlias(), timestampAlias));
-                } else {
-                    model.addBottomUpColumnIfNotExists(column);
-                }
-                k++;
-            } else {
-                QueryColumn qcFrom = tempColumns.getQuick(i);
-                model.addBottomUpColumnIfNotExists(nextColumn(qcFrom.getAlias()));
-                i++;
-            }
-        }
     }
 
     @SuppressWarnings("unused")
