@@ -338,6 +338,22 @@ public class TtlTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTablesFunction() throws Exception {
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR");
+        assertSql("ttlValue\tttlUnit\n0\tHOUR\n", "select ttlValue, ttlUnit from (tables())");
+        execute("ALTER TABLE tango SET TTL 2 HOURS");
+        assertSql("ttlValue\tttlUnit\n2\tHOUR\n", "select ttlValue, ttlUnit from (tables())");
+        execute("ALTER TABLE tango SET TTL 2 DAYS");
+        assertSql("ttlValue\tttlUnit\n2\tDAY\n", "select ttlValue, ttlUnit from (tables())");
+        execute("ALTER TABLE tango SET TTL 2 WEEKS");
+        assertSql("ttlValue\tttlUnit\n2\tWEEK\n", "select ttlValue, ttlUnit from (tables())");
+        execute("ALTER TABLE tango SET TTL 2 MONTHS");
+        assertSql("ttlValue\tttlUnit\n2\tMONTH\n", "select ttlValue, ttlUnit from (tables())");
+        execute("ALTER TABLE tango SET TTL 2 YEARS");
+        assertSql("ttlValue\tttlUnit\n2\tYEAR\n", "select ttlValue, ttlUnit from (tables())");
+    }
+
+    @Test
     public void testWeekExactlyAtTtl() throws Exception {
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 WEEK");
         execute("INSERT INTO tango VALUES ('1970-01-01'), ('1970-01-03'), ('1970-01-08T00:59:59.999999')");

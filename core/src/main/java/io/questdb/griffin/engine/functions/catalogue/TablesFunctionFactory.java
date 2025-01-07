@@ -184,7 +184,7 @@ public class TablesFunctionFactory implements FunctionFactory {
                         return table.getId();
                     }
                     if (col == TTL_VALUE_COLUMN) {
-                        return Math.abs(table.getTtlHoursOrMonths());
+                        return getTtlValue(table.getTtlHoursOrMonths());
                     }
                     assert col == MAX_UNCOMMITTED_ROWS_COLUMN;
                     return table.getMaxUncommittedRows();
@@ -204,7 +204,7 @@ public class TablesFunctionFactory implements FunctionFactory {
                         case PARTITION_BY_COLUMN:
                             return table.getPartitionByName();
                         case TTL_UNIT_COLUMN:
-                            return table.getTtlHoursOrMonths() >= 0 ? "HOURS" : "MONTHS";
+                            return getTtlUnit(table.getTtlHoursOrMonths());
                         case DESIGNATED_TIMESTAMP_COLUMN:
                             return table.getTimestampName();
                         case DIRECTORY_NAME_COLUMN:
@@ -231,6 +231,35 @@ public class TablesFunctionFactory implements FunctionFactory {
                 public int getStrLen(int col) {
                     CharSequence str = getStrA(col);
                     return str != null ? str.length() : -1;
+                }
+
+                private String getTtlUnit(int ttl) {
+                    if (ttl == 0) {
+                        return "HOUR";
+                    }
+                    if (ttl < 0) {
+                        return -ttl % 12 != 0 ? "MONTH" : "YEAR";
+                    }
+                    if (ttl % 24 != 0) {
+                        return "HOUR";
+                    }
+                    ttl /= 24;
+                    return ttl % 7 != 0 ? "DAY" : "WEEK";
+                }
+
+                private int getTtlValue(int ttl) {
+                    if (ttl == 0) {
+                        return 0;
+                    }
+                    if (ttl > 0) {
+                        if (ttl % 24 != 0) {
+                            return ttl;
+                        }
+                        ttl /= 24;
+                        return (ttl % 7 == 0) ? (ttl / 7) : ttl;
+                    }
+                    ttl = -ttl;
+                    return (ttl % 12 == 0) ? (ttl / 12) : ttl;
                 }
 
                 private void of(CairoTable table) {

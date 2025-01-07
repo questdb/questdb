@@ -131,7 +131,7 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
             execute("rename table \"from\" to \"to\"");
             assertSql(
                     "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\n" +
-                            "1\tto\t\tNONE\t1000\t300000000\tfalse\tto~\tfalse\t0\tHOURS\n", "tables()"
+                            "1\tto\t\tNONE\t1000\t300000000\tfalse\tto~\tfalse\t0\tHOUR\n", "tables()"
             );
         });
     }
