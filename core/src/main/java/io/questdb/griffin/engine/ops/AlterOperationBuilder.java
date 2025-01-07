@@ -252,7 +252,6 @@ public class AlterOperationBuilder implements Mutable {
         this.extraInfo.add(ttlHoursOrMonths);
         this.tableId = tableId;
         return this;
-
     }
 
     public AlterOperationBuilder ofSquashPartitions(int tableNamePosition, TableToken tableToken) {

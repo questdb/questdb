@@ -517,11 +517,6 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
 
         @Override
-        public int getTtlHoursOrMonths() {
-            return 0;
-        }
-
-        @Override
         public boolean isDedupKey(int columnIndex) {
             return false;
         }

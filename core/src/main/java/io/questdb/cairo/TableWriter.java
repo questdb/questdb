@@ -136,6 +136,8 @@ import java.util.function.LongConsumer;
 import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
+import static io.questdb.cairo.TableUtils.openAppend;
+import static io.questdb.cairo.TableUtils.openRO;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.std.Files.*;
@@ -914,13 +916,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             symbolMapWriter.updateCacheFlag(cache);
             TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
             columnMetadata.setSymbolCacheFlag(cache);
-
-            rewriteAndSwapMetadata(metadata);
-            clearTodoAndCommitMeta();
-
-            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                metadataRW.hydrateTable(metadata);
-            }
+            writeMetadataToDisk();
         }
     }
 
@@ -1940,8 +1936,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     ? maxTimestamp - partitionCeiling >= Timestamps.HOUR_MICROS * ttl
                     : Timestamps.getMonthsBetween(partitionCeiling, maxTimestamp) >= -ttl;
             if (shouldEvict) {
-                LOG.info().$("Partition's TTL expired, evicting. partitionTs=")
-                        .microTime(partitionTimestamp).$();
+                LOG.info()
+                        .$("Partition's TTL expired, evicting. partitionTs=").microTime(partitionTimestamp)
+                        .$();
                 dropPartitionByExactTimestamp(partitionTimestamp);
             } else {
                 // Partitions are sorted by timestamp, no need to check the rest
@@ -2936,38 +2933,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     @Override
     public void setMetaMaxUncommittedRows(int maxUncommittedRows) {
         commit();
-
         metadata.setMaxUncommittedRows(maxUncommittedRows);
-        rewriteAndSwapMetadata(metadata);
-        clearTodoAndCommitMeta();
-
-        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-            metadataRW.hydrateTable(metadata);
-        }
+        writeMetadataToDisk();
     }
 
     @Override
     public void setMetaO3MaxLag(long o3MaxLagUs) {
         commit();
         metadata.setO3MaxLag(o3MaxLagUs);
-        rewriteAndSwapMetadata(metadata);
-        clearTodoAndCommitMeta();
-
-        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-            metadataRW.hydrateTable(metadata);
-        }
+        writeMetadataToDisk();
     }
 
     @Override
     public void setMetaTtlHoursOrMonths(int metaTtlHoursOrMonths) {
         commit();
         metadata.setTtlHoursOrMonths(metaTtlHoursOrMonths);
-        rewriteAndSwapMetadata(metadata);
-        clearTodoAndCommitMeta();
-
-        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-            metadataRW.hydrateTable(metadata);
-        }
+        writeMetadataToDisk();
     }
 
     public void setSeqTxn(long seqTxn) {
@@ -8626,6 +8607,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             todoMem.sync(false);
         } catch (CairoException e) {
             runFragile(RECOVER_FROM_TODO_WRITE_FAILURE, e);
+        }
+    }
+
+    private void writeMetadataToDisk() {
+        rewriteAndSwapMetadata(metadata);
+        clearTodoAndCommitMeta();
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.hydrateTable(metadata);
         }
     }
 

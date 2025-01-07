@@ -300,7 +300,6 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
-    // Returns sequencer transaction number
     @Override
     public void commit() {
         checkDistressed();

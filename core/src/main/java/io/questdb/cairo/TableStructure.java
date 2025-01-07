@@ -55,7 +55,10 @@ public interface TableStructure {
      * it's in hours; if negative, it's in months (and the actual value is positive).
      * Zero means "no TTL".
      */
-    int getTtlHoursOrMonths();
+    default int getTtlHoursOrMonths() {
+        // TTL disabled by default
+        return 0;
+    }
 
     boolean isDedupKey(int columnIndex);
 
