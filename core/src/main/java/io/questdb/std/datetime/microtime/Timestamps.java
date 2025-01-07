@@ -83,7 +83,6 @@ public final class Timestamps {
     private static final long[] MAX_MONTH_OF_YEAR_MICROS = new long[12];
     private static final long[] MIN_MONTH_OF_YEAR_MICROS = new long[12];
     private static final int YEAR_DAYS = 365;
-    private static final int YEAR_HOURS = YEAR_DAYS * DAY_HOURS + DAY_HOURS / 4;
     private static final long YEAR_MICROS = YEAR_DAYS * DAY_MICROS;
     private static final int YEAR_MONTHS = 12;
 
