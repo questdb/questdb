@@ -1372,9 +1372,10 @@ public class CairoEngine implements Closeable, WriterSource {
                                 .$(matViewDefinition.getBaseTableName())
                                 .$(", view=").$(tableToken.getTableName())
                                 .I$();
+                    } else {
+                        this.matViewGraph.createView(baseTableToken, matViewDefinition);
+                        this.matViewGraph.refresh(tableToken);
                     }
-                    this.matViewGraph.createView(tableToken, matViewDefinition);
-                    this.matViewGraph.refresh(tableToken);
                 }
             }
         }
