@@ -1027,15 +1027,27 @@ public final class TableUtils {
             TableToken matViewToken
     ) {
 
-        mem.smallFile(ff, path.trimTo(rootLen)
-                .concat(matViewToken.getDirName())
-                .concat(MAT_VIEW_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-        assert mem.size() >= MV_HEADER_SIZE + 3 * Long.BYTES + 3 * Integer.BYTES + Character.BYTES;
+        mem.smallFile(
+                ff, path.trimTo(rootLen)
+                        .concat(matViewToken.getDirName())
+                        .concat(MAT_VIEW_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT
+        );
+        if (mem.size() < MV_HEADER_SIZE + 3 * Long.BYTES + 3 * Integer.BYTES + Character.BYTES) {
+            throw CairoException.nonCritical()
+                    .put("cannot read materialized view definition, file is too small [path=")
+                    .put(path)
+                    .put(']');
+        }
 
         long offset = MV_HEADER_SIZE;
 
         final CharSequence baseTableName = mem.getStrA(offset);
-        assert baseTableName != null;
+        if (baseTableName == null || baseTableName.length() == 0) {
+            throw CairoException.nonCritical()
+                    .put("base table name for materialized view is empty [view=")
+                    .put(matViewToken.getTableName())
+                    .put(']');
+        }
         offset += Vm.getStorageLength(baseTableName);
         final String baseTableNameStr = Chars.toString(baseTableName);
 
@@ -1058,12 +1070,24 @@ public final class TableUtils {
         final CharSequence timeZoneOffset = mem.getStrA(offset);
         final String timeZoneOffsetStr = Chars.toString(timeZoneOffset);
 
-        mem.smallFile(ff, path.trimTo(rootLen)
-                .concat(matViewToken.getDirName())
-                .concat(MAT_VIEW_QUERY_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-        assert mem.size() >= Integer.BYTES;
+        mem.smallFile(
+                ff, path.trimTo(rootLen)
+                        .concat(matViewToken.getDirName())
+                        .concat(MAT_VIEW_QUERY_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT
+        );
+        if (mem.size() < Integer.BYTES) {
+            throw CairoException.nonCritical()
+                    .put("cannot read materialized view SQL, file is too small [path=")
+                    .put(path)
+                    .put(']');
+        }
         final CharSequence matViewSql = mem.getStrA(0);
-        assert matViewSql != null;
+        if (matViewSql == null || matViewSql.length() == 0) {
+            throw CairoException.nonCritical()
+                    .put("materialized view SQL is empty [view=")
+                    .put(matViewToken.getTableName())
+                    .put(']');
+        }
         final String matViewSqlStr = Chars.toString(matViewSql);
 
         return new MaterializedViewDefinition(

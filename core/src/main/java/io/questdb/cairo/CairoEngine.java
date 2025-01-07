@@ -1358,23 +1358,30 @@ public class CairoEngine implements Closeable, WriterSource {
                 final TableToken tableToken = tableTokenBucket.get(i);
                 final FilesFacade ff = configuration.getFilesFacade();
                 if (tableToken.isMatView() && TableUtils.doesMvFileExist(configuration, path, tableToken.getDirName(), ff)) {
-                    MaterializedViewDefinition matViewDefinition = TableUtils.loadMatViewDefinition(
-                            ff,
-                            memory,
-                            path,
-                            pathLen,
-                            tableToken
-                    );
-                    final TableToken baseTableToken = this.tableNameRegistry.getTableToken(matViewDefinition.getBaseTableName());
-                    if (baseTableToken == null || this.tableNameRegistry.isTableDropped(baseTableToken)) {
-                        LOG.error()
-                                .$("base table for materialized view does not exist [table=")
-                                .$(matViewDefinition.getBaseTableName())
-                                .$(", view=").$(tableToken.getTableName())
+                    try {
+                        MaterializedViewDefinition matViewDefinition = TableUtils.loadMatViewDefinition(
+                                ff,
+                                memory,
+                                path,
+                                pathLen,
+                                tableToken
+                        );
+                        final TableToken baseTableToken = this.tableNameRegistry.getTableToken(matViewDefinition.getBaseTableName());
+                        if (baseTableToken == null || this.tableNameRegistry.isTableDropped(baseTableToken)) {
+                            LOG.error()
+                                    .$("base table for materialized view does not exist [table=")
+                                    .$(matViewDefinition.getBaseTableName())
+                                    .$(", view=").$(tableToken.getTableName())
+                                    .I$();
+                        } else {
+                            this.matViewGraph.createView(baseTableToken, matViewDefinition);
+                            this.matViewGraph.refresh(tableToken);
+                        }
+                    } catch (CairoException e) {
+                        LOG.error().$("could not load materialized view definition [view=")
+                                .$(tableToken.getTableName())
+                                .$(", error=").$(e.getFlyweightMessage())
                                 .I$();
-                    } else {
-                        this.matViewGraph.createView(baseTableToken, matViewDefinition);
-                        this.matViewGraph.refresh(tableToken);
                     }
                 }
             }
