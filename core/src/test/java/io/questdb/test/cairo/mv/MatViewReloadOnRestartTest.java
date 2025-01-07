@@ -315,9 +315,12 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                                 "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
                         "price_1h order by ts, sym"
                 );
+
+                // Drop base table.
                 execute(main1, "drop table base_price");
             }
 
+            // The mat view should be skipped on server start.
             try (final TestServerMain main2 = startWithEnvVariables0(
                     PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
                     PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
@@ -325,10 +328,11 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 MaterializedViewRefreshJob refreshJob = new MaterializedViewRefreshJob(main2.getEngine());
                 refreshJob.run(0);
 
-                assertSql(main2,
-                        "last_error\tlast_error_code\n" +
-                                "table does not exist [table=base_price]\t-105\n",
-                        "select last_error, last_error_code from views"
+                assertSql(
+                        main2,
+                        "count\n" +
+                                "0\n",
+                        "select count() from views();"
                 );
             }
         });
