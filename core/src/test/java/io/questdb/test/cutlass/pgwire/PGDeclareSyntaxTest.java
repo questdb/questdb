@@ -30,6 +30,7 @@ import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.util.Arrays;
 import java.util.Collection;
 
@@ -54,12 +55,14 @@ public class PGDeclareSyntaxTest extends BasePGTest {
             try (PreparedStatement ps = connection.prepareStatement("DECLARE @x := ?, @y := ? SELECT @x::int + @y::int")) {
                 ps.setInt(1, 1);
                 ps.setInt(2, 2);
-                assertResultSet(
-                        "column[INTEGER]\n" +
-                                "3\n",
-                        sink,
-                        ps.executeQuery()
-                );
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "column[INTEGER]\n" +
+                                    "3\n",
+                            sink,
+                            rs
+                    );
+                }
             }
         });
     }
@@ -70,36 +73,12 @@ public class PGDeclareSyntaxTest extends BasePGTest {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement ps = connection.prepareStatement("DECLARE @x := ? SELECT x as x2, (@x + 5) as x1, @x as x3 FROM (SELECT * FROM long_sequence(10) WHERE x = @x)")) {
                 ps.setInt(1, 5);
-                assertResultSet(
-                        "x2[BIGINT],x1[INTEGER],x3[INTEGER]\n" +
-                                "5,10,5\n",
-                        sink,
-                        ps.executeQuery()
-                );
-            }
-        });
-    }
-
-    @Test
-    public void testDeclareSyntaxWorksWithPositionalBindVariables3() throws Exception {
-        skipInModernMode();
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            try (PreparedStatement ps = connection.prepareStatement("DECLARE @x := ? SELECT x as x2, (@x + 5) as x1, @x as x3 FROM (SELECT * FROM long_sequence(10) WHERE x = @x)")) {
-                ps.setInt(1, 5);
-                assertResultSet(
-                        "x2[BIGINT],x1[INTEGER],x3[INTEGER]\n" +
-                                "5,10,5\n",
-                        sink,
-                        ps.executeQuery()
-                );
-            } catch (AssertionError e) {
-                try (PreparedStatement ps = connection.prepareStatement("DECLARE @x := ? SELECT x as x2, (@x + 5) as x1, @x as x3 FROM (SELECT * FROM long_sequence(10) WHERE x = @x)")) {
-                    ps.setInt(1, 5);
+                try (ResultSet rs = ps.executeQuery()) {
                     assertResultSet(
-                            "x2[BIGINT],x1[BIGINT],x3[BIGINT]\n" +
+                            "x2[BIGINT],x1[INTEGER],x3[INTEGER]\n" +
                                     "5,10,5\n",
                             sink,
-                            ps.executeQuery()
+                            rs
                     );
                 }
             }
