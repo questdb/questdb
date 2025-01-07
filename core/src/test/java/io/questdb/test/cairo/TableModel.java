@@ -42,7 +42,6 @@ public class TableModel implements TableStructure {
     private final String name;
     private final int partitionBy;
     private int timestampIndex = -1;
-    private int ttlHoursOrMonths = 0;
     private int walEnabled = -1;
 
     public TableModel(CairoConfiguration configuration, String name, int partitionBy) {
@@ -138,11 +137,6 @@ public class TableModel implements TableStructure {
     @Override
     public int getTimestampIndex() {
         return timestampIndex;
-    }
-
-    @Override
-    public int getTtlHoursOrMonths() {
-        return ttlHoursOrMonths;
     }
 
     public TableModel indexed(boolean indexFlag, int indexBlockCapacity) {
