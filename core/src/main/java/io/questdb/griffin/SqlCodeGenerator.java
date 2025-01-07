@@ -2017,7 +2017,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final int timestampIndex = recordCursorFactory.getMetadata().getTimestampIndex();
 
         if (timestampIndex == -1 || recordCursorFactory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
-            return recordCursorFactory;
+            throw SqlException.$(model.getFillValues().getQuick(0).position, "fill requires designated timestamp");
         }
 
         // initialise locals
