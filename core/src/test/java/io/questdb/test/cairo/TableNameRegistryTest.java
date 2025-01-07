@@ -1067,11 +1067,6 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             }
 
             engine.load();
-//            final ObjList<TableToken> convertedTables = TableConverter.convertTables(engine, engine.getTableSequencerAPI(), engine.getTableFlagResolver());
-//            if (!releaseInactiveBeforeConversion) {
-//                engine.releaseInactive();
-//            }
-//            engine.reloadTableNames(convertedTables);
 
             engine.reconcileTableNameRegistryState();
             Assert.assertEquals(tt1, engine.verifyTableName("tab1"));
