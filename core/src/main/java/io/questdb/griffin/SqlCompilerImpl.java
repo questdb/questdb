@@ -1250,9 +1250,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private void checkMatViewModification(ExecutionModel executionModel) throws SqlException {
         final CharSequence name = executionModel.getTableName();
-        final TableToken tt = engine.getTableTokenIfExists(name);
-        if (tt != null && tt.isMatView()) {
+        final TableToken tableToken = engine.getTableTokenIfExists(name);
+        if (tableToken != null && tableToken.isMatView()) {
             throw SqlException.position(executionModel.getTableNameExpr().position).put("cannot modify materialized view [view=").put(name).put(']');
+        }
+    }
+
+    private void checkMatViewModification(TableToken tableToken) throws SqlException {
+        if (tableToken != null && tableToken.isMatView()) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("cannot modify materialized view [view=").put(tableToken.getTableName()).put(']');
         }
     }
 
@@ -1266,6 +1272,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         tok = expectToken(lexer, "table name");
         SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, tableNamePosition);
         final TableToken tableToken = tableExistsOrFail(tableNamePosition, GenericLexer.unquote(tok), executionContext);
+        checkMatViewModification(tableToken);
         final SecurityContext securityContext = executionContext.getSecurityContext();
 
         try (TableRecordMetadata tableMetadata = executionContext.getMetadataForWrite(tableToken)) {
@@ -1696,7 +1703,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (tok != null) {
             // DROP TABLE [ IF EXISTS ] name [;]
             if (SqlKeywords.isTableKeyword(tok)) {
-
                 dropTableOperationBuilder.clear();
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok == null) {
@@ -1724,6 +1730,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 // define operation to make sure we generate correct errors in case
                 // of syntax check failure.
                 final TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
+                checkMatViewModification(tableToken);
                 if (tableToken == null) {
                     // table does not exist, but it may exist at execution time
                     tableNameInterned = Chars.toString(tableName);
@@ -1881,7 +1888,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (Chars.isQuoted(tok)) {
             tok = GenericLexer.unquote(tok);
         }
-        TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
+        final TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
+        checkMatViewModification(tableToken);
         try (IndexBuilder indexBuilder = new IndexBuilder(configuration)) {
             indexBuilder.of(path.of(configuration.getRoot()).concat(tableToken.getDirName()));
 
@@ -1973,7 +1981,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (Chars.isQuoted(tok)) {
                     tok = GenericLexer.unquote(tok);
                 }
-                TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
+                final TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
+                checkMatViewModification(tableToken);
                 executionContext.getSecurityContext().authorizeTableTruncate(tableToken);
                 try {
                     tableWriters.add(engine.getTableWriterAPI(tableToken, "truncateTables"));
@@ -2171,7 +2180,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             int tableNamePos = lexer.lastTokenPosition();
             CharSequence eol = SqlUtil.fetchNext(lexer);
             if (eol == null || Chars.equals(eol, ';')) {
-                TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tableName, executionContext);
+                final TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tableName, executionContext);
+                checkMatViewModification(tableToken);
                 try (TableReader rdr = executionContext.getReader(tableToken)) {
                     int partitionBy = rdr.getMetadata().getPartitionBy();
                     if (PartitionBy.isPartitioned(partitionBy)) {
@@ -3447,9 +3457,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         keywordBasedExecutors.put("commit", this::compileCommit);
         keywordBasedExecutors.put("rollback", this::compileRollback);
         keywordBasedExecutors.put("discard", compileSet);
-        keywordBasedExecutors.put("close", compileSet); //no-op
-        keywordBasedExecutors.put("unlisten", compileSet);  //no-op
-        keywordBasedExecutors.put("reset", compileSet);  //no-op
+        keywordBasedExecutors.put("close", compileSet); // no-op
+        keywordBasedExecutors.put("unlisten", compileSet);  // no-op
+        keywordBasedExecutors.put("reset", compileSet);  // no-op
         keywordBasedExecutors.put("drop", this::compileDrop);
         keywordBasedExecutors.put("backup", backupAgent::sqlBackup);
         keywordBasedExecutors.put("vacuum", this::compileVacuum);

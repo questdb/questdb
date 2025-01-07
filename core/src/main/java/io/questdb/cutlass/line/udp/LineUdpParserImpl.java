@@ -301,6 +301,12 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 int exists = engine.getTableStatus(path, tableToken);
                 switch (exists) {
                     case TABLE_EXISTS:
+                        if (tableToken != null && tableToken.isMatView()) {
+                            throw CairoException.nonCritical()
+                                    .put("cannot modify materialized view [view=")
+                                    .put(tableToken.getTableName())
+                                    .put(']');
+                        }
                         entry.state = 1;
                         cacheWriter(entry, token, tableToken);
                         break;

@@ -8,8 +8,8 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SCSequence;
 import org.jetbrains.annotations.Nullable;
 
+// TODO(puzpuzpuz): should this operation also drop mat views?
 public class DropAllTablesOperation implements Operation {
-
     public static final DropAllTablesOperation INSTANCE = new DropAllTablesOperation();
 
     private final DoneOperationFuture future = new DoneOperationFuture();
