@@ -40,6 +40,7 @@ import static io.questdb.griffin.model.IntervalUtils.parseFloorPartialTimestamp;
 
 
 public class MaterializedViewTest extends AbstractCairoTest {
+
     @BeforeClass
     public static void setUpStatic() throws Exception {
         // override default to test copy
@@ -143,6 +144,8 @@ public class MaterializedViewTest extends AbstractCairoTest {
             assertCannotModifyMatView("reindex table price_1h");
             // truncate
             assertCannotModifyMatView("truncate table price_1h");
+            // drop
+            assertCannotModifyMatView("drop table price_1h");
             // vacuum
             assertCannotModifyMatView("vacuum table price_1h");
         });

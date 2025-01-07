@@ -47,10 +47,18 @@ import static io.questdb.test.tools.TestUtils.assertContains;
 
 
 public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        TestUtils.unchecked(() -> createDummyConfiguration());
+        dbPath.parent().$();
+    }
+
     @Test
     public void testMatViewsCheckUpdates() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain main1 = startWithEnvVariables(
+            try (final TestServerMain main1 = startWithEnvVariables0(
                     PropertyKey.LINE_UDP_ENABLED.getEnvVarName(), "true",
                     PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
                     PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
@@ -131,45 +139,10 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
         });
     }
 
-    public static TestServerMain startWithEnvVariables(String... envs) {
-        assert envs.length % 2 == 0;
-
-        Map<String, String> envMap = new HashMap<>();
-        for (int i = 0; i < envs.length; i += 2) {
-            envMap.put(envs[i], envs[i + 1]);
-        }
-        TestServerMain serverMain = new TestServerMain(newBootstrapWithEnvVariables(envMap)) {
-            @Override
-            protected void setupMatViewRefreshJob(
-                    WorkerPool workerPool,
-                    CairoEngine engine,
-                    int sharedWorkerCount
-            ) {
-            }
-
-            @Override
-            protected void setupWalApplyJob(
-                    WorkerPool workerPool,
-                    CairoEngine engine,
-                    int sharedWorkerCount
-            ) {
-            }
-        };
-        serverMain.start();
-        return serverMain;
-    }
-
-    @Before
-    public void setUp() {
-        super.setUp();
-        TestUtils.unchecked(() -> createDummyConfiguration());
-        dbPath.parent().$();
-    }
-
     @Test
     public void testMatViewsReloadOnServerStart() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain main1 = startWithEnvVariables(
+            try (final TestServerMain main1 = startWithEnvVariables0(
                     PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
                     PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
             )) {
@@ -216,7 +189,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 assertSql(main1, expected, "price_1h order by ts, sym");
             }
 
-            try (final TestServerMain main2 = startWithEnvVariables(
+            try (final TestServerMain main2 = startWithEnvVariables0(
                     PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
                     PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
             )) {
@@ -253,7 +226,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     @Test
     public void testMatViewsReloadOnServerStartMissedBaseTable() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain main1 = startWithEnvVariables(
+            try (final TestServerMain main1 = startWithEnvVariables0(
                     PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
                     PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
             )) {
@@ -285,11 +258,10 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 execute(main1, "drop table base_price");
             }
 
-            try (final TestServerMain main2 = startWithEnvVariables(
+            try (final TestServerMain main2 = startWithEnvVariables0(
                     PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
                     PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
             )) {
-
                 MaterializedViewRefreshJob refreshJob = new MaterializedViewRefreshJob(main2.getEngine());
                 refreshJob.run(0);
 
@@ -300,6 +272,46 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 );
             }
         });
+    }
+
+    private static void assertSql(TestServerMain serverMain, final String expected, final String sql) {
+        serverMain.assertSql(sql, expected);
+    }
+
+    private static void createMatView(TestServerMain serverMain, final String viewName, final String viewSql) {
+        execute(serverMain, "create materialized view " + viewName + " as (" + viewSql + ") partition by DAY");
+    }
+
+    private static void execute(TestServerMain serverMain, final String sql) {
+        serverMain.ddl(sql);
+    }
+
+    private static TestServerMain startWithEnvVariables0(String... envs) {
+        assert envs.length % 2 == 0;
+
+        Map<String, String> envMap = new HashMap<>();
+        for (int i = 0; i < envs.length; i += 2) {
+            envMap.put(envs[i], envs[i + 1]);
+        }
+        TestServerMain serverMain = new TestServerMain(newBootstrapWithEnvVariables(envMap)) {
+            @Override
+            protected void setupMatViewRefreshJob(
+                    WorkerPool workerPool,
+                    CairoEngine engine,
+                    int sharedWorkerCount
+            ) {
+            }
+
+            @Override
+            protected void setupWalApplyJob(
+                    WorkerPool workerPool,
+                    CairoEngine engine,
+                    int sharedWorkerCount
+            ) {
+            }
+        };
+        serverMain.start();
+        return serverMain;
     }
 
     private void assertLineError(Transport transport, TestServerMain main, MaterializedViewRefreshJob refreshJob, String expected) {
@@ -338,25 +350,13 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
         }
     }
 
+    private void dropMatView(TestServerMain serverMain, final String view) {
+        execute(serverMain, "drop table " + view);
+    }
+
     enum Transport {
         HTTP,
         UDP,
         TCP
-    }
-
-    private static void assertSql(TestServerMain serverMain, final String expected, final String sql) {
-        serverMain.assertSql(sql, expected);
-    }
-
-    private static void createMatView(TestServerMain serverMain, final String viewName, final String viewSql) {
-        execute(serverMain, "create materialized view " + viewName + " as (" + viewSql + ") partition by DAY");
-    }
-
-    private static void execute(TestServerMain serverMain, final String sql) {
-        serverMain.ddl(sql);
-    }
-
-    private void dropMatView(TestServerMain serverMain, final String view) {
-        execute(serverMain, "drop table " + view);
     }
 }

@@ -135,7 +135,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
 
         if (writeInitialMetadata && tableStruct.isMatView()) {
             assert tableStruct.getMatViewDefinition() != null;
-            TableUtils.createViewMetaFiles(ff, metaMem, path, pathLen, tableStruct.getMatViewDefinition());
+            TableUtils.createMatViewMetaFiles(ff, metaMem, path, pathLen, tableStruct.getMatViewDefinition());
             path.trimTo(pathLen);
         }
 

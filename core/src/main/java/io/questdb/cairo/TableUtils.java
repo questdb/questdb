@@ -378,6 +378,24 @@ public final class TableUtils {
         mem.putStr(matViewDefinition.getTimeZoneOffset());
     }
 
+    public static void createMatViewMetaFiles(
+            FilesFacade ff,
+            MemoryMARW mem,
+            Path path,
+            int rootLen,
+            MaterializedViewDefinition matViewDefinition
+    ) {
+        mem.smallFile(ff, path.trimTo(rootLen).concat(MAT_VIEW_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+        createMatViewDefinitionFile(mem, matViewDefinition);
+        mem.sync(false);
+        mem.close(true, Vm.TRUNCATE_TO_POINTER);
+
+        mem.smallFile(ff, path.trimTo(rootLen).concat(MAT_VIEW_QUERY_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+        createMatViewQueryFile(mem, matViewDefinition);
+        mem.sync(false);
+        mem.close(true, Vm.TRUNCATE_TO_POINTER);
+    }
+
     public static void createMatViewQueryFile(MemoryMARW mem, MaterializedViewDefinition matViewDefinition) {
         mem.putStr(matViewDefinition.getMatViewSql());
     }
@@ -517,7 +535,7 @@ public final class TableUtils {
             createTableNameFile(mem, getTableNameFromDirName(tableDir));
 
             if (structure.isMatView()) {
-                createViewMetaFiles(ff, mem, path, rootLen, structure.getMatViewDefinition());
+                createMatViewMetaFiles(ff, mem, path, rootLen, structure.getMatViewDefinition());
             }
 
             // Create TXN file last, it's used to determine if table exists
@@ -604,24 +622,6 @@ public final class TableUtils {
                 truncateVersion
         );
         txMem.setTruncateSize(TX_BASE_HEADER_SIZE + TX_RECORD_HEADER_SIZE);
-    }
-
-    public static void createViewMetaFiles(
-            FilesFacade ff,
-            MemoryMARW mem,
-            Path path,
-            int rootLen,
-            MaterializedViewDefinition matViewDefinition
-    ) {
-        mem.smallFile(ff, path.trimTo(rootLen).concat(MAT_VIEW_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-        createMatViewDefinitionFile(mem, matViewDefinition);
-        mem.sync(false);
-        mem.close(true, Vm.TRUNCATE_TO_POINTER);
-
-        mem.smallFile(ff, path.trimTo(rootLen).concat(MAT_VIEW_QUERY_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-        createMatViewQueryFile(mem, matViewDefinition);
-        mem.sync(false);
-        mem.close(true, Vm.TRUNCATE_TO_POINTER);
     }
 
     public static LPSZ dFile(Path path, @NotNull CharSequence columnName, long columnTxn) {
@@ -1026,11 +1026,10 @@ public final class TableUtils {
             int rootLen,
             TableToken matViewToken
     ) {
-        mem.smallFile(
-                ff, path.trimTo(rootLen)
-                        .concat(matViewToken.getDirName())
-                        .concat(MAT_VIEW_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT
-        );
+        path.trimTo(rootLen)
+                .concat(matViewToken.getDirName())
+                .concat(MAT_VIEW_FILE_NAME);
+        mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
         if (mem.size() < MV_HEADER_SIZE + 3 * Long.BYTES + 3 * Integer.BYTES + Character.BYTES) {
             throw CairoException.critical(0)
                     .put("cannot read materialized view definition, file is too small [path=")
@@ -1069,11 +1068,10 @@ public final class TableUtils {
         final CharSequence timeZoneOffset = mem.getStrA(offset);
         final String timeZoneOffsetStr = Chars.toString(timeZoneOffset);
 
-        mem.smallFile(
-                ff, path.trimTo(rootLen)
-                        .concat(matViewToken.getDirName())
-                        .concat(MAT_VIEW_QUERY_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT
-        );
+        path.trimTo(rootLen)
+                .concat(matViewToken.getDirName())
+                .concat(MAT_VIEW_QUERY_FILE_NAME);
+        mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
         if (mem.size() < Integer.BYTES) {
             throw CairoException.critical(0)
                     .put("cannot read materialized view SQL, file is too small [path=")
