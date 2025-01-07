@@ -201,11 +201,6 @@ public class TableModel implements TableStructure {
         return this;
     }
 
-    public TableModel ttl(int ttl) {
-        this.ttlHoursOrMonths = ttl;
-        return this;
-    }
-
     public TableModel wal() {
         walEnabled = 1;
         return this;
