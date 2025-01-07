@@ -329,8 +329,8 @@ public class TableSequencerAPI implements QuietCloseable {
             isDropped = seq.isDropped();
             seq.unlockWrite();
         } catch (CairoException e) {
-            LOG.info().$("failed to convert wal table [name=").$(tableToken).$(", dirName=").utf8(tableToken.getDirName()).I$();
-            return false;
+            LOG.info().$("cannot open sequencer files, assumed table converted to non-wal [name=").$(tableToken).$(", dirName=").utf8(tableToken.getDirName()).I$();
+            return true;
         }
 
         final TableSequencerImpl tableSequencer = seqRegistry.get(tableToken.getDirName());

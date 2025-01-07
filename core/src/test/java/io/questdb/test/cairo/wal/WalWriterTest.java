@@ -1235,6 +1235,29 @@ public class WalWriterTest extends AbstractCairoTest {
     @Test
     public void testExceptionThrownIfSequencerCannotBeCreated() throws Exception {
         assertMemoryLeak(() -> {
+
+
+
+            createTable(testName.getMethodName());
+            TableToken tableToken = engine.verifyTableName(testName.getMethodName());
+
+            engine.execute("alter table " + tableToken.getTableName() + " set type bypass wal");
+            engine.load();
+
+            try {
+                var lastTxn = engine.getTableSequencerAPI().lastTxn(tableToken);
+                assertExceptionNoLeakCheck("Exception expected");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-write");
+            }
+
+            engine.execute("drop table " + tableToken.getTableName());
+            createTable(testName.getMethodName());
+            tableToken = engine.verifyTableName(testName.getMethodName());
+
+            // Now that the table is really dropped
+            engine.execute("drop table " + tableToken.getTableName());
+
             ff = new TestFilesFacadeImpl() {
                 @Override
                 public long openRW(LPSZ name, long opts) {
@@ -1248,11 +1271,14 @@ public class WalWriterTest extends AbstractCairoTest {
             };
 
             try {
-                createTable(testName.getMethodName());
-                assertExceptionNoLeakCheck("Exception expected");
+                var lastTxn = engine.getTableSequencerAPI().lastTxn(tableToken);
+                Assert.fail("Exception expected");
             } catch (CairoException e) {
+                // We should receive table is dropped error
+                Assert.assertTrue(e.isTableDropped());
                 TestUtils.assertContains(e.getFlyweightMessage(), "table is dropped");
             }
+
         });
     }
 
@@ -3191,7 +3217,7 @@ public class WalWriterTest extends AbstractCairoTest {
             try (WalWriter ignored = engine.getWalWriter(tableToken)) {
                 Assert.fail();
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "table is dropped");
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-write");
                 TestUtils.assertContains(e.getFlyweightMessage(), tableName);
             }
         });

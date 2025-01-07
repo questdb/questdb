@@ -50,7 +50,8 @@ public class TableConverter {
     public static ObjList<TableToken> convertTables(
             CairoEngine engine,
             TableSequencerAPI tableSequencerAPI,
-            TableFlagResolver tableFlagResolver
+            TableFlagResolver tableFlagResolver,
+            TableNameRegistry tableNameRegistry
     ) {
         final CairoConfiguration configuration = engine.getConfiguration();
         final ObjList<TableToken> convertedTables = new ObjList<>();
@@ -84,12 +85,14 @@ public class TableConverter {
                         path.trimTo(rootLen).concat(dirNameSink);
                         try (final MemoryMARW metaMem = Vm.getMARWInstance()) {
                             openSmallFile(ff, path, rootLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
-                            if (metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED) == walEnabled) {
+                            final String dirName = dirNameSink.toString();
+                            TableToken existingToken = tableNameRegistry.getTableTokenByDirName(dirName);
+
+                            if (metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED) == walEnabled && existingToken != null && existingToken.isWal() == walEnabled) {
                                 LOG.info().$("skipping conversion, table already has the expected type [dirName=").$(dirNameSink)
                                         .$(", walEnabled=").$(walEnabled)
                                         .I$();
                             } else {
-                                final String dirName = dirNameSink.toString();
                                 final String tableName;
                                 try (final MemoryCMR mem = Vm.getCMRInstance()) {
                                     final String name = TableUtils.readTableName(path.of(configuration.getRoot()).concat(dirNameSink), rootLen, mem, ff);
@@ -118,7 +121,7 @@ public class TableConverter {
                                     path.trimTo(rootLen).concat(dirNameSink);
                                     txWriter.resetStructureVersionUnsafe();
                                 } else {
-                                    if (tableSequencerAPI.prepareToConvertToNonWal(token)) {
+                                    if (!tableNameRegistry.isWalTableDropped(dirName) && tableSequencerAPI.prepareToConvertToNonWal(token)) {
                                         removeWalPersistence(path, rootLen, ff, dirNameSink);
                                     } else {
                                         LOG.info().$("WAL table will not be converted to non-WAL, table is dropped [dirName=").$(dirNameSink).I$();
