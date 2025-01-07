@@ -1196,10 +1196,6 @@ public class SqlParser {
                 throw errUnexpected(lexer, tok, "unexpected bind expression - bracket lists are not supported");
             }
 
-            if (model.getDecls().size() > 0) {
-                expr = rewriteDeclaredVariables(expr, model.getDecls(), tok);
-            }
-
             model.getDecls().put(tok, expr);
         }
     }

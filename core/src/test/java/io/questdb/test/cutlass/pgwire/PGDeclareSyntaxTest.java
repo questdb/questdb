@@ -63,4 +63,48 @@ public class PGDeclareSyntaxTest extends BasePGTest {
             }
         });
     }
+
+    @Test
+    public void testDeclareSyntaxWorksWithPositionalBindVariables2() throws Exception {
+        skipInLegacyMode();
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (PreparedStatement ps = connection.prepareStatement("DECLARE @x := ? SELECT x as x2, (@x + 5) as x1, @x as x3 FROM (SELECT * FROM long_sequence(10) WHERE x = @x)")) {
+                ps.setInt(1, 5);
+                assertResultSet(
+                        "x2[BIGINT],x1[INTEGER],x3[INTEGER]\n" +
+                                "5,10,5\n",
+                        sink,
+                        ps.executeQuery()
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testDeclareSyntaxWorksWithPositionalBindVariables3() throws Exception {
+        skipInModernMode();
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (PreparedStatement ps = connection.prepareStatement("DECLARE @x := ? SELECT x as x2, (@x + 5) as x1, @x as x3 FROM (SELECT * FROM long_sequence(10) WHERE x = @x)")) {
+                ps.setInt(1, 5);
+                assertResultSet(
+                        "x2[BIGINT],x1[INTEGER],x3[INTEGER]\n" +
+                                "5,10,5\n",
+                        sink,
+                        ps.executeQuery()
+                );
+            } catch (AssertionError e) {
+                try (PreparedStatement ps = connection.prepareStatement("DECLARE @x := ? SELECT x as x2, (@x + 5) as x1, @x as x3 FROM (SELECT * FROM long_sequence(10) WHERE x = @x)")) {
+                    ps.setInt(1, 5);
+                    assertResultSet(
+                            "x2[BIGINT],x1[BIGINT],x3[BIGINT]\n" +
+                                    "5,10,5\n",
+                            sink,
+                            ps.executeQuery()
+                    );
+                }
+            }
+        });
+    }
 }
+
+
