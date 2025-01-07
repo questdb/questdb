@@ -71,7 +71,6 @@ public class SqlParser {
     private static final LowerCaseAsciiCharSequenceHashSet columnAliasStop = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet groupByStopSet = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceIntHashMap joinStartSet = new LowerCaseAsciiCharSequenceIntHashMap();
-    private static final RecursiveReplacingTreeTraversalAlgo recursiveReplacingTreeTraversalAlgo = new RecursiveReplacingTreeTraversalAlgo();
     private static final RewriteDeclaredVariablesInExpressionVisitor rewriteDeclaredVariablesInExpressionVisitor = new RewriteDeclaredVariablesInExpressionVisitor();
     private static final LowerCaseAsciiCharSequenceHashSet setOperations = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet tableAliasStop = new LowerCaseAsciiCharSequenceHashSet();
@@ -165,6 +164,32 @@ public class SqlParser {
                 && (tok.charAt(3) | 32) == 'l'
                 && (tok.charAt(4) | 32) == 'i'
                 && (tok.charAt(5) | 32) == 'c';
+    }
+
+    public static ExpressionNode recursiveReplace(ExpressionNode node, ReplacingVisitor visitor) throws SqlException {
+        if (node == null) {
+            return null;
+        }
+
+        switch (node.paramCount) {
+            case 0:
+                break;
+            case 1:
+                node.rhs = recursiveReplace(node.rhs, visitor);
+                break;
+            case 2:
+                node.lhs = recursiveReplace(node.lhs, visitor);
+                node.rhs = recursiveReplace(node.rhs, visitor);
+                break;
+            default:
+                for (int i = 0; i < node.paramCount; i++) {
+                    ExpressionNode arg = node.args.get(i);
+                    node.args.set(i, recursiveReplace(arg, visitor));
+                }
+                break;
+        }
+
+        return visitor.visit(node);
     }
 
     private static SqlException err(GenericLexer lexer, @Nullable CharSequence tok, @NotNull String msg) {
@@ -2969,11 +2994,18 @@ public class SqlParser {
         }
     }
 
-    private ExpressionNode rewriteDeclaredVariables(ExpressionNode expr, @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls, @Nullable CharSequence exclude) throws SqlException {
+    private ExpressionNode rewriteDeclaredVariables(
+            ExpressionNode expr,
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
+            @Nullable CharSequence exprTargetVariableName
+    ) throws SqlException {
         if (decls == null || decls.size() == 0) { // short circuit null case
             return expr;
         }
-        return recursiveReplacingTreeTraversalAlgo.traverse(expr, rewriteDeclaredVariablesInExpressionVisitor.of(decls, exclude));
+        return recursiveReplace(
+                expr,
+                rewriteDeclaredVariablesInExpressionVisitor.of(decls, exprTargetVariableName)
+        );
     }
 
     private ExpressionNode rewriteJsonExtractCast(ExpressionNode parent) throws SqlException {
@@ -3052,7 +3084,7 @@ public class SqlParser {
     private ExpressionNode rewriteKnownStatements(
             ExpressionNode parent,
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
-            @Nullable CharSequence exclude
+            @Nullable CharSequence exprTargetVariableName
     ) throws SqlException {
         return
                 rewriteDeclaredVariables(
@@ -3066,7 +3098,7 @@ public class SqlParser {
                                                 )
                                         )
                                 )
-                        ), decls, exclude);
+                        ), decls, exprTargetVariableName);
     }
 
     private ExpressionNode rewritePgCast(ExpressionNode parent) throws SqlException {
@@ -3202,11 +3234,17 @@ public class SqlParser {
         digit = 1;
     }
 
-    ExpressionNode expr(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback, @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls, @Nullable CharSequence exclude) throws SqlException {
+    ExpressionNode expr(
+            GenericLexer lexer,
+            QueryModel model,
+            SqlParserCallback sqlParserCallback,
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
+            @Nullable CharSequence exprTargetVariableName
+    ) throws SqlException {
         try {
             expressionTreeBuilder.pushModel(model);
             expressionParser.parseExpr(lexer, expressionTreeBuilder, sqlParserCallback, decls);
-            return rewriteKnownStatements(expressionTreeBuilder.poll(), decls, exclude);
+            return rewriteKnownStatements(expressionTreeBuilder.poll(), decls, exprTargetVariableName);
         } catch (SqlException e) {
             expressionTreeBuilder.reset();
             throw e;
@@ -3293,9 +3331,13 @@ public class SqlParser {
         return model;
     }
 
-    private static class RewriteDeclaredVariablesInExpressionVisitor implements RecursiveReplacingTreeTraversalAlgo.ReplacingVisitor {
+    public interface ReplacingVisitor {
+        ExpressionNode visit(ExpressionNode node) throws SqlException;
+    }
+
+    private static class RewriteDeclaredVariablesInExpressionVisitor implements ReplacingVisitor {
         public LowerCaseCharSequenceObjHashMap<ExpressionNode> decls;
-        public CharSequence exclude;
+        public CharSequence exprTargetVariableName;
         public boolean hasAtChar;
 
         @Override
@@ -3304,7 +3346,7 @@ public class SqlParser {
                 return node;
             }
 
-            if ((hasAtChar = node.token.charAt(0) == '@') && exclude != null && (Chars.equalsIgnoreCase(node.token, exclude))) {
+            if ((hasAtChar = node.token.charAt(0) == '@') && exprTargetVariableName != null && (Chars.equalsIgnoreCase(node.token, exprTargetVariableName))) {
                 return node;
             }
 
@@ -3317,10 +3359,12 @@ public class SqlParser {
             return node;
         }
 
-        RecursiveReplacingTreeTraversalAlgo.ReplacingVisitor of(@NotNull LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
-                                                                @Nullable CharSequence exclude) {
+        ReplacingVisitor of(
+                @NotNull LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
+                @Nullable CharSequence exprTargetVariableName
+        ) {
             this.decls = decls;
-            this.exclude = exclude;
+            this.exprTargetVariableName = exprTargetVariableName;
             return this;
         }
     }

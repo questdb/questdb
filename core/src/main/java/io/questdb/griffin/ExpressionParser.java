@@ -231,7 +231,12 @@ public class ExpressionParser {
         return argStackDepth;
     }
 
-    void parseExpr(GenericLexer lexer, ExpressionParserListener listener, SqlParserCallback sqlParserCallback, @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) throws SqlException {
+    void parseExpr(
+            GenericLexer lexer,
+            ExpressionParserListener listener,
+            SqlParserCallback sqlParserCallback,
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
+    ) throws SqlException {
         try {
             int shadowParseMismatchFirstPosition = -1;
             int paramCount = 0;

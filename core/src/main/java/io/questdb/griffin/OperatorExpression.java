@@ -26,8 +26,6 @@ package io.questdb.griffin;
 
 import io.questdb.std.ObjList;
 
-// Removing the type breaks JDK 8
-@SuppressWarnings("Convert2Diamond")
 public final class OperatorExpression {
     public static final int BINARY = 2;
     public static final int SET = 3;
