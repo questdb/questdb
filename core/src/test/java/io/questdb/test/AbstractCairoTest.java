@@ -530,6 +530,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         sqlExecutionContext.setParallelFilterEnabled(configuration.isSqlParallelFilterEnabled());
         // 30% chance to enable paranoia checking FD mode
         Files.PARANOIA_FD_MODE = new Rnd(System.nanoTime(), System.currentTimeMillis()).nextInt(100) > 70;
+        engine.getMetrics().clear();
     }
 
     @After
@@ -591,7 +592,13 @@ public abstract class AbstractCairoTest extends AbstractTest {
                         RecordCursorFactory factory = cq.getRecordCursorFactory();
                         RecordCursor cursor = factory.getCursor(sqlExecutionContext)
                 ) {
-                    cursor.hasNext();
+                    sink.clear();
+                    Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        // ignore the output, we're looking for an error
+                        TestUtils.println(record, factory.getMetadata(), sink);
+                        sink.clear();
+                    }
                 }
             } else if (cq.getOperation() != null) {
                 try (
