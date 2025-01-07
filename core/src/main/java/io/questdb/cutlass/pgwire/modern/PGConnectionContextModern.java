@@ -139,14 +139,14 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private static final int CACHE_HIT_SELECT_VALID = 4;
     private static final int CACHE_MISS = 0;
     private static final Log LOG = LogFactory.getLog(PGConnectionContextModern.class);
+    // Timeout to prevent getting stuck while draining socket's receive buffer
+    // before closing the socket. Ensures exit if malformed client keeps sending data.
+    private static final long MALFORMED_CLIENT_READ_TIMEOUT_MILLIS = 5000;
     private static final byte MESSAGE_TYPE_READY_FOR_QUERY = 'Z';
     private static final byte MESSAGE_TYPE_SSL_SUPPORTED_RESPONSE = 'S';
     private static final int PREFIXED_MESSAGE_HEADER_LEN = 5;
     private static final int PROTOCOL_TAIL_COMMAND_LENGTH = 64;
     private static final int SSL_REQUEST = 80877103;
-    // Timeout to prevent getting stuck while draining socket's receive buffer
-    // before closing the socket. Ensures exit if malformed client keeps sending data.
-    private static final long MALFORMED_CLIENT_READ_TIMEOUT_MILLIS = 5000;
     private final BatchCallback batchCallback;
     private final ObjectPool<DirectBinarySequence> binarySequenceParamsPool;
     private final BindVariableService bindVariableService;
@@ -166,11 +166,9 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private final ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters;
     private final ArrayDeque<PGPipelineEntry> pipeline = new ArrayDeque<>();
     private final Consumer<? super CharSequence> preparedStatementDeallocator = this::uncacheNamedStatement;
-    private final int recvBufferSize;
     private final ResponseUtf8Sink responseUtf8Sink = new ResponseUtf8Sink();
     private final Rnd rnd;
     private final SecurityContextFactory securityContextFactory;
-    private final int sendBufferSize;
     private final SqlExecutionContextImpl sqlExecutionContext;
     private final WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool;
     private final SCSequence tempSequence = new SCSequence();
@@ -186,11 +184,13 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private PGPipelineEntry pipelineCurrentEntry;
     private long recvBuffer;
     private long recvBufferReadOffset = 0;
+    private int recvBufferSize;
     private long recvBufferWriteOffset = 0;
     private PGResumeCallback resumeCallback;
     private long sendBuffer;
     private long sendBufferLimit;
     private long sendBufferPtr;
+    private int sendBufferSize;
     private SuspendEvent suspendEvent;
     // insert 'statements' are cached only for the duration of user session
     private SimpleAssociativeCache<TypesAndInsertModern> taiCache;
@@ -211,16 +211,15 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         super(
                 configuration.getFactoryProvider().getPGWireSocketFactory(),
                 configuration.getNetworkFacade(),
-                LOG,
-                engine.getMetrics().pgWire().connectionCountGauge()
+                LOG
         );
 
         try {
             this.engine = engine;
             this.configuration = configuration;
             this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
-            this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
-            this.sendBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
+            this.recvBufferSize = configuration.getRecvBufferSize();
+            this.sendBufferSize = configuration.getSendBufferSize();
             this.forceSendFragmentationChunkSize = configuration.getForceSendFragmentationChunkSize();
             this.forceRecvFragmentationChunkSize = configuration.getForceRecvFragmentationChunkSize();
             this.characterStore = new CharacterStore(
@@ -410,7 +409,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             shutdownSocketGracefully();
             throw bpe; // request disconnection
         } catch (Throwable th) {
-            metrics.pgWire().getErrorCounter().inc();
+            metrics.pgWireMetrics().getErrorCounter().inc();
             throw th;
         }
 
@@ -465,9 +464,13 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         super.of(fd, dispatcher);
         sqlExecutionContext.with(fd);
         if (recvBuffer == 0) {
+            // re-read recv buffer size in case the config was reloaded
+            this.recvBufferSize = configuration.getRecvBufferSize();
             this.recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
         }
         if (sendBuffer == 0) {
+            // re-read send buffer size in case the config was reloaded
+            this.sendBufferSize = configuration.getSendBufferSize();
             this.sendBuffer = Unsafe.malloc(sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
             this.sendBufferPtr = sendBuffer;
             this.responseUtf8Sink.bookmarkPtr = this.sendBufferPtr;
@@ -648,6 +651,15 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         if (!socket.supportsTls() || tlsSessionStarting || socket.isTlsSessionStarted()) {
             return;
         }
+
+        // This is the initial stage of communication.
+        // The only message we've partially sent so far is the SSL request handling error.
+        if (bufferRemainingSize > 0) {
+            sendBuffer(bufferRemainingOffset, bufferRemainingSize);
+            // The client received the response; shutdown the socket
+            throw BadProtocolException.INSTANCE;
+        }
+
         recv();
         int expectedLen = 2 * Integer.BYTES;
         int len = (int) (recvBufferWriteOffset - recvBufferReadOffset);
@@ -1103,7 +1115,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         }
     }
 
-    // processes one or more queries (batch/script). "Simple Query" in PostgresSQL docs.
+    // processes one or more queries (batch/script). "Simple Query" in PostgreSQL docs.
     private void msgQuery(long lo, long limit) throws BadProtocolException, PeerIsSlowToReadException, QueryPausedException, PeerDisconnectedException {
         if (pipelineCurrentEntry != null && pipelineCurrentEntry.isError()) {
             return;

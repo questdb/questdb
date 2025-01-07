@@ -236,7 +236,7 @@ public class SqlParser {
     }
 
     private void assertNotDot(GenericLexer lexer, CharSequence tok) throws SqlException {
-        if (Chars.indexOf(tok, '.') != -1) {
+        if (Chars.indexOfUnquoted(tok, '.') != -1) {
             throw SqlException.$(lexer.lastTokenPosition(), "'.' is not allowed here");
         }
     }
@@ -255,7 +255,7 @@ public class SqlParser {
         return SqlUtil.createColumnAlias(
                 characterStore,
                 unquote(node.token),
-                Chars.indexOf(node.token, '.'),
+                Chars.indexOfUnquoted(node.token, '.'),
                 aliasToColumnMap,
                 node.type != ExpressionNode.LITERAL
         );
@@ -1250,6 +1250,7 @@ public class SqlParser {
                 // show search_path
                 // show datestyle
                 // show time zone
+                // show create table tab
                 if (isTablesKeyword(tok)) {
                     showKind = QueryModel.SHOW_TABLES;
                 } else if (isColumnsKeyword(tok)) {
@@ -1282,6 +1283,9 @@ public class SqlParser {
                     showKind = QueryModel.SHOW_SERVER_VERSION;
                 } else if (SqlKeywords.isServerVersionNumKeyword(tok)) {
                     showKind = QueryModel.SHOW_SERVER_VERSION_NUM;
+                } else if (isCreateKeyword(tok)) {
+                    parseShowCreateTable(lexer, model);
+                    showKind = QueryModel.SHOW_CREATE_TABLE;
                 } else {
                     showKind = sqlParserCallback.parseShowSql(lexer, model, tok, expressionNodePool);
                 }
@@ -1725,13 +1729,7 @@ public class SqlParser {
         if (tok == null || !isFromKeyword(tok)) {
             throw SqlException.position(lexer.lastTokenPosition()).put("expected 'from'");
         }
-        tok = SqlUtil.fetchNext(lexer);
-        if (tok == null) {
-            throw SqlException.position(lexer.getPosition()).put("expected a table name");
-        }
-        final CharSequence tableName = assertNoDotsAndSlashes(unquote(tok), lexer.lastTokenPosition());
-        ExpressionNode tableNameExpr = expressionNodePool.next().of(ExpressionNode.LITERAL, tableName, 0, lexer.lastTokenPosition());
-        model.setTableNameExpr(tableNameExpr);
+        parseTableName(lexer, model);
     }
 
     private ExecutionModel parseInsert(GenericLexer lexer, SqlParserCallback sqlParserCallback) throws SqlException {
@@ -2422,7 +2420,7 @@ public class SqlParser {
                         throw err(lexer, null, "'from' expected");
                     }
                     CharSequence alias;
-                    if (qc.getAst().type == ExpressionNode.CONSTANT && Chars.indexOf(token, '.') != -1) {
+                    if (qc.getAst().type == ExpressionNode.CONSTANT && Chars.indexOfUnquoted(token, '.') != -1) {
                         alias = createConstColumnAlias(aliasMap);
                     } else {
                         alias = createColumnAlias(qc.getAst(), aliasMap);
@@ -2458,7 +2456,7 @@ public class SqlParser {
                     model.setNestedModel(parseWith(lexer, withClause, sqlParserCallback));
                     model.setAlias(literal(tableName, expr.position));
                 } else {
-                    int dot = Chars.indexOf(tableName, '.');
+                    int dot = Chars.indexOfUnquoted(tableName, '.');
                     if (dot == -1) {
                         model.setTableNameExpr(literal(tableName, expr.position));
                     } else {
@@ -2480,11 +2478,30 @@ public class SqlParser {
         }
     }
 
+    /*
+        For use with `SHOW CREATE TABLE my_table`
+        Expect that we already checked the `CREATE`.
+     */
+    private void parseShowCreateTable(GenericLexer lexer, QueryModel model) throws SqlException {
+        expectTok(lexer, "table");
+        parseTableName(lexer, model);
+    }
+
     private int parseSymbolCapacity(GenericLexer lexer) throws SqlException {
         final int errorPosition = lexer.getPosition();
         final int symbolCapacity = expectInt(lexer);
         TableUtils.validateSymbolCapacity(errorPosition, symbolCapacity);
         return Numbers.ceilPow2(symbolCapacity);
+    }
+
+    private void parseTableName(GenericLexer lexer, QueryModel model) throws SqlException {
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok == null) {
+            throw SqlException.position(lexer.getPosition()).put("expected a table name");
+        }
+        final CharSequence tableName = assertNoDotsAndSlashes(unquote(tok), lexer.lastTokenPosition());
+        ExpressionNode tableNameExpr = expressionNodePool.next().of(ExpressionNode.LITERAL, tableName, 0, lexer.lastTokenPosition());
+        model.setTableNameExpr(tableNameExpr);
     }
 
     private long parseTimeUnit(GenericLexer lexer) throws SqlException {

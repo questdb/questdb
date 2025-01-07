@@ -24,7 +24,13 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AlterTableUtils;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
@@ -332,6 +338,31 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddColumnIfNotExists() throws Exception {
+        createX();
+        execute("alter table x add column if not exists a int");
+        execute("alter table x add column description string");
+    }
+
+    @Test
+    public void testAddDuplicateColumnIfNotExists() throws Exception {
+        createX();
+        execute("alter table x add column a int");
+        execute("alter table x add column if not exists a int");
+    }
+
+    @Test
+    public void testAddColumnINotExistsWithMissingNotToken() throws Exception {
+        assertFailure("alter table x add column if exists b int", 28, "'not' expected");
+    }
+
+    @Test
+    public void testAddColumnIfNoExistsUnexpectedToken() throws Exception {
+        assertFailure("alter table x add column if not a int", 32,
+                "unexpected token 'a' for if not exists");
+    }
+
+    @Test
     public void testAddExpectColumnKeyword() throws Exception {
         assertFailure("alter table x add", 17, "'column' or column name");
     }
@@ -366,7 +397,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                         }
                     };
 
-                    try (CairoEngine engine = new CairoEngine(configuration, metrics)) {
+                    try (CairoEngine engine = new CairoEngine(configuration)) {
                         try (SqlCompiler compiler = engine.getSqlCompiler()) {
                             execute(compiler, "alter table x add column meh symbol cache");
 
@@ -543,7 +574,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                         }
                     };
 
-                    try (CairoEngine engine = new CairoEngine(configuration, metrics)) {
+                    try (CairoEngine engine = new CairoEngine(configuration)) {
                         try (SqlCompiler compiler = engine.getSqlCompiler()) {
                             execute(compiler, "alter table x add column meh symbol", sqlExecutionContext);
                             try (TableReader reader = getReader("x")) {

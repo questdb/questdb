@@ -25,17 +25,18 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.PartitionFrameCursor;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
 public class FullBwdPartitionFrameCursorFactory extends AbstractPartitionFrameCursorFactory {
-    private final FullBwdPartitionFrameCursor cursor = new FullBwdPartitionFrameCursor();
-
+    private final FullBwdPartitionFrameCursor cursor;
     private FullFwdPartitionFrameCursor fwdCursor;
 
-    public FullBwdPartitionFrameCursorFactory(TableToken tableToken, long metadataVersion, GenericRecordMetadata metadata) {
+    public FullBwdPartitionFrameCursorFactory(TableToken tableToken, long metadataVersion, RecordMetadata metadata) {
         super(tableToken, metadataVersion, metadata);
+        this.cursor = new FullBwdPartitionFrameCursor();
     }
 
     @Override

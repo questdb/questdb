@@ -24,11 +24,17 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import org.jetbrains.annotations.Nullable;
+
 /**
  * Interface for retrieving information about a partition frame.
  * <p>
  * Each partition frame holds a number of {@link PageFrame}s.
  * Think, a partition or a slice of a partition.
+ * <p>
+ * In case of a Parquet partition, frame corresponds to a Parquet file
+ * or a slice within it.
  * <p>
  * Partition frame is an internal API and shouldn't be used for data access.
  * Page frames are meant to be used for data access.
@@ -36,7 +42,18 @@ package io.questdb.cairo.sql;
 public interface PartitionFrame {
 
     /**
-     * @return numeric index of the current partition
+     * @return parquet decoder initialized for the partition for parquet partitions; null for native partitions
+     */
+    @Nullable
+    PartitionDecoder getParquetDecoder();
+
+    /**
+     * @return format of the frame's partition; set to {@link PartitionFormat#NATIVE} or {@link PartitionFormat#PARQUET}
+     */
+    byte getPartitionFormat();
+
+    /**
+     * @return numeric index of the frame's partition
      */
     int getPartitionIndex();
 

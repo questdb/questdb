@@ -243,7 +243,6 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                             tableWriter.getTableToken(),
                             tableWriter.getPartitionBy(),
                             tableWriter.checkScoreboardHasReadersBeforeLastCommittedTxn(),
-                            tableWriter.getMetadata(),
                             tableWriter.getTruncateVersion(),
                             tableWriter.getTxn()
                     );
@@ -629,12 +628,13 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
         RecordMetadata metadata = tableWriter.getMetadata();
         try {
             path.trimTo(rootLen);
-            TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), partitionTimestamp, partitionNameTxn);
+            TableUtils.setPathForNativePartition(path, tableWriter.getPartitionBy(), partitionTimestamp, partitionNameTxn);
             int pathTrimToLen = path.size();
             for (int i = 0, n = updateColumnIndexes.size(); i < n; i++) {
                 int columnIndex = updateColumnIndexes.get(i);
-                CharSequence name = metadata.getColumnName(columnIndex);
+                String columnName = metadata.getColumnName(columnIndex);
                 int columnType = metadata.getColumnType(columnIndex);
+                boolean isIndexed = ColumnType.isSymbol(columnType) && metadata.isColumnIndexed(columnIndex);
 
                 final long columnTop = tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1L);
                 long rowCount = columnTop > -1 ? partitionSize - columnTop : 0;
@@ -644,7 +644,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                     tableWriter.upsertColumnVersion(partitionTimestamp, columnIndex, columnTop);
                     if (rowCount > 0) {
                         // columnTop == -1 means column did not exist at the partition
-                        purgingOperator.add(columnIndex, existingVersion, partitionTimestamp, partitionNameTxn);
+                        purgingOperator.add(columnIndex, columnName, columnType, isIndexed, existingVersion, partitionTimestamp, partitionNameTxn);
                     }
                 }
 
@@ -660,7 +660,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                     if (forWrite || rowCount > 0) {
                         colMemIndex.of(
                                 ff,
-                                iFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
+                                iFile(path.trimTo(pathTrimToLen), columnName, columnNameTxn),
                                 dataAppendPageSize,
                                 -1,
                                 MemoryTag.MMAP_UPDATE,
@@ -668,7 +668,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                         );
                         colMemVar.of(
                                 ff,
-                                dFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
+                                dFile(path.trimTo(pathTrimToLen), columnName, columnNameTxn),
                                 dataAppendPageSize,
                                 -1,
                                 MemoryTag.MMAP_UPDATE,
@@ -683,7 +683,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                     if (forWrite || rowCount > 0) {
                         colMem.of(
                                 ff,
-                                dFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
+                                dFile(path.trimTo(pathTrimToLen), columnName, columnNameTxn),
                                 dataAppendPageSize,
                                 -1,
                                 MemoryTag.MMAP_UPDATE,

@@ -26,6 +26,7 @@ package io.questdb.cutlass.pgwire.modern;
 
 import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GeoHashes;
@@ -68,6 +69,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Long128;
 import io.questdb.std.Long256;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
@@ -126,7 +128,18 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private final BitSet msgBindSelectFormatCodes = new BitSet();
     // types are sent to us via "parse" message
     private final IntList msgParseParameterTypeOIDs;
-    private final IntList outParameterTypeDescriptionTypeOIDs;
+
+    // List with encoded bind variable types. It combines types client sent to us in PARSE message and types
+    // inferred by the SQL compiler. Each entry uses lower 32 bits for QuestDB native type and upper 32 bits
+    // contains PGWire OID type. If a client sent us a type, then the high 32 bits (=OID type) is set to the same value.
+    // Q: Why do we have to store each variable type in both native and pgwire encoding?
+    //    Cannot we just maintain a single list and convert when needed?
+    // A: Some QuestDB natives do not have native equivalents. For example BYTE or GEOHASH
+    // Q: Cannot we just maintain QuestDB native types and convert to PGWire OIDs when needed?
+    // A: PGWire clients could have specified their own expectations about type in a PARSE message,
+    //    and we have to respect this. Thus, if a PARSE message contains a type VARCHAR then
+    //    we need to read it from wire as VARCHAR even we use e.g. INT internally. So we need both native and wire types.
+    private final LongList outParameterTypeDescriptionTypes;
     private final ObjList<String> pgResultSetColumnNames;
     // list of pair: column types (with format flag stored in first bit) AND additional type flag
     private final IntList pgResultSetColumnTypes;
@@ -198,7 +211,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.compiledQueryCopy = compiledQuery;
         this.maxRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
         this.msgParseParameterTypeOIDs = new IntList();
-        this.outParameterTypeDescriptionTypeOIDs = new IntList();
+        this.outParameterTypeDescriptionTypes = new LongList();
         this.pgResultSetColumnTypes = new IntList();
         this.pgResultSetColumnNames = new ObjList<>();
     }
@@ -258,7 +271,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         msgBindParameterFormatCodes.clear();
         msgBindSelectFormatCodes.clear();
         msgParseParameterTypeOIDs.clear();
-        outParameterTypeDescriptionTypeOIDs.clear();
+        outParameterTypeDescriptionTypes.clear();
         pgResultSetColumnNames.clear();
         pgResultSetColumnTypes.clear();
         portalNames.clear();
@@ -318,10 +331,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 pendingWriter.value = Misc.free(w);
             }
             pendingWriters.clear();
-        } catch (Throwable e) {
+        } catch (Throwable th) {
             // free remaining writers
             rollback(pendingWriters);
-            throw kaput().put(e);
+            throw kaput().put(th);
         }
     }
 
@@ -354,8 +367,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 setupEntryAfterSQLCompilation(sqlExecutionContext, taiPool, cq);
             }
             validatePgResultSetColumnTypesAndNames();
-        } catch (Throwable e) {
-            throw kaput().put(e);
+        } catch (Throwable th) {
+            throw kaput().put(th);
         }
     }
 
@@ -615,23 +628,34 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     rollback(pendingWriters);
                     return IMPLICIT_TRANSACTION;
                 case CompiledQuery.CREATE_TABLE_AS_SELECT:
+                    engine.getMetrics().pgWireMetrics().markStart();
                     try (OperationFuture fut = operation.execute(sqlExecutionContext, tempSequence)) {
                         fut.await();
                         sqlAffectedRowCount = fut.getAffectedRowsCount();
+                    } finally {
+                        engine.getMetrics().pgWireMetrics().markComplete();
                     }
                     break;
                 case CompiledQuery.CREATE_TABLE:
                     // fall-through
                 case CompiledQuery.DROP:
+                    engine.getMetrics().pgWireMetrics().markStart();
                     try (OperationFuture fut = operation.execute(sqlExecutionContext, tempSequence)) {
                         fut.await();
+                    } finally {
+                        engine.getMetrics().pgWireMetrics().markComplete();
                     }
                     break;
                 default:
                     // execute statements that either have not been parse-executed
                     // or we are re-executing it from a prepared statement
                     if (!empty) {
-                        engine.execute(sqlText, sqlExecutionContext);
+                        engine.getMetrics().pgWireMetrics().markStart();
+                        try {
+                            engine.execute(sqlText, sqlExecutionContext);
+                        } finally {
+                            engine.getMetrics().pgWireMetrics().markComplete();
+                        }
                     }
                     break;
             }
@@ -640,7 +664,14 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         } catch (Throwable th) {
             if (th instanceof FlyweightMessageContainer) {
                 setErrorMessagePosition(((FlyweightMessageContainer) th).getPosition());
-                getErrorMessageSink().put(((FlyweightMessageContainer) th).getFlyweightMessage());
+                final StringSink errorMsgSink = getErrorMessageSink();
+                int errno;
+                if (th instanceof CairoException && (errno = ((CairoException) th).getErrno()) != CairoException.NON_CRITICAL) {
+                    errorMsgSink.put('[');
+                    errorMsgSink.put(errno);
+                    errorMsgSink.put("] ");
+                }
+                errorMsgSink.put(((FlyweightMessageContainer) th).getFlyweightMessage());
             } else {
                 String msg = th.getMessage();
                 if (msg != null) {
@@ -822,8 +853,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.sqlType = tai.getSqlType();
         this.cacheHit = true;
         this.tai = tai;
-        this.outParameterTypeDescriptionTypeOIDs.clear();
-        this.outParameterTypeDescriptionTypeOIDs.addAll(tai.getPgOutParameterTypeOIDs());
+        this.outParameterTypeDescriptionTypes.clear();
+        this.outParameterTypeDescriptionTypes.addAll(tai.getPgOutParameterTypes());
     }
 
     public void ofCachedSelect(CharSequence utf16SqlText, TypesAndSelectModern tas) {
@@ -833,8 +864,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.sqlType = tas.getSqlType();
         this.tas = tas;
         this.cacheHit = true;
-        this.outParameterTypeDescriptionTypeOIDs.clear();
-        this.outParameterTypeDescriptionTypeOIDs.addAll(tas.getPgOutParameterTypeOIDs());
+        this.outParameterTypeDescriptionTypes.clear();
+        this.outParameterTypeDescriptionTypes.addAll(tas.getOutPgParameterTypes());
     }
 
     public void ofEmpty(CharSequence utf16SqlText) {
@@ -851,8 +882,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.sqlType = tas.getSqlType();
         this.tas = tas;
         this.cacheHit = true;
-        this.outParameterTypeDescriptionTypeOIDs.clear();
-        assert tas.getPgOutParameterTypeOIDs().size() == 0;
+        this.outParameterTypeDescriptionTypes.clear();
+        assert tas.getOutPgParameterTypes().size() == 0;
 
         // We cannot use regular msgExecuteSelect() since this method is called from a callback in SqlCompiler and
         // msgExecuteSelect() may try to recompile the query on its own when it gets TableReferenceOutOfDateException.
@@ -1014,51 +1045,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         bindVariableService.setBoolean(variableIndex, valueSize == 4);
     }
 
-    // defines bind variable from statement description types we sent to client.
-    // that is a combination of types we received in the PARSE message and types the compiler inferred
-    // unknown types are defined as strings
-    private void bindDefineBindVariableType(BindVariableService bindVariableService, int j) throws SqlException {
-        switch (outParameterTypeDescriptionTypeOIDs.getQuick(j)) {
-            case X_PG_INT4:
-                bindVariableService.define(j, ColumnType.INT, 0);
-                break;
-            case X_PG_INT8:
-                bindVariableService.define(j, ColumnType.LONG, 0);
-                break;
-            case X_PG_TIMESTAMP:
-            case X_PG_TIMESTAMP_TZ:
-                bindVariableService.define(j, ColumnType.TIMESTAMP, 0);
-                break;
-            case X_PG_INT2:
-                bindVariableService.define(j, ColumnType.SHORT, 0);
-                break;
-            case X_PG_FLOAT8:
-                bindVariableService.define(j, ColumnType.DOUBLE, 0);
-                break;
-            case X_PG_FLOAT4:
-                bindVariableService.define(j, ColumnType.FLOAT, 0);
-                break;
-            case X_PG_CHAR:
-                bindVariableService.define(j, ColumnType.CHAR, 0);
-                break;
-            case X_PG_DATE:
-                bindVariableService.define(j, ColumnType.DATE, 0);
-                break;
-            case X_PG_BOOL:
-                bindVariableService.define(j, ColumnType.BOOLEAN, 0);
-                break;
-            case X_PG_BYTEA:
-                bindVariableService.define(j, ColumnType.BINARY, 0);
-                break;
-            case X_PG_UUID:
-                bindVariableService.define(j, ColumnType.UUID, 0);
-                break;
-            default:
-                bindVariableService.define(j, ColumnType.STRING, 0);
-                break;
-        }
-    }
-
     private long calculateRecordTailSize(
             Record record,
             int startFrom,
@@ -1097,8 +1083,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.msgParseParameterTypeOIDs.clear();
         this.msgParseParameterTypeOIDs.addAll(blueprint.msgParseParameterTypeOIDs);
 
-        this.outParameterTypeDescriptionTypeOIDs.clear();
-        this.outParameterTypeDescriptionTypeOIDs.addAll(blueprint.outParameterTypeDescriptionTypeOIDs);
+        this.outParameterTypeDescriptionTypes.clear();
+        this.outParameterTypeDescriptionTypes.addAll(blueprint.outParameterTypeDescriptionTypes);
 
         this.pgResultSetColumnTypes.clear();
         this.pgResultSetColumnTypes.addAll(blueprint.pgResultSetColumnTypes);
@@ -1133,6 +1119,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         // Bind variables have to be configured for the cursor.
         // We have stored the following:
         // - outTypeDescriptionTypeOIDs - OIDS of the parameter types, these are all types present in the SQL
+        // - outTypeDescriptionType - QuestDB native types, as inferred by SQL compiler
         // - parameter values - list of parameter values supplied by the client; this list may be
         //                      incomplete insofar as being shorter than the list of bind variables. The values
         //                      are read from the parameter value arena.
@@ -1145,71 +1132,87 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         bindVariableService.clear();
         long lo = parameterValueArenaPtr;
         long msgLimit = parameterValueArenaHi;
-        for (int i = 0, n = outParameterTypeDescriptionTypeOIDs.size(); i < n; i++) {
-            if (i < msgBindParameterValueCount) {
-                // read value from the arena
-                final int valueSize = getInt(lo, msgLimit, "malformed bind variable");
-                lo += Integer.BYTES;
-                if (valueSize == -1) {
-                    // value is not provided, assume NULL
-                    bindDefineBindVariableType(bindVariableService, i);
-                } else {
-                    if (msgBindParameterFormatCodes.get(i)) {
-                        // binary value or a string (binary string and text string is the same)
-                        switch (outParameterTypeDescriptionTypeOIDs.getQuick(i)) {
-                            case X_PG_INT4:
-                                setBindVariableAsInt(i, lo, valueSize, bindVariableService);
-                                break;
-                            case X_PG_INT8:
-                                setBindVariableAsLong(i, lo, valueSize, bindVariableService);
-                                break;
-                            case X_PG_TIMESTAMP:
-                            case X_PG_TIMESTAMP_TZ:
-                                setBindVariableAsTimestamp(i, lo, valueSize, bindVariableService);
-                                break;
-                            case X_PG_INT2:
-                                setBindVariableAsShort(i, lo, valueSize, bindVariableService);
-                                break;
-                            case X_PG_FLOAT8:
-                                setBindVariableAsDouble(i, lo, valueSize, bindVariableService);
-                                break;
-                            case X_PG_FLOAT4:
-                                setBindVariableAsFloat(i, lo, valueSize, bindVariableService);
-                                break;
-                            case X_PG_CHAR:
-                                setBindVariableAsChar(i, lo, valueSize, bindVariableService, characterStore);
-                                break;
-                            case X_PG_DATE:
-                                setBindVariableAsDate(i, lo, valueSize, bindVariableService, characterStore);
-                                break;
-                            case X_PG_BOOL:
-                                setBindVariableAsBoolean(i, valueSize, bindVariableService);
-                                break;
-                            case X_PG_BYTEA:
-                                setBindVariableAsBin(i, lo, valueSize, bindVariableService, binarySequenceParamsPool);
-                                break;
-                            case X_PG_UUID:
-                                setUuidBindVariable(i, lo, valueSize, bindVariableService);
-                                break;
-                            default:
-                                // before we bind a string, we need to define the type of the variable
-                                // so the binding process can cast the string as required
-                                bindDefineBindVariableType(bindVariableService, i);
-                                setBindVariableAsStr(i, lo, valueSize, bindVariableService, characterStore, utf8String);
-                                break;
-                        }
-                    } else {
-                        // read as a string
-                        bindDefineBindVariableType(bindVariableService, i);
+        for (int i = 0, n = outParameterTypeDescriptionTypes.size(); i < n; i++) {
+            // lower 32 bits = native type, higher 32 bits = pgwire type
+            long encodedType = outParameterTypeDescriptionTypes.getQuick(i);
+
+            // define binding variable. we have to use the exact type as was inferred by the compiler. we cannot use
+            // pgwire equivalent. why? some QuestDB native types do not have exact equivalent in pgwire so we approximate
+            // them by using the most similar/suitable type
+            // example: there is no 8-bit unsigned integer in pgwire, but there is a 'byte' type in QuestDB.
+            //          so we use int2 in pgwire for binding variables inferred as 'byte'. however, int2 is also
+            //          used for 'short' binding variables. when we are defining a binding variable we use the
+            //          exact type previously provided by sql compiler. if we drive everything by 'pgwire' types
+            //          then pgwire int2 would define a 'short binding variable. however if the compiled plan
+            //          expect 'byte' then it will call 'function.getByte()' and 'shortFunction.getByte()' throws
+            //          unsupported operation exception.
+            int nativeType = Numbers.decodeLowInt(encodedType);
+            bindVariableService.define(i, nativeType, 0);
+
+            if (i >= msgBindParameterValueCount) {
+                // client did not set this binding variable, keep it unset (=null)
+                continue;
+            }
+
+            // read value from the arena
+            final int valueSize = getInt(lo, msgLimit, "malformed bind variable");
+            lo += Integer.BYTES;
+            if (valueSize == -1) {
+                // value is not provided, assume NULL
+                continue;
+            }
+
+            // read the pgwire protocol types
+            if (msgBindParameterFormatCodes.get(i)) {
+                // beware, pgwire type is encoded as big endian
+                // that's why we use X_PG_INT4 and not just PG_INT4
+                int pgWireType = Numbers.decodeHighInt(encodedType);
+                switch (pgWireType) {
+                    case X_PG_INT4:
+                        setBindVariableAsInt(i, lo, valueSize, bindVariableService);
+                        break;
+                    case X_PG_INT8:
+                        setBindVariableAsLong(i, lo, valueSize, bindVariableService);
+                        break;
+                    case X_PG_TIMESTAMP:
+                    case X_PG_TIMESTAMP_TZ:
+                        setBindVariableAsTimestamp(i, lo, valueSize, bindVariableService);
+                        break;
+                    case X_PG_INT2:
+                        setBindVariableAsShort(i, lo, valueSize, bindVariableService);
+                        break;
+                    case X_PG_FLOAT8:
+                        setBindVariableAsDouble(i, lo, valueSize, bindVariableService);
+                        break;
+                    case X_PG_FLOAT4:
+                        setBindVariableAsFloat(i, lo, valueSize, bindVariableService);
+                        break;
+                    case X_PG_CHAR:
+                        setBindVariableAsChar(i, lo, valueSize, bindVariableService, characterStore);
+                        break;
+                    case X_PG_DATE:
+                        setBindVariableAsDate(i, lo, valueSize, bindVariableService, characterStore);
+                        break;
+                    case X_PG_BOOL:
+                        setBindVariableAsBoolean(i, valueSize, bindVariableService);
+                        break;
+                    case X_PG_BYTEA:
+                        setBindVariableAsBin(i, lo, valueSize, bindVariableService, binarySequenceParamsPool);
+                        break;
+                    case X_PG_UUID:
+                        setUuidBindVariable(i, lo, valueSize, bindVariableService);
+                        break;
+                    default:
+                        // before we bind a string, we need to define the type of the variable
+                        // so the binding process can cast the string as required
                         setBindVariableAsStr(i, lo, valueSize, bindVariableService, characterStore, utf8String);
-                    }
-                    lo += valueSize;
+                        break;
                 }
             } else {
-                // set NULL for the type
-                // todo: test how this works with vararg function args.
-                defineBindVariableType(sqlExecutionContext.getBindVariableService(), i);
+                // read as a string
+                setBindVariableAsStr(i, lo, valueSize, bindVariableService, characterStore, utf8String);
             }
+            lo += valueSize;
         }
     }
 
@@ -1276,7 +1279,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             case X_PG_UUID:
                 bindVariableService.define(j, ColumnType.UUID, 0);
                 break;
-            case 0:
+            case PG_UNSPECIFIED:
                 // unknown types, we are not defining them for now - this gives
                 // the compiler a chance to infer the best possible type
                 break;
@@ -1347,10 +1350,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         return BadProtocolException.instance(this);
     }
 
-    private long msgBindComputeParameterValueAreaSize(
-            long lo,
-            long msgLimit
-    ) throws BadProtocolException {
+    private long msgBindComputeParameterValueAreaSize(long lo, long msgLimit) throws BadProtocolException {
         if (msgBindParameterValueCount > 0) {
             long l = lo;
             for (int j = 0; j < msgBindParameterValueCount; j++) {
@@ -1375,26 +1375,31 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool
     ) throws SqlException, BadProtocolException {
         if (transactionState != ERROR_TRANSACTION) {
+            engine.getMetrics().pgWireMetrics().markStart();
             // execute against writer from the engine, synchronously (null sequence)
-            for (int attempt = 1; ; attempt++) {
-                copyParameterValuesToBindVariableService(
-                        sqlExecutionContext,
-                        characterStore,
-                        utf8String,
-                        binarySequenceParamsPool
-                );
-                try (OperationFuture fut = compiledQuery.execute(sqlExecutionContext, tempSequence, false)) {
-                    // this doesn't actually wait, because the call is synchronous
-                    fut.await();
-                    sqlAffectedRowCount = fut.getAffectedRowsCount();
-                    break;
-                } catch (TableReferenceOutOfDateException e) {
-                    Misc.free(compiledQuery.getUpdateOperation());
-                    if (attempt == maxRecompileAttempts) {
-                        throw e;
+            try {
+                for (int attempt = 1; ; attempt++) {
+                    copyParameterValuesToBindVariableService(
+                            sqlExecutionContext,
+                            characterStore,
+                            utf8String,
+                            binarySequenceParamsPool
+                    );
+                    try (OperationFuture fut = compiledQuery.execute(sqlExecutionContext, tempSequence, false)) {
+                        // this doesn't actually wait, because the call is synchronous
+                        fut.await();
+                        sqlAffectedRowCount = fut.getAffectedRowsCount();
+                        break;
+                    } catch (TableReferenceOutOfDateException e) {
+                        Misc.free(compiledQuery.getUpdateOperation());
+                        if (attempt == maxRecompileAttempts) {
+                            throw e;
+                        }
+                        compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool);
                     }
-                    compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool);
                 }
+            } finally {
+                engine.getMetrics().pgWireMetrics().markComplete();
             }
         }
     }
@@ -1416,34 +1421,39 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             case IMPLICIT_TRANSACTION:
                 // fall through, there is no difference between implicit and explicit transaction at this stage
             case IN_TRANSACTION: {
-                for (int attempt = 1; ; attempt++) {
-                    copyParameterValuesToBindVariableService(
-                            sqlExecutionContext,
-                            characterStore,
-                            utf8String,
-                            binarySequenceParamsPool
-                    );
-                    InsertMethod m;
-                    try {
-                        m = insertOp.createMethod(sqlExecutionContext, writerSource);
+                engine.getMetrics().pgWireMetrics().markStart();
+                try {
+                    for (int attempt = 1; ; attempt++) {
+                        copyParameterValuesToBindVariableService(
+                                sqlExecutionContext,
+                                characterStore,
+                                utf8String,
+                                binarySequenceParamsPool
+                        );
+                        InsertMethod m;
                         try {
-                            sqlAffectedRowCount = m.execute();
-                            TableWriterAPI writer = m.popWriter();
-                            pendingWriters.put(writer.getTableToken(), writer);
-                            if (tai.hasBindVariables()) {
-                                taiCache.put(sqlText, tai);
+                            m = insertOp.createMethod(sqlExecutionContext, writerSource);
+                            try {
+                                sqlAffectedRowCount = m.execute();
+                                TableWriterAPI writer = m.popWriter();
+                                pendingWriters.put(writer.getTableToken(), writer);
+                                if (tai.hasBindVariables()) {
+                                    taiCache.put(sqlText, tai);
+                                }
+                            } catch (Throwable e) {
+                                Misc.free(m);
+                                throw e;
                             }
-                        } catch (Throwable e) {
-                            Misc.free(m);
-                            throw e;
+                            break;
+                        } catch (TableReferenceOutOfDateException e) {
+                            if (attempt == maxRecompileAttempts) {
+                                throw e;
+                            }
+                            compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool);
                         }
-                        break;
-                    } catch (TableReferenceOutOfDateException e) {
-                        if (attempt == maxRecompileAttempts) {
-                            throw e;
-                        }
-                        compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool);
                     }
+                } finally {
+                    engine.getMetrics().pgWireMetrics().markComplete();
                 }
             }
             break;
@@ -1466,6 +1476,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             int maxRecompileAttempts
     ) throws SqlException, BadProtocolException {
         if (cursor == null) {
+            engine.getMetrics().pgWireMetrics().markStart();
+
             // commit implicitly if we are not in a transaction
             // this makes data inserted in the same pipeline visible to the select
             if (transactionState == IMPLICIT_TRANSACTION) {
@@ -1474,6 +1486,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
             sqlExecutionContext.getCircuitBreaker().resetTimer();
             sqlExecutionContext.setCacheHit(cacheHit);
+            // if the current execution is in the execute stage of prepare-execute mode, we always set the `cacheHit` to true after the first execution.
+            // (The execute stage always does not compile the query, while the first execution corresponds to the prepare stage's cacheHit flag.)
+            if (preparedStatement) {
+                cacheHit = true;
+            }
+
             try {
                 copyParameterValuesToBindVariableService(
                         sqlExecutionContext,
@@ -1527,52 +1545,67 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool
     ) throws SqlException, BadProtocolException {
         if (transactionState != ERROR_TRANSACTION) {
+            engine.getMetrics().pgWireMetrics().markStart();
             // execute against writer from the engine, synchronously (null sequence)
-            for (int attempt = 1; ; attempt++) {
-                copyParameterValuesToBindVariableService(
-                        sqlExecutionContext,
-                        characterStore,
-                        utf8String,
-                        binarySequenceParamsPool
-                );
-                try {
-                    UpdateOperation updateOperation = compiledQuery.getUpdateOperation();
-                    TableToken tableToken = updateOperation.getTableToken();
-                    final int index = pendingWriters.keyIndex(tableToken);
-                    if (index < 0) {
-                        updateOperation.withContext(sqlExecutionContext);
-                        // cached writers to remain in the list until transaction end
-                        @SuppressWarnings("resource")
-                        TableWriterAPI tableWriterAPI = pendingWriters.valueAt(index);
-                        // Update implicitly commits. WAL table cannot do 2 commits in 1 call and require commits to be made upfront.
-                        tableWriterAPI.commit();
-                        sqlAffectedRowCount = tableWriterAPI.apply(updateOperation);
-                    } else {
-                        try (OperationFuture fut = compiledQuery.execute(sqlExecutionContext, tempSequence, false)) {
-                            fut.await();
-                            sqlAffectedRowCount = fut.getAffectedRowsCount();
+            try {
+                for (int attempt = 1; ; attempt++) {
+                    copyParameterValuesToBindVariableService(
+                            sqlExecutionContext,
+                            characterStore,
+                            utf8String,
+                            binarySequenceParamsPool
+                    );
+                    try {
+                        UpdateOperation updateOperation = compiledQuery.getUpdateOperation();
+                        TableToken tableToken = updateOperation.getTableToken();
+                        final int index = pendingWriters.keyIndex(tableToken);
+                        if (index < 0) {
+                            updateOperation.withContext(sqlExecutionContext);
+                            // cached writers to remain in the list until transaction end
+                            @SuppressWarnings("resource")
+                            TableWriterAPI tableWriterAPI = pendingWriters.valueAt(index);
+                            // Update implicitly commits. WAL table cannot do 2 commits in 1 call and require commits to be made upfront.
+                            tableWriterAPI.commit();
+                            sqlAffectedRowCount = tableWriterAPI.apply(updateOperation);
+                        } else {
+                            try (OperationFuture fut = compiledQuery.execute(sqlExecutionContext, tempSequence, false)) {
+                                fut.await();
+                                sqlAffectedRowCount = fut.getAffectedRowsCount();
+                            }
                         }
+                        break;
+                    } catch (TableReferenceOutOfDateException e) {
+                        Misc.free(compiledQuery.getUpdateOperation());
+                        if (attempt == maxRecompileAttempts) {
+                            throw e;
+                        }
+                        compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool);
                     }
-                    break;
-                } catch (TableReferenceOutOfDateException e) {
-                    Misc.free(compiledQuery.getUpdateOperation());
-                    if (attempt == maxRecompileAttempts) {
-                        throw e;
-                    }
-                    compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool);
                 }
+            } finally {
+                engine.getMetrics().pgWireMetrics().markComplete();
             }
         }
     }
 
     private void msgParseCopyOutTypeDescriptionTypeOIDs(BindVariableService bindVariableService) {
+        // Priority order for determining OID column types:
+        // 1. Client-specified type in PARSE message (if provided and not PG_UNSPECIFIED nor X_PG_VOID)
+        // 2. Compiler-inferred type (fallback)
+        //
+        // Important: We cannot exclusively rely on compiler-inferred types for OID because:
+        // - Clients may specify their own type expectations
+        // - Type mismatches between PARSE and subsequent DESCRIBE messages can cause client errors
+        // - Some clients (e.g., PG JDBC) strictly validate type consistency between types in PARSE and DESCRIBE messages
+        // In contract, QuestDB natives types are always stored as derived by compiler. Without considering
+
         final int n = bindVariableService.getIndexedVariableCount();
-        outParameterTypeDescriptionTypeOIDs.setPos(n);
+        outParameterTypeDescriptionTypes.setPos(n);
         if (n > 0) {
             for (int i = 0; i < n; i++) {
                 int oid = PG_UNSPECIFIED;
 
-                // first we prioritize the types we received in the PARSE message
+                // First we prioritize the types we received in the PARSE message
                 if (msgParseParameterTypeOIDs.size() > i) {
                     oid = msgParseParameterTypeOIDs.getQuick(i);
                 }
@@ -1582,11 +1615,16 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 // A: the compiler might infer slightly different type than the client provided.
                 //    if the client include types in a PARSE message and a subsequent DESCRIBE sends back different types
                 //    the client will error out. e.g. PG JDBC is very strict about this.
+                final Function f = bindVariableService.getFunction(i);
+                int nativeType = f.getType();
+                assert nativeType != ColumnType.UNDEFINED : "function type is undefined";
                 if (oid == PG_UNSPECIFIED || oid == X_PG_VOID) {
-                    final Function f = bindVariableService.getFunction(i);
-                    oid = Numbers.bswap(PGOids.getTypeOid(f != null ? f.getType() : ColumnType.UNDEFINED));
+                    // oid is stored as Big Endian
+                    // since that's what clients expects - pgwire is big endian
+                    oid = Numbers.bswap(PGOids.getTypeOid(nativeType));
                 }
-                outParameterTypeDescriptionTypeOIDs.setQuick(i, oid);
+
+                outParameterTypeDescriptionTypes.setQuick(i, Numbers.encodeLowHighInts(nativeType, oid));
             }
         }
     }
@@ -1991,7 +2029,14 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // We'll be sending an error to the client, so reset to the start of the last sent message.
             utf8Sink.resetToBookmark(recordStartAddress);
             if (th instanceof FlyweightMessageContainer) {
-                getErrorMessageSink().put(((FlyweightMessageContainer) th).getFlyweightMessage());
+                final StringSink errorMsgSink = getErrorMessageSink();
+                int errno;
+                if (th instanceof CairoException && (errno = ((CairoException) th).getErrno()) != CairoException.NON_CRITICAL) {
+                    errorMsgSink.put('[');
+                    errorMsgSink.put(errno);
+                    errorMsgSink.put("] ");
+                }
+                errorMsgSink.put(((FlyweightMessageContainer) th).getFlyweightMessage());
             } else {
                 String msg = th.getMessage();
                 if (msg != null) {
@@ -2012,6 +2057,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // we sent as many rows as was requested, but we have more to send
             stateSync = SYNC_DATA_SUSPENDED;
         }
+
+        engine.getMetrics().pgWireMetrics().markComplete();
     }
 
     private void outError(PGResponseSink utf8Sink, ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters) {
@@ -2062,12 +2109,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private void outParameterTypeDescription(PGResponseSink utf8Sink) {
         utf8Sink.put(MESSAGE_TYPE_PARAMETER_DESCRIPTION);
         final long offset = utf8Sink.skipInt();
-        final int n = outParameterTypeDescriptionTypeOIDs.size();
+        final int n = outParameterTypeDescriptionTypes.size();
         utf8Sink.putNetworkShort((short) n);
-        if (n > 0) {
-            for (int i = 0; i < n; i++) {
-                utf8Sink.putIntDirect(toParamType(outParameterTypeDescriptionTypeOIDs.getQuick(i)));
-            }
+        for (int i = 0; i < n; i++) {
+            int pgType = Numbers.decodeHighInt(outParameterTypeDescriptionTypes.getQuick(i));
+            utf8Sink.putIntDirect(pgType);
         }
         utf8Sink.putLen(offset);
     }
@@ -2512,7 +2558,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         sqlType,
                         TAG_EXPLAIN,
                         msgParseParameterTypeOIDs,
-                        outParameterTypeDescriptionTypeOIDs
+                        outParameterTypeDescriptionTypes
                 );
                 break;
             case CompiledQuery.SELECT:
@@ -2523,7 +2569,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         sqlType,
                         sqlTag,
                         msgParseParameterTypeOIDs,
-                        outParameterTypeDescriptionTypeOIDs
+                        outParameterTypeDescriptionTypes
                 );
                 break;
             case CompiledQuery.PSEUDO_SELECT:
@@ -2543,7 +2589,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         sqlType,
                         sqlTag,
                         msgParseParameterTypeOIDs,
-                        outParameterTypeDescriptionTypeOIDs
+                        outParameterTypeDescriptionTypes
                 );
                 break;
             case CompiledQuery.UPDATE:

@@ -25,12 +25,24 @@
 package io.questdb.griffin;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnTaskJob;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeConverter;
+import io.questdb.cairo.ColumnVersionWriter;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SymbolMapReaderImpl;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.mp.*;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SOUnboundedCountDownLatch;
+import io.questdb.mp.Sequence;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
@@ -40,11 +52,11 @@ import io.questdb.tasks.ColumnTask;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
-import java.io.IOException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.ColumnType.isVarSize;
-import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.cairo.TableUtils.dFile;
+import static io.questdb.cairo.TableUtils.iFile;
 
 public class ConvertOperatorImpl implements Closeable {
     private static final Log LOG = LogFactory.getLog(ConvertOperatorImpl.class);
@@ -94,19 +106,26 @@ public class ConvertOperatorImpl implements Closeable {
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
     }
 
-    public void convertColumn(@NotNull CharSequence columnName, int existingColIndex, int existingType, int columnIndex, int newType) {
+    public void convertColumn(@NotNull String columnName, int existingColIndex, int existingType, boolean existingIndexed, int columnIndex, int newType) {
         clear();
         partitionUpdated = 0;
-        convertColumn0(columnName, existingColIndex, existingType, columnIndex, newType);
+        convertColumn0(columnName, existingColIndex, existingType, existingIndexed, columnIndex, newType);
     }
 
     public void finishColumnConversion() {
-        if (partitionUpdated > -1 && asyncProcessingErrorCount.get() == 0) {
+        if (partitionUpdated > 0 && asyncProcessingErrorCount.get() == 0 && !tableWriter.isDistressed()) {
             partitionUpdated = 0;
-            purgingOperator.purge(path.trimTo(rootLen), tableWriter.getTableToken(), tableWriter.getPartitionBy(), tableWriter.checkScoreboardHasReadersBeforeLastCommittedTxn(), tableWriter.getMetadata(), tableWriter.getTruncateVersion(), tableWriter.getTxn());
+            purgingOperator.purge(
+                    path.trimTo(rootLen),
+                    tableWriter.getTableToken(),
+                    tableWriter.getPartitionBy(),
+                    tableWriter.checkScoreboardHasReadersBeforeLastCommittedTxn(),
+                    tableWriter.getTruncateVersion(),
+                    tableWriter.getTxn()
+            );
         }
         clear();
     }
@@ -144,7 +163,7 @@ public class ConvertOperatorImpl implements Closeable {
         }
     }
 
-    private void convertColumn0(@NotNull CharSequence columnName, int existingColIndex, int existingType, int columnIndex, int newType) {
+    private void convertColumn0(@NotNull String columnName, int existingColIndex, int existingType, boolean existingIndexed, int columnIndex, int newType) {
         try {
             this.columnName = columnName;
             if (ColumnType.isSymbol(newType)) {
@@ -182,7 +201,7 @@ public class ConvertOperatorImpl implements Closeable {
 
                             if (rowCount > 0) {
                                 path.trimTo(rootLen);
-                                TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), partitionTimestamp, partitionNameTxn);
+                                TableUtils.setPathForNativePartition(path, tableWriter.getPartitionBy(), partitionTimestamp, partitionNameTxn);
                                 int pathTrimToLen = path.size();
 
                                 long srcFixFd = -1, srcVarFd = -1, dstFixFd = -1, dstVarFd = -1;
@@ -213,7 +232,7 @@ public class ConvertOperatorImpl implements Closeable {
                             }
 
                             long existingColTxnVer = tableWriter.getColumnNameTxn(partitionTimestamp, existingColIndex);
-                            purgingOperator.add(existingColIndex, existingColTxnVer, partitionTimestamp, partitionNameTxn);
+                            purgingOperator.add(existingColIndex, columnName, existingType, existingIndexed, existingColTxnVer, partitionTimestamp, partitionNameTxn);
                             partitionUpdated++;
                         }
                         if (columnTop != tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1)) {

@@ -24,10 +24,11 @@
 
 package io.questdb.test.griffin.engine.functions.date;
 
+import org.junit.Test;
+
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.engine.functions.date.TimestampAddFunctionFactory;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
-import org.junit.Test;
 
 public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
@@ -50,7 +51,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
 
     @Test
     public void testPeriodNullChar() throws Exception {
-        assertException("select dateadd('\0', 5, 1587275359886758L)", 15, "invalid time period unit");
+        assertException("select dateadd('\0', 5, 1587275359886758L)", 15, "invalid time period [unit=\u0000]");
     }
 
     @Test
@@ -96,7 +97,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
 
     @Test
     public void testUnknownPeriod() throws Exception {
-        assertException("select dateadd('q', -5, 1587275359886758L)", 15, "invalid time period unit");
+        assertException("select dateadd('q', -5, 1587275359886758L)", 15, "invalid time period [unit=q]");
     }
 
     @Override

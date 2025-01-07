@@ -39,7 +39,12 @@ import io.questdb.log.LogRecord;
 import io.questdb.network.IOContext;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.NetworkFacade;
-import io.questdb.std.*;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Utf8StringObjHashMap;
+import io.questdb.std.Vect;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
@@ -57,6 +62,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     private final LineTcpReceiverConfiguration configuration;
     private final boolean disconnectOnError;
     private final long idleTimeout;
+    private final boolean logMessageOnError;
     private final Metrics metrics;
     private final MillisecondClock milliClock;
     private final LineTcpParser parser;
@@ -73,19 +79,20 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     private long nextCheckIdleTime;
     private long nextCommitTime;
 
-    public LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler, Metrics metrics) {
+    public LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler) {
         super(
                 configuration.getFactoryProvider().getLineSocketFactory(),
                 configuration.getNetworkFacade(),
-                LOG,
-                metrics.line().connectionCountGauge()
+                LOG
         );
+
         try {
             this.configuration = configuration;
-            nf = configuration.getNetworkFacade();
-            disconnectOnError = configuration.getDisconnectOnError();
+            this.nf = configuration.getNetworkFacade();
+            this.disconnectOnError = configuration.getDisconnectOnError();
+            this.logMessageOnError = configuration.logMessageOnError();
             this.scheduler = scheduler;
-            this.metrics = metrics;
+            this.metrics = configuration.getMetrics();
             this.milliClock = configuration.getMillisecondClock();
             parser = new LineTcpParser();
             this.authenticator = configuration.getFactoryProvider().getLineAuthenticatorFactory().getLineTCPAuthenticator();
@@ -214,8 +221,10 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     public LineTcpConnectionContext of(long fd, @NotNull IODispatcher<LineTcpConnectionContext> dispatcher) {
         super.of(fd, dispatcher);
         if (recvBufStart == 0) {
-            recvBufStart = Unsafe.malloc(configuration.getNetMsgBufferSize(), MemoryTag.NATIVE_ILP_RSS);
-            recvBufEnd = recvBufStart + configuration.getNetMsgBufferSize();
+            // re-read recv buffer size in case the config was reloaded
+            final int recvBufferSize = configuration.getRecvBufferSize();
+            recvBufStart = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_ILP_RSS);
+            recvBufEnd = recvBufStart + recvBufferSize;
             recvBufPos = recvBufStart;
             resetParser();
         }
@@ -300,13 +309,15 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     private void logParseError() {
         int position = (int) (parser.getBufferAddress() - recvBufStartOfMeasurement);
         assert position >= 0;
-        LOG.error()
+        final LogRecord errorRec = LOG.error()
                 .$('[').$(getFd())
                 .$("] could not parse measurement, ").$(parser.getErrorCode())
-                .$(" at ").$(position)
-                .$(", line (may be mangled due to partial parsing): '")
-                .$(byteCharSequence.of(recvBufStartOfMeasurement, parser.getBufferAddress(), false)).$("'")
-                .$();
+                .$(" at ").$(position);
+        if (logMessageOnError) {
+            errorRec.$(", line (may be mangled due to partial parsing): '")
+                    .$(byteCharSequence.of(recvBufStartOfMeasurement, parser.getBufferAddress(), false)).$("'");
+        }
+        errorRec.$();
     }
 
     private void startNewMeasurement() {
@@ -421,7 +432,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                         .$(", ex=").$(ex)
                         .I$();
                 // This is a critical error, so we treat it as an unhandled one.
-                metrics.health().incrementUnhandledErrors();
+                metrics.healthMetrics().incrementUnhandledErrors();
                 return IOContextResult.NEEDS_DISCONNECT;
             }
         }
@@ -432,7 +443,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         final int orig = bufferRemaining;
         if (bufferRemaining > 0 && !peerDisconnected) {
             int bytesRead = socket.recv(recvBufPos, bufferRemaining);
-            metrics.line().totalIlpTcpBytesGauge().add(bytesRead);
+            metrics.lineMetrics().totalIlpTcpBytesGauge().add(bytesRead);
             if (bytesRead > 0) {
                 recvBufPos += bytesRead;
                 bufferRemaining -= bytesRead;

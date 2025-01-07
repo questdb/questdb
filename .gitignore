@@ -24,6 +24,7 @@ core/cmake-build-debug-coverage
 core/cmake-build-release
 core/cmake-build-minsizerel
 core/CMakeCache.txt
+core/rust/qdbr/parquet2/target
 **/.project
 **/.settings
 **/.classpath
@@ -34,3 +35,5 @@ core/CMakeCache.txt
 core/rust/qdbr/target
 compat/src/test/rust/scenarios/target/
 compat/src/test/rust/scenarios/Cargo.lock
+compat/src/test/python/__pycache__/
+venv/
