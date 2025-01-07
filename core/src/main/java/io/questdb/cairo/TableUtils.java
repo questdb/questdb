@@ -641,21 +641,6 @@ public final class TableUtils {
         return ff.exists(path.$());
     }
 
-    public static boolean equalColumnNamesAndTypes(RecordMetadata metadataA, RecordMetadata metadataB) {
-        if (metadataA.getColumnCount() != metadataB.getColumnCount()) {
-            return false;
-        }
-        for (int i = 0, n = metadataA.getColumnCount(); i < n; i++) {
-            if (metadataA.getColumnType(i) != metadataB.getColumnType(i)) {
-                return false;
-            }
-            if (!Chars.equals(metadataA.getColumnName(i), metadataB.getColumnName(i))) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     public static long estimateAvgRecordSize(RecordMetadata metadata) {
         long recSize = 0;
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
