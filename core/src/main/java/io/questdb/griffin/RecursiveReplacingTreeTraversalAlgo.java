@@ -29,9 +29,9 @@ import io.questdb.griffin.model.ExpressionNode;
 /*
     Rebuilds an ExpressionNode tree using a recursive crawl of the ExpressionNodes.
  */
-public final class RecursiveReplacingTreeTraversalAlgo {
+public class RecursiveReplacingTreeTraversalAlgo {
 
-    public ExpressionNode traverse(ExpressionNode node, ReplacingVisitor visitor) throws SqlException {
+    public static ExpressionNode traverse(ExpressionNode node, ReplacingVisitor visitor) throws SqlException {
         if (node == null) {
             return null;
         }
@@ -56,7 +56,7 @@ public final class RecursiveReplacingTreeTraversalAlgo {
 
         return visitor.visit(node);
     }
-
+    
     public interface ReplacingVisitor {
         ExpressionNode visit(ExpressionNode node) throws SqlException;
     }

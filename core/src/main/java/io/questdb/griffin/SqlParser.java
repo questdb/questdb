@@ -71,7 +71,6 @@ public class SqlParser {
     private static final LowerCaseAsciiCharSequenceHashSet columnAliasStop = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet groupByStopSet = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceIntHashMap joinStartSet = new LowerCaseAsciiCharSequenceIntHashMap();
-    private static final RecursiveReplacingTreeTraversalAlgo recursiveReplacingTreeTraversalAlgo = new RecursiveReplacingTreeTraversalAlgo();
     private static final RewriteDeclaredVariablesInExpressionVisitor rewriteDeclaredVariablesInExpressionVisitor = new RewriteDeclaredVariablesInExpressionVisitor();
     private static final LowerCaseAsciiCharSequenceHashSet setOperations = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet tableAliasStop = new LowerCaseAsciiCharSequenceHashSet();
@@ -2973,7 +2972,7 @@ public class SqlParser {
         if (decls == null || decls.size() == 0) { // short circuit null case
             return expr;
         }
-        return recursiveReplacingTreeTraversalAlgo.traverse(expr, rewriteDeclaredVariablesInExpressionVisitor.of(decls, exclude));
+        return RecursiveReplacingTreeTraversalAlgo.traverse(expr, rewriteDeclaredVariablesInExpressionVisitor.of(decls, exclude));
     }
 
     private ExpressionNode rewriteJsonExtractCast(ExpressionNode parent) throws SqlException {
