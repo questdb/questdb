@@ -1366,20 +1366,19 @@ public class CairoEngine implements Closeable, WriterSource {
                                 pathLen,
                                 tableToken
                         );
-                        final TableToken baseTableToken = this.tableNameRegistry.getTableToken(matViewDefinition.getBaseTableName());
-                        if (baseTableToken == null || this.tableNameRegistry.isTableDropped(baseTableToken)) {
+                        final TableToken baseTableToken = tableNameRegistry.getTableToken(matViewDefinition.getBaseTableName());
+                        if (baseTableToken == null || tableNameRegistry.isTableDropped(baseTableToken)) {
                             LOG.error()
-                                    .$("base table for materialized view does not exist [table=")
-                                    .$(matViewDefinition.getBaseTableName())
-                                    .$(", view=").$(tableToken.getTableName())
+                                    .$("base table for materialized view does not exist [table=").utf8(matViewDefinition.getBaseTableName())
+                                    .$(", view=").utf8(tableToken.getTableName())
                                     .I$();
                         } else {
-                            this.matViewGraph.createView(baseTableToken, matViewDefinition);
-                            this.matViewGraph.refresh(tableToken);
+                            matViewGraph.createView(baseTableToken, matViewDefinition);
+                            matViewGraph.refresh(tableToken);
                         }
                     } catch (CairoException e) {
-                        LOG.error().$("could not load materialized view definition [view=")
-                                .$(tableToken.getTableName())
+                        LOG.error().$("could not load materialized view definition [view=").utf8(tableToken.getTableName())
+                                .$(", errno=").$(e.getErrno())
                                 .$(", error=").$(e.getFlyweightMessage())
                                 .I$();
                     }
