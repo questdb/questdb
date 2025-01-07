@@ -1368,8 +1368,7 @@ public class CairoEngine implements Closeable, WriterSource {
                         );
                         final TableToken baseTableToken = tableNameRegistry.getTableToken(matViewDefinition.getBaseTableName());
                         if (baseTableToken == null || tableNameRegistry.isTableDropped(baseTableToken)) {
-                            LOG.error()
-                                    .$("base table for materialized view does not exist [table=").utf8(matViewDefinition.getBaseTableName())
+                            LOG.error().$("base table for materialized view does not exist [table=").utf8(matViewDefinition.getBaseTableName())
                                     .$(", view=").utf8(tableToken.getTableName())
                                     .I$();
                         } else {
