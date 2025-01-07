@@ -30,8 +30,6 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
-import io.questdb.std.str.StringSink;
-import io.questdb.std.Interval;
 
 public class ToTimezoneIntervalFunctionFactoryTest extends AbstractCairoTest {
 
@@ -99,11 +97,40 @@ public class ToTimezoneIntervalFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testToTimezoneWithConstantTimezonePlan() throws Exception {
+        assertMemoryLeak(() -> assertPlanNoLeakCheck(
+                //Input query
+                "select to_timezone(interval('2020-03-12T15:30:00.000000Z', '2020-03-12T17:30:00.000000Z'), '-07:40')",
+                //Expected Plan
+                "VirtualRecord\n" +
+                        "  functions: [to_timezone(('2020-03-12T15:30:00.000Z', '2020-03-12T17:30:00.000Z'),'-07:40')]\n" +
+                        "    long_sequence count: 1\n"
+        ));
+    }
+
+    @Test
+    public void testToTimezoneWithVarTimezonePlan() throws Exception {
+        assertMemoryLeak(() -> assertPlanNoLeakCheck(
+                //Input query
+                "select to_timezone(interval('2020-03-12T15:30:00.000000Z', '2020-03-12T17:30:00.000000Z'), zone) from (select '-07:40' zone)",
+                //Expected Plan
+                "VirtualRecord\n" +
+                        "  functions: [to_timezone(('2020-03-12T15:30:00.000Z', '2020-03-12T17:30:00.000Z'),zone)]\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: ['-07:40']\n" +
+                        "        long_sequence count: 1\n"
+        ));
+    }
+
+    @Test
     public void testVarInvalidTimezone() throws Exception {
-        assertToTimezoneInterval(
-                "select to_timezone(interval('2020-03-12T15:30:00.000000Z', '2020-03-12T17:30:00.000000Z'), zone) from (select 'XU' zone)",
-                "('2020-03-12T15:30:00.000Z', '2020-03-12T17:30:00.000Z')\n"
-        );
+        assertMemoryLeak(() -> {
+            try {
+                assertExceptionNoLeakCheck("select to_timezone(interval('2020-03-12T15:30:00.000000Z', '2020-03-12T17:30:00.000000Z'), zone) from (select 'XU' zone)");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone name");
+            }
+        });
     }
 
     @Test

@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.IntervalFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.datetime.TimeZoneRules;
@@ -36,10 +37,12 @@ class OffsetIntervalFromRulesFunction extends IntervalFunction implements UnaryF
     private final Interval interval = new Interval();
     private final Function intervalFunction;
     private final TimeZoneRules rules;
+    private final Function timezoneFunction;
 
-    public OffsetIntervalFromRulesFunction(Function intervalFunction, TimeZoneRules rules) {
+    public OffsetIntervalFromRulesFunction(Function intervalFunction, Function timezone, TimeZoneRules rules) {
         this.intervalFunction = intervalFunction;
         this.rules = rules;
+        this.timezoneFunction = timezone;
     }
 
     @Override
@@ -53,6 +56,11 @@ class OffsetIntervalFromRulesFunction extends IntervalFunction implements UnaryF
         long timestampHi = intervalFunction.getInterval(rec).getHi();
         interval.of(timestampLo + rules.getOffset(timestampLo), timestampHi + rules.getOffset(timestampHi));
         return interval;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.val("to_timezone(").val(intervalFunction).val(',').val(timezoneFunction).val(')');
     }
 
 }
