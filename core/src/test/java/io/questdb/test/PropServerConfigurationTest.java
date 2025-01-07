@@ -896,7 +896,7 @@ public class PropServerConfigurationTest {
     @Test
     public void testJpTimestampTimezoneCustomUtcOffset() throws Exception {
         assertTimestampTimezone(
-                "月, 11 3 2024 06:11:40 UTC+08",
+                "月, 11 3月 2024 06:11:40 UTC+08",
                 "UTC+08",
                 "ja",
                 "E, d MMM yyyy HH:mm:ss Z",
@@ -912,7 +912,7 @@ public class PropServerConfigurationTest {
         );
 
         assertTimestampTimezone(
-                "星期日, 10 三月 2024 13:11:40.222555 -10:00",
+                "周日, 10 3月 2024 13:11:40.222555 -10:00",
                 "-10:00",
                 "zh",
                 "E, d MMM yyyy HH:mm:ss.SSSUUU Z",
