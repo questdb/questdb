@@ -35,6 +35,8 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.Arrays;
 import java.util.Map;
@@ -52,11 +54,16 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
     private final ConcurrentHashMap<Entry<T>> entries = new ConcurrentHashMap<>();
     private final int maxEntries;
     private final int maxSegments;
+    private final ThreadLocal<ResourcePoolSupervisor<T>> threadLocalPoolSupervisor = new ThreadLocal<>();
 
     public AbstractMultiTenantPool(CairoConfiguration configuration, int maxSegments, long inactiveTtlMillis) {
         super(configuration, inactiveTtlMillis);
         this.maxSegments = maxSegments;
         this.maxEntries = maxSegments * ENTRY_SIZE;
+    }
+
+    public void configureThreadLocalPoolSupervisor(@NotNull ResourcePoolSupervisor<T> poolSupervisor) {
+        this.threadLocalPoolSupervisor.set(poolSupervisor);
     }
 
     public Map<CharSequence, Entry<T>> entries() {
@@ -81,13 +88,14 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
                     Unsafe.arrayPutOrdered(e.releaseOrAcquireTimes, i, clock.getTicks());
                     // got lock, allocate if needed
                     T tenant = e.getTenant(i);
+                    ResourcePoolSupervisor<T> supervisor = threadLocalPoolSupervisor.get();
                     if (tenant == null) {
                         try {
                             LOG.debug()
                                     .$("open '").utf8(tableToken.getDirName())
                                     .$("' [at=").$(e.index).$(':').$(i)
                                     .I$();
-                            tenant = newTenant(tableToken, e, i);
+                            tenant = newTenant(tableToken, e, i, supervisor);
                         } catch (CairoException ex) {
                             Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
                             throw ex;
@@ -97,7 +105,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
                         notifyListener(thread, tableToken, PoolListener.EV_CREATE, e.index, i);
                     } else {
                         try {
-                            tenant.refresh();
+                            tenant.refresh(supervisor);
                         } catch (Throwable th) {
                             tenant.goodbye();
                             tenant.close();
@@ -113,12 +121,18 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
                         tenant.goodbye();
                         LOG.info().$('\'').utf8(tableToken.getDirName()).$("' born free").$();
                         tenant.updateTableToken(tableToken);
+                        if (supervisor != null) {
+                            supervisor.onResourceBorrowed(tenant);
+                        }
                         return tenant;
                     }
                     LOG.debug().$('\'').utf8(tableToken.getDirName()).$("' is assigned [at=").$(e.index).$(':').$(i)
                             .$(", thread=").$(thread)
                             .I$();
                     tenant.updateTableToken(tableToken);
+                    if (supervisor != null) {
+                        supervisor.onResourceBorrowed(tenant);
+                    }
                     return tenant;
                 }
             }
@@ -214,6 +228,10 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         return true;
     }
 
+    public void removeThreadLocalPoolSupervisor() {
+        this.threadLocalPoolSupervisor.remove();
+    }
+
     public void unlock(TableToken tableToken) {
         Entry<T> e = entries.get(tableToken.getDirName());
         long thread = Thread.currentThread().getId();
@@ -306,7 +324,12 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
 
     protected abstract byte getListenerSrc();
 
-    protected abstract T newTenant(TableToken tableToken, Entry<T> entry, int index);
+    protected abstract T newTenant(
+            TableToken tableToken,
+            Entry<T> entry,
+            int index,
+            @Nullable ResourcePoolSupervisor<T> supervisor
+    );
 
     @Override
     protected boolean releaseAll(long deadline) {

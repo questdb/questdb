@@ -26,8 +26,9 @@ package io.questdb.cairo;
 
 import io.questdb.metrics.Counter;
 import io.questdb.metrics.MetricsRegistry;
+import io.questdb.std.Mutable;
 
-public class TableWriterMetrics {
+public class TableWriterMetrics implements Mutable {
 
     // Includes all types of commits (in-order and o3)
     private final Counter commitCounter;
@@ -51,6 +52,15 @@ public class TableWriterMetrics {
 
     public void addPhysicallyWrittenRows(long rows) {
         physicallyWrittenRowCounter.add(rows);
+    }
+
+    @Override
+    public void clear() {
+        commitCounter.reset();
+        committedRowCounter.reset();
+        o3CommitCounter.reset();
+        physicallyWrittenRowCounter.reset();
+        rollbackCounter.reset();
     }
 
     public long getCommitCount() {

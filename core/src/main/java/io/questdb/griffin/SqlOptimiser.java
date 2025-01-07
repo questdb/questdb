@@ -152,7 +152,7 @@ public class SqlOptimiser implements Mutable {
     private final IntList tempCrossIndexes = new IntList();
     private final IntList tempCrosses = new IntList();
     private final IntList tempList = new IntList();
-    private final ObjList<QueryColumn> tempColumns = new ObjList<QueryColumn>();
+    private final ObjList<QueryColumn> tempColumns = new ObjList<>();
     private final CharSequenceHashSet existsDependedTokens = new CharSequenceHashSet();
     private final CharSequenceHashSet missingDependedTokens = new CharSequenceHashSet();
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> tmpCursorAliases = new LowerCaseCharSequenceObjHashMap<>();
@@ -1052,7 +1052,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * Checks whether the given advice is for one table only i.e consistent table prefix.
+     * Checks whether the given advice is for one table only i.e. consistent table prefix.
      *
      * @param orderByAdvice the given advice
      * @return whether prefix is consistent or not
@@ -1216,7 +1216,6 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void copyColumnTypesFromMetadata(QueryModel model, TableRecordMetadata m) {
-        // TODO: optimise by copying column indexes, types of the columns used in SET clause in the UPDATE only
         for (int i = 0, k = m.getColumnCount(); i < k; i++) {
             model.addUpdateTableColumnMetadata(m.getColumnType(i), m.getColumnName(i));
         }
@@ -3720,7 +3719,7 @@ public class SqlOptimiser implements Mutable {
 
     /**
      * Identify joined tables without join clause and try to find other reversible join clauses
-     * that may be applied to it. For example when these tables joined"
+     * that may be applied to it. For example when these tables joined
      * <p>
      * from a
      * join b on c.x = b.x
@@ -4337,7 +4336,7 @@ public class SqlOptimiser implements Mutable {
                 return;
             }
 
-            // we want to push down a limited reverse scan, and then sort into the intended ordering afterwards
+            // we want to push down a limited reverse scan, and then sort into the intended ordering afterward
 
             // first, copy the order by up
             for (int i = 0, n = nested.getOrderBy().size(); i < n; i++) {

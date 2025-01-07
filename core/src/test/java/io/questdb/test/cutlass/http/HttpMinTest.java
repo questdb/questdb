@@ -28,7 +28,7 @@ import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cutlass.http.HttpContextConfiguration;
-import io.questdb.cutlass.http.HttpMinServerConfiguration;
+import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
@@ -72,7 +72,7 @@ public class HttpMinTest extends AbstractBootstrapTest {
                     PropertyKey.HTTP_ENABLED.getEnvVarName(), "false"
             )) {
                 serverMain.start();
-                HttpMinServerConfiguration httpMinConfig = serverMain.getConfiguration().getHttpMinServerConfiguration();
+                HttpServerConfiguration httpMinConfig = serverMain.getConfiguration().getHttpMinServerConfiguration();
                 HttpContextConfiguration httpMinContextConfig = httpMinConfig.getHttpContextConfiguration();
                 long expectedAllocation = httpMinConfig.getSendBufferSize() + 20
                         + httpMinConfig.getRecvBufferSize()

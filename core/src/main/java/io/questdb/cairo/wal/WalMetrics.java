@@ -27,10 +27,11 @@ package io.questdb.cairo.wal;
 import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.MetricsRegistry;
+import io.questdb.std.Mutable;
 
 import java.util.concurrent.atomic.AtomicLong;
 
-public class WalMetrics {
+public class WalMetrics implements Mutable {
     private final Counter applyPhysicallyWrittenRowsCounter;
     private final LongGauge applyRowsWriteRateGauge;
     private final Counter applyRowsWrittenCounter;
@@ -56,5 +57,15 @@ public class WalMetrics {
 
     public void addRowsWritten(long rows) {
         rowsWrittenCounter.add(rows);
+    }
+
+    @Override
+    public void clear() {
+        applyPhysicallyWrittenRowsCounter.reset();
+        applyRowsWriteRateGauge.setValue(0);
+        applyRowsWrittenCounter.reset();
+        rowsWrittenCounter.reset();
+        totalRowsWritten.set(0);
+        totalRowsWrittenTotalTime.set(0);
     }
 }

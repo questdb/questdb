@@ -52,7 +52,12 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<SequencerMeta
     }
 
     @Override
-    protected SequencerMetadataTenantImpl newTenant(TableToken tableToken, Entry<SequencerMetadataTenantImpl> entry, int index) {
+    protected SequencerMetadataTenantImpl newTenant(
+            TableToken tableToken,
+            Entry<SequencerMetadataTenantImpl> entry,
+            int index,
+            @Nullable ResourcePoolSupervisor<SequencerMetadataTenantImpl> supervisor
+    ) {
         return new SequencerMetadataTenantImpl(this, entry, index, tableToken, engine.getTableSequencerAPI());
     }
 
@@ -196,9 +201,8 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<SequencerMeta
             }
         }
 
-
         @Override
-        public void refresh() {
+        public void refresh(@Nullable ResourcePoolSupervisor<SequencerMetadataTenantImpl> supervisor) {
             tableSequencerAPI.reloadMetadataConditionally(tableToken, getMetadataVersion(), this);
         }
 
