@@ -1233,56 +1233,6 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testExceptionThrownIfSequencerCannotBeCreated() throws Exception {
-        assertMemoryLeak(() -> {
-
-
-
-            createTable(testName.getMethodName());
-            TableToken tableToken = engine.verifyTableName(testName.getMethodName());
-
-            engine.execute("alter table " + tableToken.getTableName() + " set type bypass wal");
-            engine.load();
-
-            try {
-                var lastTxn = engine.getTableSequencerAPI().lastTxn(tableToken);
-                assertExceptionNoLeakCheck("Exception expected");
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-write");
-            }
-
-            engine.execute("drop table " + tableToken.getTableName());
-            createTable(testName.getMethodName());
-            tableToken = engine.verifyTableName(testName.getMethodName());
-
-            // Now that the table is really dropped
-            engine.execute("drop table " + tableToken.getTableName());
-
-            ff = new TestFilesFacadeImpl() {
-                @Override
-                public long openRW(LPSZ name, long opts) {
-                    if (Utf8s.endsWithAscii(name, WAL_INDEX_FILE_NAME)) {
-                        // Set errno to path does not exist
-                        this.openRO(Path.getThreadLocal2("does-not-exist").$());
-                        return -1;
-                    }
-                    return TestFilesFacadeImpl.INSTANCE.openRW(name, opts);
-                }
-            };
-
-            try {
-                var lastTxn = engine.getTableSequencerAPI().lastTxn(tableToken);
-                Assert.fail("Exception expected");
-            } catch (CairoException e) {
-                // We should receive table is dropped error
-                Assert.assertTrue(e.isTableDropped());
-                TestUtils.assertContains(e.getFlyweightMessage(), "table is dropped");
-            }
-
-        });
-    }
-
-    @Test
     public void testExceptionThrownIfSequencerCannotBeOpened() throws Exception {
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
@@ -1337,6 +1287,27 @@ public class WalWriterTest extends AbstractCairoTest {
             } catch (Exception e) {
                 // this exception will be handled in ILP/PG/HTTP
                 assertTrue(e.getMessage().startsWith("[999] Cannot create sequencer directory:"));
+            }
+        });
+    }
+
+    @Test
+    public void testFileOpenExceptionThrownIfSequencerCannotBeOpened() throws Exception {
+        assertMemoryLeak(() -> {
+
+            createTable(testName.getMethodName());
+            TableToken tableToken = engine.verifyTableName(testName.getMethodName());
+
+            engine.execute("alter table " + tableToken.getTableName() + " set type bypass wal");
+            engine.load();
+
+            try {
+                var lastTxn = engine.getTableSequencerAPI().lastTxn(tableToken);
+                assertExceptionNoLeakCheck("Exception expected");
+            } catch (CairoException e) {
+                // The table is not dropped in the table registry, the exception should not be table dropped exception
+                Assert.assertFalse(e.isTableDropped());
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-write");
             }
         });
     }
@@ -3051,6 +3022,38 @@ public class WalWriterTest extends AbstractCairoTest {
                 assertWalFileExist(path, tableToken, walName, "d.k");
                 assertWalFileExist(path, tableToken, walName, "d.o");
                 assertWalFileExist(path, tableToken, walName, "d.v");
+            }
+        });
+    }
+
+    @Test
+    public void testTableDropExceptionThrownIfSequencerCannotBeOpenTableIsDropped() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(testName.getMethodName());
+            TableToken tableToken = engine.verifyTableName(testName.getMethodName());
+
+            // Now that the table is really dropped
+            engine.execute("drop table " + tableToken.getTableName());
+
+            ff = new TestFilesFacadeImpl() {
+                @Override
+                public long openRW(LPSZ name, long opts) {
+                    if (Utf8s.endsWithAscii(name, WAL_INDEX_FILE_NAME)) {
+                        // Set errno to path does not exist
+                        this.openRO(Path.getThreadLocal2("does-not-exist").$());
+                        return -1;
+                    }
+                    return TestFilesFacadeImpl.INSTANCE.openRW(name, opts);
+                }
+            };
+
+            try {
+                var lastTxn = engine.getTableSequencerAPI().lastTxn(tableToken);
+                Assert.fail("Exception expected");
+            } catch (CairoException e) {
+                // We should receive table is dropped error
+                Assert.assertTrue(e.isTableDropped());
+                TestUtils.assertContains(e.getFlyweightMessage(), "table is dropped");
             }
         });
     }
