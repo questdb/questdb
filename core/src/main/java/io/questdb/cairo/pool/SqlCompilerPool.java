@@ -40,6 +40,7 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Rnd;
+import org.jetbrains.annotations.Nullable;
 
 public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPool.C> {
     // The table tokens below are fake, only needed to satisfy the contract of the base class.
@@ -83,7 +84,7 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
     }
 
     @Override
-    protected C newTenant(TableToken tableToken, Entry<C> entry, int index) {
+    protected C newTenant(TableToken tableToken, Entry<C> entry, int index, @Nullable ResourcePoolSupervisor<C> supervisor) {
         return new C(
                 engine.getSqlCompilerFactory().getInstance(engine),
                 this,
@@ -193,7 +194,7 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
-        public void refresh() {
+        public void refresh(ResourcePoolSupervisor<C> supervisor) {
             clear();
         }
 
