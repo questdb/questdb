@@ -60,6 +60,7 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
                 0.01,
                 0.0,
                 0.1 * rnd.nextDouble(),
+                0.0,
                 0.0
         );
 
@@ -96,6 +97,7 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
                 0.01,
                 0.0,
                 0.1 * rnd.nextDouble(),
+                0.0,
                 0.0
         );
 

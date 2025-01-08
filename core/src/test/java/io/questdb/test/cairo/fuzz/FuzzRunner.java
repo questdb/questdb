@@ -109,6 +109,7 @@ public class FuzzRunner {
     private int symbolCountMax;
     private int symbolStrLenMax;
     private double tableDropProb;
+    private double setTtlProb;
     private int transactionCount;
     private double truncateProb;
 
@@ -526,7 +527,8 @@ public class FuzzRunner {
             double equalTsRowsProb,
             double partitionDropProb,
             double truncateProb,
-            double tableDropProb
+            double tableDropProb,
+            double setTtlProb
     ) {
         this.cancelRowsProb = cancelRowsProb;
         this.notSetProb = notSetProb;
@@ -541,6 +543,7 @@ public class FuzzRunner {
         this.partitionDropProb = partitionDropProb;
         this.truncateProb = truncateProb;
         this.tableDropProb = tableDropProb;
+        this.setTtlProb = setTtlProb;
     }
 
     public void withDb(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
@@ -965,7 +968,8 @@ public class FuzzRunner {
                         0.01,
                         0.0,
                         0.1 * rnd.nextDouble(),
-                        rnd.nextDouble()
+                        rnd.nextDouble(),
+                        0.0
                 );
             }
             if (randomiseCounts) {
