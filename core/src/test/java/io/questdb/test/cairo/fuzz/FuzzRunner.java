@@ -104,12 +104,12 @@ public class FuzzRunner {
     private double rollbackProb;
     private long s0;
     private long s1;
+    private double setTtlProb;
     private SqlExecutionContext sqlExecutionContext;
     private int strLen;
     private int symbolCountMax;
     private int symbolStrLenMax;
     private double tableDropProb;
-    private double setTtlProb;
     private int transactionCount;
     private double truncateProb;
 
@@ -455,7 +455,7 @@ public class FuzzRunner {
                 partitionDropProb,
                 truncateProb,
                 tableDropProb,
-                0.0,
+                setTtlProb,
                 strLen,
                 generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableName),
                 (int) sequencerMetadata.getMetadataVersion()

@@ -56,8 +56,8 @@ import static io.questdb.test.cairo.fuzz.FuzzRunner.MAX_WAL_APPLY_TIME_PER_TABLE
  * timestamps for the record where the comparison fails.
  */
 public class WalWriterFuzzTest extends AbstractFuzzTest {
-    private boolean fsAllowsMixedIO;
     private boolean existingFilesParanoia;
+    private boolean fsAllowsMixedIO;
 
     @Before
     public void setUp() {
@@ -80,7 +80,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     @Test
     public void testAddDropColumnDropPartition() throws Exception {
         Rnd rnd = generateRandom(LOG);
-        setFuzzProbabilities(0.0, 0.0, 0.0, 0.0, 0.05, 0.05, 0.0, 0.0, 1.0, 0.01, 0.01, 0.0, 0.0, 0.0);
+        setFuzzProbabilities(0.0, 0.0, 0.0, 0.0, 0.05, 0.05, 0.0, 0.0, 1.0, 0.01, 0.01, 0.0, 0.0, 1.0);
         setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3);
         runFuzz(rnd);
     }
@@ -139,7 +139,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     @Test
     public void testSimpleDataTransaction() throws Exception {
         Rnd rnd = generateRandom(LOG);
-        setFuzzProbabilities(0, 0.2, 0.1, 0, 0, 0, 0, 0, 1.0, 0.01, 0.0, 0.01, 0.0, 0.0);
+        setFuzzProbabilities(0, 0.2, 0.1, 0, 0, 0, 0, 0, 1.0, 0.01, 0.0, 0.01, 0.0, 1.0);
         setFuzzCounts(rnd.nextBoolean(), rnd.nextInt(10_000_000),
                 rnd.nextInt(1500), 20, 10, 200, 0, 1
         );

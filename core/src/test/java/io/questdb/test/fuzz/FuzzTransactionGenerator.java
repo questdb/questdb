@@ -87,7 +87,7 @@ public class FuzzTransactionGenerator {
         probabilityOfTruncate = probabilityOfTruncate / sumOfProbabilities;
         probabilityOfDropPartition = probabilityOfDropPartition / sumOfProbabilities;
         // effectively, probabilityOfDataInsert is as follows, but we don't need this value:
-// probabilityOfDataInsert = probabilityOfDataInsert / sumOfProbabilities;
+        // probabilityOfDataInsert = probabilityOfDataInsert / sumOfProbabilities;
 
         // To prevent long loops of cancelling rows, limit max probability of cancelling rows
         probabilityOfCancelRow = Math.min(probabilityOfCancelRow, 0.3);
@@ -101,12 +101,24 @@ public class FuzzTransactionGenerator {
         if (generateTableDrop) {
             transactionCount++;
         }
+
+        // Decide if TTL will be set
+        boolean generateSetTtl = rnd.nextDouble() < probabilityOfSetTtl;
+        int setTtlIteration = generateSetTtl ? 0 : -1;
+        if (generateSetTtl) {
+            transactionCount++;
+        }
+
         long estimatedTotalRows = rowCount + initialRowCount;
 
         for (int i = 0; i < transactionCount; i++) {
             if (i == tableDropIteration) {
                 generateTableDropCreate(transactionList, metaVersion, waitBarrierVersion++);
                 metaVersion = 0;
+                continue;
+            }
+            if (i == setTtlIteration) {
+                generateSetTtl(transactionList, metaVersion, waitBarrierVersion++);
                 continue;
             }
 
@@ -322,6 +334,16 @@ public class FuzzTransactionGenerator {
 
         // nothing to drop, only timestamp column left
         return null;
+    }
+
+    private static void generateSetTtl(ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion) {
+        FuzzTransaction transaction = new FuzzTransaction();
+        transaction.waitBarrierVersion = waitBarrierVersion;
+        transaction.structureVersion = metadataVersion;
+        transaction.waitAllDone = true;
+        transaction.reopenTable = true;
+        transaction.operationList.add(new FuzzSetTtlOperation());
+        transactionList.add(transaction);
     }
 
     private static void generateTableDropCreate(ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion) {
