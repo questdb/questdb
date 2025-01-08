@@ -26,16 +26,36 @@ package io.questdb.test.cairo;
 
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assume;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+
+import java.util.Arrays;
+import java.util.Collection;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 
+@RunWith(Parameterized.class)
 public class TtlTest extends AbstractCairoTest {
+
+    private final String wal;
+
+    public TtlTest(WalMode walMode) {
+        this.wal = walMode == WalMode.WITH_WAL ? " WAL" : " BYPASS WAL";
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {WalMode.WITH_WAL}, {WalMode.NO_WAL}
+        });
+    }
 
     @Test
     public void testAlterSyntaxInvalid() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR" + wal);
         try {
             execute("ALTER TABLE tango SET TTL");
             fail("Invalid syntax accepted");
@@ -86,6 +106,7 @@ public class TtlTest extends AbstractCairoTest {
 
     @Test
     public void testAlterTableNotPartitioned() throws Exception {
+        Assume.assumeTrue(wal.equals("BYPASS WAL"));
         execute("CREATE TABLE tango (n LONG)");
         execute("ALTER TABLE tango SET TTL 0H"); // zero TTL is acceptable
         try {
@@ -98,22 +119,25 @@ public class TtlTest extends AbstractCairoTest {
 
     @Test
     public void testAlterTableSetTtl() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR" + wal);
         execute("INSERT INTO tango VALUES (0), (3_600_000_000), (7_200_000_001)");
-        assertQuery("ts\n" +
+        drainWalQueue();
+        assertSql("ts\n" +
                         "1970-01-01T00:00:00.000000Z\n" +  // with TTL of 1 hour, this row would be evictable
                         "1970-01-01T01:00:00.000000Z\n" +
                         "1970-01-01T02:00:00.000001Z\n",
-                "tango", "ts", true, true);
+                "tango");
         execute("ALTER TABLE tango SET TTL 1H");
-        assertQuery("ts\n" +
+        drainWalQueue();
+        assertSql("ts\n" +
                         "1970-01-01T01:00:00.000000Z\n" +
                         "1970-01-01T02:00:00.000001Z\n",
-                "tango", "ts", true, true);
+                "tango");
     }
 
     @Test
     public void testCreateSyntaxInvalid() {
+        Assume.assumeTrue(wal.equals("BYPASS WAL"));
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL");
             fail("Invalid syntax accepted");
@@ -164,82 +188,88 @@ public class TtlTest extends AbstractCairoTest {
 
     @Test
     public void testDayExactlyAtTtl() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 DAY");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 DAY" + wal);
         execute("INSERT INTO tango VALUES ('1970-01-01T00:00:00'), ('1970-01-01T23:00:00'), ('1970-01-02T00:59:59.999999')");
-        assertQuery("ts\n" +
+        drainWalQueue();
+        assertSql("ts\n" +
                         "1970-01-01T00:00:00.000000Z\n" +
                         "1970-01-01T23:00:00.000000Z\n" +
                         "1970-01-02T00:59:59.999999Z\n",
-                "tango", "ts", true, true);
+                "tango");
     }
 
     @Test
     public void testDayOneMicrosBeyondTtl() throws Exception {
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1D");
         execute("INSERT INTO tango VALUES ('1970-01-01T00:00:00'), ('1970-01-01T23:00:00'), ('1970-01-02T01:00:00')");
-        assertQuery("ts\n" +
+        assertSql("ts\n" +
                         "1970-01-01T23:00:00.000000Z\n" +
                         "1970-01-02T01:00:00.000000Z\n",
-                "tango", "ts", true, true);
+                "tango");
     }
 
     @Test
     public void testHourExactlyAtTtl() throws Exception {
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 HOUR");
         execute("INSERT INTO tango VALUES ('1970-01-01T00:00:00'), ('1970-01-01T01:00:00'), ('1970-01-01T01:59:59.999999')");
-        assertQuery("ts\n" +
+        assertSql("ts\n" +
                         "1970-01-01T00:00:00.000000Z\n" +
                         "1970-01-01T01:00:00.000000Z\n" +
                         "1970-01-01T01:59:59.999999Z\n",
-                "tango", "ts", true, true);
+                "tango");
     }
 
     @Test
     public void testHourOneMicrosBeyondTtl() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1H");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1H" + wal);
         execute("INSERT INTO tango VALUES ('1970-01-01T00:00:00'), ('1970-01-01T01:00:00'), ('1970-01-01T02:00:00')");
-        assertQuery("ts\n" +
+        drainWalQueue();
+        assertSql("ts\n" +
                         "1970-01-01T01:00:00.000000Z\n" +
                         "1970-01-01T02:00:00.000000Z\n",
-                "tango", "ts", true, true);
+                "tango");
     }
 
     @Test
     public void testManyPartitions() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 HOUR;");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 HOUR" + wal);
         execute("INSERT INTO tango SELECT (x*1_000_000*60*60)::TIMESTAMP ts FROM long_sequence(72);");
-        assertQuery("ts\n" +
+        drainWalQueue();
+        assertSql("ts\n" +
                         "1970-01-03T23:00:00.000000Z\n" +
                         "1970-01-04T00:00:00.000000Z\n",
-                "tango", "ts", true, true);
+                "tango");
     }
 
     @Test
     public void testMonthExactlyAtTtl() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 MONTH");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 MONTH" + wal);
         execute("INSERT INTO tango VALUES ('1970-02-01T04:20:00.0Z'), ('1970-02-10T04:20:00.0Z'), ('1970-03-01T04:59:59.999999Z')");
-        assertQuery("ts\n" +
+        drainWalQueue();
+        assertSql("ts\n" +
                         "1970-02-01T04:20:00.000000Z\n" +
                         "1970-02-10T04:20:00.000000Z\n" +
                         "1970-03-01T04:59:59.999999Z\n",
-                "tango", "ts", true, true);
+                "tango");
     }
 
     @Test
     public void testMonthOneMicrosBeyondTtl() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1M");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1M" + wal);
         execute("INSERT INTO tango VALUES ('1970-02-01T04:20:00.0Z'), ('1970-02-10T04:20:00.0Z'), ('1970-03-01T05:00:00')");
-        assertQuery("ts\n" +
+        drainWalQueue();
+        assertSql("ts\n" +
                         "1970-02-10T04:20:00.000000Z\n" +
                         "1970-03-01T05:00:00.000000Z\n",
-                "tango", "ts", true, true);
+                "tango");
     }
 
     @Test
     public void testRandomInsertion() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1D");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1D" + wal);
         execute("INSERT INTO tango SELECT rnd_timestamp('1970-01-01', '1970-12-01', 0) ts from long_sequence(2_000_000)");
         execute("INSERT INTO tango values ('1970-12-02')");
+        drainWalQueue();
         assertQuery("name\n1970-12-02T00\n",
                 "SELECT name FROM (SHOW PARTITIONS FROM tango)",
                 "", false, true);
@@ -247,6 +277,8 @@ public class TtlTest extends AbstractCairoTest {
 
     @Test
     public void testSyntaxJustWithinRange() throws Exception {
+        Assume.assumeTrue(wal.equals("BYPASS WAL"));
+
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 2_147_483_647 HOURS");
         execute("DROP TABLE tango");
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 89_478_485 DAYS");
@@ -260,6 +292,8 @@ public class TtlTest extends AbstractCairoTest {
 
     @Test
     public void testSyntaxOutOfRange() {
+        Assume.assumeTrue(wal.equals("BYPASS WAL"));
+
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL -1 HOURS");
             fail("Invalid syntax accepted");
@@ -306,92 +340,101 @@ public class TtlTest extends AbstractCairoTest {
 
     @Test
     public void testSyntaxValid() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1H");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1H" + wal);
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 HOUR");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 HOUR" + wal);
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 HOURS");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 HOURS" + wal);
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1D");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1D" + wal);
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 DAY");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 DAY" + wal);
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 DAYS");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 DAYS" + wal);
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1W");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1W" + wal);
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 WEEK");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 WEEK" + wal);
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 WEEKS");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 WEEKS" + wal);
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1M");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1M" + wal);
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 MONTH");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 MONTH" + wal);
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 MONTHS");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 MONTHS" + wal);
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1Y");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1Y" + wal);
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 YEAR");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 YEAR" + wal);
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 YEARS");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 YEARS" + wal);
     }
 
     @Test
     public void testTablesFunction() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR" + wal);
         assertSql("ttlValue\tttlUnit\n0\tHOUR\n", "select ttlValue, ttlUnit from (tables())");
         execute("ALTER TABLE tango SET TTL 2 HOURS");
+        drainWalQueue();
         assertSql("ttlValue\tttlUnit\n2\tHOUR\n", "select ttlValue, ttlUnit from (tables())");
         execute("ALTER TABLE tango SET TTL 2 DAYS");
+        drainWalQueue();
         assertSql("ttlValue\tttlUnit\n2\tDAY\n", "select ttlValue, ttlUnit from (tables())");
         execute("ALTER TABLE tango SET TTL 2 WEEKS");
+        drainWalQueue();
         assertSql("ttlValue\tttlUnit\n2\tWEEK\n", "select ttlValue, ttlUnit from (tables())");
         execute("ALTER TABLE tango SET TTL 2 MONTHS");
+        drainWalQueue();
         assertSql("ttlValue\tttlUnit\n2\tMONTH\n", "select ttlValue, ttlUnit from (tables())");
         execute("ALTER TABLE tango SET TTL 2 YEARS");
+        drainWalQueue();
         assertSql("ttlValue\tttlUnit\n2\tYEAR\n", "select ttlValue, ttlUnit from (tables())");
     }
 
     @Test
     public void testWeekExactlyAtTtl() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 WEEK");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 WEEK" + wal);
         execute("INSERT INTO tango VALUES ('1970-01-01'), ('1970-01-03'), ('1970-01-08T00:59:59.999999')");
-        assertQuery("ts\n" +
+        drainWalQueue();
+        assertSql("ts\n" +
                         "1970-01-01T00:00:00.000000Z\n" +
                         "1970-01-03T00:00:00.000000Z\n" +
                         "1970-01-08T00:59:59.999999Z\n",
-                "tango", "ts", true, true);
+                "tango");
     }
 
     @Test
     public void testWeekOneMicrosBeyondTtl() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1W");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1W" + wal);
         execute("INSERT INTO tango VALUES ('1970-01-01'), ('1970-01-03'), ('1970-01-08T01:00:00')");
-        assertQuery("ts\n" +
+        drainWalQueue();
+        assertSql("ts\n" +
                         "1970-01-03T00:00:00.000000Z\n" +
                         "1970-01-08T01:00:00.000000Z\n",
-                "tango", "ts", true, true);
+                "tango");
     }
 
     @Test
     public void testYearExactlyAtTtl() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 YEAR");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 YEAR" + wal);
         execute("INSERT INTO tango VALUES ('1970-01-01T04:20:00.0Z'), ('1970-12-01'), ('1971-01-01T04:59:59.999999')");
-        assertQuery("ts\n" +
+        drainWalQueue();
+        assertSql("ts\n" +
                         "1970-01-01T04:20:00.000000Z\n" +
                         "1970-12-01T00:00:00.000000Z\n" +
                         "1971-01-01T04:59:59.999999Z\n",
-                "tango", "ts", true, true);
+                "tango");
     }
 
     @Test
     public void testYearOneMicrosBeyondTtl() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1Y");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1Y" + wal);
         execute("INSERT INTO tango VALUES ('1970-01-01T04:20:00.0Z'), ('1970-12-01'), ('1971-01-01T05:00:00')");
-        assertQuery("ts\n" +
+        drainWalQueue();
+        assertSql("ts\n" +
                         "1970-12-01T00:00:00.000000Z\n" +
                         "1971-01-01T05:00:00.000000Z\n",
-                "tango", "ts", true, true);
+                "tango");
     }
 }
