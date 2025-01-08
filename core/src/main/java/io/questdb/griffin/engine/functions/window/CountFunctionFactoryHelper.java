@@ -46,7 +46,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowColumn;
-import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -63,7 +62,6 @@ public class CountFunctionFactoryHelper {
     static Function newCountWindowFunction(AbstractWindowFunctionFactory factory,
                                            int position,
                                            ObjList<Function> args,
-                                           IntList argPositions,
                                            CairoConfiguration configuration,
                                            SqlExecutionContext sqlExecutionContext,
                                            IsRecordNotNull isRecordNotNull) throws SqlException {
@@ -124,7 +122,7 @@ public class CountFunctionFactoryHelper {
                                 partitionByKeyTypes,
                                 CountFunctionFactoryHelper.COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES
                         );
-                        mem = Vm.getARWInstance(
+                        mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(),
                                 MemoryTag.NATIVE_CIRCULAR_BUFFER
@@ -193,7 +191,7 @@ public class CountFunctionFactoryHelper {
                                 partitionByKeyTypes,
                                 CountFunctionFactoryHelper.COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES
                         );
-                        MemoryARW mem = Vm.getARWInstance(
+                        MemoryARW mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(),
                                 MemoryTag.NATIVE_CIRCULAR_BUFFER
@@ -254,7 +252,7 @@ public class CountFunctionFactoryHelper {
                     return new CountOverWholeResultSetFunction(args.get(0), isRecordNotNull);
                 } // between [unbounded | x] preceding and [x preceding | current row]
                 else {
-                    MemoryARW mem = Vm.getARWInstance(
+                    MemoryARW mem = Vm.getCARWInstance(
                             configuration.getSqlWindowStorePageSize(),
                             configuration.getSqlWindowStoreMaxPages(),
                             MemoryTag.NATIVE_CIRCULAR_BUFFER
@@ -788,7 +786,11 @@ public class CountFunctionFactoryHelper {
         ) {
             super(arg);
             this.initialCapacity = configuration.getSqlWindowStorePageSize() / RECORD_SIZE;
-            this.memory = Vm.getARWInstance(configuration.getSqlWindowStorePageSize(), configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+            this.memory = Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
             this.isRecordNotNull = isRecordNotNull;
             frameLoBounded = rangeLo != Long.MIN_VALUE;
             maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE; // maxDiff must be used only if frameLoBounded

@@ -28,7 +28,11 @@ import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Long256Acceptor;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -167,29 +171,39 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
         extend0(address - pageAddress);
     }
 
-    private void extend0(long size) {
-        if (size == 0 && pageAddress == 0) {
+    private void extend0(final long requiredSize) {
+        if (requiredSize == 0 && pageAddress == 0) {
             return;
         }
 
-        long nPages = size > 0 ? ((size - 1) >>> sizeMsb) + 1 : 1;
-        size = nPages << sizeMsb;
         final long oldSize = size();
+        final long newPageCount = getNewPageCount(requiredSize, oldSize);
+        final long newSize = newPageCount << sizeMsb;
 
         // sometimes the resize request ends up being the same
         // as existing memory size
-        if (size == oldSize) {
+        if (newSize <= oldSize && requiredSize > 0) {
             return;
         }
 
-        if (nPages > maxPages) {
+        if (newPageCount > maxPages) {
             throw LimitOverflowException.instance().put("Maximum number of pages (").put(maxPages).put(") breached in VirtualMemory");
         }
-        final long newBaseAddress = reallocateMemory(pageAddress, size(), size);
+        final long newBaseAddress = reallocateMemory(pageAddress, size(), newSize);
         if (oldSize > 0) {
-            LOG.debug().$("extended [oldBase=").$(pageAddress).$(", newBase=").$(newBaseAddress).$(", oldSize=").$(oldSize).$(", newSize=").$(size).$(']').$();
+            LOG.debug().$("extended [oldBase=").$(pageAddress).$(", newBase=").$(newBaseAddress).$(", oldSize=").$(oldSize).$(", newSize=").$(newSize).$(']').$();
         }
-        handleMemoryReallocation(newBaseAddress, size);
+        handleMemoryReallocation(newBaseAddress, newSize);
+    }
+
+    private long getNewPageCount(long requiredSize, long oldSize) {
+        final long minPageCount = requiredSize > 0 ? ((requiredSize - 1) >>> sizeMsb) + 1 : 1;
+        if (oldSize > 0 && requiredSize > 0 && minPageCount * 2 < maxPages) {
+            // double the page count on each resize to avoid frequent resizes, unless this is
+            // are request to downsize the memory or aggressive resize will throw us over the limit
+            return minPageCount * 2;
+        }
+        return minPageCount;
     }
 
     protected final void handleMemoryReallocation(long newBaseAddress, long newSize) {

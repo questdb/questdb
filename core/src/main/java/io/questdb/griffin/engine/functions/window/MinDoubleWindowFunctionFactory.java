@@ -42,9 +42,9 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
+    public static final MaxDoubleWindowFunctionFactory.DoubleComparator LESS_THAN = (a, b) -> Double.compare(a, b) < 0;
     public static final String NAME = "min";
     private static final String SIGNATURE = NAME + "(D)";
-    public static final MaxDoubleWindowFunctionFactory.DoubleComparator LESS_THAN = (a, b) -> Double.compare(a, b) < 0;
 
     @Override
     public String getSignature() {
@@ -117,13 +117,13 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                                 rowsLo == Long.MIN_VALUE ? MaxDoubleWindowFunctionFactory.MAX_OVER_PARTITION_RANGE_COLUMN_TYPES :
                                         MaxDoubleWindowFunctionFactory.MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES
                         );
-                        mem = Vm.getARWInstance(
+                        mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(),
                                 MemoryTag.NATIVE_CIRCULAR_BUFFER
                         );
                         if (rowsLo != Long.MIN_VALUE) {
-                            dequeMem = Vm.getARWInstance(
+                            dequeMem = Vm.getCARWInstance(
                                     configuration.getSqlWindowStorePageSize(),
                                     configuration.getSqlWindowStoreMaxPages(),
                                     MemoryTag.NATIVE_CIRCULAR_BUFFER
@@ -201,13 +201,13 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                                 rowsLo == Long.MIN_VALUE ? MaxDoubleWindowFunctionFactory.MAX_OVER_PARTITION_ROWS_COLUMN_TYPES :
                                         MaxDoubleWindowFunctionFactory.MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES
                         );
-                        mem = Vm.getARWInstance(
+                        mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(),
                                 MemoryTag.NATIVE_CIRCULAR_BUFFER
                         );
                         if (rowsLo != Long.MIN_VALUE) {
-                            dequeMem = Vm.getARWInstance(
+                            dequeMem = Vm.getCARWInstance(
                                     configuration.getSqlWindowStorePageSize(),
                                     configuration.getSqlWindowStoreMaxPages(),
                                     MemoryTag.NATIVE_CIRCULAR_BUFFER
@@ -254,13 +254,13 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     MemoryARW mem = null;
                     MemoryARW dequeMem = null;
                     try {
-                        mem = Vm.getARWInstance(
+                        mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(),
                                 MemoryTag.NATIVE_CIRCULAR_BUFFER
                         );
                         if (rowsLo != Long.MIN_VALUE) {
-                            dequeMem = Vm.getARWInstance(
+                            dequeMem = Vm.getCARWInstance(
                                     configuration.getSqlWindowStorePageSize(),
                                     configuration.getSqlWindowStoreMaxPages(),
                                     MemoryTag.NATIVE_CIRCULAR_BUFFER
@@ -296,14 +296,14 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     return new MaxDoubleWindowFunctionFactory.MaxMinOverWholeResultSetFunction(args.get(0), LESS_THAN, NAME);
                 } // between [unbounded | x] preceding and [x preceding | current row]
                 else {
-                    MemoryARW mem = Vm.getARWInstance(
+                    MemoryARW mem = Vm.getCARWInstance(
                             configuration.getSqlWindowStorePageSize(),
                             configuration.getSqlWindowStoreMaxPages(),
                             MemoryTag.NATIVE_CIRCULAR_BUFFER
                     );
                     MemoryARW dequeMem = null;
                     if (rowsLo != Long.MIN_VALUE) {
-                        dequeMem = Vm.getARWInstance(
+                        dequeMem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(),
                                 MemoryTag.NATIVE_CIRCULAR_BUFFER

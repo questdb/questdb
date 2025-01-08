@@ -239,8 +239,10 @@ public class TableWriterTest extends AbstractCairoTest {
             TableModel model = new TableModel(configuration, "testAddColumnConcurrentWithDataUpdates", PartitionBy.NONE);
             model.timestamp();
             TableToken token;
-            try (Path path = new Path(); MemoryMARW mem = Vm.getMARWInstance()) {
-                token = TestUtils.createTable(engine, mem, path, model, tableId, model.getTableName());
+            try (Path path = new Path()) {
+                try (MemoryMARW mem = Vm.getCMARWInstance()) {
+                    token = TestUtils.createTable(engine, mem, path, model, tableId, model.getTableName());
+                }
             }
 
             // Write data in a loop getting writer in and out of pool
@@ -1030,7 +1032,8 @@ public class TableWriterTest extends AbstractCairoTest {
 
             // this contraption will verify that all timestamps that are
             // supposed to be stored have matching partitions
-            try (MemoryARW vmem = Vm.getARWInstance(FF.getPageSize(), Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+            long pageSize = FF.getPageSize();
+            try (MemoryARW vmem = Vm.getCARWInstance(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
                 try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
                     long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
                     int i = 0;
@@ -1209,7 +1212,8 @@ public class TableWriterTest extends AbstractCairoTest {
 
             // this contraption will verify that all timestamps that are
             // supposed to be stored have matching partitions
-            try (MemoryARW vmem = Vm.getARWInstance(ff.getPageSize(), Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+            long pageSize = ff.getPageSize();
+            try (MemoryARW vmem = Vm.getCARWInstance(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
                 try (TableWriter writer = newOffPoolWriter(new DefaultTestCairoConfiguration(root) {
                     @Override
                     public @NotNull FilesFacade getFilesFacade() {

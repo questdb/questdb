@@ -152,8 +152,8 @@ public class UnorderedVarcharMapBenchmark {
     public void createMem() {
         FilesFacade ff = FilesFacadeImpl.INSTANCE;
         try (
-                MemoryMA auxAppendMem = Vm.getMAInstance(null);
-                MemoryMA dataAppendMem = Vm.getMAInstance(null)
+                MemoryMA auxAppendMem = Vm.getPMARInstance(null);
+                MemoryMA dataAppendMem = Vm.getPMARInstance(null)
         ) {
             try (Path path = new Path()) {
                 path.of(AUX_MEM_FILENAME);

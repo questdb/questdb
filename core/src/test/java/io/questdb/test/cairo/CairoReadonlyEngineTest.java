@@ -128,16 +128,18 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
                 createTable(tableName, engine);
 
                 roEngine.reloadTableNames();
-                try (MemoryMARW mem = Vm.getMARWInstance()) {
-                    roEngine.rename(
-                            AllowAllSecurityContext.INSTANCE,
-                            Path.getThreadLocal(root),
-                            mem,
-                            tableName,
-                            Path.getThreadLocal2(root),
-                            tableName + "_renamed"
-                    );
-                    Assert.fail();
+                try {
+                    try (MemoryMARW mem = Vm.getCMARWInstance()) {
+                        roEngine.rename(
+                                AllowAllSecurityContext.INSTANCE,
+                                Path.getThreadLocal(root),
+                                mem,
+                                tableName,
+                                Path.getThreadLocal2(root),
+                                tableName + "_renamed"
+                        );
+                        Assert.fail();
+                    }
                 } catch (CairoException e) {
                     TestUtils.assertEquals("instance is read only", e.getFlyweightMessage());
                 }

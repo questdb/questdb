@@ -1028,13 +1028,15 @@ public final class TestUtils {
             int tableId,
             TableToken tableToken
     ) {
-        try (Path path = new Path(); MemoryMARW mem = Vm.getMARWInstance()) {
-            TableUtils.createTable(configuration, mem, path, model, tableVersion, tableId, tableToken.getDirName());
+        try (Path path = new Path()) {
+            try (MemoryMARW mem = Vm.getCMARWInstance()) {
+                TableUtils.createTable(configuration, mem, path, model, tableVersion, tableId, tableToken.getDirName());
+            }
         }
     }
 
     public static TableToken createTable(CairoEngine engine, TableStructure structure, int tableId) {
-        try (MemoryMARW mem = Vm.getMARWInstance(); Path path = new Path()) {
+        try (MemoryMARW mem = Vm.getCMARWInstance(); Path path = new Path()) {
             return TestUtils.createTable(engine, mem, path, structure, tableId, structure.getTableName());
         }
     }
