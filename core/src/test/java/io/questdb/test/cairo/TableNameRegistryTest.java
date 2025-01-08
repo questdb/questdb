@@ -27,7 +27,6 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableConverter;
 import io.questdb.cairo.TableFlagResolverImpl;
 import io.questdb.cairo.TableNameRegistry;
 import io.questdb.cairo.TableNameRegistryRO;
@@ -73,6 +72,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.GrowOnlyTableNameRegistryStore.OPERATION_ADD;
+import static io.questdb.cairo.wal.WalUtils.CONVERT_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.TABLE_REGISTRY_NAME_FILE;
 import static io.questdb.std.Files.FILES_RENAME_OK;
 
@@ -695,6 +695,65 @@ public class TableNameRegistryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConvertRestarted() throws Exception {
+        AtomicBoolean failFinishConversion = new AtomicBoolean(true);
+        AtomicBoolean failReloadNameRegistry = new AtomicBoolean(false);
+
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, long opts) {
+                if (failReloadNameRegistry.get() && Utf8s.endsWithAscii(name, "tables.d.0")) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+
+            @Override
+            public boolean removeQuiet(LPSZ name) {
+                if (failFinishConversion.get() && Utf8s.endsWithAscii(name, CONVERT_FILE_NAME)) {
+                    failReloadNameRegistry.set(true);
+                    return false;
+                }
+                return super.removeQuiet(name);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            TableToken tt1;
+            tt1 = createTableWal("tab1");
+            Assert.assertTrue(engine.isWalTable(tt1));
+
+            execute("alter table tab1 set type bypass wal");
+            Assert.assertTrue(engine.verifyTableName("tab1").isWal());
+
+            // Simulate engine restart in the middle of conversion
+            engine.releaseInactive();
+            engine.closeNameRegistry();
+            engine.reloadTableNames(null);
+
+            try {
+                engine.load();
+                Assert.fail("expected conversion failure");
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "could not open read-write");
+            }
+
+            // Do full restart
+            failFinishConversion.set(false);
+            failReloadNameRegistry.set(false);
+            simulateEngineRestart();
+
+            // Write a line into the table
+            execute("insert into tab1(a, b, timestamp) values(0, 1, '2022-02-24')");
+
+            assertSql("a\tb\ttimestamp\n" +
+                    "0\t1\t2022-02-24T00:00:00.000000Z\n", "tab1");
+
+            Assert.assertFalse(engine.verifyTableName("tab1").isWal());
+        });
+    }
+
+    @Test
     public void testConvertedTableListPassedToRegistryOnLoad() throws Exception {
         testConvertedTableListPassedToRegistryOnLoad0(true);
     }
@@ -981,14 +1040,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
         engine.releaseInactive();
         engine.closeNameRegistry();
         engine.reloadTableNames(null);
-
-        final ObjList<TableToken> convertedTables = TableConverter.convertTables(
-                engine,
-                engine.getTableSequencerAPI(),
-                engine.getTableFlagResolver()
-        );
-        engine.closeNameRegistry();
-        engine.reloadTableNames(convertedTables);
+        engine.load();
     }
 
     private static void testConvertedTableListPassedToRegistryOnLoad0(boolean releaseInactiveBeforeConversion) throws Exception {
@@ -1014,12 +1066,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 engine.releaseInactive();
             }
 
-            final ObjList<TableToken> convertedTables = TableConverter.convertTables(engine, engine.getTableSequencerAPI(), engine.getTableFlagResolver());
-
-            if (!releaseInactiveBeforeConversion) {
-                engine.releaseInactive();
-            }
-            engine.reloadTableNames(convertedTables);
+            engine.load();
 
             engine.reconcileTableNameRegistryState();
             Assert.assertEquals(tt1, engine.verifyTableName("tab1"));
