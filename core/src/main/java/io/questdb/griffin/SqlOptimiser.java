@@ -5015,7 +5015,7 @@ public class SqlOptimiser implements Mutable {
                     orderBy.token = characterStoreEntry.toImmutable();
                     orderBy.type = CONSTANT;
                     nested.getOrderBy().add(orderBy);
-                    nested.getOrderByDirection().add(0);
+                    nested.getOrderByDirection().add(ORDER_DIRECTION_ASCENDING);
                     nested.setTimestamp(nextLiteral(timestamp.token));
                 }
 
