@@ -26,7 +26,7 @@ package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.mv.MaterializedViewRefreshJob;
+import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
@@ -39,7 +39,7 @@ import org.junit.Test;
 import static io.questdb.griffin.model.IntervalUtils.parseFloorPartialTimestamp;
 
 
-public class MaterializedViewTest extends AbstractCairoTest {
+public class MatViewTest extends AbstractCairoTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -76,7 +76,7 @@ public class MaterializedViewTest extends AbstractCairoTest {
             drainWalQueue();
 
             currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
-            MaterializedViewRefreshJob refreshJob = new MaterializedViewRefreshJob(engine);
+            MatViewRefreshJob refreshJob = new MatViewRefreshJob(engine);
             refreshJob.run(0);
             drainWalQueue();
 
@@ -170,7 +170,7 @@ public class MaterializedViewTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            MaterializedViewRefreshJob refreshJob = new MaterializedViewRefreshJob(engine);
+            MatViewRefreshJob refreshJob = new MatViewRefreshJob(engine);
             refreshJob.run(0);
             drainWalQueue();
 
@@ -239,7 +239,7 @@ public class MaterializedViewTest extends AbstractCairoTest {
             );
             drainWalQueue();
 
-            MaterializedViewRefreshJob refreshJob = new MaterializedViewRefreshJob(engine);
+            MatViewRefreshJob refreshJob = new MatViewRefreshJob(engine);
             refreshJob.run(0);
             drainWalQueue();
 
@@ -312,7 +312,7 @@ public class MaterializedViewTest extends AbstractCairoTest {
             );
             drainWalQueue();
 
-            MaterializedViewRefreshJob refreshJob = new MaterializedViewRefreshJob(engine);
+            MatViewRefreshJob refreshJob = new MatViewRefreshJob(engine);
             refreshJob.run(0);
 
             assertSql(

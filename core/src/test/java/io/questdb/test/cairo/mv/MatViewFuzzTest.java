@@ -25,7 +25,7 @@
 package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.mv.MaterializedViewRefreshJob;
+import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -42,7 +42,7 @@ import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class MaterializedViewFuzzTest extends AbstractFuzzTest {
+public class MatViewFuzzTest extends AbstractFuzzTest {
     @Before
     public void setUp() {
         super.setUp();
@@ -272,7 +272,7 @@ public class MaterializedViewFuzzTest extends AbstractFuzzTest {
         Rnd rnd = new Rnd(outsideRnd.nextLong(), outsideRnd.nextLong());
         Thread th = new Thread(() -> {
             try {
-                MaterializedViewRefreshJob refreshJob = new MaterializedViewRefreshJob(engine);
+                MatViewRefreshJob refreshJob = new MatViewRefreshJob(engine);
                 while (!stop.get()) {
                     refreshJob.run(0);
                     Os.sleep(rnd.nextInt(1000));

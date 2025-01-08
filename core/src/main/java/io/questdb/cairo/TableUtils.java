@@ -28,7 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.mv.MaterializedViewDefinition;
+import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -366,7 +366,7 @@ public final class TableUtils {
         return function;
     }
 
-    public static void createMatViewDefinitionFile(MemoryMARW mem, MaterializedViewDefinition matViewDefinition) {
+    public static void createMatViewDefinitionFile(MemoryMARW mem, MatViewDefinition matViewDefinition) {
         mem.extend(MV_HEADER_SIZE);
         mem.jumpTo(MV_HEADER_SIZE);
         mem.putStr(matViewDefinition.getBaseTableName());
@@ -383,7 +383,7 @@ public final class TableUtils {
             MemoryMARW mem,
             Path path,
             int rootLen,
-            MaterializedViewDefinition matViewDefinition
+            MatViewDefinition matViewDefinition
     ) {
         mem.smallFile(ff, path.trimTo(rootLen).concat(MAT_VIEW_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
         createMatViewDefinitionFile(mem, matViewDefinition);
@@ -396,7 +396,7 @@ public final class TableUtils {
         mem.close(true, Vm.TRUNCATE_TO_POINTER);
     }
 
-    public static void createMatViewQueryFile(MemoryMARW mem, MaterializedViewDefinition matViewDefinition) {
+    public static void createMatViewQueryFile(MemoryMARW mem, MatViewDefinition matViewDefinition) {
         mem.putStr(matViewDefinition.getMatViewSql());
     }
 
@@ -1004,7 +1004,7 @@ public final class TableUtils {
         return columnValue != null ? columnValue.length() : NULL_LEN;
     }
 
-    public static @NotNull MaterializedViewDefinition loadMatViewDefinition(
+    public static @NotNull MatViewDefinition loadMatViewDefinition(
             FilesFacade ff,
             MemoryCMR mem,
             Path path,
@@ -1072,7 +1072,7 @@ public final class TableUtils {
         }
         final String matViewSqlStr = Chars.toString(matViewSql);
 
-        return new MaterializedViewDefinition(
+        return new MatViewDefinition(
                 matViewToken,
                 matViewSqlStr,
                 baseTableNameStr,

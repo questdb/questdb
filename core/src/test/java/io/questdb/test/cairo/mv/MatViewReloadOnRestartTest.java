@@ -27,7 +27,7 @@ package io.questdb.test.cairo.mv;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.mv.MaterializedViewRefreshJob;
+import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.LineUdpSender;
@@ -79,7 +79,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 );
                 drainWalQueue(main1.getEngine());
 
-                MaterializedViewRefreshJob refreshJob = new MaterializedViewRefreshJob(main1.getEngine());
+                MatViewRefreshJob refreshJob = new MatViewRefreshJob(main1.getEngine());
                 refreshJob.run(0);
                 drainWalQueue(main1.getEngine());
 
@@ -162,7 +162,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 );
                 drainWalQueue(main1.getEngine());
 
-                MaterializedViewRefreshJob refreshJob = new MaterializedViewRefreshJob(main1.getEngine());
+                MatViewRefreshJob refreshJob = new MatViewRefreshJob(main1.getEngine());
                 refreshJob.run(0);
                 drainWalQueue(main1.getEngine());
 
@@ -209,7 +209,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
 
                 drainWalQueue(main2.getEngine());
 
-                MaterializedViewRefreshJob refreshJob = new MaterializedViewRefreshJob(main2.getEngine());
+                MatViewRefreshJob refreshJob = new MatViewRefreshJob(main2.getEngine());
                 refreshJob.run(0);
                 drainWalQueue(main2.getEngine());
 
@@ -246,7 +246,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 );
                 drainWalQueue(main1.getEngine());
 
-                MaterializedViewRefreshJob refreshJob = new MaterializedViewRefreshJob(main1.getEngine());
+                MatViewRefreshJob refreshJob = new MatViewRefreshJob(main1.getEngine());
                 refreshJob.run(0);
                 drainWalQueue(main1.getEngine());
 
@@ -270,7 +270,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
                     PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
             )) {
-                MaterializedViewRefreshJob refreshJob = new MaterializedViewRefreshJob(main2.getEngine());
+                MatViewRefreshJob refreshJob = new MatViewRefreshJob(main2.getEngine());
                 refreshJob.run(0);
 
                 assertSql(
@@ -304,7 +304,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 );
                 drainWalQueue(main1.getEngine());
 
-                MaterializedViewRefreshJob refreshJob = new MaterializedViewRefreshJob(main1.getEngine());
+                MatViewRefreshJob refreshJob = new MatViewRefreshJob(main1.getEngine());
                 refreshJob.run(0);
                 drainWalQueue(main1.getEngine());
 
@@ -325,7 +325,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
                     PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
             )) {
-                MaterializedViewRefreshJob refreshJob = new MaterializedViewRefreshJob(main2.getEngine());
+                MatViewRefreshJob refreshJob = new MatViewRefreshJob(main2.getEngine());
                 refreshJob.run(0);
 
                 assertSql(
@@ -378,7 +378,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
         return serverMain;
     }
 
-    private void assertLineError(Transport transport, TestServerMain main, MaterializedViewRefreshJob refreshJob, String expected) {
+    private void assertLineError(Transport transport, TestServerMain main, MatViewRefreshJob refreshJob, String expected) {
         try (Sender sender = buildLineSender(transport)) {
             sender.table("price_1h").stringColumn("sym", "gbpusd")
                     .doubleColumn("price", 1.330)

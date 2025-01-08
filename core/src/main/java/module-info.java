@@ -888,7 +888,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.PrefixedVersionFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.TypeOfFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.CheckpointStatusFunctionFactory,
-            io.questdb.griffin.engine.functions.catalogue.RefreshMaterializedViewFunctionFactory,
+            RefreshMatViewFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.ViewsFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.ReloadConfigFunctionFactory,
 

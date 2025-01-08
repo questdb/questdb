@@ -26,7 +26,7 @@ package io.questdb.cairo.mv;
 
 import io.questdb.cairo.TableToken;
 
-public class MaterializedViewDefinition {
+public class MatViewDefinition {
     private final String baseTableName;
     private final long fromMicros;
     private final String matViewSql;
@@ -37,7 +37,7 @@ public class MaterializedViewDefinition {
     private final String timeZoneOffset;
     private final long toMicros;
 
-    public MaterializedViewDefinition(
+    public MatViewDefinition(
             TableToken matViewToken,
             String matViewSql,
             String baseTableName,

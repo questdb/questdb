@@ -37,7 +37,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class MatViewRefreshState implements QuietCloseable {
     private final AtomicBoolean locked = new AtomicBoolean(false);
     private final AtomicBoolean newNotification = new AtomicBoolean();
-    private final MaterializedViewDefinition viewDefinition;
+    private final MatViewDefinition viewDefinition;
     private RecordCursorFactory cursorFactory;
     private StringSink error;
     private int errorCode;
@@ -46,7 +46,7 @@ public class MatViewRefreshState implements QuietCloseable {
     private long recordRowCopierMetadataVersion;
     private RecordToRowCopier recordToRowCopier;
 
-    public MatViewRefreshState(MaterializedViewDefinition viewDefinition) {
+    public MatViewRefreshState(MatViewDefinition viewDefinition) {
         this.viewDefinition = viewDefinition;
     }
 
@@ -89,7 +89,7 @@ public class MatViewRefreshState implements QuietCloseable {
         return recordToRowCopier;
     }
 
-    public MaterializedViewDefinition getViewDefinition() {
+    public MatViewDefinition getViewDefinition() {
         return viewDefinition;
     }
 

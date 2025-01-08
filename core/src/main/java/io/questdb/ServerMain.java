@@ -28,7 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.FlushQueryCacheJob;
-import io.questdb.cairo.mv.MaterializedViewRefreshJob;
+import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.security.ReadOnlySecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -434,7 +434,7 @@ public class ServerMain implements Closeable {
     ) {
         for (int i = 0, workerCount = workerPool.getWorkerCount(); i < workerCount; i++) {
             // create job per worker
-            final MaterializedViewRefreshJob matViewRefreshJob = new MaterializedViewRefreshJob(engine);
+            final MatViewRefreshJob matViewRefreshJob = new MatViewRefreshJob(engine);
             workerPool.assign(i, matViewRefreshJob);
             workerPool.freeOnExit(matViewRefreshJob);
         }

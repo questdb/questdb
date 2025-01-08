@@ -27,7 +27,7 @@ package io.questdb.test.cairo.mv;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.mv.MaterializedViewDefinition;
+import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
@@ -520,7 +520,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             String name, String query, String baseTableName, long samplingInterval, char samplingIntervalUnit,
             long fromMicros, long toMicros, String timeZone, String timeZoneOffset
     ) {
-        final MaterializedViewDefinition matViewDefinition = getMatViewDefinition(name);
+        final MatViewDefinition matViewDefinition = getMatViewDefinition(name);
         assertNotNull(matViewDefinition);
         assertTrue(matViewDefinition.getMatViewToken().isMatView());
         assertTrue(matViewDefinition.getMatViewToken().isWal());
@@ -602,7 +602,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
         }
     }
 
-    private static MaterializedViewDefinition getMatViewDefinition(String viewName) {
+    private static MatViewDefinition getMatViewDefinition(String viewName) {
         final TableToken matViewToken = engine.getTableTokenIfExists(viewName);
         if (matViewToken == null) {
             return null;

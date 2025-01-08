@@ -24,7 +24,7 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.mv.MaterializedViewDefinition;
+import io.questdb.cairo.mv.MatViewDefinition;
 
 public interface TableStructure {
 
@@ -36,7 +36,7 @@ public interface TableStructure {
 
     int getIndexBlockCapacity(int columnIndex);
 
-    default MaterializedViewDefinition getMatViewDefinition() {
+    default MatViewDefinition getMatViewDefinition() {
         return null;
     }
 

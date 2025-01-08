@@ -30,9 +30,9 @@ import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
 import io.questdb.cairo.mv.MatViewRefreshState;
-import io.questdb.cairo.mv.MaterializedViewDefinition;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -161,7 +161,7 @@ public class ViewsFunctionFactory implements FunctionFactory {
                 private int lastErrorCode;
                 private long lastRefreshTimestamp;
                 private boolean refreshPending;
-                private MaterializedViewDefinition viewDefinition;
+                private MatViewDefinition viewDefinition;
 
                 @Override
                 public boolean getBool(int col) {
@@ -204,7 +204,7 @@ public class ViewsFunctionFactory implements FunctionFactory {
                     return getStrA(col);
                 }
 
-                public void of(MaterializedViewDefinition viewDefinition, long lastRefreshTimestamp, CharSequence lastError, int lastErrorCode, boolean refreshPending) {
+                public void of(MatViewDefinition viewDefinition, long lastRefreshTimestamp, CharSequence lastError, int lastErrorCode, boolean refreshPending) {
                     this.viewDefinition = viewDefinition;
                     this.lastRefreshTimestamp = lastRefreshTimestamp;
                     this.lastError = lastError != null && lastError.length() != 0 ? lastError : null;

@@ -57,7 +57,7 @@ public class MatViewGraph implements QuietCloseable {
         refreshStateByTableDirName.clear();
     }
 
-    public void createView(TableToken baseTableToken, MaterializedViewDefinition viewDefinition) {
+    public void createView(TableToken baseTableToken, MatViewDefinition viewDefinition) {
         TableToken matViewToken = viewDefinition.getMatViewToken();
         MatViewRefreshState viewRefreshState = refreshStateByTableDirName.get(matViewToken.getDirName());
         if (viewRefreshState != null && !viewRefreshState.isDropped()) {
@@ -142,7 +142,7 @@ public class MatViewGraph implements QuietCloseable {
         }
     }
 
-    public MaterializedViewDefinition getMatView(TableToken matViewToken) {
+    public MatViewDefinition getMatView(TableToken matViewToken) {
         final MatViewRefreshState state = refreshStateByTableDirName.get(matViewToken.getDirName());
         if (state != null && !state.isDropped()) {
             if (state.isDropped()) {

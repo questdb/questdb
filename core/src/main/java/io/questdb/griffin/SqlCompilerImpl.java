@@ -56,7 +56,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.VacuumColumnVersions;
-import io.questdb.cairo.mv.MaterializedViewDefinition;
+import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
@@ -2502,7 +2502,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
                 }
 
-                final MaterializedViewDefinition matViewDefinition;
+                final MatViewDefinition matViewDefinition;
                 final TableToken matViewToken;
 
                 final CreateTableOperation createTableOp = createMatViewOp.getCreateTableOperation();

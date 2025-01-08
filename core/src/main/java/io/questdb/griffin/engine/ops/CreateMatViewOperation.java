@@ -27,7 +27,7 @@ package io.questdb.griffin.engine.ops;
 import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.mv.MaterializedViewDefinition;
+import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler;
@@ -46,7 +46,7 @@ public class CreateMatViewOperation implements TableStructure, Operation {
     private final String timeZoneOffset;
     private final long toMicros;
     private final String viewSql;
-    private MaterializedViewDefinition matViewDefinition;
+    private MatViewDefinition matViewDefinition;
 
     public CreateMatViewOperation(
             CreateTableOperation createTableOperation,
@@ -108,7 +108,7 @@ public class CreateMatViewOperation implements TableStructure, Operation {
     }
 
     @Override
-    public MaterializedViewDefinition getMatViewDefinition() {
+    public MatViewDefinition getMatViewDefinition() {
         return matViewDefinition;
     }
 
@@ -180,7 +180,7 @@ public class CreateMatViewOperation implements TableStructure, Operation {
 
     @Override
     public void init(TableToken tableToken) {
-        matViewDefinition = new MaterializedViewDefinition(
+        matViewDefinition = new MatViewDefinition(
                 tableToken, viewSql, baseTableName, samplingInterval, samplingIntervalUnit,
                 fromMicros, toMicros, timeZone, timeZoneOffset
         );

@@ -30,8 +30,8 @@ import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
 import io.questdb.Telemetry;
 import io.questdb.cairo.mig.EngineMigration;
+import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
-import io.questdb.cairo.mv.MaterializedViewDefinition;
 import io.questdb.cairo.mv.MvRefreshTask;
 import io.questdb.cairo.pool.AbstractMultiTenantPool;
 import io.questdb.cairo.pool.PoolListener;
@@ -384,7 +384,7 @@ public class CairoEngine implements Closeable, WriterSource {
         readerPool.configureThreadLocalPoolSupervisor(supervisor);
     }
 
-    public @NotNull MaterializedViewDefinition createMatView(
+    public @NotNull MatViewDefinition createMatView(
             SecurityContext securityContext,
             MemoryMARW mem,
             Path path,
@@ -1368,7 +1368,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 final FilesFacade ff = configuration.getFilesFacade();
                 if (tableToken.isMatView() && TableUtils.doesMvFileExist(configuration, path, tableToken.getDirName(), ff)) {
                     try {
-                        MaterializedViewDefinition matViewDefinition = TableUtils.loadMatViewDefinition(
+                        MatViewDefinition matViewDefinition = TableUtils.loadMatViewDefinition(
                                 ff,
                                 memory,
                                 path,

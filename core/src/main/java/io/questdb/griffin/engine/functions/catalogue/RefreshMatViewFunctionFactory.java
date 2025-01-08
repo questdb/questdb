@@ -39,23 +39,30 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class RefreshMaterializedViewFunctionFactory implements FunctionFactory {
+public class RefreshMatViewFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "refresh_mat_view(S)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return new RefreshMaterializedViewFunction(args.get(0));
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        return new Func(args.get(0));
     }
 
-    private static class RefreshMaterializedViewFunction extends BooleanFunction implements UnaryFunction {
+    private static class Func extends BooleanFunction implements UnaryFunction {
         private final Function function;
         private SqlExecutionContext executionContext;
         private MatViewGraph matViewGraph;
 
-        public RefreshMaterializedViewFunction(Function arg) {
+        public Func(Function arg) {
             this.function = arg;
         }
 

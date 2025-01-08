@@ -58,8 +58,8 @@ import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
-public class MaterializedViewRefreshJob extends SynchronizedJob implements QuietCloseable {
-    private static final Log LOG = LogFactory.getLog(MaterializedViewRefreshJob.class);
+public class MatViewRefreshJob extends SynchronizedJob implements QuietCloseable {
+    private static final Log LOG = LogFactory.getLog(MatViewRefreshJob.class);
     private final ObjList<CharSequence> baseTables = new ObjList<>();
     private final ObjList<TableToken> childViewSink = new ObjList<>();
     private final EntityColumnFilter columnFilter = new EntityColumnFilter();
@@ -69,7 +69,7 @@ public class MaterializedViewRefreshJob extends SynchronizedJob implements Quiet
     private final MvRefreshTask mvRefreshTask = new MvRefreshTask();
     private final WalTxnRangeLoader txnRangeLoader;
 
-    public MaterializedViewRefreshJob(CairoEngine engine) {
+    public MatViewRefreshJob(CairoEngine engine) {
         this.engine = engine;
         this.matViewRefreshExecutionContext = new MatViewRefreshExecutionContext(engine);
         this.txnRangeLoader = new WalTxnRangeLoader(engine.getConfiguration().getFilesFacade());
@@ -85,7 +85,7 @@ public class MaterializedViewRefreshJob extends SynchronizedJob implements Quiet
             MatViewRefreshExecutionContext executionContext,
             TableReader baseTableReader,
             long lastRefreshTxn,
-            MaterializedViewDefinition viewDefinition
+            MatViewDefinition viewDefinition
     ) throws SqlException {
         long lastTxn = baseTableReader.getSeqTxn();
 
@@ -169,7 +169,7 @@ public class MaterializedViewRefreshJob extends SynchronizedJob implements Quiet
         return copier;
     }
 
-    private boolean insertAsSelect(MatViewRefreshState state, MaterializedViewDefinition viewDef, TableWriterAPI tableWriter) throws SqlException {
+    private boolean insertAsSelect(MatViewRefreshState state, MatViewDefinition viewDef, TableWriterAPI tableWriter) throws SqlException {
         RecordCursorFactory factory;
         RecordToRowCopier copier;
         long rowCount;
@@ -388,7 +388,7 @@ public class MaterializedViewRefreshJob extends SynchronizedJob implements Quiet
             long fromBaseTxn,
             long toBaseTxn
     ) {
-        MaterializedViewDefinition viewDef = state.getViewDefinition();
+        MatViewDefinition viewDef = state.getViewDefinition();
         if (viewDef == null) {
             // View must be deleted
             LOG.info().$("not refreshing mat view, new definition does not exist [view=").$(viewToken).$(", base=").$(baseToken).I$();
