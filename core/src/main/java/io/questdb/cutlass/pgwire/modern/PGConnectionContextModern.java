@@ -885,7 +885,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                 pipelineCurrentEntry = entryPool.next();
             }
         } else {
-            addPipelineEntry();
+            releaseToPoolIfAbandoned(pipelineCurrentEntry);
             pipelineCurrentEntry = lookedUpPipelineEntry;
         }
 
