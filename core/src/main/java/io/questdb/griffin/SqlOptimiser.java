@@ -1194,7 +1194,12 @@ public class SqlOptimiser implements Mutable {
         if (parent.addModelAliasIndex(alias, modelIndex)) {
             return;
         }
-        throw SqlException.position(alias.position).put("Duplicate table or alias: ").put(alias.token);
+        // if both models are the same and we already added the alias to it via a subquery, it's not a duplicate
+        // it's only a duplicate if its being applied to a different model
+        if (parent != model) {
+            throw SqlException.position(alias.position).put("Duplicate table or alias: ").put(alias.token);
+        }
+
     }
 
     private ExpressionNode concatFilters(ExpressionNode old, ExpressionNode filter) {
@@ -3293,12 +3298,14 @@ public class SqlOptimiser implements Mutable {
             }
             model.setTableNameFunction(tableFactory);
         } else {
-            assert model.getTableNameFunction() == null;
-            tableFactory = TableUtils.createCursorFunction(functionParser, model, executionContext).getRecordCursorFactory();
-            model.setTableNameFunction(tableFactory);
-            tableFactoriesInFlight.add(tableFactory);
+            // if we haven't initialised the model, initialise it
+            if (model.getTableNameFunction() == null) {
+                tableFactory = TableUtils.createCursorFunction(functionParser, model, executionContext).getRecordCursorFactory();
+                model.setTableNameFunction(tableFactory);
+                tableFactoriesInFlight.add(tableFactory);
+            }
         }
-        copyColumnsFromMetadata(model, tableFactory.getMetadata());
+        copyColumnsFromMetadata(model, model.getTableNameFunction().getMetadata());
     }
 
     private void processEmittedJoinClauses(QueryModel model) {
