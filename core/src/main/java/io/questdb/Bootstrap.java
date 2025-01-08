@@ -28,12 +28,12 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogLevel;
 import io.questdb.log.LogRecord;
-import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.Net;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
@@ -673,16 +673,17 @@ public class Bootstrap {
                 sb.append("ILP Client Connection String");
             }
             sb.append("\n\n");
-            final IODispatcherConfiguration httpConf = config.getHttpServerConfiguration();
+            final HttpFullFatServerConfiguration httpConf = config.getHttpServerConfiguration();
             final int bindIP = httpConf.getBindIPv4Address();
             final int bindPort = httpConf.getBindPort();
+            final String contextPath = httpConf.getContextPath();
             if (bindIP == 0) {
                 try {
                     for (Enumeration<NetworkInterface> ni = NetworkInterface.getNetworkInterfaces(); ni.hasMoreElements(); ) {
                         for (Enumeration<InetAddress> addr = ni.nextElement().getInetAddresses(); addr.hasMoreElements(); ) {
                             InetAddress inetAddress = addr.nextElement();
                             if (inetAddress instanceof Inet4Address) {
-                                String leftCol = schema + "://" + inetAddress.getHostAddress() + ':' + bindPort;
+                                String leftCol = schema + "://" + inetAddress.getHostAddress() + ':' + bindPort + contextPath;
                                 sb.append(indent).append(leftCol);
                                 if (ilpEnabled) {
                                     padToNextCol(sb, leftCol.length());

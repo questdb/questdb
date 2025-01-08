@@ -75,6 +75,11 @@ public class HttpServerConfigurationWrapper implements HttpFullFatServerConfigur
     }
 
     @Override
+    public String getContextPath() {
+        return getDelegate().getContextPath();
+    }
+
+    @Override
     public String getDispatcherLogName() {
         return getDelegate().getDispatcherLogName();
     }

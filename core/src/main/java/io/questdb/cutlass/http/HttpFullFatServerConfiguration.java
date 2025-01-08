@@ -34,6 +34,8 @@ public interface HttpFullFatServerConfiguration extends HttpServerConfiguration 
 
     ConcurrentCacheConfiguration getConcurrentCacheConfiguration();
 
+    String getContextPath();
+
     JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration();
 
     LineHttpProcessorConfiguration getLineHttpProcessorConfiguration();

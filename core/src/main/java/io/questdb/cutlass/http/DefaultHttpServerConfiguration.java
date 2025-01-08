@@ -102,6 +102,11 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
     }
 
     @Override
+    public String getContextPath() {
+        return "";
+    }
+
+    @Override
     public FactoryProvider getFactoryProvider() {
         return DefaultFactoryProvider.INSTANCE;
     }
@@ -254,6 +259,11 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
         @Override
         public boolean autoCreateNewTables() {
             return lineHttpProcessorConfiguration.autoCreateNewTables();
+        }
+
+        @Override
+        public String getContextPath() {
+            return "";
         }
 
         @Override

@@ -195,6 +195,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final FilesFacade filesFacade;
     private final FactoryProviderFactory fpf;
     private final PropHttpContextConfiguration httpContextConfiguration;
+    private final String httpContextPath;
     private final boolean httpFrozenClock;
     private final PropHttpConcurrentCacheConfiguration httpMinConcurrentCacheConfiguration = new PropHttpConcurrentCacheConfiguration();
     private final PropHttpContextConfiguration httpMinContextConfiguration;
@@ -236,6 +237,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String keepAliveHeader;
     private final int latestByQueueCapacity;
     private final String legacyCheckpointRoot;
+    private final String lineHttpContextPath;
     private final boolean lineHttpEnabled;
     private final CharSequence lineHttpPingVersion;
     private final LineHttpProcessorConfiguration lineHttpProcessorConfiguration = new PropLineHttpProcessorConfiguration();
@@ -926,7 +928,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             // Use a separate configuration for min server. It does not make sense for the min server to grow the buffer sizes together with the main http server
             int minHttpConnectionStringPoolCapacity = getInt(properties, env, PropertyKey.HTTP_MIN_CONNECTION_STRING_POOL_CAPACITY, 2);
-            int minHttpconnectionPoolInitialCapacity = getInt(properties, env, PropertyKey.HTTP_MIN_CONNECTION_POOL_INITIAL_CAPACITY, 2);
+            int minHttpConnectionPoolInitialCapacity = getInt(properties, env, PropertyKey.HTTP_MIN_CONNECTION_POOL_INITIAL_CAPACITY, 2);
             int minHttpMultipartHeaderBufferSize = getIntSize(properties, env, PropertyKey.HTTP_MIN_MULTIPART_HEADER_BUFFER_SIZE, 512);
             long minHttpMultipartIdleSpinCount = getLong(properties, env, PropertyKey.HTTP_MIN_MULTIPART_IDLE_SPIN_COUNT, 0);
             boolean minHttpAllowDeflateBeforeSend = getBoolean(properties, env, PropertyKey.HTTP_MIN_ALLOW_DEFLATE_BEFORE_SEND, false);
@@ -936,7 +938,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             httpMinContextConfiguration = new PropHttpContextConfiguration(
                     minHttpConnectionStringPoolCapacity,
-                    minHttpconnectionPoolInitialCapacity,
+                    minHttpConnectionPoolInitialCapacity,
                     this,
                     minHttpAllowDeflateBeforeSend,
                     httpForceRecvFragmentationChunkSize,
@@ -993,6 +995,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.HTTP_NET_CONNECTION_RCVBUF, httpNetConnectionRcvBuf);
             this.httpRecvBufferSize = getIntSize(properties, env, PropertyKey.HTTP_RECEIVE_BUFFER_SIZE, 2 * Numbers.SIZE_1MB);
             this.httpRecvBufferSize = getIntSize(properties, env, PropertyKey.HTTP_RECV_BUFFER_SIZE, httpRecvBufferSize);
+
+            this.httpContextPath = getContextPath(properties, env, PropertyKey.HTTP_CONTEXT_PATH, "");
 
             this.dateAdapterPoolCapacity = getInt(properties, env, PropertyKey.HTTP_TEXT_DATE_ADAPTER_POOL_CAPACITY, 16);
             this.jsonCacheLimit = getIntSize(properties, env, PropertyKey.HTTP_TEXT_JSON_CACHE_LIMIT, 16384);
@@ -1359,6 +1363,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.lineTcpEnabled = getBoolean(properties, env, PropertyKey.LINE_TCP_ENABLED, true);
             this.lineHttpEnabled = getBoolean(properties, env, PropertyKey.LINE_HTTP_ENABLED, true);
             this.lineHttpPingVersion = getString(properties, env, PropertyKey.LINE_HTTP_PING_VERSION, "v2.7.4");
+            this.lineHttpContextPath = getContextPath(properties, env, PropertyKey.LINE_HTTP_CONTEXT_PATH, httpContextPath);
             if (lineTcpEnabled || lineHttpEnabled) {
                 // obsolete
                 lineTcpNetConnectionLimit = getInt(properties, env, PropertyKey.LINE_TCP_NET_ACTIVE_CONNECTION_LIMIT, 256);
@@ -1755,6 +1760,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         } catch (IOException e) {
             throw new ServerConfigurationException("Cannot calculate canonical path for configuration property [key=" + PropertyKey.CAIRO_SQL_COPY_WORK_ROOT.getPropertyPath() + ",value=" + path + "]");
         }
+    }
+
+    protected String getContextPath(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, String defaultValue) {
+        final String contextPath = getString(properties, env, key, defaultValue);
+        return !contextPath.isEmpty() && !contextPath.startsWith("/") ? "/" + contextPath : contextPath;
     }
 
     protected double getDouble(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, String defaultValue) throws ServerConfigurationException {
@@ -3666,6 +3676,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public String getContextPath() {
+            return httpContextPath;
+        }
+
+        @Override
         public String getDispatcherLogName() {
             return "http-server";
         }
@@ -3914,6 +3929,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean autoCreateNewTables() {
             return ilpAutoCreateNewTables;
+        }
+
+        @Override
+        public String getContextPath() {
+            return lineHttpContextPath;
         }
 
         @Override

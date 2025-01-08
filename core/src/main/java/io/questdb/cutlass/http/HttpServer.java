@@ -152,10 +152,11 @@ public class HttpServer implements Closeable {
         final LineHttpProcessorConfiguration lineHttpProcessorConfiguration = httpServerConfiguration.getLineHttpProcessorConfiguration();
         // Disable ILP HTTP if the instance configured to be read-only for HTTP requests
         if (httpServerConfiguration.isEnabled() && lineHttpProcessorConfiguration.isEnabled() && !httpServerConfiguration.getHttpContextConfiguration().readOnlySecurityContext()) {
+            final String lineHttpContextPath = lineHttpProcessorConfiguration.getContextPath();
             server.bind(new HttpRequestProcessorFactory() {
                 @Override
                 public String getUrl() {
-                    return "/write";
+                    return lineHttpContextPath + "/write";
                 }
 
                 @Override
@@ -167,7 +168,7 @@ public class HttpServer implements Closeable {
             server.bind(new HttpRequestProcessorFactory() {
                 @Override
                 public String getUrl() {
-                    return "/api/v2/write";
+                    return lineHttpContextPath + "/api/v2/write";
                 }
 
                 @Override
@@ -182,7 +183,7 @@ public class HttpServer implements Closeable {
             server.bind(new HttpRequestProcessorFactory() {
                 @Override
                 public String getUrl() {
-                    return "/ping";
+                    return lineHttpContextPath + "/ping";
                 }
 
                 @Override
@@ -192,11 +193,13 @@ public class HttpServer implements Closeable {
             });
         }
 
+        final String httpContextPath = httpServerConfiguration.getContextPath();
+
         final SettingsProcessor settingsProcessor = new SettingsProcessor(serverConfiguration);
         server.bind(new HttpRequestProcessorFactory() {
             @Override
             public String getUrl() {
-                return "/settings";
+                return httpContextPath + "/settings";
             }
 
             @Override
@@ -209,7 +212,7 @@ public class HttpServer implements Closeable {
         server.bind(new HttpRequestProcessorFactory() {
             @Override
             public String getUrl() {
-                return "/warnings";
+                return httpContextPath + "/warnings";
             }
 
             @Override
@@ -221,7 +224,7 @@ public class HttpServer implements Closeable {
         server.bind(new HttpRequestProcessorFactory() {
             @Override
             public String getUrl() {
-                return "/exec";
+                return httpContextPath + "/exec";
             }
 
             @Override
@@ -233,7 +236,7 @@ public class HttpServer implements Closeable {
         server.bind(new HttpRequestProcessorFactory() {
             @Override
             public String getUrl() {
-                return "/imp";
+                return httpContextPath + "/imp";
             }
 
             @Override
@@ -245,7 +248,7 @@ public class HttpServer implements Closeable {
         server.bind(new HttpRequestProcessorFactory() {
             @Override
             public String getUrl() {
-                return "/exp";
+                return httpContextPath + "/exp";
             }
 
             @Override
@@ -262,7 +265,7 @@ public class HttpServer implements Closeable {
         server.bind(new HttpRequestProcessorFactory() {
             @Override
             public String getUrl() {
-                return "/chk";
+                return httpContextPath + "/chk";
             }
 
             @Override

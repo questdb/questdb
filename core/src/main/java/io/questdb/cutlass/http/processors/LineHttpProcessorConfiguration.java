@@ -33,6 +33,8 @@ public interface LineHttpProcessorConfiguration {
 
     boolean autoCreateNewTables();
 
+    String getContextPath();
+
     short getDefaultColumnTypeForFloat();
 
     short getDefaultColumnTypeForInteger();
