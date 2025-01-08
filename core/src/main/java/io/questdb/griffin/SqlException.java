@@ -135,6 +135,10 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         return position(position).put("unexpected token [").put(token).put(']');
     }
 
+    public static SqlException unexpectedToken(int position, CharSequence token, @NotNull CharSequence extraMessage) {
+        return position(position).put("unexpected token [").put(token).put("] - ").put(extraMessage);
+    }
+
     public static SqlException unsupportedCast(int position, CharSequence columnName, int fromType, int toType) {
         return SqlException.$(position, "unsupported cast [column=").put(columnName)
                 .put(", from=").put(ColumnType.nameOf(fromType))

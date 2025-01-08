@@ -114,6 +114,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ObjList<QueryColumn> bottomUpColumns = new ObjList<>();
     private final LowerCaseCharSequenceIntHashMap columnAliasIndexes = new LowerCaseCharSequenceIntHashMap();
     private final LowerCaseCharSequenceObjHashMap<CharSequence> columnNameToAliasMap = new LowerCaseCharSequenceObjHashMap<>();
+    private final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls = new LowerCaseCharSequenceObjHashMap<>();
     private final IntHashSet dependencies = new IntHashSet();
     private final ObjList<ExpressionNode> expressionModels = new ObjList<>();
     private final ObjList<ExpressionNode> groupBy = new ObjList<>();
@@ -471,6 +472,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         fillValues = null;
         skipped = false;
         allowPropagationOfOrderByAdvice = true;
+        decls.clear();
     }
 
     public void clearColumnMapStructs() {
@@ -550,6 +552,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
     }
 
+    public void copyDeclsFrom(QueryModel model) {
+        copyDeclsFrom(model.getDecls());
+    }
+
+    public void copyDeclsFrom(LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) {
+        if (decls != null && decls.size() > 0) {
+            this.decls.putAll(decls);
+        }
+    }
+
     public void copyOrderByAdvice(ObjList<ExpressionNode> orderByAdvice) {
         this.orderByAdvice.clear();
         this.orderByAdvice.addAll(orderByAdvice);
@@ -614,6 +626,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && isMatViewModel == that.isMatViewModel
                 && modelType == that.modelType
                 && artificialStar == that.artificialStar
+                && skipped == that.skipped
+                && allowPropagationOfOrderByAdvice == that.allowPropagationOfOrderByAdvice
                 && Objects.equals(bottomUpColumns, that.bottomUpColumns)
                 && Objects.equals(topDownNameSet, that.topDownNameSet)
                 && Objects.equals(topDownColumns, that.topDownColumns)
@@ -671,8 +685,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && Objects.equals(unionModel, that.unionModel)
                 && Objects.equals(updateTableModel, that.updateTableModel)
                 && Objects.equals(updateTableToken, that.updateTableToken)
-                && skipped == that.skipped
-                && allowPropagationOfOrderByAdvice == that.allowPropagationOfOrderByAdvice;
+                && Objects.equals(decls, that.decls);
     }
 
     public QueryColumn findBottomUpColumnByAst(ExpressionNode node) {
@@ -727,6 +740,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public JoinContext getContext() {
         return context;
+    }
+
+    public LowerCaseCharSequenceObjHashMap<ExpressionNode> getDecls() {
+        return decls;
     }
 
     public IntHashSet getDependencies() {
@@ -1032,7 +1049,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 distinct, unionModel, setOperationType,
                 modelPosition, orderByAdviceMnemonic, tableId,
                 isUpdateModel, isMatViewModel, modelType, updateTableModel,
-                updateTableToken, artificialStar, fillFrom, fillStride, fillTo, fillValues
+                updateTableToken, artificialStar, fillFrom, fillStride, fillTo, fillValues, decls
         );
     }
 
