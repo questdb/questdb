@@ -3183,6 +3183,31 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUncommittedEnforceTtl() throws Exception {
+        String tango = "tango";
+        TableModel model = new TableModel(configuration, tango, PartitionBy.HOUR)
+                .timestamp("ts")
+                .ttlHoursOrMonths(1);
+        AbstractCairoTest.create(model);
+        try (TableWriter writer = newOffPoolWriter(configuration, tango)) {
+            writer.newRow(1).append();
+            writer.newRow(Timestamps.HOUR_MICROS + 1).append();
+            writer.commit();
+        }
+        assertSql("ts\n" +
+                "1970-01-01T00:00:00.000001Z\n" +
+                "1970-01-01T01:00:00.000001Z\n", "tango");
+        try (TableWriter writer = newOffPoolWriter(configuration, tango)) {
+            writer.newRow(2 * Timestamps.HOUR_MICROS + 1).append();
+            writer.enforceTtl();
+            writer.commit();
+        }
+        assertSql("ts\n" +
+                "1970-01-01T01:00:00.000001Z\n" +
+                "1970-01-01T02:00:00.000001Z\n", "tango");
+    }
+
+    @Test
     public void testUtf8() {
         String name = "utf8";
         TableModel model = new TableModel(configuration, name, PartitionBy.NONE)
