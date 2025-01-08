@@ -283,21 +283,24 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private Status handleCommitError(Throwable ex) {
         errorId = ERROR_COUNT.incrementAndGet();
         errorLine = -1;
-        LOG.critical()
-                .$('[').$(fd).$("] could not commit [table=").$(parser.getMeasurementName())
-                .$(", errorId=").$(ERROR_ID).$('-').$(errorId)
-                .$(", ex=").$(ex.getMessage())
-                .I$();
 
+        final Status status;
         error.put("commit error for table: ").put(parser.getMeasurementName());
         if (ex instanceof CairoException) {
             CairoException exception = (CairoException) ex;
             error.put(", errno: ").put(exception.getErrno()).put(", error: ").put(exception.getFlyweightMessage());
-            return exception.isAuthorizationError() ? Status.SECURITY_ERROR : Status.INTERNAL_ERROR;
+            status = exception.isAuthorizationError() ? Status.SECURITY_ERROR : Status.INTERNAL_ERROR;
         } else {
             error.put(", error: ").put(ex.getClass().getCanonicalName());
-            return Status.INTERNAL_ERROR;
+            status = Status.INTERNAL_ERROR;
         }
+
+        final LogRecord errorRec = status == Status.SECURITY_ERROR ? LOG.error() : LOG.critical();
+        errorRec.$('[').$(fd).$("] could not commit [table=").$(parser.getMeasurementName())
+                .$(", errorId=").$(ERROR_ID).$('-').$(errorId)
+                .$(", ex=").$(ex.getMessage())
+                .I$();
+        return status;
     }
 
     private Status handleLineError(LineTcpParser parser) {
