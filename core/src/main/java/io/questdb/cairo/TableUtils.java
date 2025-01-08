@@ -397,12 +397,10 @@ public final class TableUtils {
             CharSequence dirName
     ) {
         try (
-                Path path = new Path()
+                Path path = new Path();
+                MemoryMARW mem = Vm.getCMARWInstance()
         ) {
-            try (MemoryMARW mem = Vm.getCMARWInstance()
-            ) {
-                createTable(ff, root, mkDirMode, mem, path, dirName, structure, tableVersion, tableId);
-            }
+            createTable(ff, root, mkDirMode, mem, path, dirName, structure, tableVersion, tableId);
         }
     }
 

@@ -1028,10 +1028,11 @@ public final class TestUtils {
             int tableId,
             TableToken tableToken
     ) {
-        try (Path path = new Path()) {
-            try (MemoryMARW mem = Vm.getCMARWInstance()) {
-                TableUtils.createTable(configuration, mem, path, model, tableVersion, tableId, tableToken.getDirName());
-            }
+        try (
+                Path path = new Path();
+                MemoryMARW mem = Vm.getCMARWInstance()
+        ) {
+            TableUtils.createTable(configuration, mem, path, model, tableVersion, tableId, tableToken.getDirName());
         }
     }
 

@@ -69,83 +69,82 @@ public class EngineMigration {
         long mem = Unsafe.malloc(tempMemSize, MemoryTag.NATIVE_MIG);
 
         try {
-            try (MemoryARW virtualMem = Vm.getCARWInstance(ff.getPageSize(), Integer.MAX_VALUE, MemoryTag.NATIVE_MIG_MMAP);
-                 Path path = new Path()
+            try (
+                    MemoryARW virtualMem = Vm.getCARWInstance(ff.getPageSize(), Integer.MAX_VALUE, MemoryTag.NATIVE_MIG_MMAP);
+                    Path path = new Path();
+                    MemoryMARW rwMemory = Vm.getCMARWInstance()
             ) {
-                try (MemoryMARW rwMemory = Vm.getCMARWInstance()
-                ) {
-                    MigrationContext context = new MigrationContext(engine, mem, tempMemSize, virtualMem, rwMemory);
-                    path.of(configuration.getRoot());
+                MigrationContext context = new MigrationContext(engine, mem, tempMemSize, virtualMem, rwMemory);
+                path.of(configuration.getRoot());
 
-                    // check if all tables have been upgraded already
-                    path.concat(TableUtils.UPGRADE_FILE_NAME);
-                    final boolean existed = !force && ff.exists(path.$());
-                    long upgradeFd = openFileRWOrFail(ff, path.$(), configuration.getWriterFileOpenOpts());
-                    LOG.debug()
-                            .$("open [fd=").$(upgradeFd)
-                            .$(", path=").$(path)
-                            .I$();
-                    if (existed) {
-                        int currentTableVersion = ff.readNonNegativeInt(upgradeFd, 0);
+                // check if all tables have been upgraded already
+                path.concat(TableUtils.UPGRADE_FILE_NAME);
+                final boolean existed = !force && ff.exists(path.$());
+                long upgradeFd = openFileRWOrFail(ff, path.$(), configuration.getWriterFileOpenOpts());
+                LOG.debug()
+                        .$("open [fd=").$(upgradeFd)
+                        .$(", path=").$(path)
+                        .I$();
+                if (existed) {
+                    int currentTableVersion = ff.readNonNegativeInt(upgradeFd, 0);
 
-                        if (currentTableVersion > latestTableVersion) {
-                            ff.close(upgradeFd);
-                            LOG.critical().$("database storage is marked as upgraded to an incompatible version, ")
-                                    .$(". Upgrade the database or ")
-                                    .$("remove file ")
-                                    .$(TableUtils.UPGRADE_FILE_NAME)
-                                    .$((" to force proceed"))
-                                    .$(" [storageVersion=").$(currentTableVersion)
-                                    .$(", databaseVersion=").$(latestTableVersion).I$();
+                    if (currentTableVersion > latestTableVersion) {
+                        ff.close(upgradeFd);
+                        LOG.critical().$("database storage is marked as upgraded to an incompatible version, ")
+                                .$(". Upgrade the database or ")
+                                .$("remove file ")
+                                .$(TableUtils.UPGRADE_FILE_NAME)
+                                .$((" to force proceed"))
+                                .$(" [storageVersion=").$(currentTableVersion)
+                                .$(", databaseVersion=").$(latestTableVersion).I$();
 
-                            throw CairoException.critical(0)
-                                    .put("database storage is marked as upgraded to an incompatible version, ")
-                                    .put(". Upgrade the database or ")
-                                    .put("remove file ")
-                                    .put(TableUtils.UPGRADE_FILE_NAME)
-                                    .put(" [storageVersion=").put(currentTableVersion)
-                                    .put(", databaseVersion=").put(latestTableVersion);
-                        }
-
-                        int currentMigrationVersion = ff.readNonNegativeInt(upgradeFd, 4);
-                        if (currentMigrationVersion <= 0 || configuration.getRepeatMigrationsFromVersion() == currentTableVersion) {
-                            currentMigrationVersion = currentTableVersion;
-                        }
-
-                        if (currentMigrationVersion == latestMigrationVersion) {
-                            LOG.info().$("upgraded to [migrationVersion=").$(currentMigrationVersion).I$();
-                            ff.fsyncAndClose(upgradeFd);
-                            return;
-                        }
+                        throw CairoException.critical(0)
+                                .put("database storage is marked as upgraded to an incompatible version, ")
+                                .put(". Upgrade the database or ")
+                                .put("remove file ")
+                                .put(TableUtils.UPGRADE_FILE_NAME)
+                                .put(" [storageVersion=").put(currentTableVersion)
+                                .put(", databaseVersion=").put(latestTableVersion);
                     }
 
-                    try {
-                        LOG.info().$("upgrading database [version=").$(latestMigrationVersion).I$();
-                        upgradeTables(context, latestTableVersion, latestMigrationVersion);
-                        TableUtils.writeIntOrFail(
-                                ff,
-                                upgradeFd,
-                                0,
-                                latestTableVersion,
-                                mem,
-                                path
-                        );
-                        TableUtils.writeIntOrFail(
-                                ff,
-                                upgradeFd,
-                                4,
-                                latestMigrationVersion,
-                                mem,
-                                path
-                        );
-                    } finally {
-                        Vm.bestEffortClose(
-                                ff,
-                                LOG,
-                                upgradeFd,
-                                2 * Integer.BYTES
-                        );
+                    int currentMigrationVersion = ff.readNonNegativeInt(upgradeFd, 4);
+                    if (currentMigrationVersion <= 0 || configuration.getRepeatMigrationsFromVersion() == currentTableVersion) {
+                        currentMigrationVersion = currentTableVersion;
                     }
+
+                    if (currentMigrationVersion == latestMigrationVersion) {
+                        LOG.info().$("upgraded to [migrationVersion=").$(currentMigrationVersion).I$();
+                        ff.fsyncAndClose(upgradeFd);
+                        return;
+                    }
+                }
+
+                try {
+                    LOG.info().$("upgrading database [version=").$(latestMigrationVersion).I$();
+                    upgradeTables(context, latestTableVersion, latestMigrationVersion);
+                    TableUtils.writeIntOrFail(
+                            ff,
+                            upgradeFd,
+                            0,
+                            latestTableVersion,
+                            mem,
+                            path
+                    );
+                    TableUtils.writeIntOrFail(
+                            ff,
+                            upgradeFd,
+                            4,
+                            latestMigrationVersion,
+                            mem,
+                            path
+                    );
+                } finally {
+                    Vm.bestEffortClose(
+                            ff,
+                            LOG,
+                            upgradeFd,
+                            2 * Integer.BYTES
+                    );
                 }
             }
         } finally {
