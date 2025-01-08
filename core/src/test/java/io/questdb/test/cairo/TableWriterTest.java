@@ -1212,8 +1212,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             // this contraption will verify that all timestamps that are
             // supposed to be stored have matching partitions
-            long pageSize = ff.getPageSize();
-            try (MemoryARW vmem = Vm.getCARWInstance(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+            try (MemoryARW vmem = Vm.getCARWInstance(ff.getPageSize(), Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
                 try (TableWriter writer = newOffPoolWriter(new DefaultTestCairoConfiguration(root) {
                     @Override
                     public @NotNull FilesFacade getFilesFacade() {

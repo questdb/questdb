@@ -430,9 +430,9 @@ public class CairoEngineTest extends AbstractCairoTest {
                     try (MemoryMARW mem = Vm.getCMARWInstance()) {
                         engine.rename(securityContext, path, mem, "x", otherPath, "y");
                         Assert.fail();
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "table busy [reason=missing or owned by other process]");
                     }
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "table busy [reason=missing or owned by other process]");
                 }
             }
         });
