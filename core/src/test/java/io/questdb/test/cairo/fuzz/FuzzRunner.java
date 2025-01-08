@@ -455,6 +455,7 @@ public class FuzzRunner {
                 partitionDropProb,
                 truncateProb,
                 tableDropProb,
+                0.0,
                 strLen,
                 generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableName),
                 (int) sequencerMetadata.getMetadataVersion()

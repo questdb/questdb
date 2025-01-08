@@ -62,6 +62,7 @@ public class FuzzTransactionGenerator {
             double probabilityOfDropPartition,
             double probabilityOfTruncate,
             double probabilityOfDropTable,
+            double probabilityOfSetTtl,
             int maxStrLenForStrColumns,
             String[] symbols,
             int metaVersion
