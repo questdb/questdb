@@ -180,15 +180,14 @@ public class SqlParser {
         int tokLength = tok.length();
         int unit = -1;
         int unitPos = -1;
-        if (tokLength > 1 && Character.isLetter(tok.charAt(tokLength - 1))) {
-            CharSequence unitChar = tok.subSequence(tokLength - 1, tokLength);
-            unit = PartitionBy.ttlUnitFromString(unitChar);
-            tok = tok.subSequence(0, tokLength - 1);
+        char unitChar = tok.charAt(tokLength - 1);
+        if (tokLength > 1 && Character.isLetter(unitChar)) {
+            unit = PartitionBy.ttlUnitFromString(tok, tokLength - 1, tokLength);
             if (unit != -1) {
                 unitPos = valuePos;
             } else {
                 try {
-                    Numbers.parseLong(tok);
+                    Numbers.parseLong(tok, 0, tokLength - 1);
                 } catch (NumericException e) {
                     throw SqlException.$(valuePos,
                             "invalid argument, should be TTL <number> <unit> or <number_with_unit>");
@@ -200,7 +199,7 @@ public class SqlParser {
         // at this point, unit == -1 means the syntax wasn't of the "1H" form, it can still be of the "1 HOUR" form
         int ttlValue;
         try {
-            long ttlLong = Numbers.parseLong(tok);
+            long ttlLong = unit == -1 ? Numbers.parseLong(tok) : Numbers.parseLong(tok, 0, tokLength - 1);
             if (ttlLong > Integer.MAX_VALUE || ttlLong < 0) {
                 throw SqlException.$(valuePos, "TTL value out of range: ").put(ttlLong)
                         .put(". Max value: ").put(Integer.MAX_VALUE);
@@ -217,7 +216,7 @@ public class SqlParser {
                 throw SqlException.$(unitPos,
                         "missing unit, 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)' expected");
             }
-            unit = PartitionBy.ttlUnitFromString(tok);
+            unit = PartitionBy.ttlUnitFromString(tok, 0, tok.length());
         }
         if (unit == -1) {
             throw SqlException.$(unitPos,

@@ -271,8 +271,8 @@ public final class PartitionBy {
         }
     }
 
-    public static int ttlUnitFromString(CharSequence name) {
-        return ttlUnitToIndexMap.get(name);
+    public static int ttlUnitFromString(CharSequence name, int start, int limit) {
+        return ttlUnitToIndexMap.valueAt(ttlUnitToIndexMap.keyIndex(name, start, limit));
     }
 
     private static CairoException expectedPartitionDirNameFormatCairoException(CharSequence partitionName, int lo, int hi, int partitionBy) {
