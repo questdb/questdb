@@ -69,6 +69,7 @@ import io.questdb.test.fuzz.FuzzTransactionGenerator;
 import io.questdb.test.fuzz.FuzzTransactionOperation;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
 
@@ -562,17 +563,17 @@ public class FuzzRunner {
         }
     }
 
-    private static void reloadReader(Rnd reloadRnd, TableReader rdr1, CharSequence rdrId) {
+    private static void reloadReader(Rnd reloadRnd, @Nullable TableReader reader, CharSequence rdrId) {
         if (reloadRnd.nextBoolean()) {
-            if (rdr1.isActive()) {
-                reloadPartitions(rdr1);
-                LOG.info().$("releasing reader txn [rdr=").$(rdrId).$(", table=").$(rdr1.getTableToken()).$(", txn=").$(rdr1.getTxn()).I$();
-                rdr1.goPassive();
+            if (reader != null && reader.isActive()) {
+                reloadPartitions(reader);
+                LOG.info().$("releasing reader txn [rdr=").$(rdrId).$(", table=").$(reader.getTableToken()).$(", txn=").$(reader.getTxn()).I$();
+                reader.goPassive();
             }
 
-            if (reloadRnd.nextBoolean() && rdr1.isActive()) {
-                rdr1.goActive();
-                LOG.info().$("acquired reader txn [rdr=").$(rdrId).$(", table=").$(rdr1.getTableToken()).$(", txn=").$(rdr1.getTxn()).I$();
+            if (reloadRnd.nextBoolean() && reader != null && reader.isActive()) {
+                reader.goActive();
+                LOG.info().$("acquired reader txn [rdr=").$(rdrId).$(", table=").$(reader.getTableToken()).$(", txn=").$(reader.getTxn()).I$();
             }
         }
     }
