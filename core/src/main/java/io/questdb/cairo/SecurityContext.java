@@ -76,6 +76,12 @@ public interface SecurityContext extends Mutable {
 
     void authorizeLineTcp();
 
+    void authorizeMatViewCreate();
+
+    void authorizeMatViewDrop(TableToken tableToken);
+
+    void authorizeMatViewRefresh();
+
     void authorizePGWire();
 
     void authorizeResumeWal(TableToken tableToken);
@@ -89,8 +95,6 @@ public interface SecurityContext extends Mutable {
     void authorizeSystemAdmin();
 
     void authorizeTableBackup(ObjHashSet<TableToken> tableTokens);
-
-    // todo: add create/drop/refresh mat view checks
 
     void authorizeTableCreate();
 

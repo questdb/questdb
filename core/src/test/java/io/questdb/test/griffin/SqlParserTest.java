@@ -3538,11 +3538,38 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDropMaterializedViewIfExistsMissingName() throws Exception {
+        assertSyntaxError(
+                "drop materialized view if exists",
+                32,
+                "mat-view-name expected"
+        );
+    }
+
+    @Test
+    public void testDropMaterializedViewMissingName() throws Exception {
+        assertSyntaxError(
+                "drop materialized view",
+                18,
+                "expected IF EXISTS mat-view-name"
+        );
+    }
+
+    @Test
+    public void testDropMaterializedViewMissingView() throws Exception {
+        assertSyntaxError(
+                "drop materialized tab1",
+                18,
+                "expected VIEW"
+        );
+    }
+
+    @Test
     public void testDropTablesMissingComma() throws Exception {
         assertSyntaxError(
                 "drop tables tab1 tab2",
                 5,
-                "'table' or 'all tables' expected",
+                "'table' or 'all tables' or 'materialized view' expected",
                 modelOf("tab1").col("a", ColumnType.INT).col("b", ColumnType.INT),
                 modelOf("tab2").col("a", ColumnType.INT).col("b", ColumnType.INT)
         );
@@ -3553,7 +3580,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "drop tables tab1, ",
                 5,
-                "'table' or 'all tables' expected",
+                "'table' or 'all tables' or 'materialized view' expected",
                 modelOf("tab1").col("a", ColumnType.INT).col("b", ColumnType.INT),
                 modelOf("tab2").col("a", ColumnType.INT).col("b", ColumnType.INT)
         );

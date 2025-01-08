@@ -8,21 +8,21 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SCSequence;
 import org.jetbrains.annotations.Nullable;
 
-public class DropTableOperation implements Operation {
+public class DropMatViewOperation implements Operation {
     private final DoneOperationFuture future = new DoneOperationFuture();
     private final boolean ifExists;
+    private final String matViewName;
+    private final int matViewNamePosition;
     private final String sqlText;
-    private final String tableName;
-    private final int tableNamePosition;
 
-    public DropTableOperation(
+    public DropMatViewOperation(
             String sqlText,
-            String tableName,
-            int tableNamePosition,
+            String matViewName,
+            int matViewNamePosition,
             boolean ifExists
     ) {
-        this.tableName = tableName;
-        this.tableNamePosition = tableNamePosition;
+        this.matViewName = matViewName;
+        this.matViewNamePosition = matViewNamePosition;
         this.ifExists = ifExists;
         this.sqlText = sqlText;
     }
@@ -39,9 +39,17 @@ public class DropTableOperation implements Operation {
         return future;
     }
 
+    public String getMatViewName() {
+        return matViewName;
+    }
+
+    public int getMatViewNamePosition() {
+        return matViewNamePosition;
+    }
+
     @Override
     public int getOperationCode() {
-        return OperationCodes.DROP_TABLE;
+        return OperationCodes.DROP_MAT_VIEW;
     }
 
     @Override
@@ -51,14 +59,6 @@ public class DropTableOperation implements Operation {
 
     public String getSqlText() {
         return sqlText;
-    }
-
-    public String getTableName() {
-        return tableName;
-    }
-
-    public int getTableNamePosition() {
-        return tableNamePosition;
     }
 
     public boolean ifExists() {

@@ -126,7 +126,7 @@ public class DropStatementTest extends AbstractCairoTest {
                 assertExceptionNoLeakCheck("drop i_am_missing");
             } catch (SqlException e) {
                 Assert.assertEquals(5, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "'table' or 'all tables' expected");
+                TestUtils.assertContains(e.getFlyweightMessage(), "'table' or 'all tables' or 'materialized view' expected");
             }
         });
     }
