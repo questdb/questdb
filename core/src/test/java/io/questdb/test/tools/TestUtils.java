@@ -52,6 +52,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
+import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cutlass.text.CopyRequestJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -149,7 +150,8 @@ public final class TestUtils {
             Utf8StringSink sink = new Utf8StringSink();
             sink.put("ascii flag set to '").put(utf8Sequence == null || utf8Sequence.isAscii())
                     .put("' for value '").put(utf8Sequence).put("'. ");
-            Assert.assertEquals(sink.toString(),
+            Assert.assertEquals(
+                    sink.toString(),
                     Utf8s.isAscii(utf8Sequence), utf8Sequence == null || utf8Sequence.isAscii()
             );
         }
@@ -241,7 +243,8 @@ public final class TestUtils {
 
                 // check if we can bail out early because current record timestamps do not match
                 if (tsL != tsR) {
-                    throw new AssertionError(String.format("Row %d column %s[%s] %s. Expected %s but found %s",
+                    throw new AssertionError(String.format(
+                            "Row %d column %s[%s] %s. Expected %s but found %s",
                             rowIndex, metadataActual.getColumnName(timestampIndex), ColumnType.TIMESTAMP,
                             "timestamp mismatch", Timestamps.toUSecString(tsL), Timestamps.toUSecString(tsR)
                     ));
@@ -1089,6 +1092,17 @@ public final class TestUtils {
         }
     }
 
+    public static void drainPurgeJob(CairoEngine engine) {
+        try (WalPurgeJob job = new WalPurgeJob(
+                engine,
+                engine.getConfiguration().getFilesFacade(),
+                engine.getConfiguration().getMicrosecondClock()
+        )) {
+            engine.setWalPurgeJobRunLock(job.getRunLock());
+            job.drain(0);
+        }
+    }
+
     public static void drainTextImportJobQueue(CairoEngine engine) throws Exception {
         try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, 1)) {
             copyRequestJob.drain(0);
@@ -1381,7 +1395,8 @@ public final class TestUtils {
 
     public static void messTxnUnallocated(FilesFacade ff, Path path, Rnd rnd, TableToken tableToken) {
         path.concat(tableToken).concat(TableUtils.TXN_FILE_NAME);
-        try (MemoryMARW txFile = Vm.getCMARWInstance(ff, path.$(), Files.PAGE_SIZE, -1,
+        try (MemoryMARW txFile = Vm.getCMARWInstance(
+                ff, path.$(), Files.PAGE_SIZE, -1,
                 MemoryTag.NATIVE_MIG_MMAP, CairoConfiguration.O_NONE
         )
         ) {
@@ -1729,11 +1744,15 @@ public final class TestUtils {
             } catch (AssertionError e) {
                 String expected = recordToString(rr, metadataExpected, genericStringMatch);
                 String actual = recordToString(lr, metadataActual, genericStringMatch);
-                Assert.assertEquals(String.format(String.format("Row %d column %s[%s]",
-                        rowIndex, columnName, ColumnType.nameOf(columnType)
-                )), expected, actual);
+                Assert.assertEquals(
+                        String.format(String.format(
+                                "Row %d column %s[%s]",
+                                rowIndex, columnName, ColumnType.nameOf(columnType)
+                        )), expected, actual
+                );
                 // If above didn't fail because of types not included or double precision not enough, throw here anyway
-                throw new AssertionError(String.format("Row %d column %s[%s] %s", rowIndex, columnName,
+                throw new AssertionError(String.format(
+                        "Row %d column %s[%s] %s", rowIndex, columnName,
                         ColumnType.nameOf(columnType), e.getMessage()
                 ));
             }
@@ -1940,12 +1959,14 @@ public final class TestUtils {
             CursorPrinter.printColumn(record, metadata, i, sink, genericStringMatch, true, "<null>");
         }
         String printed = sink.toString();
-        map.compute(printed, (s, i) -> {
-            if (i == null) {
-                return 1;
-            }
-            return i + 1;
-        });
+        map.compute(
+                printed, (s, i) -> {
+                    if (i == null) {
+                        return 1;
+                    }
+                    return i + 1;
+                }
+        );
     }
 
     public interface CheckedIntFunction {
@@ -2002,8 +2023,10 @@ public final class TestUtils {
 
             Path.clearThreadLocals();
             if (fileCount != Files.getOpenFileCount()) {
-                Assert.assertEquals("file descriptors, expected: " + fileDebugInfo + ", actual: "
-                        + Files.getOpenFdDebugInfo(), fileCount, Files.getOpenFileCount());
+                Assert.assertEquals(
+                        "file descriptors, expected: " + fileDebugInfo + ", actual: "
+                                + Files.getOpenFdDebugInfo(), fileCount, Files.getOpenFileCount()
+                );
             }
 
             // Checks that the same tag used for allocation and freeing native memory
@@ -2015,7 +2038,8 @@ public final class TestUtils {
                     long actualMemByTag = Unsafe.getMemUsedByTag(i);
                     if (memoryUsageByTag[i] != actualMemByTag) {
                         if (i != MemoryTag.NATIVE_SQL_COMPILER) {
-                            Assert.assertEquals("Memory usage by tag: " + MemoryTag.nameOf(i)
+                            Assert.assertEquals(
+                                    "Memory usage by tag: " + MemoryTag.nameOf(i)
                                             + ", difference: " + (actualMemByTag - memoryUsageByTag[i]),
                                     memoryUsageByTag[i], actualMemByTag
                             );
