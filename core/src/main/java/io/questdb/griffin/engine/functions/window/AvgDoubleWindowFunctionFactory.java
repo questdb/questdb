@@ -1280,11 +1280,10 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             if (Numbers.isFinite(d)) {
                 sum += d;
                 count++;
-
-                value.putDouble(0, sum);
-                value.putLong(1, count);
             }
 
+            value.putDouble(0, sum);
+            value.putLong(1, count);
             avg = count != 0 ? sum / count : Double.NaN;
         }
 
