@@ -187,6 +187,16 @@ public class TtlTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateTableLike() throws Exception {
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 2 HOURS" + wal);
+        execute("CREATE TABLE samba (LIKE tango)");
+        assertSql("ddl\n" +
+                        "CREATE TABLE 'samba' ( \n\tts TIMESTAMP\n) timestamp(ts) PARTITION BY HOUR TTL 2 HOURS" + wal
+                        + "\nWITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n",
+                "SHOW CREATE TABLE samba");
+    }
+
+    @Test
     public void testDayExactlyAtTtl() throws Exception {
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 DAY" + wal);
         execute("INSERT INTO tango VALUES ('1970-01-01T00:00:00'), ('1970-01-01T23:00:00'), ('1970-01-02T00:59:59.999999')");
