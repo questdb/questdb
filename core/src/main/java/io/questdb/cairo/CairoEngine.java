@@ -435,6 +435,7 @@ public class CairoEngine implements Closeable, WriterSource {
         readerPool.detach(reader);
     }
 
+    // TODO(puzpuzpuz): rename to dropTableOrMatView
     public void dropTable(@Transient Path path, TableToken tableToken) {
         verifyTableToken(tableToken);
         if (tableToken.isWal()) {

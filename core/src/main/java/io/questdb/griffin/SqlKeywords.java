@@ -1901,6 +1901,14 @@ public class SqlKeywords {
                 && (tok.charAt(5) | 32) == 's';
     }
 
+    public static boolean isViewKeyword(CharSequence tok) {
+        return tok.length() == 4
+                && (tok.charAt(0) | 32) == 'v'
+                && (tok.charAt(1) | 32) == 'i'
+                && (tok.charAt(2) | 32) == 'e'
+                && (tok.charAt(3) | 32) == 'w';
+    }
+
     public static boolean isVolumeKeyword(CharSequence tok) {
         return tok.length() == 6
                 && (tok.charAt(0) | 32) == 'v'

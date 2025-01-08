@@ -294,7 +294,7 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     private void dropMatView() throws SqlException {
-        execute("drop table price_1h");
+        execute("drop materialized view price_1h;");
     }
 
     private void testIncrementalRefresh0(String viewSql) throws Exception {
