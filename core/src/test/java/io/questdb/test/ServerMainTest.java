@@ -405,6 +405,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.multipart.idle.spin.count\tQDB_HTTP_MULTIPART_IDLE_SPIN_COUNT\t10000\tdefault\tfalse\tfalse\n" +
                                     "http.net.snd.buf.size\tQDB_HTTP_NET_SND_BUF_SIZE\t-1\tdefault\tfalse\tfalse\n" +
                                     "http.net.connection.sndbuf\tQDB_HTTP_NET_CONNECTION_SNDBUF\t-1\tdefault\tfalse\tfalse\n" +
+                                    "http.context.path\tQDB_HTTP_CONTEXT_PATH\t\tdefault\tfalse\tfalse\n" +
                                     "http.send.buffer.size\tQDB_HTTP_SEND_BUFFER_SIZE\t2097152\tdefault\tfalse\tfalse\n" +
                                     "http.net.rcv.buf.size\tQDB_HTTP_NET_RCV_BUF_SIZE\t-1\tdefault\tfalse\tfalse\n" +
                                     "http.net.connection.rcvbuf\tQDB_HTTP_NET_CONNECTION_RCVBUF\t-1\tdefault\tfalse\tfalse\n" +
@@ -456,6 +457,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "line.float.default.column.type\tQDB_LINE_FLOAT_DEFAULT_COLUMN_TYPE\tDOUBLE\tdefault\tfalse\tfalse\n" +
                                     "line.http.enabled\tQDB_LINE_HTTP_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "line.http.ping.version\tQDB_LINE_HTTP_PING_VERSION\tv2.7.4\tdefault\tfalse\tfalse\n" +
+                                    "line.http.context.path\tQDB_LINE_HTTP_CONTEXT_PATH\t\tdefault\tfalse\tfalse\n" +
                                     "line.integer.default.column.type\tQDB_LINE_INTEGER_DEFAULT_COLUMN_TYPE\tLONG\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.auth.db.path\tQDB_LINE_TCP_AUTH_DB_PATH\t\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.commit.interval.default\tQDB_LINE_TCP_COMMIT_INTERVAL_DEFAULT\t2000\tdefault\tfalse\tfalse\n" +
