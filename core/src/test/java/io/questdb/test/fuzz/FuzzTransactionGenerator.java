@@ -57,14 +57,14 @@ public class FuzzTransactionGenerator {
             double probabilityOfRemovingColumn,
             double probabilityOfRenamingColumn,
             double probabilityOfColumnTypeChange,
-            double probabilityOfTruncate,
-            double probabilityOfDropPartition,
             double probabilityOfDataInsert,
             double probabilityOfSameTimestamp,
+            double probabilityOfDropPartition,
+            double probabilityOfTruncate,
+            double probabilityOfDropTable,
             int maxStrLenForStrColumns,
             String[] symbols,
-            int metaVersion,
-            double tableDropProbability
+            int metaVersion
     ) {
         ObjList<FuzzTransaction> transactionList = new ObjList<>();
         int waitBarrierVersion = 0;
@@ -95,7 +95,7 @@ public class FuzzTransactionGenerator {
         transactionCount = Math.max(Math.min(transactionCount, 1_500_000 / rowCount), 3);
 
         // Decide if drop will be generated
-        boolean generateTableDrop = rnd.nextDouble() < tableDropProbability;
+        boolean generateTableDrop = rnd.nextDouble() < probabilityOfDropTable;
         int tableDropIteration = generateTableDrop ? rnd.nextInt(transactionCount) : -1;
         if (generateTableDrop) {
             transactionCount++;

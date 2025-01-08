@@ -450,14 +450,14 @@ public class FuzzRunner {
                 colRemoveProb,
                 colRenameProb,
                 colTypeChangeProb,
-                truncateProb,
-                partitionDropProb,
                 dataAddProb,
                 equalTsRowsProb,
+                partitionDropProb,
+                truncateProb,
+                tableDropProb,
                 strLen,
                 generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableName),
-                (int) sequencerMetadata.getMetadataVersion(),
-                tableDropProb
+                (int) sequencerMetadata.getMetadataVersion()
         );
     }
 
