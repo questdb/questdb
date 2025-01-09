@@ -38,13 +38,19 @@ import io.questdb.std.Rnd;
 
 public class FuzzSetTtlOperation implements FuzzTransactionOperation {
 
+    private final int ttlHours;
+
+    public FuzzSetTtlOperation(int ttlHours) {
+        this.ttlHours = ttlHours;
+    }
+
     @Override
     public boolean apply(Rnd tempRnd, CairoEngine engine, TableWriterAPI wApi, int virtualTimestampIndex) {
         try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1);
              SqlCompiler sqlCompiler = engine.getSqlCompiler()
         ) {
             context.with(AllowAllSecurityContext.INSTANCE);
-            String sql = String.format("ALTER TABLE %s SET TTL 1 HOUR", wApi.getTableToken().getTableName());
+            String sql = String.format("ALTER TABLE %s SET TTL %d HOURS", wApi.getTableToken().getTableName(), ttlHours);
 
             try {
                 CompiledQuery query = sqlCompiler.compile(sql, context);

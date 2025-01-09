@@ -118,7 +118,7 @@ public class FuzzTransactionGenerator {
                 continue;
             }
             if (i == setTtlIteration) {
-                generateSetTtl(transactionList, metaVersion, waitBarrierVersion++);
+                generateSetTtl(transactionList, metaVersion, waitBarrierVersion++, rnd);
                 continue;
             }
 
@@ -336,13 +336,14 @@ public class FuzzTransactionGenerator {
         return null;
     }
 
-    private static void generateSetTtl(ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion) {
+    private static void generateSetTtl(ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion, Rnd rnd) {
+        int ttlHours = rnd.nextInt(36) + 1;
         FuzzTransaction transaction = new FuzzTransaction();
         transaction.waitBarrierVersion = waitBarrierVersion;
         transaction.structureVersion = metadataVersion;
         transaction.waitAllDone = true;
         transaction.reopenTable = true;
-        transaction.operationList.add(new FuzzSetTtlOperation());
+        transaction.operationList.add(new FuzzSetTtlOperation(ttlHours));
         transactionList.add(transaction);
     }
 
