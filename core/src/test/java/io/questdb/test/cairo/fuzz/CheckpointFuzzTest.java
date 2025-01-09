@@ -82,6 +82,7 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 0,
                 0,
                 1,
+                0.5,
                 0.0,
                 0,
                 0,
@@ -122,10 +123,11 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 0,
                 0,
                 0.1,
+                0.5,
                 0.0,
                 0,
                 1,
-                0.5
+                0.0
         );
 
         fuzzer.setFuzzCounts(
@@ -259,9 +261,11 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 rnd.nextDouble(),
                 rnd.nextDouble(),
                 rnd.nextDouble(),
+                0.01,
                 0.0,
                 0.1 * rnd.nextDouble(),
-                rnd.nextDouble(), 0.01
+                rnd.nextDouble(),
+                0.0
         );
 
         fuzzer.setFuzzCounts(
