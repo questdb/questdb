@@ -421,12 +421,20 @@ public final class TableUtils {
             throw CairoException.critical(ff.errno()).put("table directory already exists [path=").put(path).put(']');
         }
         int rootLen = path.size();
+        boolean dirCreated = false;
         try {
             if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
                 throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path.trimTo(rootLen).$()).put(']');
             }
+            dirCreated = true;
             createTableFiles(ff, memory, path, rootLen, tableDir, structure, tableVersion, tableId);
-        } finally {
+        } catch (Throwable e) {
+            if (dirCreated) {
+                ff.rmdir(path.trimTo(rootLen).slash());
+            }
+            throw e;
+        }
+        finally {
             path.trimTo(rootLen);
         }
     }

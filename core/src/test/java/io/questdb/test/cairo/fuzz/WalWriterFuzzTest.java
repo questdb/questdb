@@ -56,8 +56,8 @@ import static io.questdb.test.cairo.fuzz.FuzzRunner.MAX_WAL_APPLY_TIME_PER_TABLE
  * timestamps for the record where the comparison fails.
  */
 public class WalWriterFuzzTest extends AbstractFuzzTest {
-    private boolean fsAllowsMixedIO;
     private boolean existingFilesParanoia;
+    private boolean fsAllowsMixedIO;
 
     @Before
     public void setUp() {
