@@ -124,7 +124,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                 rnd.nextDouble(),
                 0.1 * rnd.nextDouble(),
                 rnd.nextDouble(),
-                0.0
+                rnd.nextDouble()
         );
 
         fuzzer.setFuzzCounts(

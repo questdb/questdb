@@ -96,7 +96,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             execute("alter table " + tableName + " dedup enable upsert keys(ts)");
 
             ObjList<FuzzTransaction> transactions = new ObjList<>();
-            Rnd rnd = generateRandomAndProps(LOG);
+            Rnd rnd = generateRandomAndProps();
             long initialDelta = Timestamps.MINUTE_MICROS * 15;
             int initialCount = 4 * 24 * 5;
             generateInsertsTransactions(
@@ -139,7 +139,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     @Test
     public void testDedupWithRandomShiftAndStepAndSymbolKey() throws Exception {
         assertMemoryLeak(() -> {
-            Rnd rnd = generateRandomAndProps(LOG);
+            Rnd rnd = generateRandomAndProps();
 
             String tableName = getTestName();
             execute(
@@ -158,7 +158,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         // TODO(eugene): Enable this test when adding columns after Parquet conversion is supported
         Assume.assumeFalse(convertToParquet);
         assertMemoryLeak(() -> {
-            Rnd rnd = generateRandomAndProps(LOG);
+            Rnd rnd = generateRandomAndProps();
 
             String tableName = getTestName();
             execute(
@@ -174,7 +174,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     @Test
     public void testDedupWithRandomShiftAndStepAndVarcharKey() throws Exception {
         assertMemoryLeak(() -> {
-            Rnd rnd = generateRandomAndProps(LOG);
+            Rnd rnd = generateRandomAndProps();
 
             String tableName = getTestName();
             execute(
@@ -193,7 +193,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         // TODO(eugene): Enable this test when adding columns after Parquet conversion is supported
         Assume.assumeFalse(convertToParquet);
         assertMemoryLeak(() -> {
-            Rnd rnd = generateRandomAndProps(LOG);
+            Rnd rnd = generateRandomAndProps();
 
             String tableName = getTestName();
             execute(
@@ -213,7 +213,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             createEmptyTable(tableName, "");
 
             ObjList<FuzzTransaction> transactions = new ObjList<>();
-            Rnd rnd = generateRandomAndProps(LOG);
+            Rnd rnd = generateRandomAndProps();
             long initialDelta = Timestamps.MINUTE_MICROS * 15;
             int initialCount = 4 * 24 * 5;
             int initialDuplicates = 2 + rnd.nextInt(5);
@@ -266,7 +266,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             createEmptyTable(tableName, "DEDUP upsert keys(ts)");
 
             ObjList<FuzzTransaction> transactions = new ObjList<>();
-            Rnd rnd = generateRandomAndProps(LOG);
+            Rnd rnd = generateRandomAndProps();
             long initialDelta = Timestamps.MINUTE_MICROS * 15;
             int initialCount = 2 * 24 * 5;
             generateInsertsTransactions(
@@ -314,7 +314,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testRandomColumnsDedupMultipleKeyCol() throws Exception {
-        Rnd rnd = generateRandomAndProps(LOG);
+        Rnd rnd = generateRandomAndProps();
         setFuzzProbabilities(
                 rnd.nextDouble() / 100,
                 rnd.nextDouble(),
@@ -330,7 +330,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 0.0,
                 0.1 * rnd.nextDouble(),
                 0.0,
-                0.0
+                0.5
         );
 
         setFuzzCounts(
@@ -349,7 +349,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testRandomColumnsDedupOneKeyCol() throws Exception {
-        Rnd rnd = generateRandomAndProps(LOG);
+        Rnd rnd = generateRandomAndProps();
         setFuzzProbabilities(
                 rnd.nextDouble() / 100,
                 rnd.nextDouble(),
@@ -366,7 +366,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 0.0,
                 0.1 * rnd.nextDouble(),
                 0.0,
-                0.0
+                0.5
         );
 
         setFuzzCounts(
@@ -387,7 +387,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     public void testRandomDedupRepeat() throws Exception {
         // TODO(eugene): update the parquet partition with a missed column (e.g. column top) is not yet implemented
         Assume.assumeFalse(convertToParquet);
-        Rnd rnd = generateRandomAndProps(LOG);
+        Rnd rnd = generateRandomAndProps();
         setFuzzProbabilities(
                 0,
                 rnd.nextDouble(),
@@ -401,8 +401,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 0.0,
                 0.0,
                 0.1 * rnd.nextDouble(),
-                0.0,
-                0.0
+                0.1,
+                0.4
         );
 
         setFuzzCounts(
@@ -610,8 +610,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         }
     }
 
-    private Rnd generateRandomAndProps(Log log) {
-        Rnd rnd = fuzzer.generateRandom(log);
+    private Rnd generateRandomAndProps() {
+        Rnd rnd = fuzzer.generateRandom(io.questdb.test.AbstractCairoTest.LOG);
         setFuzzProperties(rnd);
         setRandomAppendPageSize(rnd);
         return rnd;

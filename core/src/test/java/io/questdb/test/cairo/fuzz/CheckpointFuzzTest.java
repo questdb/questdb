@@ -86,7 +86,7 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 0.0,
                 0,
                 0,
-                0.0
+                0.5
         );
 
         fuzzer.setFuzzCounts(
