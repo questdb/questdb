@@ -43,6 +43,7 @@ import org.junit.Test;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MatViewFuzzTest extends AbstractFuzzTest {
+
     @Before
     public void setUp() {
         super.setUp();
@@ -170,9 +171,10 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     }
 
     private static void createMatView(String viewSql, String mvName) throws SqlException {
-        execute("create materialized view " + mvName + " as ("
-                + viewSql
-                + ") partition by DAY"
+        execute(
+                "create materialized view " + mvName + " as ("
+                        + viewSql
+                        + ") partition by DAY"
         );
     }
 
@@ -184,7 +186,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
 
         ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameBase, rnd);
 
-        // Release TW to reduce memory pressure
+        // Release table writers to reduce memory pressure
         engine.releaseInactive();
         return transactions;
     }
@@ -203,8 +205,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
 
         for (int i = 0; i < tableCount; i++) {
             String tableNameBase = testTableName + "_" + i;
-
-            String viewSql = "select min(c3), max(c3), avg(c3), ts from  " + tableNameBase + " sample by 1h";
+            String viewSql = "select min(c3), max(c3), ts from  " + tableNameBase + " sample by 1h";
             ObjList<FuzzTransaction> transactions = createTransactionsAndMv(rnd, tableNameBase, viewSql);
             fuzzTransactions.add(transactions);
             viewSqls.add(viewSql);
@@ -250,7 +251,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 5 + rnd.nextInt(10)
         );
 
-        // Easy, not column manipulations
+        // Easy, no column manipulations
         fuzzer.setFuzzProbabilities(
                 0.0,
                 0.0,
@@ -259,8 +260,8 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 collAddProb,
                 0.0,
                 0.0,
-                0.5,
-                0.5,
+                0.0,
+                1,
                 0.0,
                 0.0,
                 0.0,

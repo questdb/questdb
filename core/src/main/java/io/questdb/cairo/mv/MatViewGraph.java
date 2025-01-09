@@ -58,7 +58,7 @@ public class MatViewGraph implements QuietCloseable {
     }
 
     public void createView(TableToken baseTableToken, MatViewDefinition viewDefinition) {
-        TableToken matViewToken = viewDefinition.getMatViewToken();
+        final TableToken matViewToken = viewDefinition.getMatViewToken();
         MatViewRefreshState viewRefreshState = refreshStateByTableDirName.get(matViewToken.getDirName());
         if (viewRefreshState != null && !viewRefreshState.isDropped()) {
             if (viewRefreshState.getViewDefinition() != viewDefinition) {
@@ -82,7 +82,7 @@ public class MatViewGraph implements QuietCloseable {
                 //  can `matViews` contain token for the dropped view?
                 for (int i = 0, n = matViews.size(); i < n; i++) {
                     // TODO(eugene): index is always 0 !!!
-                    TableToken existingViewToken = matViews.getQuick(0);
+                    final TableToken existingViewToken = matViews.getQuick(0);
                     if (existingViewToken.equals(matViewToken)) {
                         break;
                     }
@@ -107,8 +107,8 @@ public class MatViewGraph implements QuietCloseable {
                 refreshState.markAsDropped();
             }
 
-            CharSequence baseTableName = refreshState.getViewDefinition().getBaseTableName();
-            MatViewRefreshList state = dependantViewsByTableName.get(baseTableName);
+            final CharSequence baseTableName = refreshState.getViewDefinition().getBaseTableName();
+            final MatViewRefreshList state = dependantViewsByTableName.get(baseTableName);
             if (state != null) {
                 try {
                     ObjList<TableToken> matViews = state.writeLock();
@@ -189,8 +189,9 @@ public class MatViewGraph implements QuietCloseable {
     }
 
     public void refresh(TableToken viewTableToken) {
-        var state = refreshStateByTableDirName.get(viewTableToken.getDirName());
-        var task = taskHolder.get();
+        final MatViewRefreshState state = refreshStateByTableDirName.get(viewTableToken.getDirName());
+        // TODO(puzpuzpuz): state can be null???
+        final MvRefreshTask task = taskHolder.get();
         task.baseTable = state.getViewDefinition().getMatViewToken();
         task.viewToken = viewTableToken;
         refreshTaskQueue.enqueue(task);
@@ -201,7 +202,7 @@ public class MatViewGraph implements QuietCloseable {
     }
 
     private void addToRefreshQueue(TableToken baseToken, @Nullable TableToken viewToken) {
-        MvRefreshTask task = taskHolder.get();
+        final MvRefreshTask task = taskHolder.get();
         task.baseTable = baseToken;
         task.viewToken = viewToken;
         refreshTaskQueue.enqueue(task);

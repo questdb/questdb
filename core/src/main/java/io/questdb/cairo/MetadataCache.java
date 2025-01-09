@@ -43,6 +43,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.SimpleReadWriteLock;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
@@ -293,19 +294,19 @@ public class MetadataCache implements QuietCloseable {
     }
 
     private void loadCapacities(CairoColumn column, TableToken token, Path path, CairoConfiguration configuration, ColumnVersionReader columnVersionReader) {
-        var columnName = column.getName();
-        var writerIndex = column.getWriterIndex();
+        final CharSequence columnName = column.getName();
+        final int writerIndex = column.getWriterIndex();
 
         try (columnVersionReader) {
             LOG.debug().$("hydrating symbol metadata [table=").$(token.getTableName()).$(", column=").$(columnName).I$();
 
             // get column version
             path.trimTo(configuration.getRoot().length()).concat(token);
-            int rootLen = path.size();
+            final int rootLen = path.size();
             path.concat(TableUtils.COLUMN_VERSION_FILE_NAME);
 
             final long columnNameTxn;
-            FilesFacade ff = configuration.getFilesFacade();
+            final FilesFacade ff = configuration.getFilesFacade();
             try (columnVersionReader) {
                 columnVersionReader.ofRO(ff, path.$());
 
@@ -314,13 +315,13 @@ public class MetadataCache implements QuietCloseable {
             }
 
             // use txn to find correct symbol entry
-            final var offsetFileName = TableUtils.offsetFileName(path.trimTo(rootLen), columnName, columnNameTxn);
-            var fd = TableUtils.openRO(ff, offsetFileName, LOG);
+            final LPSZ offsetFileName = TableUtils.offsetFileName(path.trimTo(rootLen), columnName, columnNameTxn);
+            final long fd = TableUtils.openRO(ff, offsetFileName, LOG);
 
             // initialise symbol map memory
             final long capacityOffset = SymbolMapWriter.HEADER_CAPACITY;
-            int capacity = ff.readNonNegativeInt(fd, capacityOffset);
-            byte isCached = ff.readNonNegativeByte(fd, SymbolMapWriter.HEADER_CACHE_ENABLED);
+            final int capacity = ff.readNonNegativeInt(fd, capacityOffset);
+            final byte isCached = ff.readNonNegativeByte(fd, SymbolMapWriter.HEADER_CACHE_ENABLED);
 
             // get symbol properties
             if (capacity > 0 && isCached >= 0) {
@@ -336,8 +337,10 @@ public class MetadataCache implements QuietCloseable {
             }
         } catch (CairoException ex) {
             // Don't stall startup.
-            LOG.error().$("could not load symbol metadata [table=")
-                    .$(token.getTableName()).$(", column=").$(columnName).$(", errno=").$(ex.getErrno()).$(", message=").$(ex.getMessage()).I$();
+            LOG.error().$("could not load symbol metadata [table=").$(token.getTableName()).$(", column=").$(columnName)
+                    .$(", errno=").$(ex.getErrno())
+                    .$(", message=").$(ex.getMessage())
+                    .I$();
         }
     }
 
