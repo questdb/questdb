@@ -837,20 +837,23 @@ public class SqlParser {
 
         int walSetting = WAL_NOT_SET;
 
-        ExpressionNode partitionBy = parseCreateTablePartition(lexer, tok);
-        if (partitionBy != null) {
+        ExpressionNode partitionByExpr = parseCreateTablePartition(lexer, tok);
+        if (partitionByExpr != null) {
             if (builder.getTimestampExpr() == null) {
-                throw SqlException.$(partitionBy.position, "partitioning is possible only on tables with designated timestamps");
+                throw SqlException.$(partitionByExpr.position, "partitioning is possible only on tables with designated timestamps");
             }
-            if (PartitionBy.fromString(partitionBy.token) == -1) {
-                throw SqlException.$(partitionBy.position, "'NONE', 'HOUR', 'DAY', 'MONTH' or 'YEAR' expected");
+            int partitionBy = PartitionBy.fromString(partitionByExpr.token);
+            if (partitionBy == -1) {
+                throw SqlException.$(partitionByExpr.position, "'NONE', 'HOUR', 'DAY', 'MONTH' or 'YEAR' expected");
             }
-            builder.setPartitionByExpr(partitionBy);
+            builder.setPartitionByExpr(partitionByExpr);
             tok = optTok(lexer);
 
             if (tok != null && isTtlKeyword(tok)) {
-                int ttlHours = parseTtlHoursOrMonths(lexer);
-                builder.setTtlHoursOrMonths(ttlHours);
+                int ttlValuePos = lexer.getPosition();
+                int ttlHoursOrMonths = parseTtlHoursOrMonths(lexer);
+                PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, ttlValuePos);
+                builder.setTtlHoursOrMonths(ttlHoursOrMonths);
                 tok = optTok(lexer);
             }
 
@@ -3076,19 +3079,6 @@ public class SqlParser {
         return parent;
     }
 
-    /*
-       Rewrites the following:
-
-       select json_extract(json,path)::varchar -> select json_extract(json,path)
-       select json_extract(json,path)::double -> select json_extract(json,path,double)
-       select json_extract(json,path)::uuid -> select json_extract(json,path)::uuid
-
-       Notes:
-        - varchar cast it rewritten in a special way, e.g. removed
-        - subset of types is handled more efficiently in the 3-arg function
-        - the remaining type casts are not rewritten, e.g. left as is
-     */
-
     private void rewriteJsonExtractCast0(ExpressionNode node) {
         if (node.type == ExpressionNode.FUNCTION && SqlKeywords.isCastKeyword(node.token)) {
             if (node.lhs != null && SqlKeywords.isJsonExtract(node.lhs.token) && node.lhs.paramCount == 2) {
@@ -3143,6 +3133,19 @@ public class SqlParser {
             }
         }
     }
+
+    /*
+       Rewrites the following:
+
+       select json_extract(json,path)::varchar -> select json_extract(json,path)
+       select json_extract(json,path)::double -> select json_extract(json,path,double)
+       select json_extract(json,path)::uuid -> select json_extract(json,path)::uuid
+
+       Notes:
+        - varchar cast it rewritten in a special way, e.g. removed
+        - subset of types is handled more efficiently in the 3-arg function
+        - the remaining type casts are not rewritten, e.g. left as is
+     */
 
     private ExpressionNode rewriteKnownStatements(
             ExpressionNode parent,

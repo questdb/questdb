@@ -337,13 +337,13 @@ public class FuzzTransactionGenerator {
     }
 
     private static void generateSetTtl(ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion, Rnd rnd) {
-        int ttlHours = rnd.nextInt(36) + 1;
+        int ttlDays = rnd.nextInt(2) + 1;
         FuzzTransaction transaction = new FuzzTransaction();
         transaction.waitBarrierVersion = waitBarrierVersion;
         transaction.structureVersion = metadataVersion;
         transaction.waitAllDone = true;
         transaction.reopenTable = true;
-        transaction.operationList.add(new FuzzSetTtlOperation(ttlHours));
+        transaction.operationList.add(new FuzzSetTtlOperation(ttlDays));
         transactionList.add(transaction);
     }
 

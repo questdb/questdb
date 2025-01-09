@@ -32,6 +32,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultLifecycleManager;
 import io.questdb.cairo.EntityColumnFilter;
@@ -41,6 +42,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexBuilder;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.MapWriter;
+import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
@@ -1458,12 +1460,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         throw SqlException.$(lexer.lastTokenPosition(), "'=' expected");
                     }
                 } else if (SqlKeywords.isTtlKeyword(tok)) {
-                    int ttlValPos = lexer.getPosition();
+                    int ttlValuePos = lexer.getPosition();
                     int ttlHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
-                    try (TableReader reader = executionContext.getReader(tableToken)) {
-                        if (ttlHoursOrMonths != 0 && reader.getPartitionedBy() == PartitionBy.NONE) {
-                            throw SqlException.position(ttlValPos).put("cannot set TTL on a non-partitioned table");
-                        }
+                    try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
+                        CairoTable table = metadataRO.getTable(tableToken);
+                        assert table != null : "CairoTable == null after we already checked it exists";
+                        PartitionBy.validateTtlGranularity(table.getPartitionBy(), ttlHoursOrMonths, ttlValuePos);
                     }
                     compiledQuery.ofAlter(
                             alterOperationBuilder.ofSetTtlHoursOrMonths(tableNamePosition, tableToken, tableMetadata.getTableId(), ttlHoursOrMonths)

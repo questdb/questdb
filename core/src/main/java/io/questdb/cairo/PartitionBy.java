@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.ptt.IsoDatePartitionFormat;
 import io.questdb.cairo.ptt.IsoWeekPartitionFormat;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseUtf8SequenceIntHashMap;
 import io.questdb.std.NumericException;
@@ -273,6 +274,37 @@ public final class PartitionBy {
 
     public static int ttlUnitFromString(CharSequence name, int start, int limit) {
         return ttlUnitToIndexMap.valueAt(ttlUnitToIndexMap.keyIndex(name, start, limit));
+    }
+
+    public static void validateTtlGranularity(int partitionBy, int ttlHoursOrMonths, int ttlValuePos) throws SqlException {
+        switch (partitionBy) {
+            case NONE:
+                throw SqlException.position(ttlValuePos).put("cannot set TTL on a non-partitioned table");
+            case DAY:
+                if (ttlHoursOrMonths < 0 || ttlHoursOrMonths % 24 == 0) {
+                    return;
+                }
+                break;
+            case WEEK:
+                if (ttlHoursOrMonths < 0 || ttlHoursOrMonths % (24 * 7) == 0) {
+                    return;
+                }
+                break;
+            case MONTH:
+                if (ttlHoursOrMonths < 0) {
+                    return;
+                }
+                break;
+            case YEAR:
+                if (ttlHoursOrMonths < 0 && ttlHoursOrMonths % 12 == 0) {
+                    return;
+                }
+                break;
+            default:
+                return;
+        }
+        throw SqlException.position(ttlValuePos)
+                .put("TTL value must be an integer multiple of partition size");
     }
 
     private static CairoException expectedPartitionDirNameFormatCairoException(CharSequence partitionName, int lo, int hi, int partitionBy) {

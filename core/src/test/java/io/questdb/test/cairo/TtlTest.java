@@ -219,6 +219,188 @@ public class TtlTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGranularityInvalidAlter() throws Exception {
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        try {
+            execute("ALTER TABLE tango SET TTL 1 HOUR");
+            fail("Accepted a TTL that's too fine-grained for partition size");
+        } catch (SqlException e) {
+            assertEquals("[26] TTL value must be an integer multiple of partition size", e.getMessage());
+        }
+        try {
+            execute("ALTER TABLE tango SET TTL 25 HOUR");
+            fail("Accepted a TTL that's too fine-grained for partition size");
+        } catch (SqlException e) {
+            assertEquals("[26] TTL value must be an integer multiple of partition size", e.getMessage());
+        }
+        execute("DROP TABLE tango");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY WEEK");
+        try {
+            execute("ALTER TABLE tango SET TTL 1 HOUR");
+            fail("Accepted a TTL that's too fine-grained for partition size");
+        } catch (SqlException e) {
+            assertEquals("[26] TTL value must be an integer multiple of partition size", e.getMessage());
+        }
+        try {
+            execute("ALTER TABLE tango SET TTL 1 DAY");
+            fail("Accepted a TTL that's too fine-grained for partition size");
+        } catch (SqlException e) {
+            assertEquals("[26] TTL value must be an integer multiple of partition size", e.getMessage());
+        }
+        try {
+            execute("ALTER TABLE tango SET TTL 12 DAY");
+            fail("Accepted a TTL that's too fine-grained for partition size");
+        } catch (SqlException e) {
+            assertEquals("[26] TTL value must be an integer multiple of partition size", e.getMessage());
+        }
+        execute("DROP TABLE tango");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH");
+        try {
+            execute("ALTER TABLE tango SET TTL 1 HOUR");
+            fail("Accepted a TTL that's too fine-grained for partition size");
+        } catch (SqlException e) {
+            assertEquals("[26] TTL value must be an integer multiple of partition size", e.getMessage());
+        }
+        try {
+            execute("ALTER TABLE tango SET TTL 30 DAY");
+            fail("Accepted a TTL that's too fine-grained for partition size");
+        } catch (SqlException e) {
+            assertEquals("[26] TTL value must be an integer multiple of partition size", e.getMessage());
+        }
+        try {
+            execute("ALTER TABLE tango SET TTL 4 WEEK");
+            fail("Accepted a TTL that's too fine-grained for partition size");
+        } catch (SqlException e) {
+            assertEquals("[26] TTL value must be an integer multiple of partition size", e.getMessage());
+        }
+        execute("DROP TABLE tango");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR");
+        try {
+            execute("ALTER TABLE tango SET TTL 1000 HOUR");
+            fail("Accepted a TTL that's too fine-grained for partition size");
+        } catch (SqlException e) {
+            assertEquals("[26] TTL value must be an integer multiple of partition size", e.getMessage());
+        }
+        try {
+            execute("ALTER TABLE tango SET TTL 365 DAY");
+            fail("Accepted a TTL that's too fine-grained for partition size");
+        } catch (SqlException e) {
+            assertEquals("[26] TTL value must be an integer multiple of partition size", e.getMessage());
+        }
+        try {
+            execute("ALTER TABLE tango SET TTL 52 WEEK");
+            fail("Accepted a TTL that's too fine-grained for partition size");
+        } catch (SqlException e) {
+            assertEquals("[26] TTL value must be an integer multiple of partition size", e.getMessage());
+        }
+        try {
+            execute("ALTER TABLE tango SET TTL 13 MONTH");
+            fail("Accepted a TTL that's too fine-grained for partition size");
+        } catch (SqlException e) {
+            assertEquals("[26] TTL value must be an integer multiple of partition size", e.getMessage());
+        }
+    }
+
+    @Test
+    public void testGranularityInvalidCreate() throws Exception {
+        try {
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY TTL 1 HOUR");
+            fail("Accepted a TTL that's too fine-grained for partition size");
+        } catch (SqlException e) {
+            assertEquals("[69] TTL value must be an integer multiple of partition size", e.getMessage());
+        }
+        try {
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY TTL 25 HOUR");
+            fail("Accepted a TTL that's too fine-grained for partition size");
+        } catch (SqlException e) {
+            assertEquals("[69] TTL value must be an integer multiple of partition size", e.getMessage());
+        }
+        try {
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY WEEK TTL 1 HOUR");
+            fail("Accepted a TTL that's too fine-grained for partition size");
+        } catch (SqlException e) {
+            assertEquals("[70] TTL value must be an integer multiple of partition size", e.getMessage());
+        }
+        try {
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY WEEK TTL 1 DAY");
+            fail("Accepted a TTL that's too fine-grained for partition size");
+        } catch (SqlException e) {
+            assertEquals("[70] TTL value must be an integer multiple of partition size", e.getMessage());
+        }
+        try {
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY WEEK TTL 12 DAY");
+            fail("Accepted a TTL that's too fine-grained for partition size");
+        } catch (SqlException e) {
+            assertEquals("[70] TTL value must be an integer multiple of partition size", e.getMessage());
+        }
+        try {
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH TTL 1 HOUR");
+            fail("Accepted a TTL that's too fine-grained for partition size");
+        } catch (SqlException e) {
+            assertEquals("[71] TTL value must be an integer multiple of partition size", e.getMessage());
+        }
+        try {
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH TTL 30 DAY");
+            fail("Accepted a TTL that's too fine-grained for partition size");
+        } catch (SqlException e) {
+            assertEquals("[71] TTL value must be an integer multiple of partition size", e.getMessage());
+        }
+        try {
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH TTL 4 WEEK");
+            fail("Accepted a TTL that's too fine-grained for partition size");
+        } catch (SqlException e) {
+            assertEquals("[71] TTL value must be an integer multiple of partition size", e.getMessage());
+        }
+        try {
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR TTL 1000 HOUR");
+            fail("Accepted a TTL that's too fine-grained for partition size");
+        } catch (SqlException e) {
+            assertEquals("[70] TTL value must be an integer multiple of partition size", e.getMessage());
+        }
+        try {
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR TTL 365 DAY");
+            fail("Accepted a TTL that's too fine-grained for partition size");
+        } catch (SqlException e) {
+            assertEquals("[70] TTL value must be an integer multiple of partition size", e.getMessage());
+        }
+        try {
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR TTL 52 WEEK");
+            fail("Accepted a TTL that's too fine-grained for partition size");
+        } catch (SqlException e) {
+            assertEquals("[70] TTL value must be an integer multiple of partition size", e.getMessage());
+        }
+        try {
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR TTL 13 MONTH");
+            fail("Accepted a TTL that's too fine-grained for partition size");
+        } catch (SqlException e) {
+            assertEquals("[70] TTL value must be an integer multiple of partition size", e.getMessage());
+        }
+    }
+
+    @Test
+    public void testGranularityValidAlter() throws Exception {
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("ALTER TABLE tango SET TTL 24 HOUR");
+        execute("DROP TABLE tango");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY WEEK");
+        execute("ALTER TABLE tango SET TTL 168 HOUR");
+        execute("DROP TABLE tango");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR");
+        execute("ALTER TABLE tango SET TTL 12 MONTH");
+    }
+
+    @Test
+    public void testGranularityValidCreate() throws Exception {
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY TTL 24 HOUR");
+        execute("DROP TABLE tango");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY WEEK TTL 7 DAY");
+        execute("DROP TABLE tango");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY WEEK TTL 168 HOUR");
+        execute("DROP TABLE tango");
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR TTL 12 MONTH");
+    }
+
+    @Test
     public void testHourExactlyAtTtl() throws Exception {
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 HOUR");
         execute("INSERT INTO tango VALUES ('1970-01-01T00:00:00'), ('1970-01-01T01:00:00'), ('1970-01-01T01:59:59.999999')");
