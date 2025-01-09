@@ -2610,13 +2610,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
             // TODO(puzpuzpuz): jit is always false, why?
             QueryProgress.logEnd(sqlId, createMatViewOp.getSqlText(), executionContext, beginNanos);
-        } catch (Throwable e) {
-            if (e instanceof CairoException) {
-                ((CairoException) e).position(createMatViewOp.getTableNamePosition());
+        } catch (Throwable th) {
+            if (th instanceof CairoException) {
+                ((CairoException) th).position(createMatViewOp.getTableNamePosition());
             }
             // TODO(puzpuzpuz): jit is always false, why?
-            QueryProgress.logError(e, sqlId, createMatViewOp.getSqlText(), executionContext, beginNanos);
-            throw e;
+            QueryProgress.logError(th, sqlId, createMatViewOp.getSqlText(), executionContext, beginNanos);
+            throw th;
         }
     }
 
