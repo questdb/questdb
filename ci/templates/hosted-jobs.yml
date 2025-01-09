@@ -49,7 +49,7 @@ jobs:
           excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**"
           javadoc_step: ""
           javadoc_profile: ""
-        windows-griffin-noO3-noFuzz:
+        windows-griffin:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
