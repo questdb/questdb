@@ -37,7 +37,6 @@ import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -49,7 +48,7 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
-public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSinkSPI, WindowSPI, Reopenable {
+public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, WindowSPI, Reopenable {
     private final int columnCount;
     private final long[] columnOffsets;
     private final long fixOffset;
@@ -125,8 +124,9 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         counter.add(result);
     }
 
-    @Override
     public void clear() {
+        // memory will self-extend on write
+        // reads are prevented by setting nextRecordOffset to -1
         mem.close();
         nextRecordOffset = -1L;
         varAppendOffset = 0L;
@@ -178,6 +178,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     }
 
     public void of(long nextRecordOffset) {
+        assert nextRecordOffset == -1 || (nextRecordOffset > -1 && nextRecordOffset + Long.BYTES <= mem.size());
         this.nextRecordOffset = nextRecordOffset;
     }
 

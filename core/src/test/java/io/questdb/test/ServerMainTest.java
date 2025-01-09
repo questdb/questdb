@@ -602,7 +602,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.create.table.column.model.pool.capacity\tQDB_CAIRO_CREATE_TABLE_COLUMN_MODEL_POOL_CAPACITY\t16\tdefault\tfalse\tfalse\n" +
                                     "log.timestamp.format\tQDB_LOG_TIMESTAMP_FORMAT\tyyyy-MM-ddTHH:mm:ss.SSSUUUz\tdefault\tfalse\tfalse\n" +
                                     "log.timestamp.locale\tQDB_LOG_TIMESTAMP_LOCALE\ten\tdefault\tfalse\tfalse\n" +
-                                    "log.timestamp.timezone\tQDB_LOG_TIMESTAMP_TIMEZONE\tZ\tdefault\tfalse\tfalse\n"
+                                    "log.timestamp.timezone\tQDB_LOG_TIMESTAMP_TIMEZONE\tZ\tdefault\tfalse\tfalse\n" +
+                                    "query.timeout\tQDB_QUERY_TIMEOUT\t60000\tdefault\tfalse\tfalse\n"
                             )
                                     .split("\n");
 
