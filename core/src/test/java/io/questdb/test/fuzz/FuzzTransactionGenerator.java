@@ -104,7 +104,7 @@ public class FuzzTransactionGenerator {
 
         // Decide if TTL will be set
         boolean generateSetTtl = rnd.nextDouble() < probabilityOfSetTtl;
-        int setTtlIteration = generateSetTtl ? 0 : -1;
+        int setTtlIteration = generateSetTtl ? rnd.nextInt(transactionCount) : -1;
         if (generateSetTtl) {
             transactionCount++;
         }
