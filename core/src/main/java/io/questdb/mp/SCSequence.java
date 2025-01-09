@@ -69,10 +69,15 @@ public class SCSequence extends AbstractSSequence {
         do {
             if (cursor > -1) {
                 final long available = available();
-                while (cursor < available) {
-                    consumer.consume(queue.get(cursor++));
+                try {
+                    while (cursor < available) {
+                        consumer.consume(queue.get(cursor++));
+                    }
+                } finally {
+                    // Mark last consumed item as processed,
+                    // even if there was an exception.
+                    done(Math.min(cursor, available - 1));
                 }
-                done(available - 1);
             }
         } while ((cursor = next()) != -1);
 
