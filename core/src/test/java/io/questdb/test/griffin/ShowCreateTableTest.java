@@ -203,6 +203,102 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTtlOneDay() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1D");
+            assertSql("ddl\n" +
+                    "CREATE TABLE 'tango' ( \n" +
+                    "\tts TIMESTAMP\n" +
+                    ") timestamp(ts) PARTITION BY HOUR TTL 1 DAY BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n", "SHOW CREATE TABLE tango");
+        });
+    }
+
+    @Test
+    public void testTtlOneHour() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 HOUR");
+            assertSql("ddl\n" +
+                    "CREATE TABLE 'tango' ( \n" +
+                    "\tts TIMESTAMP\n" +
+                    ") timestamp(ts) PARTITION BY HOUR TTL 1 HOUR BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n", "SHOW CREATE TABLE tango");
+        });
+    }
+
+    @Test
+    public void testTtlOneMonth() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1M");
+            assertSql("ddl\n" +
+                    "CREATE TABLE 'tango' ( \n" +
+                    "\tts TIMESTAMP\n" +
+                    ") timestamp(ts) PARTITION BY HOUR TTL 1 MONTH BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n", "SHOW CREATE TABLE tango");
+        });
+    }
+
+    @Test
+    public void testTtlOneWeek() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1W");
+            assertSql("ddl\n" +
+                    "CREATE TABLE 'tango' ( \n" +
+                    "\tts TIMESTAMP\n" +
+                    ") timestamp(ts) PARTITION BY HOUR TTL 1 WEEK BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n", "SHOW CREATE TABLE tango");
+        });
+    }
+
+    @Test
+    public void testTtlOneYear() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1Y");
+            assertSql("ddl\n" +
+                    "CREATE TABLE 'tango' ( \n" +
+                    "\tts TIMESTAMP\n" +
+                    ") timestamp(ts) PARTITION BY HOUR TTL 1 YEAR BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n", "SHOW CREATE TABLE tango");
+        });
+    }
+
+    @Test
+    public void testTtlTwoHours() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 2H");
+            assertSql("ddl\n" +
+                    "CREATE TABLE 'tango' ( \n" +
+                    "\tts TIMESTAMP\n" +
+                    ") timestamp(ts) PARTITION BY HOUR TTL 2 HOURS BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n", "SHOW CREATE TABLE tango");
+        });
+    }
+
+    @Test
+    public void testTtlTwoWeeks() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 2W");
+            assertSql("ddl\n" +
+                    "CREATE TABLE 'tango' ( \n" +
+                    "\tts TIMESTAMP\n" +
+                    ") timestamp(ts) PARTITION BY HOUR TTL 2 WEEKS BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n", "SHOW CREATE TABLE tango");
+        });
+    }
+
+    @Test
+    public void testTtlTwoYears() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 2Y");
+            assertSql("ddl\n" +
+                    "CREATE TABLE 'tango' ( \n" +
+                    "\tts TIMESTAMP\n" +
+                    ") timestamp(ts) PARTITION BY HOUR TTL 2 YEARS BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n", "SHOW CREATE TABLE tango");
+        });
+    }
+
+    @Test
     public void testWithMaxUncommittedRows() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table foo ( ts timestamp, s symbol ) " +

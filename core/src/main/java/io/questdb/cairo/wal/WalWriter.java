@@ -300,9 +300,8 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
-    // Returns sequencer transaction number
     @Override
-    public long commit() {
+    public void commit() {
         checkDistressed();
         try {
             if (inTransaction()) {
@@ -320,7 +319,6 @@ public class WalWriter implements TableWriterAPI {
                 resetDataTxnProperties();
                 mayRollSegmentOnNextRow();
                 metrics.walMetrics().addRowsWritten(rowsToCommit);
-                return seqTxn;
             }
         } catch (CairoException ex) {
             distressed = true;
@@ -334,7 +332,6 @@ public class WalWriter implements TableWriterAPI {
         } finally {
             isCommittingData = false;
         }
-        return NO_TXN;
     }
 
     public void doClose(boolean truncate) {
