@@ -1937,7 +1937,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     : Timestamps.getMonthsBetween(partitionCeiling, maxTimestamp) >= -ttl;
             if (shouldEvict) {
                 LOG.info()
-                        .$("Partition's TTL expired, evicting. partitionTs=").microTime(partitionTimestamp)
+                        .$("Partition's TTL expired, evicting. table=").$(metadata.getTableName())
+                        .$(" partitionTs=").microTime(partitionTimestamp)
                         .$();
                 dropPartitionByExactTimestamp(partitionTimestamp);
             } else {
