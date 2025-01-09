@@ -214,12 +214,12 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
             if (framingMode == WindowColumn.FRAMING_RANGE) {
                 // if there's no order by then all elements are equal in range mode, thus calculation is done on whole result set
                 if (!windowContext.isOrdered() && windowContext.isDefaultFrame()) {
-                    return new FirstValueOverWholeResultSetFunction(args.get(0), false);
+                    return new FirstValueOverWholeResultSetFunction(args.get(0));
                 } // between unbounded preceding and current row
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     // same as for rows because calculation stops at current rows even if there are 'equal' following rows
                     // if lower bound is unbounded then it's the same as over ()
-                    return new FirstValueOverWholeResultSetFunction(args.get(0), false);
+                    return new FirstValueOverWholeResultSetFunction(args.get(0));
                 } // range between [unbounded | x] preceding and [y preceding | current row]
                 else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
@@ -240,7 +240,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
             } else if (framingMode == WindowColumn.FRAMING_ROWS) {
                 // between unbounded preceding and [current row | unbounded following]
                 if (rowsLo == Long.MIN_VALUE && (rowsHi == 0 || rowsHi == Long.MAX_VALUE)) {
-                    return new FirstValueOverWholeResultSetFunction(args.get(0), false);
+                    return new FirstValueOverWholeResultSetFunction(args.get(0));
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsLo == rowsHi) {
                     return new FirstValueOverCurrentRowFunction(args.get(0));
@@ -1115,7 +1115,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
             sink.val(" over (");
             sink.val("partition by ");
             sink.val(partitionByRecord.getFunctions());
-            sink.val(" rows between unbounded preceding and current row)");
+            sink.val(" rows between unbounded preceding and current row )");
         }
     }
 
@@ -1123,25 +1123,18 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
     // first_value() over () - empty clause, no partition by no order by, no frame == default frame
     // first_value() over (rows between unbounded preceding and current row); there's no partition by.
     public static class FirstValueOverWholeResultSetFunction extends BaseDoubleWindowFunction {
-        private boolean found;
-        private double value = Double.NaN;
-        private final boolean ignoreNulls;
+        protected boolean found;
+        protected double value = Double.NaN;
 
-        public FirstValueOverWholeResultSetFunction(Function arg, boolean ignoreNulls) {
+        public FirstValueOverWholeResultSetFunction(Function arg) {
             super(arg);
-            this.ignoreNulls = ignoreNulls;
         }
 
         @Override
         public void computeNext(Record record) {
             if (!found) {
-                double d = arg.getDouble(record);
-                if (!ignoreNulls || Numbers.isFinite(d)) {
-                    if (Numbers.isFinite(d)) {
-                        this.value = d;
-                        this.found = true;
-                    }
-                }
+                this.value = arg.getDouble(record);
+                this.found = true;
             }
         }
 

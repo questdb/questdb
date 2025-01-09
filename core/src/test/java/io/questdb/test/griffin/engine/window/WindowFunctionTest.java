@@ -227,9 +227,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             //default buffer size holds 65k entries
             execute("create table tab (ts timestamp, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)");
-            execute("insert into tab select x::timestamp, x/4, x, 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(40000)");
+            execute("insert into tab select x::timestamp, x/4, case when x % 3 = 0 THEN NULL ELSE x END, 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(40000)");
             //trigger removal of rows below lo boundary AND resize of buffer
-            execute("insert into tab select (100000+x)::timestamp, x/4, x, 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(90000)");
+            execute("insert into tab select (100000+x)::timestamp, x/4, case when x % 3 = 0 THEN NULL ELSE x END, 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(90000)");
 
             assertQueryNoLeakCheck(
                     "ts\ti\tj\tavg\tsum\tfirst_value\tlast_value\tfirst_not_null_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
@@ -263,7 +263,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             execute("truncate table tab");
             // trigger buffer resize
-            execute("insert into tab select (100000+x)::timestamp, x/4, x, 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(90000)");
+            execute("insert into tab select (100000+x)::timestamp, x/4, case when x % 3 = 0 THEN NULL ELSE x END, 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(90000)");
 
             assertQueryNoLeakCheck(
                     "ts\ti\tj\tavg\tsum\tfirst_value\tlast_value\tfirst_not_null_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
@@ -300,8 +300,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tab (ts timestamp, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)");
 
-            execute("insert into tab select x::timestamp, x/10000, x, 'k' || (x%10) ::symbol, x::double, 'k' || x from long_sequence(39999)");
-            execute("insert into tab select (100000+x)::timestamp, (100000+x)%4, (100000+x), 'k' || (x%10) ::symbol, x::double, 'k' || x from long_sequence(4*90000)");
+            execute("insert into tab select x::timestamp, x/10000, case when x % 3 = 0 THEN NULL ELSE x END, 'k' || (x%10) ::symbol, x::double, 'k' || x from long_sequence(39999)");
+            execute("insert into tab select (100000+x)::timestamp, (100000+x)%3, case when x % 3 = 0 THEN NULL ELSE 100000 + x END, 'k' || (x%10) ::symbol, x::double, 'k' || x from long_sequence(4*90000)");
 
             String expected = "ts\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
                     "1970-01-01T00:00:00.460000Z\t460000\t420000.0\t3.360042E10\t380000.0\t380000.0\t460000.0\t460000.0\t80001\t80001\t80001\t80001\t80001\t460000.0\t380000.0\n";
@@ -309,7 +309,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // cross-check with re-write using aggregate functions
             assertSql(
                     expected,
-                    " select max(ts) as ts, max(j) j, avg(j) as avg, sum(j::double) as sum, last(j::double) as first_value, " +
+                    " select max(ts) as ts, avg(j) as avg, sum(j::double) as sum, last(j::double) as first_value, " +
                             "last_not_null(j::double) as first_not_null_value," +
                             "first(j::double) as last_value, first_not_null(j::double) as last_not_null_value," +
                             "count(*) as count, count(j::double) as count1, count(s) as count2, count(d) as count3, count(c) as count4, " +
@@ -323,7 +323,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     expected,
                     "select * from (" +
                             "select * from " +
-                            "(select ts, j, " +
+                            "(select ts, " +
                             "avg(j) over (order by ts rows between 80000 preceding and current row), " +
                             "sum(j) over (order by ts rows between 80000 preceding and current row), " +
                             "first_value(j) over (order by ts rows between 80000 preceding and current row), " +
@@ -352,8 +352,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tab (ts timestamp, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)");
 
-            execute("insert into tab select x::timestamp, x/10000, x, 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(39999)");
-            execute("insert into tab select (100000+x)::timestamp, rnd_long(1,10000,10), rnd_long(1,100000,10), 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(1000000)");
+            execute("insert into tab select x::timestamp, x/10000, case when x % 3 = 0 THEN NULL ELSE x END, 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(39999)");            execute("insert into tab select (100000+x)::timestamp, rnd_long(1,10000,10), rnd_long(1,100000,10), 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(1000000)");
 
             String expected = "ts\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
                     "1970-01-01T00:00:01.100000Z\t49980.066958378644\t3.815028491E9\t2073.0\t2073.0\t46392.0\t46392.0\t80001\t76331\t80001\t80001\t80001\t100000.0\t3.0\n";
@@ -404,10 +403,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("create table tab (ts timestamp, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)");
 
             // trigger per-partition buffers growth and free list usage
-            execute("insert into tab select x::timestamp, x/10000, x, 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(39999)");
-            // trigger removal of rows below lo boundary AND resize of buffer
-            execute("insert into tab select (100000+x)::timestamp, (100000+x)%4, (100000+x), 'k' || (x%20) ::symbol, x*2::double, 'k' || x from long_sequence(4*90000)");
-
+            execute("insert into tab select x::timestamp, x/10000, case when x % 3 = 0 THEN NULL ELSE x END, 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(39999)");            // trigger removal of rows below lo boundary AND resize of buffer
+            execute("insert into tab select (100000+x)::timestamp, (100000+x)%4, case when x % 3 = 0 THEN NULL ELSE 100000 + x END, 'k' || (x%20) ::symbol, x*2::double, 'k' || x from long_sequence(4*90000)");
             String expected = "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
                     "1970-01-01T00:00:00.460000Z\t0\t460000\t420000.0\t8.40042E9\t380000.0\t380000.0\t460000.0\t460000.0\t20001\t20001\t20001\t20001\t20001\t460000.0\t380000.0\n" +
                     "1970-01-01T00:00:00.459997Z\t1\t459997\t419997.0\t8.400359997E9\t379997.0\t379997.0\t459997.0\t459997.0\t20001\t20001\t20001\t20001\t20001\t459997.0\t379997.0\n" +
@@ -417,7 +414,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // cross-check with re-write using aggregate functions
             assertSql(
                     expected,
-                    "select max(ts) as ts, i, max(j) as j, avg(j) as avg, sum(j::double) as sum, first(j::double) as first_value, " +
+                    "select max(ts) as ts, i, avg(j) as avg, sum(j::double) as sum, first(j::double) as first_value, " +
                             "first_not_null(j::double) as first_not_null_value, " +
                             "last(j::double) as last_value, last_not_null(j::double) as last_not_null_value, " +
                             "count(*) as count, count(j::double) as count1, count(s) as count2, count(d) as count3, count(c) as count4, " +
@@ -435,7 +432,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     expected,
                     "select * from " +
-                            "(select * from (select ts, i, j, " +
+                            "(select * from (select ts, i, " +
                             "avg(j) over (partition by i order by ts range between 80000 preceding and current row), " +
                             "sum(j) over (partition by i order by ts range between 80000 preceding and current row), " +
                             "first_value(j) over (partition by i order by ts range between 80000 preceding and current row), " +
@@ -564,8 +561,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tab (ts timestamp, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)");
 
-            execute("insert into tab select x::timestamp, x/10000, x, 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(39999)");
-            execute("insert into tab select (100000+x)::timestamp, (100000+x)%4, (100000+x), 'k' || (x%20) ::symbol, x*2::double, 'k' || x from long_sequence(4*90000)");
+            execute("insert into tab select x::timestamp, x/10000, case when x % 3 = 0 THEN NULL ELSE x END, 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(39999)");
+            execute("insert into tab select (100000+x)::timestamp, (100000+x)%4, case when x % 3 = 0 THEN NULL ELSE 100000+x END, 'k' || (x%20) ::symbol, x*2::double, 'k' || x from long_sequence(4*90000)");
 
             String expected = "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
                     "1970-01-01T00:00:00.460000Z\t0\t460000\t300000.0\t2.40003E10\t140000.0\t140000.0\t460000.0\t460000.0\t80001\t80001\t80001\t80001\t80001\t460000.0\t140000.0\n" +
@@ -576,7 +573,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // cross-check with re-write using aggregate functions
             assertSql(
                     expected,
-                    " select max(ts) as ts, i, max(j) j, avg(j::double) as avg, sum(j::double) as sum, last(j::double) as first_value, " +
+                    " select max(ts) as ts, i, avg(j::double) as avg, sum(j::double) as sum, last(j::double) as first_value, " +
                             "last_not_null(j::double) as first_not_null_value, first(j::double) as last_value, first_not_null(j::double) as last_not_null_value," +
                             "count(*) as count, count(j::double) as count1, count(s) as count2, " +
                             "count(d) as count3, count(c) as count4, max(j::double) as max, min(j::double) as min " +
@@ -590,7 +587,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     expected,
                     "select * from (" +
-                            "select * from (select ts, i, j, " +
+                            "select * from (select ts, i, " +
                             "avg(j) over (partition by i order by ts rows between 80000 preceding and current row), " +
                             "sum(j) over (partition by i order by ts rows between 80000 preceding and current row), " +
                             "first_value(j) over (partition by i order by ts rows between 80000 preceding and current row), " +
@@ -618,7 +615,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testFrameFunctionOverRangeFrame() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab_big (ts timestamp, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)");
-            execute("insert into tab_big select (x*1000000)::timestamp, x/4, x%5, " +
+            execute("insert into tab_big select (x*1000000)::timestamp, x/4, case when x % 3 = 0 THEN NULL ELSE x%5 END, " +
                     "'k' || (x%5) ::symbol, x*2::double, 'k' || x  from long_sequence(10)");
 
             // tests when frame doesn't end on current row and time gaps between values are bigger than hi bound
@@ -751,7 +748,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             execute("create table tab (ts timestamp, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)");
-            execute("insert into tab select x::timestamp, x/4, x%5, 'k' || (x%5) ::symbol, x::double, " +
+            execute("insert into tab select x::timestamp, x/4, case when x % 3 = 0 THEN NULL ELSE x%5 END, 'k' || (x%5) ::symbol, x::double, " +
                     "'k' || x  from long_sequence(7)");
 
             // tests for between X preceding and [Y preceding | current row]
@@ -1215,7 +1212,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // with duplicate timestamp values (but still unique within partition)
 
             execute("create table dups(ts timestamp, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts) partition by year");
-            execute("insert into dups select (x/2)::timestamp, x%2, x%5, 'k' || (x%5) ::symbol, x*2::double," +
+            execute("insert into dups select (x/2)::timestamp, x%2, case when x % 3 = 0 THEN NULL ELSE x%5 END, 'k' || (x%5) ::symbol, x*2::double," +
                     " 'k' || x from long_sequence(10)");
 
             assertQueryNoLeakCheck(
@@ -1257,8 +1254,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "first_not_null_value(j) over (partition by i order by ts range between 4 preceding and current row), " +
                             "last_value(j) over (partition by i order by ts range between 4 preceding and current row), " +
                             "last_not_null_value(j) over (partition by i order by ts range between 4 preceding and current row), " +
-                            "count(j) over (partition by i order by ts range between 4 preceding and current row), " +
                             "count(*) over (partition by i order by ts range between 4 preceding and current row), " +
+                            "count(j) over (partition by i order by ts range between 4 preceding and current row), " +
                             "count(s) over (partition by i order by ts range between 4 preceding and current row), " +
                             "count(d) over (partition by i order by ts range between 4 preceding and current row), " +
                             "count(c) over (partition by i order by ts range between 4 preceding and current row), " +
@@ -1376,7 +1373,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // with duplicate timestamp values (including ts duplicates within partition)
             execute("create table dups2(ts timestamp, i long, j long, n long, s symbol, d double, c VARCHAR) timestamp(ts) partition by year");
-            execute("insert into dups2 select (x/4)::timestamp, x%2, x%5, x, 'k' || (x%5) ::symbol, x*2::double," +
+            execute("insert into dups2 select (x/4)::timestamp, x%2, case when x % 3 = 0 THEN NULL ELSE x%5 END, x, 'k' || (x%5) ::symbol, x*2::double," +
                     " 'k' || x from long_sequence(10)");
 
             assertSql(
@@ -1746,8 +1743,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // table without designated timestamp
             execute("create table nodts(ts timestamp, i long, j long, s symbol, d double, c VARCHAR)");
-            execute("insert into nodts select (x/2)::timestamp, x%2, x%5, 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(10)");
-
+            execute("insert into nodts select (x/2)::timestamp, x%2, case when x % 3 = 0 THEN NULL ELSE x%5 END, 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(10)");
             // timestamp ascending order is declared using timestamp(ts) clause
             assertQueryNoLeakCheck(
                     dupResult,
@@ -2057,6 +2053,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testFrameFunctionResolvesSymbolTablesInPartitionByCachedWindow() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (sym symbol, i int);");
+            execute("insert into x values ('aaa', NULL);");
             execute("insert into x values ('aaa', 1);");
             execute("insert into x values ('aaa', 2);");
 
@@ -2087,8 +2084,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testFrameFunctionResolvesSymbolTablesInPartitionByNonCachedWindow() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (sym symbol, i int, ts timestamp) timestamp(ts) partition by day;");
-            execute("insert into x values ('aaa', 1, '2023-11-09T00:00:00.000000');");
-            execute("insert into x values ('aaa', 2, '2023-11-09T01:00:00.000000');");
+            execute("insert into x values ('aaa', NULL, '2023-11-09T00:00:00.000000');");
+            execute("insert into x values ('aaa', 1, '2023-11-09T01:00:00.000000');");
+            execute("insert into x values ('aaa', 2, '2023-11-09T02:00:00.000000');");
 
             assertQueryNoLeakCheck(
                     "ts\tsym\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tmax\tmin\n" +
@@ -2136,8 +2134,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testFrameFunctionsOverRowsFrame() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab (ts timestamp, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)");
-            execute("insert into tab select x::timestamp, x/4, x%5, x%5, 'k' || (x%5) ::symbol, 'k' || x from long_sequence(7)");
-
+            execute("insert into tab select x::timestamp, x/4, case when x % 3 = 0 THEN NULL ELSE x%5 END, x%5, 'k' || (x%5) ::symbol, 'k' || x from long_sequence(7)");
             assertSql(
                     "ts\ti\tj\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\n" +
@@ -2162,10 +2159,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "select ts, i, j, " +
                             "avg(d) over (order by ts rows unbounded preceding)," +
                             "sum(d) over (order by ts rows unbounded preceding), " +
-                            "first_value(d) over (order by ts rows unbounded preceding), " +
-                            "first_not_null_value(d) over (order by ts rows unbounded preceding), " +
-                            "last_value(d) over (order by ts rows unbounded preceding), " +
-                            "last_not_null_value(d) over (order by ts rows unbounded preceding), " +
+                            "first_value(j) over (order by ts rows unbounded preceding), " +
+                            "first_not_null_value(j) over (order by ts rows unbounded preceding), " +
+                            "last_value(j) over (order by ts rows unbounded preceding), " +
+                            "last_not_null_value(j) over (order by ts rows unbounded preceding), " +
                             "count(*) over (order by ts rows unbounded preceding), " +
                             "count(d) over (order by ts rows unbounded preceding), " +
                             "count(s) over (order by ts rows unbounded preceding), " +
@@ -2174,8 +2171,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "min(d) over (order by ts rows unbounded preceding) " +
                             "from tab",
                     "ts",
-                    false,
-                    true
+                    true,
+                    false
             );
 
             assertQueryNoLeakCheck(
@@ -2218,10 +2215,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "select ts, i, j, " +
                             "avg(d) over (order by ts rows current row), " +
                             "sum(d) over (order by ts rows current row), " +
-                            "first_value(d) over (order by ts rows current row), " +
-                            "first_not_null_value(d) over (order by ts rows current row), " +
-                            "last_value(d) over (order by ts rows current row), " +
-                            "last_not_null_value(d) over (order by ts rows current row), " +
+                            "first_value(j) over (order by ts rows current row), " +
+                            "first_not_null_value(j) over (order by ts rows current row), " +
+                            "last_value(j) over (order by ts rows current row), " +
+                            "last_not_null_value(j) over (order by ts rows current row), " +
                             "count(*) over (order by ts rows current row), " +
                             "count(s) over (order by ts rows current row), " +
                             "count(d) over (order by ts rows current row), " +
@@ -2246,10 +2243,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "select ts, i, j, " +
                             "avg(d) over (order by ts desc rows current row), " +
                             "sum(d) over (order by ts desc rows current row), " +
-                            "first_value(d) over (order by ts desc rows current row), " +
-                            "first_not_null_value(d) over (order by ts desc rows current row), " +
-                            "last_value(d) over (order by ts desc rows current row), " +
-                            "last_not_null_value(d) over (order by ts desc rows current row), " +
+                            "first_value(j) over (order by ts desc rows current row), " +
+                            "first_not_null_value(j) over (order by ts desc rows current row), " +
+                            "last_value(j) over (order by ts desc rows current row), " +
+                            "last_not_null_value(j) over (order by ts desc rows current row), " +
                             "count(*) over (order by ts desc rows current row), " +
                             "count(s) over (order by ts desc rows current row), " +
                             "count(d) over (order by ts desc rows current row), " +
@@ -2274,10 +2271,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "select ts, i, j, " +
                             "avg(d) over (order by ts rows between unbounded preceding and 1 preceding), " +
                             "sum(d) over (order by ts rows between unbounded preceding and 1 preceding), " +
-                            "first_value(d) over (order by ts rows between unbounded preceding and 1 preceding), " +
-                            "first_not_null_value(d) over (order by ts rows between unbounded preceding and 1 preceding), " +
-                            "last_value(d) over (order by ts rows between unbounded preceding and 1 preceding), " +
-                            "last_not_null_value(d) over (order by ts rows between unbounded preceding and 1 preceding), " +
+                            "first_value(j) over (order by ts rows between unbounded preceding and 1 preceding), " +
+                            "first_not_null_value(j) over (order by ts rows between unbounded preceding and 1 preceding), " +
+                            "last_value(j) over (order by ts rows between unbounded preceding and 1 preceding), " +
+                            "last_not_null_value(j) over (order by ts rows between unbounded preceding and 1 preceding), " +
                             "count(*) over (order by ts rows between unbounded preceding and 1 preceding), " +
                             "count(s) over (order by ts rows between unbounded preceding and 1 preceding), " +
                             "count(d) over (order by ts rows between unbounded preceding and 1 preceding), " +
@@ -2302,10 +2299,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "select ts, i, j, " +
                             "avg(d) over (order by ts rows between 4 preceding and 2 preceding), " +
                             "sum(d) over (order by ts rows between 4 preceding and 2 preceding), " +
-                            "first_value(d) over (order by ts rows between 4 preceding and 2 preceding), " +
-                            "first_not_null_value(d) over (order by ts rows between 4 preceding and 2 preceding), " +
-                            "last_value(d) over (order by ts rows between 4 preceding and 2 preceding), " +
-                            "last_not_null_value(d) over (order by ts rows between 4 preceding and 2 preceding), " +
+                            "first_value(j) over (order by ts rows between 4 preceding and 2 preceding), " +
+                            "first_not_null_value(j) over (order by ts rows between 4 preceding and 2 preceding), " +
+                            "last_value(j) over (order by ts rows between 4 preceding and 2 preceding), " +
+                            "last_not_null_value(j) over (order by ts rows between 4 preceding and 2 preceding), " +
                             "count(*) over (order by ts rows between 4 preceding and 2 preceding), " +
                             "count(s) over (order by ts rows between 4 preceding and 2 preceding), " +
                             "count(d) over (order by ts rows between 4 preceding and 2 preceding), " +
@@ -2330,10 +2327,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "select ts, i, j, " +
                             "avg(d) over (order by ts desc rows between 4 preceding and 2 preceding), " +
                             "sum(d) over (order by ts desc rows between 4 preceding and 2 preceding), " +
-                            "first_value(d) over (order by ts desc rows between 4 preceding and 2 preceding), " +
-                            "first_not_null_value(d) over (order by ts desc rows between 4 preceding and 2 preceding), " +
-                            "last_value(d) over (order by ts desc rows between 4 preceding and 2 preceding), " +
-                            "last_not_null_value(d) over (order by ts desc rows between 4 preceding and 2 preceding), " +
+                            "first_value(j) over (order by ts desc rows between 4 preceding and 2 preceding), " +
+                            "first_not_null_value(j) over (order by ts desc rows between 4 preceding and 2 preceding), " +
+                            "last_value(j) over (order by ts desc rows between 4 preceding and 2 preceding), " +
+                            "last_not_null_value(j) over (order by ts desc rows between 4 preceding and 2 preceding), " +
                             "count(*) over (order by ts desc rows between 4 preceding and 2 preceding), " +
                             "count(s) over (order by ts desc rows between 4 preceding and 2 preceding), " +
                             "count(d) over (order by ts desc rows between 4 preceding and 2 preceding), " +
@@ -2358,10 +2355,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "select ts, i, j, " +
                             "avg(d) over (order by i rows between unbounded preceding and unbounded following), " +
                             "sum(d) over (order by i rows between unbounded preceding and unbounded following), " +
-                            "first_value(d) over (order by i rows between unbounded preceding and unbounded following), " +
-                            "first_not_null_value(d) over (order by i rows between unbounded preceding and unbounded following), " +
-                            "last_value(d) over (order by i rows between unbounded preceding and unbounded following), " +
-                            "last_not_null_value(d) over (order by i rows between unbounded preceding and unbounded following), " +
+                            "first_value(j) over (order by i rows between unbounded preceding and unbounded following), " +
+                            "first_not_null_value(j) over (order by i rows between unbounded preceding and unbounded following), " +
+                            "last_value(j) over (order by i rows between unbounded preceding and unbounded following), " +
+                            "last_not_null_value(j) over (order by i rows between unbounded preceding and unbounded following), " +
                             "count(*) over (order by i rows between unbounded preceding and unbounded following), " +
                             "count(s) over (order by i rows between unbounded preceding and unbounded following), " +
                             "count(d) over (order by i rows between unbounded preceding and unbounded following), " +
@@ -3932,15 +3929,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "max(j) over (order by ts), " +
                             "min(j) over (order by ts) " +
                             "from tab",
-                    "Window\n" +
-                            "  functions: [first_value(j) over (),first_not_null_value(j) over (),last_value(j) over (range between unbounded preceding and current row),last_not_null_value(j) over (rows between unbounded preceding and current row),avg(j) over (rows between unbounded preceding and current row),sum(j) over (rows between unbounded preceding and current row),count(*) over (rows between unbounded preceding and current row),count(j) over (rows between unbounded preceding and current row),count(sym) over (rows between unbounded preceding and current row),count(c) over (rows between unbounded preceding and current row),max(j) over (rows between unbounded preceding and current row),min(j) over (rows between unbounded preceding and current row)]\n" +
+                    "CachedWindow\n" +
+                            "  unorderedFunctions: [first_value(j) over (),first_not_null_value(j) over (),last_value(j) over (range between unbounded preceding and current row),last_not_null_value(j) over (rows between unbounded preceding and current row),avg(j) over (rows between unbounded preceding and current row),sum(j) over (rows between unbounded preceding and current row),count(*) over (rows between unbounded preceding and current row),count(j) over (rows between unbounded preceding and current row),count(sym) over (rows between unbounded preceding and current row),count(c) over (rows between unbounded preceding and current row),max(j) over (rows between unbounded preceding and current row),min(j) over (rows between unbounded preceding and current row)]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n",
                     "ts\ti\tj\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n",
                     "ts",
-                    false,
-                    true
+                    true,
+                    false
             );
 
             assertQueryAndPlan(
