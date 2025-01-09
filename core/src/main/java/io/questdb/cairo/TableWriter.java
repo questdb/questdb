@@ -8591,6 +8591,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void writeMetadataToDisk() {
+        rewriteAndSwapMetadata(metadata);
+        clearTodoAndCommitMeta();
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.hydrateTable(metadata);
+        }
+    }
+
     private void writeRestoreMetaTodo() {
         try {
             todoMem.putLong(0, ++todoTxn); // write txn, reader will first read txn at offset 24 and then at offset 0
@@ -8607,14 +8615,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             todoMem.sync(false);
         } catch (CairoException e) {
             runFragile(RECOVER_FROM_TODO_WRITE_FAILURE, e);
-        }
-    }
-
-    private void writeMetadataToDisk() {
-        rewriteAndSwapMetadata(metadata);
-        clearTodoAndCommitMeta();
-        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-            metadataRW.hydrateTable(metadata);
         }
     }
 
