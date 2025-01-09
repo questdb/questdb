@@ -41,8 +41,8 @@ public class MatViewGraph implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(MatViewGraph.class);
     private final ConcurrentHashMap<MatViewRefreshList> dependantViewsByTableName = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<MatViewRefreshState> refreshStateByTableDirName = new ConcurrentHashMap<>();
-    private final ConcurrentQueue<MvRefreshTask> refreshTaskQueue = new ConcurrentQueue<>(MvRefreshTask::new);
-    private final ThreadLocal<MvRefreshTask> taskHolder = new ThreadLocal<>(MvRefreshTask::new);
+    private final ConcurrentQueue<MatViewRefreshTask> refreshTaskQueue = new ConcurrentQueue<>(MatViewRefreshTask::new);
+    private final ThreadLocal<MatViewRefreshTask> taskHolder = new ThreadLocal<>(MatViewRefreshTask::new);
 
     public void clear() {
         close();
@@ -169,7 +169,7 @@ public class MatViewGraph implements QuietCloseable {
         }
     }
 
-    public void notifyBaseRefreshed(MvRefreshTask task, long seqTxn) {
+    public void notifyBaseRefreshed(MatViewRefreshTask task, long seqTxn) {
         TableToken tableToken = task.baseTable;
         MatViewRefreshList state = dependantViewsByTableName.get(tableToken.getTableName());
         if (state != null) {
@@ -180,7 +180,7 @@ public class MatViewGraph implements QuietCloseable {
         }
     }
 
-    public void notifyTxnApplied(MvRefreshTask task, long seqTxn) {
+    public void notifyTxnApplied(MatViewRefreshTask task, long seqTxn) {
         MatViewRefreshList state = dependantViewsByTableName.get(task.baseTable.getTableName());
         if (state != null) {
             if (state.notifyOnBaseTableCommitNoLock(seqTxn)) {
@@ -195,18 +195,18 @@ public class MatViewGraph implements QuietCloseable {
     public void refresh(TableToken viewTableToken) {
         final MatViewRefreshState state = refreshStateByTableDirName.get(viewTableToken.getDirName());
         // TODO(puzpuzpuz): state can be null???
-        final MvRefreshTask task = taskHolder.get();
+        final MatViewRefreshTask task = taskHolder.get();
         task.baseTable = state.getViewDefinition().getMatViewToken();
         task.viewToken = viewTableToken;
         refreshTaskQueue.enqueue(task);
     }
 
-    public boolean tryDequeueRefreshTask(MvRefreshTask task) {
+    public boolean tryDequeueRefreshTask(MatViewRefreshTask task) {
         return refreshTaskQueue.tryDequeue(task);
     }
 
     private void addToRefreshQueue(TableToken baseToken, @Nullable TableToken viewToken) {
-        final MvRefreshTask task = taskHolder.get();
+        final MatViewRefreshTask task = taskHolder.get();
         task.baseTable = baseToken;
         task.viewToken = viewToken;
         refreshTaskQueue.enqueue(task);

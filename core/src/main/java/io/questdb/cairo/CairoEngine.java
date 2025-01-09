@@ -32,7 +32,7 @@ import io.questdb.Telemetry;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
-import io.questdb.cairo.mv.MvRefreshTask;
+import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.pool.AbstractMultiTenantPool;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ReaderPool;
@@ -435,8 +435,7 @@ public class CairoEngine implements Closeable, WriterSource {
         readerPool.detach(reader);
     }
 
-    // TODO(puzpuzpuz): rename to dropTableOrMatView
-    public void dropTable(@Transient Path path, TableToken tableToken) {
+    public void dropTableOrMatView(@Transient Path path, TableToken tableToken) {
         verifyTableToken(tableToken);
         if (tableToken.isWal()) {
             if (tableNameRegistry.dropTable(tableToken)) {
@@ -984,7 +983,7 @@ public class CairoEngine implements Closeable, WriterSource {
         tableNameRegistry.dropTable(tableToken);
     }
 
-    public void notifyMaterializedViewBaseCommit(MvRefreshTask task, long seqTxn) {
+    public void notifyMaterializedViewBaseCommit(MatViewRefreshTask task, long seqTxn) {
         matViewGraph.notifyTxnApplied(task, seqTxn);
     }
 

@@ -406,7 +406,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                 }
                 if (overwrite) {
                     securityContext.authorizeTableDrop(tableToken);
-                    engine.dropTable(path, tableToken);
+                    engine.dropTableOrMatView(path, tableToken);
                     tableToken = createTable(names, detectedTypes, securityContext, path);
                     tableReCreated = true;
                     writer = engine.getTableWriterAPI(tableToken, WRITER_LOCK_REASON);

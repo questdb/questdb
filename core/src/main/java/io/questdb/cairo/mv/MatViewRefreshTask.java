@@ -27,12 +27,12 @@ package io.questdb.cairo.mv;
 import io.questdb.cairo.TableToken;
 import io.questdb.mp.QueueValueHolder;
 
-public class MvRefreshTask implements QueueValueHolder<MvRefreshTask> {
+public class MatViewRefreshTask implements QueueValueHolder<MatViewRefreshTask> {
     public TableToken baseTable;
     public TableToken viewToken;
 
     @Override
-    public void copyTo(MvRefreshTask anotherHolder) {
+    public void copyTo(MatViewRefreshTask anotherHolder) {
         anotherHolder.baseTable = baseTable;
         anotherHolder.viewToken = viewToken;
     }

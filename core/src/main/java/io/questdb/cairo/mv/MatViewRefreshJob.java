@@ -66,7 +66,7 @@ public class MatViewRefreshJob extends SynchronizedJob implements QuietCloseable
     private final CairoEngine engine;
     private final MatViewRefreshExecutionContext matViewRefreshExecutionContext;
     private final MicrosecondClock microsecondClock;
-    private final MvRefreshTask mvRefreshTask = new MvRefreshTask();
+    private final MatViewRefreshTask mvRefreshTask = new MatViewRefreshTask();
     private final WalTxnRangeLoader txnRangeLoader;
 
     public MatViewRefreshJob(CairoEngine engine) {

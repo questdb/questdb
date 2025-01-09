@@ -36,7 +36,7 @@ import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.mv.MvRefreshTask;
+import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
@@ -85,6 +85,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private final int lookAheadTransactionCount;
     private final WalMetrics metrics;
     private final MicrosecondClock microClock;
+    private final MatViewRefreshTask mvRefreshTask = new MatViewRefreshTask();
     private final OperationExecutor operationExecutor;
     private final Rnd rnd = new Rnd();
     private final long tableTimeQuotaMicros;
@@ -94,7 +95,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private final Telemetry<TelemetryWalTask> walTelemetry;
     private final WalTelemetryFacade walTelemetryFacade;
     private long lastAttemptSeqTxn;
-    private final MvRefreshTask mvRefreshTask = new MvRefreshTask();
 
     public ApplyWal2TableJob(CairoEngine engine, int workerCount, int sharedWorkerCount) {
         super(engine.getMessageBus().getWalTxnNotificationQueue(), engine.getMessageBus().getWalTxnNotificationSubSequence());

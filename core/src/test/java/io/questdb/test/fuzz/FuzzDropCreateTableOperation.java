@@ -24,7 +24,14 @@
 
 package io.questdb.test.fuzz;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -53,7 +60,7 @@ public class FuzzDropCreateTableOperation implements FuzzTransactionOperation {
             while (true) {
                 try {
                     LOG.info().$("dropping table ").$(tableToken.getDirName()).$();
-                    engine.dropTable(path, tableToken);
+                    engine.dropTableOrMatView(path, tableToken);
                     break;
                 } catch (CairoException ignore) {
                     if (!isWal) {

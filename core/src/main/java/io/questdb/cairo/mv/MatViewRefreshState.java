@@ -40,8 +40,8 @@ public class MatViewRefreshState implements QuietCloseable {
     private final AtomicBoolean newNotification = new AtomicBoolean();
     private final MatViewDefinition viewDefinition;
     private RecordCursorFactory cursorFactory;
-    private StringSink error;
     private int errorCode;
+    private StringSink errorSink;
     private volatile boolean isDropped;
     private long lastRefreshTimestamp = Numbers.LONG_NULL;
     private long recordRowCopierMetadataVersion;
@@ -65,16 +65,17 @@ public class MatViewRefreshState implements QuietCloseable {
     public void compilationFail(SqlException e, long refreshTimestamp) {
         assert locked.get();
         this.lastRefreshTimestamp = refreshTimestamp;
-        getSink().put(e.getFlyweightMessage());
+        getErrorSink().put(e.getFlyweightMessage());
         errorCode = e.getPosition();
     }
 
     public CharSequence getLastError() {
-        // TODO: synchronize read and write
-        return error;
+        // TODO(puzpuzpuz): synchronize read and write
+        return errorSink;
     }
 
     public int getLastErrorCode() {
+        // TODO(puzpuzpuz): synchronize read and write
         return errorCode;
     }
 
@@ -114,11 +115,11 @@ public class MatViewRefreshState implements QuietCloseable {
         assert locked.get();
         this.lastRefreshTimestamp = refreshTimestamp;
         if (th instanceof CairoException) {
-            getSink().put(((CairoException) th).getFlyweightMessage());
+            getErrorSink().put(((CairoException) th).getFlyweightMessage());
             errorCode = ((CairoException) th).getErrno();
         } else {
             errorCode = -1;
-            StringSink sink = getSink();
+            StringSink sink = getErrorSink();
             sink.put(th.getClass().getSimpleName());
             if (th.getMessage() != null) {
                 sink.put(": ");
@@ -130,7 +131,7 @@ public class MatViewRefreshState implements QuietCloseable {
     public void refreshFail(CharSequence errorMessage, long refreshTimestamp) {
         assert locked.get();
         this.lastRefreshTimestamp = refreshTimestamp;
-        getSink().put(errorMessage);
+        getErrorSink().put(errorMessage);
         this.errorCode = Integer.MIN_VALUE;
     }
 
@@ -157,12 +158,12 @@ public class MatViewRefreshState implements QuietCloseable {
         }
     }
 
-    private StringSink getSink() {
-        if (error == null) {
-            error = new StringSink();
-            return error;
+    private StringSink getErrorSink() {
+        if (errorSink == null) {
+            errorSink = new StringSink();
+            return errorSink;
         }
-        error.clear();
-        return error;
+        errorSink.clear();
+        return errorSink;
     }
 }

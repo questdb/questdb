@@ -2712,7 +2712,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 record.$(", errno=").$(e.getErrno());
                             }
                             record.I$();
-                            engine.dropTable(path, tableToken);
+                            engine.dropTableOrMatView(path, tableToken);
                             engine.unlockTableName(tableToken);
                             throw e;
                         }
@@ -2796,7 +2796,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (!tableToken.isSystem()) {
                 securityContext.authorizeTableDrop(tableToken);
                 try {
-                    engine.dropTable(path, tableToken);
+                    engine.dropTableOrMatView(path, tableToken);
                 } catch (CairoException report) {
                     // it will fail when there are readers/writers and lock cannot be acquired
                     dropAllTablesFailedTableNames.put(tableToken.getTableName(), report.getMessage());
@@ -2839,7 +2839,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final String sqlText = op.getSqlText();
         final long queryId = queryRegistry.register(sqlText, sqlExecutionContext);
         try {
-            engine.dropTable(path, tableToken);
+            engine.dropTableOrMatView(path, tableToken);
         } catch (CairoException ex) {
             if ((ex.isTableDropped() || ex.isTableDoesNotExist()) && op.ifExists()) {
                 // all good, mat view dropped already
@@ -2873,7 +2873,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final String sqlText = op.getSqlText();
         final long queryId = queryRegistry.register(sqlText, sqlExecutionContext);
         try {
-            engine.dropTable(path, tableToken);
+            engine.dropTableOrMatView(path, tableToken);
         } catch (CairoException ex) {
             if ((ex.isTableDropped() || ex.isTableDoesNotExist()) && op.ifExists()) {
                 // all good, table dropped already
