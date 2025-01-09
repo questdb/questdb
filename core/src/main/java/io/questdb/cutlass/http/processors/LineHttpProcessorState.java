@@ -53,7 +53,8 @@ import java.util.concurrent.atomic.AtomicLong;
 public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private static final AtomicLong ERROR_COUNT = new AtomicLong();
     private static final String ERROR_ID = generateErrorId();
-    private static final Log LOG = LogFactory.getLog(LineHttpProcessorState.class);
+    @SuppressWarnings("FieldMayBeFinal")
+    private static Log LOG = LogFactory.getLog(LineHttpProcessorState.class);
     private final LineWalAppender appender;
     private final StringSink error = new StringSink();
     private final LineHttpTudCache ilpTudCache;
