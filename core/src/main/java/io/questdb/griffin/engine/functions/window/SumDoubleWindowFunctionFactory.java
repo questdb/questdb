@@ -477,11 +477,10 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             if (Numbers.isFinite(d)) {
                 sum += d;
                 count++;
-
-                value.putDouble(0, sum);
-                value.putLong(1, count);
             }
 
+            value.putDouble(0, sum);
+            value.putLong(1, count);
             this.sum = count != 0 ? sum : Double.NaN;
         }
 

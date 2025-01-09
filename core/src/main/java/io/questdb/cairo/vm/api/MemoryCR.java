@@ -94,7 +94,7 @@ public interface MemoryCR extends MemoryC, MemoryR {
     }
 
     default long getLong(long offset) {
-        assert addressOf(offset + Long.BYTES) > 0;
+        assert offset > -1 && addressOf(offset + Long.BYTES) > 0;
         return Unsafe.getUnsafe().getLong(addressOf(offset));
     }
 

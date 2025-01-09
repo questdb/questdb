@@ -241,11 +241,12 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     private void testTimeout() {
-        if (clock.getTicks() - timeout > powerUpTime) {
+        long runtime = clock.getTicks() - powerUpTime;
+        if (runtime > timeout) {
             if (isCancelled()) {
                 throw CairoException.queryCancelled(fd);
             } else {
-                throw CairoException.queryTimedOut(fd);
+                throw CairoException.queryTimedOut(fd, runtime, timeout);
             }
         }
     }
