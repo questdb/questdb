@@ -286,7 +286,7 @@ public class FuzzRunner {
                             if (ex.isTableDoesNotExist() && transaction.operationList.get(0) instanceof FuzzDropCreateTableOperation) {
                                 // Table is dropped, but failed to recreate.
                                 // Create it again.
-                                FuzzDropCreateTableOperation dropCreateTableOperation = (FuzzDropCreateTableOperation)transaction.operationList.get(0);
+                                FuzzDropCreateTableOperation dropCreateTableOperation = (FuzzDropCreateTableOperation) transaction.operationList.get(0);
                                 if (dropCreateTableOperation.recreateTable(engine)) {
                                     writer = TestUtils.getWriter(engine, tableName);
                                     // Drop and create cycle now complete, move to next transaction.

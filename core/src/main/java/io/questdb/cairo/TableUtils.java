@@ -433,8 +433,7 @@ public final class TableUtils {
                 ff.rmdir(path.trimTo(rootLen).slash());
             }
             throw e;
-        }
-        finally {
+        } finally {
             path.trimTo(rootLen);
         }
     }
