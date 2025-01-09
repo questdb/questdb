@@ -39,10 +39,11 @@ import io.questdb.griffin.model.WindowColumn;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
-    public static final MaxDoubleWindowFunctionFactory.DoubleComparator LESS_THAN = (a, b) -> Double.compare(a, b) < 0;
+    public static final MaxDoubleWindowFunctionFactory.DoubleComparator LESS_THAN = (a, b) -> Numbers.compare(a, b) < 0;
     public static final String NAME = "min";
     private static final String SIGNATURE = NAME + "(D)";
 

@@ -200,7 +200,7 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
         final long minPageCount = requiredSize > 0 ? ((requiredSize - 1) >>> sizeMsb) + 1 : 1;
         if (oldSize > 0 && requiredSize > 0 && minPageCount * 2 < maxPages) {
             // double the page count on each resize to avoid frequent resizes, unless this is
-            // are request to downsize the memory or aggressive resize will throw us over the limit
+            // a request to downsize the memory or aggressive resize will throw us over the limit
             return minPageCount * 2;
         }
         return minPageCount;

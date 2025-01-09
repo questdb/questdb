@@ -177,8 +177,7 @@ public class CairoEngineTest extends AbstractCairoTest {
             try (
                     Path path = new Path()
             ) {
-                try (MemoryMARW mem = Vm.getCMARWInstance()
-                ) {
+                try (MemoryMARW mem = Vm.getCMARWInstance()) {
                     engine.createTable(securityContext, mem, path, false, model, false);
                     fail("duplicated tables should not be permitted!");
                 }
