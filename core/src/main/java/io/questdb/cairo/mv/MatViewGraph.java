@@ -57,7 +57,7 @@ public class MatViewGraph implements QuietCloseable {
         refreshStateByTableDirName.clear();
     }
 
-    public void createView(TableToken baseTableToken, MatViewDefinition viewDefinition) {
+    public void createView(MatViewDefinition viewDefinition) {
         final TableToken matViewToken = viewDefinition.getMatViewToken();
         MatViewRefreshState viewRefreshState = refreshStateByTableDirName.get(matViewToken.getDirName());
         if (viewRefreshState != null && !viewRefreshState.isDropped()) {
@@ -74,7 +74,7 @@ public class MatViewGraph implements QuietCloseable {
             viewRefreshState = new MatViewRefreshState(viewDefinition);
             refreshStateByTableDirName.putIfAbsent(matViewToken.getDirName(), viewRefreshState);
 
-            MatViewRefreshList list = getDependencyList(baseTableToken.getTableName());
+            MatViewRefreshList list = getDependencyList(viewDefinition.getBaseTableName());
             try {
                 ObjList<TableToken> matViews = list.writeLock();
                 // TODO(eugene): what the purpose of this loop?
@@ -92,8 +92,12 @@ public class MatViewGraph implements QuietCloseable {
                 list.unlockWrite();
             }
         }
+    }
 
-        addToRefreshQueue(baseTableToken, matViewToken);
+    public void createView(TableToken baseTableToken, MatViewDefinition viewDefinition) {
+        assert baseTableToken.getTableName().equals(viewDefinition.getBaseTableName());
+        createView(viewDefinition);
+        addToRefreshQueue(baseTableToken, viewDefinition.getMatViewToken());
     }
 
     public void dropViewIfExists(TableToken viewToken) {

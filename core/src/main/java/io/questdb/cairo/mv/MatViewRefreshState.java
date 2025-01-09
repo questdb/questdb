@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.StringSink;
 
@@ -42,7 +43,7 @@ public class MatViewRefreshState implements QuietCloseable {
     private StringSink error;
     private int errorCode;
     private volatile boolean isDropped;
-    private long lastRefreshTimestamp;
+    private long lastRefreshTimestamp = Numbers.LONG_NULL;
     private long recordRowCopierMetadataVersion;
     private RecordToRowCopier recordToRowCopier;
 
