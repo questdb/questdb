@@ -309,7 +309,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String publicDirectory;
     private final PublicPassthroughConfiguration publicPassthroughConfiguration = new PropPublicPassthroughConfiguration();
     private final int queryCacheEventQueueCapacity;
-    private final long queryTimeout;
     private final int readerPoolMaxSegments;
     private final int repeatMigrationFromVersion;
     private final double rerunExponentialWaitMultiplier;
@@ -590,6 +589,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long pgWorkerNapThreshold;
     private long pgWorkerSleepThreshold;
     private long pgWorkerYieldThreshold;
+    private long queryTimeout;
     private boolean stringToCharCastAllowed;
     private long symbolCacheWaitBeforeReload;
 
@@ -1054,7 +1054,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.rerunMaxProcessingQueueSize = getIntSize(properties, env, PropertyKey.HTTP_BUSY_RETRY_MAX_PROCESSING_QUEUE_SIZE, 4096);
 
             this.circuitBreakerThrottle = getInt(properties, env, PropertyKey.CIRCUIT_BREAKER_THROTTLE, 2_000_000);
+            // obsolete
             this.queryTimeout = (long) (getDouble(properties, env, PropertyKey.QUERY_TIMEOUT_SEC, "60") * Timestamps.SECOND_MILLIS);
+            this.queryTimeout = getMillis(properties, env, PropertyKey.QUERY_TIMEOUT, this.queryTimeout);
+
             this.netTestConnectionBufferSize = getInt(properties, env, PropertyKey.CIRCUIT_BREAKER_BUFFER_SIZE, 64);
             this.netTestConnectionBufferSize = getInt(properties, env, PropertyKey.NET_TEST_CONNECTION_BUFFER_SIZE, netTestConnectionBufferSize);
 
@@ -2066,6 +2069,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             registerDeprecated(
                     PropertyKey.CIRCUIT_BREAKER_BUFFER_SIZE,
                     PropertyKey.NET_TEST_CONNECTION_BUFFER_SIZE
+            );
+            registerDeprecated(
+                    PropertyKey.QUERY_TIMEOUT_SEC,
+                    PropertyKey.QUERY_TIMEOUT
             );
             registerDeprecated(
                     PropertyKey.CAIRO_PAGE_FRAME_TASK_POOL_CAPACITY
