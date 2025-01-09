@@ -776,7 +776,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             engine.reconcileTableNameRegistryState();
 
             TableToken tt2;
-            try (MemoryMARW mem = Vm.getMARWInstance()) {
+            try (MemoryMARW mem = Vm.getCMARWInstance()) {
                 tt2 = engine.rename(
                         securityContext,
                         Path.getThreadLocal(""),
@@ -935,7 +935,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             Assert.assertTrue(engine.isWalTable(tt1));
 
             TableToken tt2;
-            try (MemoryMARW mem = Vm.getMARWInstance()) {
+            try (MemoryMARW mem = Vm.getCMARWInstance()) {
                 tt2 = engine.rename(
                         securityContext,
                         Path.getThreadLocal(""),
@@ -982,7 +982,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             tt3 = createTable(model);
             Assert.assertFalse(engine.isWalTable(tt3));
 
-            try (MemoryMARW mem = Vm.getMARWInstance()) {
+            try (MemoryMARW mem = Vm.getCMARWInstance()) {
                 tt2 = engine.rename(
                         securityContext,
                         Path.getThreadLocal(""),

@@ -302,7 +302,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     }
                 case TableUtils.TABLE_DOES_NOT_EXIST:
                     securityContext.authorizeTableCreate();
-                    try (MemoryMARW memory = Vm.getMARWInstance()) {
+                    try (MemoryMARW memory = Vm.getCMARWInstance()) {
                         TableUtils.createTable(
                                 ff,
                                 root,
