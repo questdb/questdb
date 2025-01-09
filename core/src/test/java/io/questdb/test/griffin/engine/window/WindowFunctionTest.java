@@ -233,11 +233,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     "ts\ti\tj\tavg\tsum\tfirst_value\tlast_value\tfirst_not_null_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.189996Z\t22499\t89996\t49996.0\t3.999729996E9\t9996.0\t89996.0\t9996.0\t89996.0\t80001\t80001\t80001\t80001\t80001\t89996.0\t9996.0\n" +
-                            "1970-01-01T00:00:00.189997Z\t22499\t89997\t49997.0\t3.999809997E9\t9997.0\t89997.0\t9997.0\t89997.0\t80001\t80001\t80001\t80001\t80001\t89997.0\t9997.0\n" +
-                            "1970-01-01T00:00:00.189998Z\t22499\t89998\t49998.0\t3.999889998E9\t9998.0\t89998.0\t9998.0\t89998.0\t80001\t80001\t80001\t80001\t80001\t89998.0\t9998.0\n" +
-                            "1970-01-01T00:00:00.189999Z\t22499\t89999\t49999.0\t3.999969999E9\t9999.0\t89999.0\t9999.0\t89999.0\t80001\t80001\t80001\t80001\t80001\t89999.0\t9999.0\n" +
-                            "1970-01-01T00:00:00.190000Z\t22500\t90000\t50000.0\t4.00005E9\t10000.0\t90000.0\t10000.0\t90000.0\t80001\t80001\t80001\t80001\t80001\t90000.0\t10000.0\n",
+                            "1970-01-01T00:00:00.189996Z\t22499\t89996\t49996.5\t2.666513331E9\tnull\t89996.0\t9997.0\t89996.0\t80001\t53334\t80001\t80001\t80001\t89996.0\t9997.0\n" +
+                            "1970-01-01T00:00:00.189997Z\t22499\tnull\t49996.5\t2.666513331E9\t9997.0\tnull\t9997.0\t89996.0\t80001\t53334\t80001\t80001\t80001\t89996.0\t9997.0\n" +
+                            "1970-01-01T00:00:00.189998Z\t22499\t89998\t49998.0\t2.666593332E9\t9998.0\t89998.0\t9998.0\t89998.0\t80001\t53334\t80001\t80001\t80001\t89998.0\t9998.0\n" +
+                            "1970-01-01T00:00:00.189999Z\t22499\t89999\t49999.5\t2.666673333E9\tnull\t89999.0\t10000.0\t89999.0\t80001\t53334\t80001\t80001\t80001\t89999.0\t10000.0\n" +
+                            "1970-01-01T00:00:00.190000Z\t22500\tnull\t49999.5\t2.666673333E9\t10000.0\tnull\t10000.0\t89999.0\t80001\t53334\t80001\t80001\t80001\t89999.0\t10000.0\n",
                     "select * from (" +
                             "select ts, i, j, " +
                             "avg(j) over (order by ts range between 80000 preceding and current row), " +
@@ -267,11 +267,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     "ts\ti\tj\tavg\tsum\tfirst_value\tlast_value\tfirst_not_null_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.189996Z\t22499\t89996\t49996.0\t3.999729996E9\t9996.0\t89996.0\t9996.0\t89996.0\t80001\t80001\t80001\t80001\t80001\t89996.0\t9996.0\n" +
-                            "1970-01-01T00:00:00.189997Z\t22499\t89997\t49997.0\t3.999809997E9\t9997.0\t89997.0\t9997.0\t89997.0\t80001\t80001\t80001\t80001\t80001\t89997.0\t9997.0\n" +
-                            "1970-01-01T00:00:00.189998Z\t22499\t89998\t49998.0\t3.999889998E9\t9998.0\t89998.0\t9998.0\t89998.0\t80001\t80001\t80001\t80001\t80001\t89998.0\t9998.0\n" +
-                            "1970-01-01T00:00:00.189999Z\t22499\t89999\t49999.0\t3.999969999E9\t9999.0\t89999.0\t9999.0\t89999.0\t80001\t80001\t80001\t80001\t80001\t89999.0\t9999.0\n" +
-                            "1970-01-01T00:00:00.190000Z\t22500\t90000\t50000.0\t4.00005E9\t10000.0\t90000.0\t10000.0\t90000.0\t80001\t80001\t80001\t80001\t80001\t90000.0\t10000.0\n",
+                            "1970-01-01T00:00:00.189996Z\t22499\t89996\t49996.5\t2.666513331E9\tnull\t89996.0\t9997.0\t89996.0\t80001\t53334\t80001\t80001\t80001\t89996.0\t9997.0\n" +
+                            "1970-01-01T00:00:00.189997Z\t22499\tnull\t49996.5\t2.666513331E9\t9997.0\tnull\t9997.0\t89996.0\t80001\t53334\t80001\t80001\t80001\t89996.0\t9997.0\n" +
+                            "1970-01-01T00:00:00.189998Z\t22499\t89998\t49998.0\t2.666593332E9\t9998.0\t89998.0\t9998.0\t89998.0\t80001\t53334\t80001\t80001\t80001\t89998.0\t9998.0\n" +
+                            "1970-01-01T00:00:00.189999Z\t22499\t89999\t49999.5\t2.666673333E9\tnull\t89999.0\t10000.0\t89999.0\t80001\t53334\t80001\t80001\t80001\t89999.0\t10000.0\n" +
+                            "1970-01-01T00:00:00.190000Z\t22500\tnull\t49999.5\t2.666673333E9\t10000.0\tnull\t10000.0\t89999.0\t80001\t53334\t80001\t80001\t80001\t89999.0\t10000.0\n",
                     "select * from (select ts, i, j, " +
                             "avg(j) over (order by ts range between 80000 preceding and current row), " +
                             "sum(j) over (order by ts range between 80000 preceding and current row), " +
@@ -564,11 +564,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab select x::timestamp, x/10000, case when x % 3 = 0 THEN NULL ELSE x END, 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(39999)");
             execute("insert into tab select (100000+x)::timestamp, (100000+x)%4, case when x % 3 = 0 THEN NULL ELSE 100000+x END, 'k' || (x%20) ::symbol, x*2::double, 'k' || x from long_sequence(4*90000)");
 
-            String expected = "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                    "1970-01-01T00:00:00.460000Z\t0\t460000\t300000.0\t2.40003E10\t140000.0\t140000.0\t460000.0\t460000.0\t80001\t80001\t80001\t80001\t80001\t460000.0\t140000.0\n" +
-                    "1970-01-01T00:00:00.459997Z\t1\t459997\t299997.0\t2.4000059997E10\t139997.0\t139997.0\t459997.0\t459997.0\t80001\t80001\t80001\t80001\t80001\t459997.0\t139997.0\n" +
-                    "1970-01-01T00:00:00.459998Z\t2\t459998\t299998.0\t2.4000139998E10\t139998.0\t139998.0\t459998.0\t459998.0\t80001\t80001\t80001\t80001\t80001\t459998.0\t139998.0\n" +
-                    "1970-01-01T00:00:00.459999Z\t3\t459999\t299999.0\t2.4000219999E10\t139999.0\t139999.0\t459999.0\t459999.0\t80001\t80001\t80001\t80001\t80001\t459999.0\t139999.0\n";
+            String expected = "ts\ti\tavg\tsum\tfirst_value\tfirst_not_null_value\tlast_value\tlast_not_null_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                    "1970-01-01T00:00:00.460000Z\t0\t299998.0\t1.6000093332E10\t140000.0\t140000.0\tnull\t459996.0\t80001\t53334\t80001\t80001\t80001\t459996.0\t140000.0\n" +
+                    "1970-01-01T00:00:00.459997Z\t1\t299995.0\t1.599993333E10\t139997.0\t139997.0\tnull\t459993.0\t80001\t53334\t80001\t80001\t80001\t459993.0\t139997.0\n" +
+                    "1970-01-01T00:00:00.459998Z\t2\t299998.0\t1.6000093332E10\t139998.0\t139998.0\t459998.0\t459998.0\t80001\t53334\t80001\t80001\t80001\t459998.0\t139998.0\n" +
+                    "1970-01-01T00:00:00.459999Z\t3\t300001.0\t1.6000253334E10\tnull\t140003.0\t459999.0\t459999.0\t80001\t53334\t80001\t80001\t80001\t459999.0\t140003.0\n";
 
             // cross-check with re-write using aggregate functions
             assertSql(
@@ -4259,14 +4259,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     String query = "select #FUNCT_NAME(#COLUMN) IGNORE NULLS over () from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column);
                     if (func.trim().equals("first_value")) {
                         assertQueryAndPlan(query,
-                                "Window\n" +
-                                        "  functions: [first_not_null_value(#COLUMN) over ()]\n".replace("#COLUMN", column) +
+                                "CachedWindow\n" +
+                                        "  unorderedFunctions: [first_not_null_value(#COLUMN) over ()]\n".replace("#COLUMN", column) +
                                         "    PageFrame\n" +
                                         "        Row forward scan\n" +
                                         "        Frame forward scan on: tab\n",
                                 "first_not_null_value\n",
                                 null,
-                                false,
+                                true,
                                 false);
                     } else if (func.trim().equals("last_value")) {
                         assertQueryAndPlan(query,
