@@ -46,7 +46,7 @@ jobs:
           jdk: "1.11"
           testset: "all"
           includeTests: "**/griffin/**"
-          excludeTests: "**/O3*Test**,**/Wal**Fuzz**"
+          excludeTests: "**/O3*Test**,**/**Fuzz**"
           javadoc_step: ""
           javadoc_profile: ""
         windows-griffin-O3-Fuzz:
@@ -55,7 +55,7 @@ jobs:
           os: Windows
           jdk: "1.11"
           testset: "all"
-          includeTests: "**/griffin/O3*Test**,**/Wal**Fuzz**"
+          includeTests: "**/O3*Test**,**/**Fuzz**"
           javadoc_step: ""
           javadoc_profile: ""
         windows-cairo:
@@ -65,6 +65,7 @@ jobs:
           jdk: "1.11"
           testset: "all"
           includeTests: "**/cairo/**"
+          excludeTests: "**/O3*Test**,**/**Fuzz**"
           javadoc_step: ""
           javadoc_profile: ""
         windows-pgwire:

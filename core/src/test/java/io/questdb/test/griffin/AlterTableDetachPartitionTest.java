@@ -941,7 +941,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
             TableModel brokenMeta = new TableModel(configuration, brokenTableName, PartitionBy.DAY);
             try (
-                    MemoryMARW mem = Vm.getMARWInstance()
+                    MemoryMARW mem = Vm.getCMARWInstance()
             ) {
                 String timestampDay = "2022-06-01";
                 createPopulateTable(
@@ -1368,7 +1368,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
             TableModel brokenMeta = new TableModel(configuration, brokenTableName, PartitionBy.DAY);
             try (
-                    MemoryMARW mem = Vm.getMARWInstance()
+                    MemoryMARW mem = Vm.getCMARWInstance()
             ) {
                 String timestampDay = "2022-06-01";
                 createPopulateTable(
@@ -1445,7 +1445,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             TableModel brokenMeta = new TableModel(configuration, brokenTableName, PartitionBy.DAY);
 
             try (
-                    MemoryMARW mem = Vm.getMARWInstance()
+                    MemoryMARW mem = Vm.getCMARWInstance()
             ) {
                 String timestampDay = "2022-06-01";
                 createPopulateTable(
@@ -1524,7 +1524,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             TableModel brokenMeta = new TableModel(configuration, brokenTableName, PartitionBy.DAY);
 
             try (
-                    MemoryMARW mem = Vm.getMARWInstance()
+                    MemoryMARW mem = Vm.getCMARWInstance()
             ) {
                 String timestampDay = "2022-06-01";
                 createPopulateTable(
@@ -2330,7 +2330,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
             TableModel brokenMeta = new TableModel(configuration, brokenTableName, PartitionBy.DAY);
             try (
-                    MemoryMARW mem = Vm.getMARWInstance()
+                    MemoryMARW mem = Vm.getCMARWInstance()
             ) {
                 createPopulateTable(
                         1,

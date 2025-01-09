@@ -242,7 +242,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final TxReader slaveTxReader;
     private final ObjList<MapWriter> symbolMapWriters;
     private final IntList symbolRewriteMap = new IntList();
-    private final MemoryMARW todoMem = Vm.getMARWInstance();
+    private final MemoryMARW todoMem = Vm.getCMARWInstance();
     private final TxWriter txWriter;
     private final TxnScoreboard txnScoreboard;
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
@@ -4005,12 +4005,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final MemoryCARW o3AuxMem2;
 
         if (type > 0) {
-            dataMem = Vm.getMAInstance(configuration);
+            dataMem = Vm.getPMARInstance(configuration);
             o3DataMem1 = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
             o3DataMem2 = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
 
             if (ColumnType.isVarSize(type)) {
-                auxMem = Vm.getMAInstance(configuration);
+                auxMem = Vm.getPMARInstance(configuration);
                 o3AuxMem1 = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
                 o3AuxMem2 = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
             } else {

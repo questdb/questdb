@@ -131,7 +131,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                                 partitionByKeyTypes,
                                 AVG_OVER_PARTITION_RANGE_COLUMN_TYPES
                         );
-                        mem = Vm.getARWInstance(
+                        mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(),
                                 MemoryTag.NATIVE_CIRCULAR_BUFFER
@@ -204,7 +204,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                                 partitionByKeyTypes,
                                 AVG_OVER_PARTITION_ROWS_COLUMN_TYPES
                         );
-                        mem = Vm.getARWInstance(
+                        mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(),
                                 MemoryTag.NATIVE_CIRCULAR_BUFFER
@@ -265,7 +265,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     return new AvgOverWholeResultSetFunction(args.get(0));
                 } // between [unbounded | x] preceding and [x preceding | current row]
                 else {
-                    MemoryARW mem = Vm.getARWInstance(
+                    MemoryARW mem = Vm.getCARWInstance(
                             configuration.getSqlWindowStorePageSize(),
                             configuration.getSqlWindowStoreMaxPages(),
                             MemoryTag.NATIVE_CIRCULAR_BUFFER
@@ -403,11 +403,11 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         private final long maxDiff;
         // holds resizable ring buffers
         private final MemoryARW memory;
+        private final RingBufferDesc memoryDesc = new RingBufferDesc();
         private final long minDiff;
         private final int timestampIndex;
         protected double sum;
         private double avg;
-        private final RingBufferDesc memoryDesc = new RingBufferDesc();
 
         public AvgOverPartitionRangeFrameFunction(
                 Map map,
@@ -883,7 +883,11 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     rangeHi,
                     arg,
                     configuration.getSqlWindowStorePageSize() / RECORD_SIZE,
-                    Vm.getARWInstance(configuration.getSqlWindowStorePageSize(), configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER),
+                    Vm.getCARWInstance(
+                            configuration.getSqlWindowStorePageSize(),
+                            configuration.getSqlWindowStoreMaxPages(),
+                            MemoryTag.NATIVE_CIRCULAR_BUFFER
+                    ),
                     timestampIdx
             );
         }
