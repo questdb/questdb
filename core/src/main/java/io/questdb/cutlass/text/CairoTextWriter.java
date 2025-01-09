@@ -68,7 +68,7 @@ public class CairoTextWriter implements Closeable, Mutable {
     private static final String WRITER_LOCK_REASON = "textWriter";
     private final LongList columnErrorCounts = new LongList();
     private final CairoConfiguration configuration;
-    private final MemoryMARW ddlMem = Vm.getMARWInstance();
+    private final MemoryMARW ddlMem = Vm.getCMARWInstance();
     private final CairoEngine engine;
     private final ObjectPool<OtherToTimestampAdapter> otherToTimestampAdapterPool = new ObjectPool<>(OtherToTimestampAdapter::new, 4);
     private final IntList remapIndex = new IntList();

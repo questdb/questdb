@@ -112,7 +112,7 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
                                 partitionByKeyTypes,
                                 CountFunctionFactoryHelper.COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES
                         );
-                        mem = Vm.getARWInstance(
+                        mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(),
                                 MemoryTag.NATIVE_CIRCULAR_BUFFER

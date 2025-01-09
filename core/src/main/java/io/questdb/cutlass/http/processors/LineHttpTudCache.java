@@ -55,7 +55,7 @@ import org.jetbrains.annotations.NotNull;
 public class LineHttpTudCache implements QuietCloseable {
     private final boolean autoCreateNewColumns;
     private final boolean autoCreateNewTables;
-    private final MemoryMARW ddlMem = Vm.getMARWInstance();
+    private final MemoryMARW ddlMem = Vm.getCMARWInstance();
     private final DefaultColumnTypes defaultColumnTypes;
     private final CairoEngine engine;
     private final TableCreateException parseException = new TableCreateException();

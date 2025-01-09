@@ -29,15 +29,28 @@ import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
-import io.questdb.std.str.*;
+import io.questdb.std.Chars;
+import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.Map;
 
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
-import static io.questdb.cairo.TableUtils.doesMvFileExist;
+import static io.questdb.cairo.TableUtils.matViewFileExists;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.std.Files.DT_FILE;
 
@@ -362,7 +375,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                             boolean isProtected = tableFlagResolver.isProtected(tableName);
                             boolean isSystem = tableFlagResolver.isSystem(tableName);
                             boolean isPublic = tableFlagResolver.isPublic(tableName);
-                            boolean isMatView = doesMvFileExist(configuration, path, dirName, ff);
+                            boolean isMatView = matViewFileExists(configuration, path, dirName, ff);
                             TableToken token = new TableToken(tableName, dirName, tableId, isMatView, isWal, isSystem, isProtected, isPublic);
                             TableToken existingTableToken = tableNameToTableTokenMap.get(tableName);
 

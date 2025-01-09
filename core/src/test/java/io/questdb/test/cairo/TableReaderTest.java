@@ -2000,7 +2000,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 }
                 try (
                         Path path = getPath(tableName);
-                        MemoryMARW mem = Vm.getMARWInstance(
+                        MemoryMARW mem = Vm.getCMARWInstance(
                                 TestFilesFacadeImpl.INSTANCE,
                                 path.$(),
                                 -1,

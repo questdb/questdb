@@ -83,7 +83,7 @@ public class TableConverter {
                                 .I$();
 
                         path.trimTo(rootLen).concat(dirNameSink);
-                        try (final MemoryMARW metaMem = Vm.getMARWInstance()) {
+                        try (final MemoryMARW metaMem = Vm.getCMARWInstance()) {
                             openSmallFile(ff, path, rootLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
                             final String dirName = dirNameSink.toString();
                             TableToken existingToken = tableNameRegistry.getTableTokenByDirName(dirName);
@@ -103,7 +103,7 @@ public class TableConverter {
                                 boolean isProtected = tableFlagResolver.isProtected(tableName);
                                 boolean isSystem = tableFlagResolver.isSystem(tableName);
                                 boolean isPublic = tableFlagResolver.isPublic(tableName);
-                                boolean isMatView = doesMvFileExist(configuration, path, dirName, ff);
+                                boolean isMatView = matViewFileExists(configuration, path, dirName, ff);
                                 final TableToken token = new TableToken(tableName, dirName, tableId, isMatView, walEnabled, isSystem, isProtected, isPublic);
 
                                 if (txWriter == null) {

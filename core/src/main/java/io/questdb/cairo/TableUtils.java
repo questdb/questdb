@@ -237,7 +237,7 @@ public final class TableUtils {
         // If Low short mismatches it means we cannot rely on High short value.
         // High short is TableUtils.META_MINOR_VERSION_LATEST.
         // Metadata minor version mismatch still allows to read the table, the table storage is forward and backward compatible.
-        // However it indicates some minor flags may be stored incorrectly and have to be re-calculated.
+        // However, it indicates some minor flags may be stored incorrectly and have to be re-calculated.
         return Numbers.encodeLowHighShorts(Numbers.decodeLowShort(metadataVersion), META_MINOR_VERSION_LATEST);
     }
 
@@ -440,7 +440,7 @@ public final class TableUtils {
     ) {
         try (
                 Path path = new Path();
-                MemoryMARW mem = Vm.getMARWInstance()
+                MemoryMARW mem = Vm.getCMARWInstance()
         ) {
             createTable(ff, root, mkDirMode, mem, path, dirName, structure, tableVersion, tableId);
         }
@@ -634,11 +634,6 @@ public final class TableUtils {
 
     public static LPSZ dFile(Path path, CharSequence columnName) {
         return dFile(path, columnName, COLUMN_NAME_TXN_NONE);
-    }
-
-    public static boolean doesMvFileExist(CairoConfiguration configuration, Path path, CharSequence dirName, FilesFacade ff) {
-        path.of(configuration.getRoot()).concat(dirName).concat(MAT_VIEW_FILE_NAME);
-        return ff.exists(path.$());
     }
 
     public static long estimateAvgRecordSize(RecordMetadata metadata) {
@@ -1240,6 +1235,11 @@ public final class TableUtils {
             ff.close(fd);
             throw e;
         }
+    }
+
+    public static boolean matViewFileExists(CairoConfiguration configuration, Path path, CharSequence dirName, FilesFacade ff) {
+        path.of(configuration.getRoot()).concat(dirName).concat(MAT_VIEW_FILE_NAME);
+        return ff.exists(path.$());
     }
 
     public static long mremap(
@@ -2046,7 +2046,6 @@ public final class TableUtils {
     }
 
     static {
-        //noinspection ConstantValue
         assert TX_OFFSET_LAG_MAX_TIMESTAMP_64 + 8 <= TX_OFFSET_MAP_WRITER_COUNT_32;
     }
 }

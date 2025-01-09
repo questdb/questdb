@@ -73,7 +73,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private final LongList columnValues = new LongList();
     private final CharSequenceObjHashMap<TableWriter> commitList = new CharSequenceObjHashMap<>();
     private final CairoConfiguration configuration;
-    private final MemoryMARW ddlMem = Vm.getMARWInstance();
+    private final MemoryMARW ddlMem = Vm.getCMARWInstance();
     private final short defaultFloatColumnType;
     private final short defaultIntegerColumnType;
     private final CairoEngine engine;
