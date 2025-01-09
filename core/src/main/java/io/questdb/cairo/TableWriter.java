@@ -1927,9 +1927,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
         long maxTimestamp = getMaxTimestamp();
+        long evictedPartitionTimestamp = -1;
         do {
             long partitionTimestamp = getPartitionTimestamp(0);
-            assert partitionTimestamp == floorFn.floor(partitionTimestamp) : "Partition 0 timestamp weirdness";
+            long floorTimestamp = floorFn.floor(partitionTimestamp);
+            if (evictedPartitionTimestamp != -1 && floorTimestamp == evictedPartitionTimestamp) {
+                assert partitionTimestamp != floorTimestamp : "Expected a higher part of a split partition";
+                dropPartitionByExactTimestamp(partitionTimestamp);
+                continue;
+            }
+            assert partitionTimestamp == floorTimestamp :
+                    String.format("partitionTimestamp %s != floor(partitionTimestamp) %s, evictedPartitionTimestamp %s",
+                            Timestamps.toString(partitionTimestamp),
+                            Timestamps.toString(floorTimestamp),
+                            Timestamps.toString(evictedPartitionTimestamp));
             long partitionCeiling = ceilFn.ceil(partitionTimestamp);
             // TTL < 0 means it's in months
             boolean shouldEvict = ttl > 0
@@ -1941,6 +1952,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         .$(" partitionTs=").microTime(partitionTimestamp)
                         .$();
                 dropPartitionByExactTimestamp(partitionTimestamp);
+                evictedPartitionTimestamp = partitionTimestamp;
             } else {
                 // Partitions are sorted by timestamp, no need to check the rest
                 break;
