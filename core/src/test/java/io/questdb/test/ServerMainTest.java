@@ -605,7 +605,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "log.timestamp.timezone\tQDB_LOG_TIMESTAMP_TIMEZONE\tZ\tdefault\tfalse\tfalse\n" +
                                     "http.query.connection.limit\tQDB_HTTP_QUERY_CONNECTION_LIMIT\t-1\tdefault\tfalse\tfalse\n" +
                                     "http.ilp.connection.limit\tQDB_HTTP_ILP_CONNECTION_LIMIT\t-1\tdefault\tfalse\tfalse\n"+
-                                    "log.timestamp.timezone\tQDB_LOG_TIMESTAMP_TIMEZONE\tZ\tdefault\tfalse\tfalse\n" +
                                     "query.timeout\tQDB_QUERY_TIMEOUT\t60000\tdefault\tfalse\tfalse\n"
                             )
                                     .split("\n");
