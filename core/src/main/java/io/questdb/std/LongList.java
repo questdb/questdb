@@ -477,6 +477,24 @@ public class LongList implements Mutable, LongVec, Sinkable {
         );
     }
 
+    /**
+     * Sorts groups of N elements. The size of the group is specified by {@code groupSize}.
+     * Comparison between groups is done by comparing the first element of each group, then
+     * if the first elements are equal the second elements are compared and so on.
+     *
+     * @param groupSize           size of the group
+     * @param compareByGroupIndex index of the element in the group to compare by
+     * @param lo                  low index to sort the array from
+     * @param hi                  high index to sort the array to
+     */
+    public void sortGroupsByElement(int groupSize, int compareByGroupIndex, int lo, int hi) {
+        if (groupSize > 0 && pos % groupSize == 0) {
+            LongGroupSort.quickSort(groupSize, compareByGroupIndex, data, 0, pos / groupSize);
+            return;
+        }
+        throw new IllegalStateException("sorting not supported for group size: " + groupSize + ", length: " + pos);
+    }
+
     public LongList subset(int lo, int hi) {
         int _hi = Math.min(hi, pos);
         LongList that = new LongList(_hi - lo);

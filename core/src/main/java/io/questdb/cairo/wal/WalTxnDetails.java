@@ -25,12 +25,15 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.SegmentCopyTasks;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.wal.WalTxnType.DATA;
@@ -38,16 +41,14 @@ import static io.questdb.cairo.wal.WalTxnType.NONE;
 import static io.questdb.cairo.wal.WalUtils.*;
 
 public class WalTxnDetails {
-    private static final int FLAG_IS_LAST_SEGMENT_USAGE = 0x2;
-    private static final int FLAG_IS_OOO = 0x1;
-
     public static final long FORCE_FULL_COMMIT = Long.MAX_VALUE;
     public static final long LAST_ROW_COMMIT = Long.MAX_VALUE - 1;
+    private static final int FLAG_IS_LAST_SEGMENT_USAGE = 0x2;
+    private static final int FLAG_IS_OOO = 0x1;
     private static final int SEQ_TXN_OFFSET = 0;
     private static final int COMMIT_TO_TIMESTAMP_OFFSET = SEQ_TXN_OFFSET + 1;
-    private static final int WAL_TXN_ID_WAL_ID_OFFSET = COMMIT_TO_TIMESTAMP_OFFSET + 1;
-    private static final int WAL_TXN_ID_SEG_ID_OFFSET = WAL_TXN_ID_WAL_ID_OFFSET + 1;
-    private static final int WAL_TXN_MIN_TIMESTAMP_OFFSET = WAL_TXN_ID_SEG_ID_OFFSET + 1;
+    private static final int WAL_TXN_ID_WAL_SEG_ID_OFFSET = COMMIT_TO_TIMESTAMP_OFFSET + 1;
+    private static final int WAL_TXN_MIN_TIMESTAMP_OFFSET = WAL_TXN_ID_WAL_SEG_ID_OFFSET + 1;
     private static final int WAL_TXN_MAX_TIMESTAMP_OFFSET = WAL_TXN_MIN_TIMESTAMP_OFFSET + 1;
     private static final int WAL_TXN_ROW_LO_OFFSET = WAL_TXN_MAX_TIMESTAMP_OFFSET + 1;
     private static final int WAL_TXN_ROW_HI_OFFSET = WAL_TXN_ROW_LO_OFFSET + 1;
@@ -63,6 +64,7 @@ public class WalTxnDetails {
     private final LongList transactionMeta = new LongList();
     private final IntList txnDetails = new IntList();
     private final WalEventReader walEventReader;
+    WalTxnDetailsSlice txnSlice = new WalTxnDetailsSlice();
     private long startSeqTxn = 0;
 
     public WalTxnDetails(FilesFacade ff, int maxLookahead) {
@@ -86,8 +88,8 @@ public class WalTxnDetails {
         }
 
         // TODO: support blocked transactions
-//        return blockSize;
-        return 1;
+        return blockSize;
+//        return 1;
     }
 
     public long getCommitToTimestamp(long seqTxn) {
@@ -135,11 +137,11 @@ public class WalTxnDetails {
     }
 
     public int getWalId(long seqTxn) {
-        return (int) transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ID_WAL_ID_OFFSET));
+        return Numbers.decodeHighInt((int) transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ID_WAL_SEG_ID_OFFSET)));
     }
 
     public int getWalSegmentId(long seqTxn) {
-        return (int) transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ID_SEG_ID_OFFSET));
+        return Numbers.decodeLowInt(transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ID_WAL_SEG_ID_OFFSET)));
     }
 
     public SymbolMapDiffCursor getWalSymbolDiffCursor(long seqTxn) {
@@ -217,9 +219,75 @@ public class WalTxnDetails {
 
     }
 
-    public WalTxnDetailsSlice sortSliceBySegment(long startSeqTxn, int blockTransactionCount) {
-        // TODO: implement
-        return null;
+    public void prepareCopySegments(long startSeqTxn, int blockTransactionCount, SegmentCopyTasks copyTasks, DirectLongList rowIndexMap) {
+        try (var sortedBySegmentTxnSlice = sortSliceByWalAndSegment(startSeqTxn, blockTransactionCount)) {
+            long copySegmentRowOffset = 0;
+            int lastSegmentId = -1;
+            int lastWalId = -1;
+            long segmentLo = -1;
+            long lastRowHi = 0;
+
+            int copyTaskCount = 0;
+            long totalRowsToCopy = 0;
+
+            long minTimestamp = Long.MAX_VALUE;
+            long maxTimestamp = Long.MIN_VALUE;
+
+            for (int i = 0; i < blockTransactionCount; i++) {
+                int seqTxn = (int) (sortedBySegmentTxnSlice.getSeqTxn(i) - startSeqTxn);
+                int segmentId = sortedBySegmentTxnSlice.getSegmentId(i);
+                int walId = sortedBySegmentTxnSlice.getWalId(i);
+                long roHi = sortedBySegmentTxnSlice.getRoHi(i);
+                long roLo = sortedBySegmentTxnSlice.getRoLo(i);
+
+                if (i > 1) {
+                    if (lastWalId != walId || lastSegmentId != segmentId) {
+                        // Switched to next segment
+                        long prevRoHi = sortedBySegmentTxnSlice.getRoHi(i - 1);
+                        copyTasks.add(walId, segmentId, segmentLo, prevRoHi, minTimestamp, maxTimestamp);
+                        copyTaskCount++;
+                        segmentLo = roLo;
+
+                        lastWalId = walId;
+                        lastSegmentId = segmentId;
+                        copySegmentRowOffset += segmentLo + prevRoHi;
+
+                        minTimestamp = Long.MAX_VALUE;
+                        maxTimestamp = Long.MIN_VALUE;
+                    } else {
+                        // Same segment, check it's last hi matches current lo
+                        if (lastRowHi != roLo) {
+                            throw CairoException.critical(0).put("uncommitted row gap found in WAL segment [")
+                                    .put("walId=").put(walId)
+                                    .put(", segmentId=").put(segmentId)
+                                    .put(", seqTxn=").put(seqTxn)
+                                    .put(", previousRowHi=").put(lastRowHi)
+                                    .put(", currentRowLo=").put(roLo);
+                        }
+                    }
+                } else {
+                    segmentLo = roLo;
+                }
+
+                minTimestamp = Math.min(minTimestamp, getMinTimestamp(seqTxn));
+                maxTimestamp = Math.min(maxTimestamp, getMaxTimestamp(seqTxn));
+
+                long committedRowsCount = roHi - roLo;
+                rowIndexMap.add(copySegmentRowOffset + roLo - segmentLo);
+                rowIndexMap.add(seqTxn);
+                rowIndexMap.add(committedRowsCount);
+                rowIndexMap.add(copyTaskCount);
+
+                lastRowHi = roHi;
+            }
+
+            int lastIndex = blockTransactionCount - 1;
+            int segmentId = sortedBySegmentTxnSlice.getSegmentId(lastIndex);
+            int walId = sortedBySegmentTxnSlice.getWalId(lastIndex);
+            long roHi = sortedBySegmentTxnSlice.getRoHi(lastIndex);
+
+            copyTasks.add(walId, segmentId, segmentLo, roHi, minTimestamp, maxTimestamp);
+        }
     }
 
     private static WalEventCursor openWalEFile(Path tempPath, WalEventReader eventReader, int segmentTxn, long seqTxn) {
@@ -235,6 +303,13 @@ public class WalTxnDetails {
 
     private long getCommitMaxTimestamp(long seqTxn) {
         return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_MAX_TIMESTAMP_OFFSET));
+    }
+
+    public WalTxnDetailsSlice sortSliceByWalAndSegment(long startSeqTxn, int blockTransactionCount) {
+        assert blockTransactionCount > 1;
+        int lo = (int) (startSeqTxn - this.startSeqTxn);
+
+        return txnSlice.of(lo, lo + blockTransactionCount);
     }
 
     private void loadTransactionDetails(Path tempPath, TransactionLogCursor transactionLogCursor, long loadFromSeqTxn, int rootLen, long maxCommittedTimestamp) {
@@ -343,7 +418,7 @@ public class WalTxnDetails {
                 transactionMeta.add(-1); // symbols diff offset
             }
 
-            transactionMeta.sortGroups(TXN_METADATA_LONGS_SIZE, incrementalLoadStartIndex, transactionMeta.size());
+            transactionMeta.sortGroupsByElement(TXN_METADATA_LONGS_SIZE, 0, incrementalLoadStartIndex, transactionMeta.size());
         } finally {
             tempPath.trimTo(rootLen);
         }
@@ -535,6 +610,51 @@ public class WalTxnDetails {
         }
     }
 
-    private class WalTxnDetailsSlice {
+    public class WalTxnDetailsSlice implements QuietCloseable {
+        private int hi;
+        private int lo;
+
+        @Override
+        public void close() {
+            // Sort the data back to original order
+            transactionMeta.sortGroupsByElement(
+                    TXN_METADATA_LONGS_SIZE,
+                    SEQ_TXN_OFFSET,
+                    lo,
+                    hi
+            );
+        }
+
+        public long getRoHi(int txn) {
+            return WalTxnDetails.this.getSegmentRowHi(lo + txn);
+        }
+
+        public long getRoLo(int txn) {
+            return WalTxnDetails.this.getSegmentRowLo(lo + txn);
+        }
+
+        public int getSegmentId(int txn) {
+            return WalTxnDetails.this.getWalSegmentId(lo + txn);
+        }
+
+        public long getSeqTxn(int txn) {
+            return transactionMeta.get((int) ((txn + lo - startSeqTxn) * TXN_METADATA_LONGS_SIZE + SEQ_TXN_OFFSET));
+        }
+
+        public int getWalId(int txn) {
+            return WalTxnDetails.this.getWalId(lo + txn);
+        }
+
+        public WalTxnDetailsSlice of(int lo, int hi) {
+            this.lo = lo;
+            this.hi = hi;
+            transactionMeta.sortGroupsByElement(
+                    TXN_METADATA_LONGS_SIZE,
+                    WAL_TXN_ID_WAL_SEG_ID_OFFSET,
+                    lo,
+                    hi
+            );
+            return this;
+        }
     }
 }

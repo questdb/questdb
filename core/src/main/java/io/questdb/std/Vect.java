@@ -274,6 +274,8 @@ public final class Vect {
     // This is not In Place sort, to be renamed later
     public static native void radixSortLongIndexAscInPlace(long pLongData, long count, long pCpy);
 
+    public static native void radixSortManyLongIndexAsc(long columnCopy, long mappedAddresses, int columnCopySize, long maxSegmentRowCount, long minTimestamp, long maxTimestamp);
+
     public static native void resetPerformanceCounters();
 
     public static native void setMemoryDouble(long pData, double value, long count);

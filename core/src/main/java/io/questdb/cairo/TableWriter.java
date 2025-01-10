@@ -55,6 +55,7 @@ import io.questdb.cairo.wal.SymbolMapDiff;
 import io.questdb.cairo.wal.SymbolMapDiffCursor;
 import io.questdb.cairo.wal.SymbolMapDiffEntry;
 import io.questdb.cairo.wal.WalTxnDetails;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WriterRowUtils;
 import io.questdb.cairo.wal.seq.TableSequencer;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
@@ -91,11 +92,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.FindVisitor;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
-import io.questdb.std.LongHashSet;
-import io.questdb.std.LongIntHashMap;
 import io.questdb.std.LongList;
-import io.questdb.std.LongLongHashMap;
-import io.questdb.std.LongLongHashSet;
 import io.questdb.std.LongObjHashMap;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.MemoryTag;
@@ -194,6 +191,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final RingQueue<TableWriterTask> commandQueue;
     private final SCSequence commandSubSeq;
     private final CairoConfiguration configuration;
+    private final SegmentCopyTasks copyTasks = new SegmentCopyTasks();
     private final long dataAppendPageSize;
     private final DdlListener ddlListener;
     private final MemoryMAR ddlMem;
@@ -244,6 +242,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
     private final AtomicLong physicallyWrittenRowsSinceLastCommit = new AtomicLong();
     private final Row row = new RowImpl();
+    private final DirectLongList rowIndexMap = new DirectLongList(4, MemoryTag.NATIVE_O3);
     private final LongList rowValueIsNotNull = new LongList();
     private final TxReader slaveTxReader;
     private final ObjList<MapWriter> symbolMapWriters;
@@ -1148,12 +1147,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.beginPartitionSizeUpdate();
         long commitToTimestamp = walTxnDetails.getCommitToTimestamp(seqTxn);
 
-        int trasactionBlock = walTxnDetails.calculateInsertTransactionBlock(seqTxn, 1_000_000L);
+        int transactionBlock = walTxnDetails.calculateInsertTransactionBlock(seqTxn, 1_000_000L);
 
         boolean committed;
         final long initialCommittedRowCount = txWriter.getRowCount();
 
-        if (trasactionBlock == 1) {
+        if (transactionBlock == 1) {
             int walId = walTxnDetails.getWalId(seqTxn);
             long txnMinTs = walTxnDetails.getMinTimestamp(seqTxn);
             long txnMaxTs = walTxnDetails.getMaxTimestamp(seqTxn);
@@ -1194,12 +1193,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 throw e;
             }
         } else {
-            committed = processWalCommitBlock(
+            int blockSize = processWalCommitBlock(
                     walPath,
                     seqTxn,
-                    trasactionBlock,
+                    transactionBlock,
                     regulator
             );
+            if (blockSize < 0) {
+                // we cannot precess block size this big, make it smaller
+                // TODO: handle this case
+                throw CairoException.critical(0).put("cannot process WAL transactions in bulk because of a gap in WAL segment [table=")
+                        .put(tableToken).put(", seqTxn=").put(seqTxn).put(", transactionBlock=").put(transactionBlock).put(']');
+            }
+            committed = blockSize > 0;
         }
 
         final long rowsAdded = txWriter.getRowCount() - initialCommittedRowCount;
@@ -2573,7 +2579,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     copiedToMemory = true;
                 } else {
                     // Wal column can are lazily mapped to improve performance. It works ok, except in this case
-                    // where access getAddress() calls be concurrent. Map them eagerly now.
+                    // where access getAddress() calls are concurrent. Map them eagerly now.
                     mmapWalColsEager();
 
                     timestampAddr = walTimestampColumn.addressOf(0);
@@ -2638,40 +2644,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             walPath.trimTo(walRootPathLen);
             closeWalColumns(isLastSegmentUsage || !success, walIdSegmentId);
         }
-    }
-
-    public boolean processWalCommitBlock(
-            @Transient Path walPath,
-            long startSeqTxn,
-            int blockTransactionCount,
-            O3JobParallelismRegulator regulator
-    ) {
-//        LongLongHashMap segmentCopyLo = new LongLongHashMap();
-//        LongLongHashMap segmentCopyHi = new LongLongHashMap();
-//
-//        for(long seqTxn = startSeqTxn, n = startSeqTxn + blockTransactionCount; seqTxn < n; seqTxn++) {
-//            int segmentId = walTxnDetails.getWalSegmentId(seqTxn);
-//            int walId = walTxnDetails.getWalId(seqTxn);
-//            long walSegId = Numbers.encodeLowHighInts(segmentId, walId);
-//
-//            long roLo = walTxnDetails.getSegmentRowLo(seqTxn);
-//            long roHi = walTxnDetails.getSegmentRowHi(seqTxn);
-//
-//            int keyIndex = segmentCopyLo.keyIndex(walSegId);
-//            if (keyIndex < 0) {
-//                long existingHi = segmentCopyHi.valueAt(keyIndex);
-//                segmentCopyHi.putAt(keyIndex, walSegId, roHi);
-//                // No need to update roLo, the first value is the minimum
-//            } else {
-//                segmentCopyLo.putAt(keyIndex, walSegId, roLo);
-//                segmentCopyHi.putAt(keyIndex, walSegId, roHi);
-//            }
-//        }
-//
-//
-//        DirectLongList indexTxnMap = new DirectLongList(blockTransactionCount, MemoryTag.NATIVE_O3);
-        walTxnDetails.sortSliceBySegment(startSeqTxn, blockTransactionCount);
-        throw new IllegalStateException("Not implemented");
     }
 
     public void publishAsyncWriterCommand(AsyncWriterCommand asyncWriterCommand) {
@@ -3959,6 +3931,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     walColumnMemoryPool.push(mappedColumnMem);
                 }
             }
+            walMappedColumns.clear();
         } else {
             LongList fds = null;
             if (key > -1) {
@@ -3978,6 +3951,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     walColumnMemoryPool.push(mappedColumnMem);
                 }
             }
+            walMappedColumns.clear();
         }
 
         if (cacheIsFull) {
@@ -4328,6 +4302,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             path.trimTo(pathSize);
             other.trimTo(pathSize);
         }
+    }
+
+    private void copySegmentTimestamps(LongList copyTasks, long copyRowCount, MemoryMAT o3TimestampMem) {
+
     }
 
     private void copyVersionAndLagValues() {
@@ -5901,8 +5879,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void mmapWalColumns(SegmentCopyTasks copyTasks) {
+        this.walMappedColumns.clear();
+        try {
+            path.concat(WalUtils.WAL_NAME_BASE);
+            int walBaseLen = path.size();
+            int timestampIndex = metadata.getTimestampIndex();
+            for (int i = 0; i < copyTasks.size(); i++) {
+                int walId = copyTasks.getWalId(i);
+                int segmentId = copyTasks.getSegmentId(i);
+                path.trimTo(walBaseLen).put(WalUtils.WAL_NAME_BASE).put(walId).concat(segmentId);
+                long rowLo = copyTasks.getRowLo(i);
+                long rowHi = copyTasks.getRowHi(i);
+                mmapWalColumns(path, Numbers.encodeLowHighInts(segmentId, walId), timestampIndex, rowLo, rowHi);
+            }
+        } finally {
+            path.trimTo(pathSize);
+        }
+    }
+
     private void mmapWalColumns(@Transient Path walPath, long walSegmentId, int timestampIndex, long rowLo, long rowHi) {
-        walMappedColumns.clear();
         int walPathLen = walPath.size();
         final int columnCount = metadata.getColumnCount();
         int key = walFdCache.keyIndex(walSegmentId);
@@ -7205,6 +7201,67 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 LOG.info().$("scheduled to purge partitions [table=").utf8(tableToken.getTableName()).I$();
             } else {
                 LOG.error().$("could not queue for purge, queue is full [table=").utf8(tableToken.getTableName()).I$();
+            }
+        }
+    }
+
+    private int processWalCommitBlock(
+            @Transient Path walPath,
+            long startSeqTxn,
+            int blockTransactionCount,
+            O3JobParallelismRegulator regulator
+    ) {
+        rowIndexMap.clear();
+        copyTasks.clear();
+        walTxnDetails.prepareCopySegments(startSeqTxn, blockTransactionCount, copyTasks, rowIndexMap);
+
+        mmapWalColumns(copyTasks);
+        processWalCommitBlockSortWalSegmentTimestamps(copyTasks, walMappedColumns, rowIndexMap);
+
+        throw new IllegalStateException("still a TODO");
+    }
+
+    private void processWalCommitBlockSortWalSegmentTimestamps(SegmentCopyTasks copyTasks, ObjList<MemoryCMOR> walMappedColumns, DirectLongList rowIndexMap) {
+        int timestampIndex = metadata.getTimestampIndex() * 2;
+        int walColumnCountPerSegment = metadata.getColumnCount() * 2;
+
+        try (var tsAddresses = new DirectLongList(copyTasks.size() + 1, MemoryTag.NATIVE_TABLE_WRITER)) {
+            for (int i = 0, n = copyTasks.size(); i < n; i++) {
+                var segmentTimestampColumn = walMappedColumns.get(walColumnCountPerSegment * i + timestampIndex);
+                tsAddresses.add(segmentTimestampColumn.addressOf(0));
+            }
+
+            // sort the LAG rows too
+            long lagTsMemAddress = 0;
+
+            long walLagRowCount = txWriter.getLagRowCount();
+            if (walLagRowCount > 0) {
+                MemoryMA timestampColumn = columns.get(getPrimaryColumnIndex(timestampIndex));
+                final long tsLagOffset = txWriter.getTransientRowCount() << 3;
+                final long tsLagSize = walLagRowCount << 3;
+
+                long targetTimestampAddr = o3TimestampMem.getAddress();
+                long copyBuff = o3TimestampMemCpy.addressOf(0);
+
+                final long tsLagBufferAddr = mapAppendColumnBuffer(timestampColumn, tsLagOffset, tsLagSize, false);
+                tsAddresses.add(Math.abs(tsLagBufferAddr));
+                copyTasks.add(-1, -1, 0, walLagRowCount, txWriter.getLagMinTimestamp(), txWriter.getLagMaxTimestamp());
+
+                assert tsAddresses.size() == copyTasks.size();
+
+                try {
+
+                    Vect.radixSortManyLongIndexAsc(
+                            copyTasks.getAddress(),
+                            tsAddresses.getAddress(),
+                            copyTasks.size(),
+                            copyTasks.getMaxSegmentRowCount(),
+                            copyTasks.getMinTimestamp(),
+                            copyTasks.getMaxTimestamp()
+                    );
+                } finally {
+                    mapAppendColumnBufferRelease(tsLagBufferAddr, tsLagOffset, tsLagSize);
+                }
             }
         }
     }
