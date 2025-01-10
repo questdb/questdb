@@ -630,6 +630,13 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         return rnd;
     }
 
+    private Rnd generateRandomAndProps(long seed1, long seed2) {
+        Rnd rnd = fuzzer.generateRandom(io.questdb.test.AbstractCairoTest.LOG, seed1, seed2);
+        setFuzzProperties(rnd);
+        setRandomAppendPageSize(rnd);
+        return rnd;
+    }
+
     private void maybeConvertToParquet(String tableName) {
         if (convertToParquet) {
             // convert to parquet, so we can test dedup with parquet
