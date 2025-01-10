@@ -88,8 +88,8 @@ public class WalTxnDetails {
         }
 
         // TODO: support blocked transactions
-        return blockSize;
-//        return 1;
+//        return blockSize;
+        return 1;
     }
 
     public long getCommitToTimestamp(long seqTxn) {
@@ -136,12 +136,12 @@ public class WalTxnDetails {
         return (isOutOfOrder & FLAG_IS_OOO) == 0;
     }
 
-    public int getWalId(long seqTxn) {
-        return Numbers.decodeHighInt((int) transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ID_WAL_SEG_ID_OFFSET)));
+    public int getSegmentId(long seqTxn) {
+        return Numbers.decodeLowInt(transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ID_WAL_SEG_ID_OFFSET)));
     }
 
-    public int getWalSegmentId(long seqTxn) {
-        return Numbers.decodeLowInt(transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ID_WAL_SEG_ID_OFFSET)));
+    public int getWalId(long seqTxn) {
+        return Numbers.decodeHighInt(transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ID_WAL_SEG_ID_OFFSET)));
     }
 
     public SymbolMapDiffCursor getWalSymbolDiffCursor(long seqTxn) {
@@ -380,8 +380,7 @@ public class WalTxnDetails {
                         WalEventCursor.DataInfo commitInfo = walEventCursor.getDataInfo();
                         transactionMeta.add(seqTxn);
                         transactionMeta.add(-1); // commit to timestamp
-                        transactionMeta.add(walId);
-                        transactionMeta.add(segmentId);
+                        transactionMeta.add(Numbers.encodeLowHighInts(segmentId, walId));
                         transactionMeta.add(commitInfo.getMinTimestamp());
                         transactionMeta.add(commitInfo.getMaxTimestamp());
                         transactionMeta.add(commitInfo.getStartRowID());
@@ -408,8 +407,7 @@ public class WalTxnDetails {
                 // If there is ALTER or UPDATE, we have to flush everything without keeping anything in the lag.
                 transactionMeta.add(seqTxn);
                 transactionMeta.add(FORCE_FULL_COMMIT); // commit to timestamp
-                transactionMeta.add(walId);
-                transactionMeta.add(segmentId);
+                transactionMeta.add(Numbers.encodeLowHighInts(segmentId, walId));
                 transactionMeta.add(structureVersion); // min timestamp but used as structure version
                 transactionMeta.add(-1); // max timestamp
                 transactionMeta.add(-1); // start row id
@@ -499,7 +497,6 @@ public class WalTxnDetails {
         int nextRecordLen;
         private long hi;
         private int lo;
-        private long seqTxn;
         private int symbolIndex;
         private int symbolsCount;
 
@@ -526,7 +523,6 @@ public class WalTxnDetails {
                 assert recordSize >= 4;
                 this.hi = this.lo + recordSize;
                 this.symbolsCount = symbolIndexes.get(startOffset + 1);
-                this.seqTxn = Numbers.encodeLowHighInts(symbolIndexes.get(startOffset + 2), symbolIndexes.get(startOffset + 3));
                 assert this.symbolsCount > -1;
                 this.lo += 4;
                 symbolIndex = 0;
@@ -634,7 +630,7 @@ public class WalTxnDetails {
         }
 
         public int getSegmentId(int txn) {
-            return WalTxnDetails.this.getWalSegmentId(lo + txn);
+            return WalTxnDetails.this.getSegmentId(lo + txn);
         }
 
         public long getSeqTxn(int txn) {

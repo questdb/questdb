@@ -21,9 +21,9 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-
 #include "jni.h"
 #include <cstring>
+#include <cassert>
 #include "util.h"
 #include "simd.h"
 #include "ooo_dispatch.h"
@@ -76,22 +76,36 @@ inline void radix_shuffle(uint64_t *counts, const T *src, T *dest, const uint64_
     }
 }
 
+template<uint16_t sh, typename T1>
+inline void radix_shuffle(uint64_t *counts, const T1 *src, index_l *dest, const uint64_t size, int64_t minValue) {
+    MM_PREFETCH_T0(counts);
+    for (uint64_t x = 0; x < size; x++) {
+        const auto digit = (src[x] >> sh) & 0xffu;
+        dest[counts[digit]].ts = (int64_t) (minValue + src[x].ts);
+        dest[counts[digit]].i = src[x].i;
+        counts[digit]++;
+        MM_PREFETCH_T2(src + x + 64);
+    }
+}
 
 template<uint16_t sh>
-inline void radix_shuffle_ab(uint64_t *counts, const uint64_t *srcA, const uint64_t sizeA, const index_t *srcB,
-                             const uint64_t sizeB, index_t *dest) {
+inline void radix_shuffle_ab(uint64_t *counts, const int64_t *srcA, const uint64_t sizeA, const index_l *srcB,
+                             const uint64_t sizeB, index_t *dest, int64_t minValue) {
     MM_PREFETCH_T0(counts);
     for (uint64_t x = 0; x < sizeA; x++) {
-        const auto digit = (srcA[x] >> sh) & 0xffu;
-        dest[counts[digit]].ts = srcA[x];
+        const uint64_t value = srcA[x] - minValue;
+        const auto digit = (value >> sh) & 0xffu;
+        dest[counts[digit]].ts = value;
         dest[counts[digit]].i = x | (1ull << 63);
         counts[digit]++;
         MM_PREFETCH_T2(srcA + x + 64);
     }
 
     for (uint64_t x = 0; x < sizeB; x++) {
-        const auto digit = (srcB[x] >> sh) & 0xffu;
-        dest[counts[digit]] = srcB[x];
+        const uint64_t value = srcB[x].ts - minValue;
+        const auto digit = (value >> sh) & 0xffu;
+        dest[counts[digit]].ts = value;
+        dest[counts[digit]].i = srcB[x].i;
         counts[digit]++;
         MM_PREFETCH_T2(srcB + x + 64);
     }
@@ -241,98 +255,114 @@ void radix_sort_long_index_asc_in_place(T *array, uint64_t size, T *cpy) {
     radix_shuffle<56u>(counts.c1, cpy, array, size);
 }
 
+template<auto Start, auto End, auto Inc, class F>
+constexpr void constexpr_for(F &&f) {
+    if constexpr (Start < End) {
+        f(std::integral_constant<decltype(Start), Start>());
+        constexpr_for<Start + Inc, End, Inc>(f);
+    }
+}
+
+template<uint16_t n>
 void
-radix_sort_ab_long_index_asc(const uint64_t *arrayA, const uint64_t sizeA, const index_t *arrayB, const uint64_t sizeB,
-                             index_t *out, index_t *cpy) {
-    rscounts_t counts;
-    memset(&counts, 0, 256 * 8 * sizeof(uint64_t));
-    uint64_t o8 = 0, o7 = 0, o6 = 0, o5 = 0, o4 = 0, o3 = 0, o2 = 0, o1 = 0;
-    uint64_t t8, t7, t6, t5, t4, t3, t2, t1;
+radix_sort_ab_long_index_asc(const int64_t *arrayA, const uint64_t sizeA, const index_l *arrayB, const uint64_t sizeB,
+                             index_l *out, index_l *cpy, int64_t minValue) {
+    uint64_t counts[n][256] = {{0}};
+    uint64_t o[n] = {0};
     uint64_t x;
 
     // calculate counts
-    MM_PREFETCH_NTA(counts.c8);
     for (x = 0; x < sizeA; x++) {
-        t8 = arrayA[x] & 0xffu;
-        t7 = (arrayA[x] >> 8u) & 0xffu;
-        t6 = (arrayA[x] >> 16u) & 0xffu;
-        t5 = (arrayA[x] >> 24u) & 0xffu;
-        t4 = (arrayA[x] >> 32u) & 0xffu;
-        t3 = (arrayA[x] >> 40u) & 0xffu;
-        t2 = (arrayA[x] >> 48u) & 0xffu;
-        t1 = (arrayA[x] >> 56u) & 0xffu;
-        counts.c8[t8]++;
-        counts.c7[t7]++;
-        counts.c6[t6]++;
-        counts.c5[t5]++;
-        counts.c4[t4]++;
-        counts.c3[t3]++;
-        counts.c2[t2]++;
-        counts.c1[t1]++;
+        uint64_t value = arrayA[x] - minValue;
+        // should be unrolled by compiler, n is compile time const
+        constexpr_for<0, n, 1>(
+                [&](auto i) {
+                    constexpr uint64_t shift = 8u * (n - i - 1);
+                    const auto t0 = (value >> shift) & 0xffu;
+                    counts[i][t0]++;
+                }
+        );
         MM_PREFETCH_T2(arrayA + x + 64);
     }
 
     for (x = 0; x < sizeB; x++) {
-        t8 = arrayB[x] & 0xffu;
-        t7 = (arrayB[x] >> 8u) & 0xffu;
-        t6 = (arrayB[x] >> 16u) & 0xffu;
-        t5 = (arrayB[x] >> 24u) & 0xffu;
-        t4 = (arrayB[x] >> 32u) & 0xffu;
-        t3 = (arrayB[x] >> 40u) & 0xffu;
-        t2 = (arrayB[x] >> 48u) & 0xffu;
-        t1 = (arrayB[x] >> 56u) & 0xffu;
-        counts.c8[t8]++;
-        counts.c7[t7]++;
-        counts.c6[t6]++;
-        counts.c5[t5]++;
-        counts.c4[t4]++;
-        counts.c3[t3]++;
-        counts.c2[t2]++;
-        counts.c1[t1]++;
+        uint64_t value = arrayB[x].ts - minValue;
+        // should be unrolled by compiler, n is compile time const
+        constexpr_for<0, n, 1>(
+                [&](auto i) {
+                    constexpr uint64_t shift = 8u * (n - i - 1);
+                    const auto t0 = (value >> shift) & 0xffu;
+                    counts[i][t0]++;
+                }
+        );
         MM_PREFETCH_T2(arrayB + x + 64);
     }
 
     // convert counts to offsets
     MM_PREFETCH_T0(&counts);
     for (x = 0; x < 256; x++) {
-        t8 = o8 + counts.c8[x];
-        t7 = o7 + counts.c7[x];
-        t6 = o6 + counts.c6[x];
-        t5 = o5 + counts.c5[x];
-        t4 = o4 + counts.c4[x];
-        t3 = o3 + counts.c3[x];
-        t2 = o2 + counts.c2[x];
-        t1 = o1 + counts.c1[x];
-        counts.c8[x] = o8;
-        counts.c7[x] = o7;
-        counts.c6[x] = o6;
-        counts.c5[x] = o5;
-        counts.c4[x] = o4;
-        counts.c3[x] = o3;
-        counts.c2[x] = o2;
-        counts.c1[x] = o1;
-        o8 = t8;
-        o7 = t7;
-        o6 = t6;
-        o5 = t5;
-        o4 = t4;
-        o3 = t3;
-        o2 = t2;
-        o1 = t1;
+        // should be unrolled by compiler, n is compile time const
+        constexpr_for<0, n, 1>(
+                [&](auto i) {
+                    auto t0 = o[i] + counts[i][x];
+                    counts[i][x] = o[i];
+                    o[i] = t0;
+                }
+        );
     }
 
     // radix
-    radix_shuffle_ab<0u>(counts.c8, arrayA, sizeA, arrayB, sizeB, cpy);
-
     auto size = sizeA + sizeB;
-    radix_shuffle<8u>(counts.c7, cpy, out, size);
-    radix_shuffle<16u>(counts.c6, out, cpy, size);
-    radix_shuffle<24u>(counts.c5, cpy, out, size);
-    radix_shuffle<32u>(counts.c4, out, cpy, size);
-    radix_shuffle<40u>(counts.c3, cpy, out, size);
-    radix_shuffle<48u>(counts.c2, out, cpy, size);
-    radix_shuffle<56u>(counts.c1, cpy, out, size);
+    auto *ucpy = (index_t *) cpy;
+    auto *uout = (index_t *) out;
+    radix_shuffle_ab<0u>(counts[n - 1], arrayA, sizeA, arrayB, sizeB, ucpy, minValue);
+
+    if constexpr (n > 2) {
+        radix_shuffle<8u>(counts[n - 2], ucpy, uout, size);
+        if constexpr (n > 3) {
+            radix_shuffle<16u>(counts[n - 3], uout, ucpy, size);
+            if constexpr (n > 4) {
+                radix_shuffle<24u>(counts[n - 4], ucpy, uout, size);
+                if constexpr (n > 5) {
+                    radix_shuffle<32u>(counts[n - 5], uout, ucpy, size);
+                    if constexpr (n > 6) {
+                        radix_shuffle<40u>(counts[n - 6], ucpy, uout, size);
+                        if constexpr (n > 7) {
+                            radix_shuffle<48u>(counts[n - 7], uout, ucpy, size);
+                            radix_shuffle<56u>(counts[n - 8], ucpy, out, size, minValue);
+                        } else {
+                            radix_shuffle<48u>(counts[n - 7], uout, cpy, size, minValue);
+                        }
+                    } else {
+                        radix_shuffle<40u>(counts[n - 6], ucpy, out, size, minValue);
+                    }
+                } else {
+                    radix_shuffle<32u>(counts[n - 5], uout, cpy, size, minValue);
+                }
+            } else {
+                radix_shuffle<24u>(counts[n - 4], ucpy, out, size, minValue);
+            }
+        } else {
+            radix_shuffle<16u>(counts[n - 3], uout, cpy, size, minValue);
+        }
+    } else if constexpr (n > 1) {
+        radix_shuffle<8u>(counts[n - 2], ucpy, out, size, minValue);
+    }
+
+    if constexpr (n == 1) {
+        if (minValue != 0) {
+            auto usrc = n % 2 == 1 ? ucpy : uout;
+            for (x = 0; x < size; x++) {
+                out[x].ts = (int64_t) (minValue + usrc[x].ts);
+                out[x].i = usrc[x].i;
+            }
+        }
+    }
+    if constexpr (n % 2 == 1) {
+        __MEMCPY(out, cpy, size * sizeof(index_t));
+    }
 }
+
 
 template<typename T>
 inline void radix_sort_long_index_asc_in_place(T *array, uint64_t size) {
@@ -701,10 +731,53 @@ Java_io_questdb_std_Vect_radixSortLongIndexAscInPlace(JNIEnv *env, jclass cl, jl
 
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_radixSortABLongIndexAsc(JNIEnv *env, jclass cl, jlong pDataA, jlong countA, jlong pDataB,
-                                                 jlong countB, jlong pDataOut, jlong pDataCpy) {
-    radix_sort_ab_long_index_asc(reinterpret_cast<uint64_t *>(pDataA), countA, reinterpret_cast<index_t *>(pDataB),
-                                 countB, reinterpret_cast<index_t *>(pDataOut),
-                                 reinterpret_cast<index_t *>(pDataCpy));
+                                                 jlong countB, jlong pDataOut, jlong pDataCpy, jlong minTimestamp,
+                                                 jlong maxTimestamp) {
+    auto minTs = __JLONG_REINTERPRET_CAST__(int64_t, minTimestamp);
+    auto maxTs = __JLONG_REINTERPRET_CAST__(int64_t, maxTimestamp);
+    uint64_t range = maxTs - minTs;
+
+    int range_bytes = 0;
+    do {
+        ++range_bytes;
+        range = range >> 8;
+    } while (range != 0);
+
+    auto *a = reinterpret_cast<int64_t *>(pDataA);
+    auto *b = reinterpret_cast<index_l *>(pDataB);
+    auto *out = reinterpret_cast<index_l *>(pDataOut);
+    auto *cpy = reinterpret_cast<index_l *>(pDataCpy);
+
+    switch (range_bytes) {
+        case 1:
+            radix_sort_ab_long_index_asc<1>(a, countA, b, countB, out, cpy, minTs);
+            break;
+        case 2:
+            radix_sort_ab_long_index_asc<2>(a, countA, b, countB, out, cpy, minTs);
+            break;
+        case 3:
+            radix_sort_ab_long_index_asc<3>(a, countA, b, countB, out, cpy, minTs);
+            break;
+        case 4:
+            radix_sort_ab_long_index_asc<4>(a, countA, b, countB, out, cpy, minTs);
+            break;
+        case 5:
+            radix_sort_ab_long_index_asc<5>(a, countA, b, countB, out, cpy, minTs);
+            break;
+        case 6:
+            radix_sort_ab_long_index_asc<6>(a, countA, b, countB, out, cpy, minTs);
+            break;
+        case 7:
+            radix_sort_ab_long_index_asc<7>(a, countA, b, countB, out, cpy, minTs);
+            break;
+        case 8:
+            radix_sort_ab_long_index_asc<8>(a, countA, b, countB, out, cpy, minTs);
+            break;
+        default:
+            assert(false || "range is too big");
+            break;
+    }
+
 }
 
 JNIEXPORT void JNICALL

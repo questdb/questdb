@@ -27,6 +27,15 @@
 
 #include "dispatcher.h"
 
+typedef struct index_l {
+    int64_t ts;
+    uint64_t i;
+
+    int64_t operator>>(uint8_t shr) const {
+        return ts >> shr;
+    }
+} index_l;
+
 typedef struct index_t {
     uint64_t ts;
     uint64_t i;

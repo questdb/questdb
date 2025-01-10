@@ -370,7 +370,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 }
 
                                 assert walId == writer.getWalTnxDetails().getWalId(seqTxn);
-                                assert segmentId == writer.getWalTnxDetails().getWalSegmentId(seqTxn);
+                                assert segmentId == writer.getWalTnxDetails().getSegmentId(seqTxn);
 
                                 final int txnCommitted = processWalCommit(
                                         writer,

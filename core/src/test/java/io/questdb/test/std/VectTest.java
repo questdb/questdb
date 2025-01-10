@@ -45,6 +45,7 @@ import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -1443,9 +1444,24 @@ public class VectTest {
         }
     }
 
+    private void seedMem1Long(int count, long p, long min, long max) {
+        for (int i = 0; i < count; i++) {
+            final long z = min + rnd.nextLong(max - min);
+            Unsafe.getUnsafe().putLong(p + (long) i * Long.BYTES, z);
+        }
+    }
+
     private void seedMem2Longs(int count, long p) {
         for (int i = 0; i < count; i++) {
             final long z = rnd.nextPositiveLong();
+            Unsafe.getUnsafe().putLong(p + i * 2L * Long.BYTES, z);
+            Unsafe.getUnsafe().putLong(p + i * 2L * Long.BYTES + 8, i);
+        }
+    }
+
+    private void seedMem2Longs(int count, long p, long min, long max) {
+        for (int i = 0; i < count; i++) {
+            final long z = min + rnd.nextLong(max);
             Unsafe.getUnsafe().putLong(p + i * 2L * Long.BYTES, z);
             Unsafe.getUnsafe().putLong(p + i * 2L * Long.BYTES + 8, i);
         }
@@ -1492,17 +1508,24 @@ public class VectTest {
         final long aAddr = Unsafe.malloc(resultSize, MemoryTag.NATIVE_DEFAULT);
         final long bAddr = Unsafe.malloc(sizeB, MemoryTag.NATIVE_DEFAULT);
         final long cpyAddr = Unsafe.malloc(resultSize, MemoryTag.NATIVE_DEFAULT);
+
+        long r1 = rnd.nextLong(Timestamps.DAY_MICROS * 365 * 10);
+        long r2 = -rnd.nextLong(Timestamps.DAY_MICROS * 365 * 10);
+
+        long min = Math.min(r1, r2);
+        long max = Math.max(r1, r2);
+
         final long aAddrCopy = Unsafe.malloc(sizeA, MemoryTag.NATIVE_DEFAULT);
         final long bAddrCopy = Unsafe.malloc(sizeB, MemoryTag.NATIVE_DEFAULT);
 
         try {
-            seedMem1Long(aCount, aAddr);
-            seedMem2Longs(bCount, bAddr);
+            seedMem1Long(aCount, aAddr, min, max);
+            seedMem2Longs(bCount, bAddr, min, max);
 
             Vect.memcpy(aAddrCopy, aAddr, sizeA);
             Vect.memcpy(bAddrCopy, bAddr, sizeB);
 
-            Vect.radixSortABLongIndexAsc(aAddr, aCount, bAddr, bCount, aAddr, cpyAddr);
+            Vect.radixSortABLongIndexAsc(aAddr, aCount, bAddr, bCount, aAddr, cpyAddr, min, max);
             assertIndexAsc(aCount + bCount, aAddr, aAddrCopy, bAddrCopy);
         } finally {
             Unsafe.free(aAddr, resultSize, MemoryTag.NATIVE_DEFAULT);
@@ -1512,6 +1535,7 @@ public class VectTest {
             Unsafe.free(bAddrCopy, sizeB, MemoryTag.NATIVE_DEFAULT);
         }
     }
+
 
     private String[] varcharColAsStringArray(MemoryCMARW dataMemA, MemoryCMARW auxMemA, int rowCount) {
         String[] strings = new String[rowCount];

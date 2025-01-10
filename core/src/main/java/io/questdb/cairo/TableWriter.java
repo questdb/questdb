@@ -191,7 +191,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final RingQueue<TableWriterTask> commandQueue;
     private final SCSequence commandSubSeq;
     private final CairoConfiguration configuration;
-    private final SegmentCopyTasks copyTasks = new SegmentCopyTasks();
     private final long dataAppendPageSize;
     private final DdlListener ddlListener;
     private final MemoryMAR ddlMem;
@@ -242,8 +241,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
     private final AtomicLong physicallyWrittenRowsSinceLastCommit = new AtomicLong();
     private final Row row = new RowImpl();
-    private final DirectLongList rowIndexMap = new DirectLongList(4, MemoryTag.NATIVE_O3);
     private final LongList rowValueIsNotNull = new LongList();
+    private final SegmentCopyTasks segmentCopyTasks = new SegmentCopyTasks();
+    private final DirectLongList segmentRowIndexMap = new DirectLongList(4, MemoryTag.NATIVE_O3);
     private final TxReader slaveTxReader;
     private final ObjList<MapWriter> symbolMapWriters;
     private final IntList symbolRewriteMap = new IntList();
@@ -1167,7 +1167,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", commitToTs=").$ts(commitToTimestamp)
                     .I$();
 
-            final int walSegmentId = walTxnDetails.getWalSegmentId(seqTxn);
+            final int walSegmentId = walTxnDetails.getSegmentId(seqTxn);
             boolean isLastSegmentUsage = walTxnDetails.isLastSegmentUsage(seqTxn);
             SymbolMapDiffCursor mapDiffCursor = walTxnDetails.getWalSymbolDiffCursor(seqTxn);
 
@@ -2536,7 +2536,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     mappedTimestampIndexAddr,
                                     commitRowCount,
                                     timestampAddr,
-                                    o3TimestampMemCpy.addressOf(0)
+                                    o3TimestampMemCpy.addressOf(0),
+                                    txWriter.getLagMinTimestamp(),
+                                    txWriter.getLagMaxTimestamp()
                             );
                         } finally {
                             mapAppendColumnBufferRelease(tsLagBufferAddr, tsLagOffset, tsLagSize);
@@ -5222,6 +5224,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(parquetDecoder);
         Misc.free(parquetStatBuffers);
         Misc.free(parquetColumnIdsAndTypes);
+        Misc.free(segmentCopyTasks);
+        Misc.free(segmentRowIndexMap);
         closeWalFiles();
         updateOperatorImpl = Misc.free(updateOperatorImpl);
         convertOperatorImpl = Misc.free(convertOperatorImpl);
@@ -7211,12 +7215,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int blockTransactionCount,
             O3JobParallelismRegulator regulator
     ) {
-        rowIndexMap.clear();
-        copyTasks.clear();
-        walTxnDetails.prepareCopySegments(startSeqTxn, blockTransactionCount, copyTasks, rowIndexMap);
+        segmentRowIndexMap.clear();
+        segmentCopyTasks.clear();
+        walTxnDetails.prepareCopySegments(startSeqTxn, blockTransactionCount, segmentCopyTasks, segmentRowIndexMap);
 
-        mmapWalColumns(copyTasks);
-        processWalCommitBlockSortWalSegmentTimestamps(copyTasks, walMappedColumns, rowIndexMap);
+        mmapWalColumns(segmentCopyTasks);
+        processWalCommitBlockSortWalSegmentTimestamps(segmentCopyTasks, walMappedColumns, segmentRowIndexMap);
 
         throw new IllegalStateException("still a TODO");
     }
