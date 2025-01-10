@@ -119,7 +119,7 @@ public class TableStructMetadataAdapter implements TableStructure {
 
     @Override
     public boolean isDedupKey(int columnIndex) {
-        return false;
+        return metadata.isDedupKey(columnIndex);
     }
 
     @Override

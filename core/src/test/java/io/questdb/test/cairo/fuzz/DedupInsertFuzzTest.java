@@ -53,11 +53,13 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
+import io.questdb.test.fuzz.FuzzDropCreateTableOperation;
 import io.questdb.test.fuzz.FuzzDropPartitionOperation;
 import io.questdb.test.fuzz.FuzzInsertOperation;
 import io.questdb.test.fuzz.FuzzStableInsertOperation;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.fuzz.FuzzTransactionOperation;
+import io.questdb.test.fuzz.FuzzTruncateTableOperation;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -554,6 +556,13 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 result.add(duplicateTrans);
                 prevInsertTrans = duplicateTrans;
             } else {
+                if (transaction.operationList.size() > 0) {
+                    var operation = transaction.operationList.getQuick(0);
+                    if (operation instanceof FuzzDropCreateTableOperation || operation instanceof FuzzTruncateTableOperation
+                        || operation instanceof FuzzDropPartitionOperation) {
+                        prevInsertTrans = null;
+                    }
+                }
                 result.add(transaction);
             }
         }
@@ -976,7 +985,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     }
 
     private ObjList<FuzzTransaction> uniqueInserts(ObjList<FuzzTransaction> transactions) {
-        ObjList<FuzzTransaction> result = new ObjList<>();
+        ObjList<FuzzTransaction> uniqueTransactions = new ObjList<>();
         LongHashSet uniqueTimestamps = new LongHashSet();
 
         for (int i = 0; i < transactions.size(); i++) {
@@ -990,23 +999,19 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                             unique.operationList.add(operation);
                         }
                     } else {
-                        if (operation instanceof FuzzDropPartitionOperation) {
-                            // to handle drop partition here we need to remove all uniqueTimestamps
-                            // values related to the partition that is about to be dropped.
-                            // This is non-trivial and given low probability of issues connected to dedup
-                            // and drop partition combination is not implemented.
-                            throw new RuntimeException("Drop partition operation cannot be supported in this type of dedup test");
+                        if (operation instanceof FuzzDropCreateTableOperation) {
+                            ((FuzzDropCreateTableOperation) operation).setDedupEnable(true);
                         }
                         unique.operationList.add(operation);
                     }
                 }
                 unique.reopenTable = transaction.reopenTable;
-                result.add(unique);
+                uniqueTransactions.add(unique);
             } else {
-                result.add(transaction);
+                uniqueTransactions.add(transaction);
             }
         }
-        return result;
+        return uniqueTransactions;
     }
 
     private void validateNoTimestampDuplicates(
