@@ -27,7 +27,9 @@ package io.questdb.tasks;
 import io.questdb.cairo.TableWriter;
 
 public interface AbstractTelemetryTask {
-    void writeTo(TableWriter writer, long timestamp);
     long getQueueCursor();
+
     void setQueueCursor(long cursor);
+
+    void writeTo(TableWriter writer, long timestamp);
 }
