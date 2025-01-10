@@ -291,8 +291,13 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         if (ex instanceof CairoException) {
             CairoException exception = (CairoException) ex;
             error.put(", errno: ").put(exception.getErrno()).put(", error: ").put(exception.getFlyweightMessage());
-            errorRec = exception.isCritical() ? LOG.critical() : LOG.error();
-            status = exception.isAuthorizationError() ? Status.SECURITY_ERROR : Status.INTERNAL_ERROR;
+            if (exception.isAuthorizationError()) {
+                errorRec = LOG.error();
+                status = Status.SECURITY_ERROR;
+            } else {
+                errorRec = LOG.critical();
+                status = Status.INTERNAL_ERROR;
+            }
         } else {
             error.put(", error: ").put(ex.getClass().getCanonicalName());
             errorRec = LOG.critical();
