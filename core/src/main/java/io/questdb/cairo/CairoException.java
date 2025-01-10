@@ -139,8 +139,12 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return nonCritical().put("cancelled by user").setInterruption(true).setCancellation(true);
     }
 
-    public static CairoException queryTimedOut(long fd) {
-        return nonCritical().put("timeout, query aborted [fd=").put(fd).put(']').setInterruption(true);
+    public static CairoException queryTimedOut(long fd, long runtime, long timeout) {
+        return nonCritical()
+                .put("timeout, query aborted [fd=").put(fd)
+                .put(", runtime=").put(runtime).put("us")
+                .put(", timeout=").put(timeout).put("us")
+                .put(']').setInterruption(true);
     }
 
     public static CairoException queryTimedOut() {

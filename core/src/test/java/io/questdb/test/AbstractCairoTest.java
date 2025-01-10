@@ -1972,7 +1972,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected TableToken createPopulateTable(int tableId, TableModel tableModel, int insertIterations, int totalRowsPerIteration, String startDate, int partitionCount) throws NumericException, SqlException {
         try (
-                MemoryMARW mem = Vm.getMARWInstance();
+                MemoryMARW mem = Vm.getCMARWInstance();
                 Path path = new Path()
         ) {
             TableToken token = TestUtils.createTable(engine, mem, path, tableModel, tableId, tableModel.getTableName());

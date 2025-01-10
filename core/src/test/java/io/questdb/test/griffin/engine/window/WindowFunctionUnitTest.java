@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.window.BaseLongWindowFunction;
 import io.questdb.griffin.engine.functions.window.CountConstWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.CountDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.CountFunctionFactoryHelper;
+import io.questdb.griffin.engine.functions.window.FirstNotNullValueDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.FirstValueDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.MaxDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.MinDoubleWindowFunctionFactory;
@@ -158,6 +159,29 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                         return new FirstValueDoubleWindowFunctionFactory.FirstValueOverWholeResultSetFunction(TestDefaults.createLongFunction(x -> x.getLong(2)));
                     }
                     return new FirstValueDoubleWindowFunctionFactory.FirstValueOverRowsFrameFunction(
+                            TestDefaults.createLongFunction(x -> x.getLong(2)),
+                            rangeLo,
+                            rangeHi,
+                            TestDefaults.createMemoryCARW()
+                    );
+                },
+                (a, b) -> b
+        );
+    }
+
+    @Test
+    public void testFirstNotNullOverRowsFuzz() throws Exception {
+        fuzzTestBase(
+                TestUtils.generateRandom(LOG),
+                false,
+                true,
+                rnd -> rnd.nextInt(8) == 0 ? Long.MIN_VALUE : -rnd.nextLong(1024),
+                rnd -> -rnd.nextLong(1024),
+                (rangeLo, rangeHi) -> {
+                    if (rangeLo == Long.MIN_VALUE && rangeHi == 0) {
+                        return new FirstNotNullValueDoubleWindowFunctionFactory.FirstNotNullValueOverWholeResultSetFunction(TestDefaults.createLongFunction(x -> x.getLong(2)));
+                    }
+                    return new FirstNotNullValueDoubleWindowFunctionFactory.FirstNotNullValueOverRowsFrameFunction(
                             TestDefaults.createLongFunction(x -> x.getLong(2)),
                             rangeLo,
                             rangeHi,
