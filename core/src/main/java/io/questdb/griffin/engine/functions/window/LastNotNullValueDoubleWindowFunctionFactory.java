@@ -123,7 +123,7 @@ public class LastNotNullValueDoubleWindowFunctionFactory extends AbstractWindowF
                     );
 
                     final int initialBufferSize = configuration.getSqlWindowInitialRangeBufferSize();
-                    MemoryARW mem = Vm.getARWInstance(configuration.getSqlWindowStorePageSize(), configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(), configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
 
                     // moving last over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
                     return new LastNotNullValueOverPartitionRangeFrameFunction(
@@ -178,7 +178,7 @@ public class LastNotNullValueDoubleWindowFunctionFactory extends AbstractWindowF
                             partitionByKeyTypes,
                             LAST_NOT_NULL_VALUE_PARTITION_ROWS_COLUMN_TYPES
                     );
-                    MemoryARW mem = Vm.getARWInstance(configuration.getSqlWindowStorePageSize(),
+                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                             configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER
                     );
 
@@ -232,7 +232,7 @@ public class LastNotNullValueDoubleWindowFunctionFactory extends AbstractWindowF
                     return new LastNotNullValueOverWholeResultSetFunction(args.get(0));
                 } // between [unbounded | x] preceding and [y preceding | current row]
                 else {
-                    MemoryARW mem = Vm.getARWInstance(
+                    MemoryARW mem = Vm.getCARWInstance(
                             configuration.getSqlWindowStorePageSize(),
                             configuration.getSqlWindowStoreMaxPages(),
                             MemoryTag.NATIVE_CIRCULAR_BUFFER

@@ -114,7 +114,7 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
                     windowContext.getPartitionByKeyTypes(),
                     LAG_COLUMN_TYPES
             );
-            MemoryARW mem = Vm.getARWInstance(configuration.getSqlWindowStorePageSize(),
+            MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                     configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER
             );
 
@@ -129,7 +129,7 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
             );
         }
 
-        MemoryARW mem = Vm.getARWInstance(
+        MemoryARW mem = Vm.getCARWInstance(
                 configuration.getSqlWindowStorePageSize(),
                 configuration.getSqlWindowStoreMaxPages(),
                 MemoryTag.NATIVE_CIRCULAR_BUFFER

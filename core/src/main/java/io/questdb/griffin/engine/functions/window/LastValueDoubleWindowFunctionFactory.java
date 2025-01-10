@@ -123,7 +123,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
                     );
 
                     final int initialBufferSize = configuration.getSqlWindowInitialRangeBufferSize();
-                    MemoryARW mem = Vm.getARWInstance(configuration.getSqlWindowStorePageSize(), configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(), configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
 
                     // moving average over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
                     return new LastValueOverPartitionRangeFrameFunction(
@@ -170,7 +170,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
                             LAST_VALUE_PARTITION_ROWS_COLUMN_TYPES
                     );
 
-                    MemoryARW mem = Vm.getARWInstance(configuration.getSqlWindowStorePageSize(),
+                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                             configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER
                     );
 
@@ -221,7 +221,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
                 } else if (rowsHi == 0) {
                     return new LastValueIncludeCurrentFrameFunction(rowsLo, false, args.get(0));
                 } else {
-                    MemoryARW mem = Vm.getARWInstance(
+                    MemoryARW mem = Vm.getCARWInstance(
                             configuration.getSqlWindowStorePageSize(),
                             configuration.getSqlWindowStoreMaxPages(),
                             MemoryTag.NATIVE_CIRCULAR_BUFFER
@@ -623,7 +623,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
             timestampIndex = timestampIdx;
             initialCapacity = configuration.getSqlWindowStorePageSize() / RECORD_SIZE;
             capacity = initialCapacity;
-            memory = Vm.getARWInstance(configuration.getSqlWindowStorePageSize(), configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+            memory = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(), configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
             startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
             firstIdx = 0;
         }
