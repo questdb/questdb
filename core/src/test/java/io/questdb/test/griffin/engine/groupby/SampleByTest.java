@@ -5258,7 +5258,7 @@ public class SampleByTest extends AbstractCairoTest {
                         ") timestamp(created_at) partition by day",
                 "timestamp###DESC",
                 true,
-                true
+                false
         );
 
         assertQuery(
@@ -5288,7 +5288,7 @@ public class SampleByTest extends AbstractCairoTest {
                         ") timestamp(created_at) partition by day",
                 "timestamp###DESC",
                 true,
-                true
+                false
         );
     }
 

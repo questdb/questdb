@@ -3426,12 +3426,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String exceptQuery = exceptAllQuery.replace("except all", "except");
 
             assertPlanNoLeakCheck(exceptAllQuery, "Except All\n" +
-                    "    Sort\n" +
-                    "      keys: [ts]\n" +
-                    "        Fill Range\n" +
-                    "          range: ('2017-12-20','2018-01-31')\n" +
-                    "          stride: '5d'\n" +
-                    "          values: [null,null]\n" +
+                    "    Fill Range\n" +
+                    "      range: ('2017-12-20','2018-01-31')\n" +
+                    "      stride: '5d'\n" +
+                    "      values: [null,null]\n" +
+                    "        Radix sort light\n" +
+                    "          keys: [ts]\n" +
                     "            Async Group By workers: 1\n" +
                     "              keys: [ts]\n" +
                     "              values: [avg(x),sum(x)]\n" +
@@ -3445,24 +3445,26 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "          range: ('2017-12-20','2018-01-31')\n" +
                     "          stride: '5d'\n" +
                     "          values: [null,null]\n" +
-                    "            Async Group By workers: 1\n" +
+                    "            Radix sort light\n" +
                     "              keys: [ts]\n" +
-                    "              values: [avg(x),sum(x)]\n" +
-                    "              filter: null\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Interval forward scan on: fromto2\n" +
-                    "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
+                    "                Async Group By workers: 1\n" +
+                    "                  keys: [ts]\n" +
+                    "                  values: [avg(x),sum(x)]\n" +
+                    "                  filter: null\n" +
+                    "                    PageFrame\n" +
+                    "                        Row forward scan\n" +
+                    "                        Interval forward scan on: fromto2\n" +
+                    "                          intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
 
             assertSql("ts\tavg\tsum\n", exceptAllQuery);
 
             assertPlanNoLeakCheck(exceptQuery, "Except\n" +
-                    "    Sort\n" +
-                    "      keys: [ts]\n" +
-                    "        Fill Range\n" +
-                    "          range: ('2017-12-20','2018-01-31')\n" +
-                    "          stride: '5d'\n" +
-                    "          values: [null,null]\n" +
+                    "    Fill Range\n" +
+                    "      range: ('2017-12-20','2018-01-31')\n" +
+                    "      stride: '5d'\n" +
+                    "      values: [null,null]\n" +
+                    "        Radix sort light\n" +
+                    "          keys: [ts]\n" +
                     "            Async Group By workers: 1\n" +
                     "              keys: [ts]\n" +
                     "              values: [avg(x),sum(x)]\n" +
@@ -3476,14 +3478,16 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "          range: ('2017-12-20','2018-01-31')\n" +
                     "          stride: '5d'\n" +
                     "          values: [null,null]\n" +
-                    "            Async Group By workers: 1\n" +
+                    "            Radix sort light\n" +
                     "              keys: [ts]\n" +
-                    "              values: [avg(x),sum(x)]\n" +
-                    "              filter: null\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Interval forward scan on: fromto2\n" +
-                    "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
+                    "                Async Group By workers: 1\n" +
+                    "                  keys: [ts]\n" +
+                    "                  values: [avg(x),sum(x)]\n" +
+                    "                  filter: null\n" +
+                    "                    PageFrame\n" +
+                    "                        Row forward scan\n" +
+                    "                        Interval forward scan on: fromto2\n" +
+                    "                          intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
 
             assertSql("ts\tavg\tsum\n", exceptQuery);
         });
@@ -3502,12 +3506,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String intersectQuery = intersectAllQuery.replace("intersect all", "intersect");
 
             assertPlanNoLeakCheck(intersectAllQuery, "Intersect All\n" +
-                    "    Sort\n" +
-                    "      keys: [ts]\n" +
-                    "        Fill Range\n" +
-                    "          range: ('2017-12-20','2018-01-31')\n" +
-                    "          stride: '5d'\n" +
-                    "          values: [null,null]\n" +
+                    "    Fill Range\n" +
+                    "      range: ('2017-12-20','2018-01-31')\n" +
+                    "      stride: '5d'\n" +
+                    "      values: [null,null]\n" +
+                    "        Radix sort light\n" +
+                    "          keys: [ts]\n" +
                     "            Async Group By workers: 1\n" +
                     "              keys: [ts]\n" +
                     "              values: [avg(x),sum(x)]\n" +
@@ -3521,14 +3525,16 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "          range: ('2017-12-20','2018-01-31')\n" +
                     "          stride: '5d'\n" +
                     "          values: [null,null]\n" +
-                    "            Async Group By workers: 1\n" +
+                    "            Radix sort light\n" +
                     "              keys: [ts]\n" +
-                    "              values: [avg(x),sum(x)]\n" +
-                    "              filter: null\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Interval forward scan on: fromto2\n" +
-                    "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
+                    "                Async Group By workers: 1\n" +
+                    "                  keys: [ts]\n" +
+                    "                  values: [avg(x),sum(x)]\n" +
+                    "                  filter: null\n" +
+                    "                    PageFrame\n" +
+                    "                        Row forward scan\n" +
+                    "                        Interval forward scan on: fromto2\n" +
+                    "                          intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
 
             assertSql("ts\tavg\tsum\n" +
                     "2017-12-20T00:00:00.000000Z\tnull\tnull\n" +
@@ -3542,12 +3548,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "2018-01-29T00:00:00.000000Z\tnull\tnull\n", intersectAllQuery);
 
             assertPlanNoLeakCheck(intersectQuery, "Intersect\n" +
-                    "    Sort\n" +
-                    "      keys: [ts]\n" +
-                    "        Fill Range\n" +
-                    "          range: ('2017-12-20','2018-01-31')\n" +
-                    "          stride: '5d'\n" +
-                    "          values: [null,null]\n" +
+                    "    Fill Range\n" +
+                    "      range: ('2017-12-20','2018-01-31')\n" +
+                    "      stride: '5d'\n" +
+                    "      values: [null,null]\n" +
+                    "        Radix sort light\n" +
+                    "          keys: [ts]\n" +
                     "            Async Group By workers: 1\n" +
                     "              keys: [ts]\n" +
                     "              values: [avg(x),sum(x)]\n" +
@@ -3561,14 +3567,16 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "          range: ('2017-12-20','2018-01-31')\n" +
                     "          stride: '5d'\n" +
                     "          values: [null,null]\n" +
-                    "            Async Group By workers: 1\n" +
+                    "            Radix sort light\n" +
                     "              keys: [ts]\n" +
-                    "              values: [avg(x),sum(x)]\n" +
-                    "              filter: null\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Interval forward scan on: fromto2\n" +
-                    "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
+                    "                Async Group By workers: 1\n" +
+                    "                  keys: [ts]\n" +
+                    "                  values: [avg(x),sum(x)]\n" +
+                    "                  filter: null\n" +
+                    "                    PageFrame\n" +
+                    "                        Row forward scan\n" +
+                    "                        Interval forward scan on: fromto2\n" +
+                    "                          intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
 
             assertSql("ts\tavg\tsum\n" +
                     "2017-12-20T00:00:00.000000Z\tnull\tnull\n" +
@@ -3757,12 +3765,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String unionQuery = unionAllQuery.replace("union all", "union");
 
             assertPlanNoLeakCheck(unionAllQuery, "Union All\n" +
-                    "    Sort\n" +
-                    "      keys: [ts]\n" +
-                    "        Fill Range\n" +
-                    "          range: ('2017-12-20','2018-01-31')\n" +
-                    "          stride: '5d'\n" +
-                    "          values: [null,null]\n" +
+                    "    Fill Range\n" +
+                    "      range: ('2017-12-20','2018-01-31')\n" +
+                    "      stride: '5d'\n" +
+                    "      values: [null,null]\n" +
+                    "        Radix sort light\n" +
+                    "          keys: [ts]\n" +
                     "            Async Group By workers: 1\n" +
                     "              keys: [ts]\n" +
                     "              values: [avg(x),sum(x)]\n" +
@@ -3775,14 +3783,16 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "      range: ('2017-12-20','2018-01-31')\n" +
                     "      stride: '5d'\n" +
                     "      values: [null,null]\n" +
-                    "        Async Group By workers: 1\n" +
+                    "        Radix sort light\n" +
                     "          keys: [ts]\n" +
-                    "          values: [avg(x),sum(x)]\n" +
-                    "          filter: null\n" +
-                    "            PageFrame\n" +
-                    "                Row forward scan\n" +
-                    "                Interval forward scan on: fromto2\n" +
-                    "                  intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
+                    "            Async Group By workers: 1\n" +
+                    "              keys: [ts]\n" +
+                    "              values: [avg(x),sum(x)]\n" +
+                    "              filter: null\n" +
+                    "                PageFrame\n" +
+                    "                    Row forward scan\n" +
+                    "                    Interval forward scan on: fromto2\n" +
+                    "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
 
             assertSql("ts\tavg\tsum\n" +
                     "2017-12-20T00:00:00.000000Z\tnull\tnull\n" +
@@ -3794,23 +3804,23 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "2018-01-19T00:00:00.000000Z\tnull\tnull\n" +
                     "2018-01-24T00:00:00.000000Z\tnull\tnull\n" +
                     "2018-01-29T00:00:00.000000Z\tnull\tnull\n" +
+                    "2017-12-20T00:00:00.000000Z\tnull\tnull\n" +
+                    "2017-12-25T00:00:00.000000Z\tnull\tnull\n" +
                     "2017-12-30T00:00:00.000000Z\t72.5\t10440\n" +
                     "2018-01-04T00:00:00.000000Z\t264.5\t63480\n" +
                     "2018-01-09T00:00:00.000000Z\t432.5\t41520\n" +
-                    "2017-12-20T00:00:00.000000Z\tnull\tnull\n" +
-                    "2017-12-25T00:00:00.000000Z\tnull\tnull\n" +
                     "2018-01-14T00:00:00.000000Z\tnull\tnull\n" +
                     "2018-01-19T00:00:00.000000Z\tnull\tnull\n" +
                     "2018-01-24T00:00:00.000000Z\tnull\tnull\n" +
                     "2018-01-29T00:00:00.000000Z\tnull\tnull\n", unionAllQuery);
 
             assertPlanNoLeakCheck(unionQuery, "Union\n" +
-                    "    Sort\n" +
-                    "      keys: [ts]\n" +
-                    "        Fill Range\n" +
-                    "          range: ('2017-12-20','2018-01-31')\n" +
-                    "          stride: '5d'\n" +
-                    "          values: [null,null]\n" +
+                    "    Fill Range\n" +
+                    "      range: ('2017-12-20','2018-01-31')\n" +
+                    "      stride: '5d'\n" +
+                    "      values: [null,null]\n" +
+                    "        Radix sort light\n" +
+                    "          keys: [ts]\n" +
                     "            Async Group By workers: 1\n" +
                     "              keys: [ts]\n" +
                     "              values: [avg(x),sum(x)]\n" +
@@ -3823,14 +3833,16 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "      range: ('2017-12-20','2018-01-31')\n" +
                     "      stride: '5d'\n" +
                     "      values: [null,null]\n" +
-                    "        Async Group By workers: 1\n" +
+                    "        Radix sort light\n" +
                     "          keys: [ts]\n" +
-                    "          values: [avg(x),sum(x)]\n" +
-                    "          filter: null\n" +
-                    "            PageFrame\n" +
-                    "                Row forward scan\n" +
-                    "                Interval forward scan on: fromto2\n" +
-                    "                  intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
+                    "            Async Group By workers: 1\n" +
+                    "              keys: [ts]\n" +
+                    "              values: [avg(x),sum(x)]\n" +
+                    "              filter: null\n" +
+                    "                PageFrame\n" +
+                    "                    Row forward scan\n" +
+                    "                    Interval forward scan on: fromto2\n" +
+                    "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
 
             assertSql("ts\tavg\tsum\n" +
                     "2017-12-20T00:00:00.000000Z\tnull\tnull\n" +
