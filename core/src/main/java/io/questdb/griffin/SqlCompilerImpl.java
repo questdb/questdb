@@ -1213,8 +1213,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             try {
                 maxUncommittedRows = Numbers.parseInt(value);
             } catch (NumericException e) {
-                throw SqlException.$(paramNamePosition,
-                        "invalid value [value=").put(value).put(",parameter=").put(paramName).put(']');
+                throw SqlException.$(
+                        paramNamePosition,
+                        "invalid value [value="
+                ).put(value).put(",parameter=").put(paramName).put(']');
             }
             if (maxUncommittedRows < 0) {
                 throw SqlException.$(paramNamePosition, "maxUncommittedRows must be non negative");
@@ -3780,7 +3782,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         }
 
                         if (tableToken.isMatView()) {
-                            // TODO(puzpuzpuz): clone mat view meta files
+                            MatViewDefinition matViewDefinition = engine.getMaterializedViewGraph().getMatView(tableToken);
+                            assert matViewDefinition != null;
+                            TableUtils.createMatViewMetaFiles(ff, mem, auxPath, tableRootLen, matViewDefinition);
                         }
                     } finally {
                         mem.close();
@@ -3901,8 +3905,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     sqlDatabaseBackup(executionContext);
                     return;
                 }
+                if (isMaterializedKeyword(tok)) {
+                    tok = SqlUtil.fetchNext(lexer);
+                    if (null != tok && isViewKeyword(tok)) {
+                        sqlTableBackup(executionContext);
+                        return;
+                    }
+                }
             }
-            throw SqlException.position(lexer.lastTokenPosition()).put("expected 'table' or 'database'");
+            throw SqlException.position(lexer.lastTokenPosition()).put("expected 'table', 'materialized view' or 'database'");
         }
 
         private void sqlDatabaseBackup(SqlExecutionContext executionContext) throws SqlException {

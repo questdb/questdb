@@ -212,6 +212,25 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointPrepareCheckMatViewMetaFiles() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
+            testCheckpointCreateCheckTableMetadataFiles(
+                    "create table base_price (sym varchar, price double, ts timestamp) timestamp(ts) partition by DAY WAL",
+                    null,
+                    "base_price"
+            );
+            String viewSql = "select sym, last(price) as price, ts from base_price sample by 1h";
+            String sql = "create materialized view price_1h as (" + viewSql + ") partition by DAY";
+            testCheckpointCreateCheckTableMetadataFiles(
+                    sql,
+                    null,
+                    "price_1h"
+            );
+        });
+    }
+
+    @Test
     public void testCheckpointPrepareCheckMetadataFileForDefaultInstanceId() throws Exception {
         testCheckpointPrepareCheckMetadataFile(null);
     }
@@ -1359,6 +1378,14 @@ public class CheckpointTest extends AbstractCairoTest {
             copyPath.trimTo(copyTableNameLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
             TestUtils.assertFileContentsEquals(path, copyPath);
 
+            if (tableToken.isMatView()) {
+                path.trimTo(tableNameLen).concat(TableUtils.MAT_VIEW_FILE_NAME).$();
+                copyPath.trimTo(copyTableNameLen).concat(TableUtils.MAT_VIEW_FILE_NAME).$();
+                TestUtils.assertFileContentsEquals(path, copyPath);
+                path.trimTo(tableNameLen).concat(TableUtils.MAT_VIEW_QUERY_FILE_NAME).$();
+                copyPath.trimTo(copyTableNameLen).concat(TableUtils.MAT_VIEW_QUERY_FILE_NAME).$();
+                TestUtils.assertFileContentsEquals(path, copyPath);
+            }
             execute("checkpoint release");
         }
     }
