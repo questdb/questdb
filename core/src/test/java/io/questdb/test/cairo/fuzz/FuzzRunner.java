@@ -69,6 +69,7 @@ import io.questdb.test.fuzz.FuzzTransactionGenerator;
 import io.questdb.test.fuzz.FuzzTransactionOperation;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
 
@@ -104,6 +105,7 @@ public class FuzzRunner {
     private double rollbackProb;
     private long s0;
     private long s1;
+    private double setTtlProb;
     private SqlExecutionContext sqlExecutionContext;
     private int strLen;
     private int symbolCountMax;
@@ -453,14 +455,15 @@ public class FuzzRunner {
                 colRemoveProb,
                 colRenameProb,
                 colTypeChangeProb,
-                truncateProb,
-                partitionDropProb,
                 dataAddProb,
                 equalTsRowsProb,
+                partitionDropProb,
+                truncateProb,
+                tableDropProb,
+                setTtlProb,
                 strLen,
                 generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableName),
-                (int) sequencerMetadata.getMetadataVersion(),
-                tableDropProb
+                (int) sequencerMetadata.getMetadataVersion()
         );
     }
 
@@ -527,10 +530,11 @@ public class FuzzRunner {
             double colRenameProb,
             double colTypeChangeProb,
             double dataAddProb,
+            double equalTsRowsProb,
             double partitionDropProb,
             double truncateProb,
             double tableDropProb,
-            double equalTsRowsProb
+            double setTtlProb
     ) {
         this.cancelRowsProb = cancelRowsProb;
         this.notSetProb = notSetProb;
@@ -541,10 +545,11 @@ public class FuzzRunner {
         this.colRenameProb = colRenameProb;
         this.colTypeChangeProb = colTypeChangeProb;
         this.dataAddProb = dataAddProb;
+        this.equalTsRowsProb = equalTsRowsProb;
         this.partitionDropProb = partitionDropProb;
         this.truncateProb = truncateProb;
         this.tableDropProb = tableDropProb;
-        this.equalTsRowsProb = equalTsRowsProb;
+        this.setTtlProb = setTtlProb;
     }
 
     public void withDb(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
@@ -562,17 +567,17 @@ public class FuzzRunner {
         }
     }
 
-    private static void reloadReader(Rnd reloadRnd, TableReader rdr1, CharSequence rdrId) {
+    private static void reloadReader(Rnd reloadRnd, @Nullable TableReader reader, CharSequence rdrId) {
         if (reloadRnd.nextBoolean()) {
-            if (rdr1.isActive()) {
-                reloadPartitions(rdr1);
-                LOG.info().$("releasing reader txn [rdr=").$(rdrId).$(", table=").$(rdr1.getTableToken()).$(", txn=").$(rdr1.getTxn()).I$();
-                rdr1.goPassive();
+            if (reader != null && reader.isActive()) {
+                reloadPartitions(reader);
+                LOG.info().$("releasing reader txn [rdr=").$(rdrId).$(", table=").$(reader.getTableToken()).$(", txn=").$(reader.getTxn()).I$();
+                reader.goPassive();
             }
 
-            if (reloadRnd.nextBoolean() && rdr1.isActive()) {
-                rdr1.goActive();
-                LOG.info().$("acquired reader txn [rdr=").$(rdrId).$(", table=").$(rdr1.getTableToken()).$(", txn=").$(rdr1.getTxn()).I$();
+            if (reloadRnd.nextBoolean() && reader != null && reader.isActive()) {
+                reader.goActive();
+                LOG.info().$("acquired reader txn [rdr=").$(rdrId).$(", table=").$(reader.getTableToken()).$(", txn=").$(reader.getTxn()).I$();
             }
         }
     }
@@ -966,10 +971,11 @@ public class FuzzRunner {
                         rnd.nextDouble(),
                         rnd.nextDouble(),
                         rnd.nextDouble(),
+                        0.01,
                         0.0,
                         0.1 * rnd.nextDouble(),
                         rnd.nextDouble(),
-                        0.01
+                        0.0
                 );
             }
             if (randomiseCounts) {

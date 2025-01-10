@@ -511,7 +511,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         ) {
             ResultSetMetaData meta = result.getMetaData();
             int colCount = meta.getColumnCount();
-            Assert.assertEquals(9, colCount);
+            Assert.assertEquals(11, colCount);
             while (result.next()) {
                 for (int i = 1; i <= colCount; i++) {
                     switch (meta.getColumnType(i)) {

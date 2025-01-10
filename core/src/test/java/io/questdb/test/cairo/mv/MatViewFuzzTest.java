@@ -265,6 +265,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 0.0,
                 0.0,
                 0.0,
+                0.0,
                 0.0
         );
     }
