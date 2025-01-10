@@ -1,4 +1,4 @@
-name: Build questdb.io on release
+name: Build questdb.com on release
 
 on:
   release:
@@ -9,7 +9,20 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Trigger build hook
+      # Trigger website build
+      - name: Trigger website build
         env:
-          NETLIFY_BUILD_HOOK_URL: ${{ secrets.NETLIFY_BUILD_HOOK_URL }}
+          NETLIFY_BUILD_HOOK_URL: ${{ secrets.WEBSITE_BUILD_HOOK_URL }}
+        run: curl -X POST $NETLIFY_BUILD_HOOK_URL
+
+      # Trigger docs build
+      - name: Trigger docs build
+        env:
+          NETLIFY_BUILD_HOOK_URL: ${{ secrets.DOCS_BUILD_HOOK_URL }}
+        run: curl -X POST $NETLIFY_BUILD_HOOK_URL
+
+      # Trigger release-notes build
+      - name: Trigger release-notes build
+        env:
+          NETLIFY_BUILD_HOOK_URL: ${{ secrets.RELEASE_NOTES_BUILD_HOOK_URL }}
         run: curl -X POST $NETLIFY_BUILD_HOOK_URL
