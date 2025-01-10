@@ -70,6 +70,7 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
     private short event;
     private float latency; // millis
     private long physicalRowCount;
+    private long queueCursor;
     private long rowCount;
     private long seqTxn;
     private int tableId;
@@ -88,8 +89,17 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
             task.rowCount = rowCount;
             task.physicalRowCount = physicalRowCount;
             task.latency = latencyUs / 1000.0f; // millis
-            telemetry.store();
+            telemetry.store(task);
         }
+    }
+
+    public long getQueueCursor() {
+        return queueCursor;
+    }
+
+    @Override
+    public void setQueueCursor(long cursor) {
+        this.queueCursor = cursor;
     }
 
     @Override
