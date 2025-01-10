@@ -53,6 +53,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
+import io.questdb.test.fuzz.FuzzDropPartitionOperation;
 import io.questdb.test.fuzz.FuzzInsertOperation;
 import io.questdb.test.fuzz.FuzzStableInsertOperation;
 import io.questdb.test.fuzz.FuzzTransaction;
@@ -401,7 +402,9 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 0.0,
                 0.0,
                 0.1 * rnd.nextDouble(),
-                0.1,
+                // This test does not support Drop Partition operations,
+                // it is not trivial to build the result set of data to assert against with drop partitions
+                0,
                 0.4
         );
 
@@ -547,6 +550,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                     duplicateTrans.operationList.add(operation);
                 }
 
+                duplicateTrans.reopenTable = transaction.reopenTable;
                 result.add(duplicateTrans);
                 prevInsertTrans = duplicateTrans;
             } else {
@@ -986,9 +990,17 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                             unique.operationList.add(operation);
                         }
                     } else {
+                        if (operation instanceof FuzzDropPartitionOperation) {
+                            // to handle drop partition here we need to remove all uniqueTimestamps
+                            // values related to the partition that is about to be dropped.
+                            // This is non-trivial and given low probability of issues connected to dedup
+                            // and drop partition combination is not implemented.
+                            throw new RuntimeException("Drop partition operation cannot be supported in this type of dedup test");
+                        }
                         unique.operationList.add(operation);
                     }
                 }
+                unique.reopenTable = transaction.reopenTable;
                 result.add(unique);
             } else {
                 result.add(transaction);
