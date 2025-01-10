@@ -213,7 +213,7 @@ public final class WindowColumn extends QueryColumn {
 
         // If this is an 'order' sensitive window function and there is no ORDER BY, it may depend on its child's ORDER BY clause.
         // todo, need add last_value/last_not_null_value after merged
-        if ((Chars.equalsIgnoreCase(token, FirstValueDoubleWindowFunctionFactory.NAME) &&
+        if ((Chars.equalsIgnoreCase(token, FirstValueDoubleWindowFunctionFactory.NAME) ||
                 Chars.equalsIgnoreCase(token, FirstNotNullValueDoubleWindowFunctionFactory.NAME)) &&
                 orderBy.size() == 0 && modelOrder.size() == 0) {
             return true;
