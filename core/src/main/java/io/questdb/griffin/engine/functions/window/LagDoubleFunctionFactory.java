@@ -117,7 +117,6 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
             MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                     configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER
             );
-
             return new LagOverPartitionFunction(
                     map,
                     windowContext.getPartitionByRecord(),
