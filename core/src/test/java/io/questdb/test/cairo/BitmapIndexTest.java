@@ -89,7 +89,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
         try {
             final FilesFacade ff = configuration.getFilesFacade();
             try (
-                    MemoryMA mem = Vm.getSmallMAInstance(
+                    MemoryMA mem = Vm.getSmallCMARWInstance(
                             ff,
                             BitmapIndexUtils.keyFileName(path, name, COLUMN_NAME_TXN_NONE),
                             MemoryTag.MMAP_DEFAULT,
@@ -238,7 +238,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
 
-                try (MemoryMARW mem = Vm.getMARWInstance()) {
+                try (MemoryMARW mem = Vm.getCMARWInstance()) {
                     try (Path path = new Path()) {
                         path.of(configuration.getRoot()).concat("x").put(".k");
                         mem.wholeFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
@@ -887,7 +887,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
 
-                try (MemoryMARW mem = Vm.getMARWInstance()) {
+                try (MemoryMARW mem = Vm.getCMARWInstance()) {
                     try (Path path = new Path()) {
                         path.of(configuration.getRoot()).concat("x").put(".k");
                         mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);

@@ -51,7 +51,7 @@ public class FuzzDropCreateTableOperation implements FuzzTransactionOperation {
         int timestampIndex = tableWriter.getMetadata().getTimestampIndex();
         recreateTableMetadata = denseMetaCopy(tableWriter.getMetadata(), timestampIndex);
 
-        try (MemoryMARW vm = Vm.getMARWInstance(); Path path = new Path()) {
+        try (MemoryMARW vm = Vm.getCMARWInstance(); Path path = new Path()) {
             engine.releaseInactive();
             while (true) {
                 try {

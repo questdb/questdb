@@ -322,7 +322,7 @@ public class BinarySearchTest extends AbstractCairoTest {
             try (Path path = new Path()) {
                 path.of(root).concat("binsearch.d").$();
                 try (
-                        MemoryA appendMem = Vm.getSmallMAInstance(
+                        MemoryA appendMem = Vm.getSmallCMARWInstance(
                                 TestFilesFacadeImpl.INSTANCE,
                                 path.$(),
                                 MemoryTag.MMAP_DEFAULT,

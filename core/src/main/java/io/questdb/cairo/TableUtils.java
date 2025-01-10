@@ -113,6 +113,7 @@ public final class TableUtils {
     public static final long META_OFFSET_VERSION = 12;
     public static final long META_OFFSET_WAL_ENABLED = 40; // BOOLEAN
     public static final long META_OFFSET_META_FORMAT_MINOR_VERSION = META_OFFSET_WAL_ENABLED + 1; // INT
+    public static final long META_OFFSET_TTL_HOURS_OR_MONTHS = META_OFFSET_META_FORMAT_MINOR_VERSION + 4; // INT
     public static final String META_PREV_FILE_NAME = "_meta.prev";
     /**
      * TXN file structure
@@ -229,7 +230,7 @@ public final class TableUtils {
         // If Low short mismatches it means we cannot rely on High short value.
         // High short is TableUtils.META_MINOR_VERSION_LATEST.
         // Metadata minor version mismatch still allows to read the table, the table storage is forward and backward compatible.
-        // However it indicates some minor flags may be stored incorrectly and have to be re-calculated.
+        // However, it indicates some minor flags may be stored incorrectly and have to be re-calculated.
         return Numbers.encodeLowHighShorts(Numbers.decodeLowShort(metadataVersion), META_MINOR_VERSION_LATEST);
     }
 
@@ -398,7 +399,7 @@ public final class TableUtils {
     ) {
         try (
                 Path path = new Path();
-                MemoryMARW mem = Vm.getMARWInstance()
+                MemoryMARW mem = Vm.getCMARWInstance()
         ) {
             createTable(ff, root, mkDirMode, mem, path, dirName, structure, tableVersion, tableId);
         }
@@ -595,21 +596,6 @@ public final class TableUtils {
 
     public static LPSZ dFile(Path path, CharSequence columnName) {
         return dFile(path, columnName, COLUMN_NAME_TXN_NONE);
-    }
-
-    public static boolean equalColumnNamesAndTypes(RecordMetadata metadataA, RecordMetadata metadataB) {
-        if (metadataA.getColumnCount() != metadataB.getColumnCount()) {
-            return false;
-        }
-        for (int i = 0, n = metadataA.getColumnCount(); i < n; i++) {
-            if (metadataA.getColumnType(i) != metadataB.getColumnType(i)) {
-                return false;
-            }
-            if (!Chars.equals(metadataA.getColumnName(i), metadataB.getColumnName(i))) {
-                return false;
-            }
-        }
-        return true;
     }
 
     public static long estimateAvgRecordSize(RecordMetadata metadata) {
@@ -1764,6 +1750,7 @@ public final class TableUtils {
         mem.putLong(0); // Structure version.
         mem.putBool(tableStruct.isWalEnabled());
         mem.putInt(TableUtils.calculateMetadataMinorFormatVersion(count));
+        mem.putInt(tableStruct.getTtlHoursOrMonths());
         mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
         assert count > 0;
@@ -1936,7 +1923,6 @@ public final class TableUtils {
     }
 
     static {
-        //noinspection ConstantValue
         assert TX_OFFSET_LAG_MAX_TIMESTAMP_64 + 8 <= TX_OFFSET_MAP_WRITER_COUNT_32;
     }
 }

@@ -128,7 +128,11 @@ public class FirstNotNullValueDoubleWindowFunctionFactory extends AbstractWindow
                     );
 
                     final int initialBufferSize = configuration.getSqlWindowInitialRangeBufferSize();
-                    MemoryARW mem = Vm.getARWInstance(configuration.getSqlWindowStorePageSize(), configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                    MemoryARW mem = Vm.getCARWInstance(
+                            configuration.getSqlWindowStorePageSize(),
+                            configuration.getSqlWindowStoreMaxPages(),
+                            MemoryTag.NATIVE_CIRCULAR_BUFFER
+                    );
 
                     // moving average over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
                     return new FirstNotNullValueOverPartitionRangeFrameFunction(
@@ -195,8 +199,10 @@ public class FirstNotNullValueDoubleWindowFunctionFactory extends AbstractWindow
                             columnTypes
                     );
 
-                    MemoryARW mem = Vm.getARWInstance(configuration.getSqlWindowStorePageSize(),
-                            configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER
+                    MemoryARW mem = Vm.getCARWInstance(
+                            configuration.getSqlWindowStorePageSize(),
+                            configuration.getSqlWindowStoreMaxPages(),
+                            MemoryTag.NATIVE_CIRCULAR_BUFFER
                     );
 
                     // moving first over preceding N rows
@@ -247,7 +253,7 @@ public class FirstNotNullValueDoubleWindowFunctionFactory extends AbstractWindow
                     return new FirstValueDoubleWindowFunctionFactory.FirstValueOverCurrentRowFunction(args.get(0));
                 } // between [unbounded | x] preceding and [y preceding | current row]
                 else {
-                    MemoryARW mem = Vm.getARWInstance(
+                    MemoryARW mem = Vm.getCARWInstance(
                             configuration.getSqlWindowStorePageSize(),
                             configuration.getSqlWindowStoreMaxPages(),
                             MemoryTag.NATIVE_CIRCULAR_BUFFER
