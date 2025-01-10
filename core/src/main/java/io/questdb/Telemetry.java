@@ -135,11 +135,13 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
             return null;
         }
 
-        return telemetryQueue.get(cursor);
+        var task = telemetryQueue.get(cursor);
+        task.setQueueCursor(cursor);
+        return task;
     }
 
-    public void store() {
-        telemetryPubSeq.done(telemetryPubSeq.current());
+    public void store(T task) {
+        telemetryPubSeq.done(task.getQueueCursor());
     }
 
     private static short getCpuClass() {
