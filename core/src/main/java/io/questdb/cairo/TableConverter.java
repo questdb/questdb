@@ -83,7 +83,7 @@ public class TableConverter {
                                 .I$();
 
                         path.trimTo(rootLen).concat(dirNameSink);
-                        try (final MemoryMARW metaMem = Vm.getMARWInstance()) {
+                        try (final MemoryMARW metaMem = Vm.getCMARWInstance()) {
                             openSmallFile(ff, path, rootLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
                             final String dirName = dirNameSink.toString();
                             TableToken existingToken = tableNameRegistry.getTableTokenByDirName(dirName);

@@ -48,7 +48,6 @@ import io.questdb.griffin.model.WindowColumn;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -133,7 +132,11 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
                     );
 
                     final int initialBufferSize = configuration.getSqlWindowInitialRangeBufferSize();
-                    MemoryARW mem = Vm.getARWInstance(configuration.getSqlWindowStorePageSize(), configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                    MemoryARW mem = Vm.getCARWInstance(
+                            configuration.getSqlWindowStorePageSize(),
+                            configuration.getSqlWindowStoreMaxPages(),
+                            MemoryTag.NATIVE_CIRCULAR_BUFFER
+                    );
 
                     // moving average over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
                     return new FirstValueOverPartitionRangeFrameFunction(
@@ -194,8 +197,10 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
                             columnTypes
                     );
 
-                    MemoryARW mem = Vm.getARWInstance(configuration.getSqlWindowStorePageSize(),
-                            configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER
+                    MemoryARW mem = Vm.getCARWInstance(
+                            configuration.getSqlWindowStorePageSize(),
+                            configuration.getSqlWindowStoreMaxPages(),
+                            MemoryTag.NATIVE_CIRCULAR_BUFFER
                     );
 
                     // moving average over preceding N rows
@@ -246,7 +251,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
                     return new FirstValueOverCurrentRowFunction(args.get(0));
                 } // between [unbounded | x] preceding and [y preceding | current row]
                 else {
-                    MemoryARW mem = Vm.getARWInstance(
+                    MemoryARW mem = Vm.getCARWInstance(
                             configuration.getSqlWindowStorePageSize(),
                             configuration.getSqlWindowStoreMaxPages(),
                             MemoryTag.NATIVE_CIRCULAR_BUFFER
@@ -765,7 +770,11 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
             initialCapacity = configuration.getSqlWindowStorePageSize() / RECORD_SIZE;
 
             capacity = initialCapacity;
-            memory = Vm.getARWInstance(configuration.getSqlWindowStorePageSize(), configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+            memory = Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
             startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
             firstIdx = 0;
             frameSize = 0;

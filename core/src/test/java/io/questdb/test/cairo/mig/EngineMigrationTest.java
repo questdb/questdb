@@ -25,11 +25,25 @@
 package io.questdb.test.cairo.mig;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoTable;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MetadataCacheReader;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxReader;
+import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
@@ -272,7 +286,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
             String tableName = params[i];
             String partitionBy = params[i + 1];
             assertCairoMetadata(
-                    "CairoTable [name=" + tableName + ", id=1, directoryName=" + tableName + ", isDedup=false, isSoftLink=false, metadataVersion=2, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=" + partitionBy + ", timestampIndex=2, timestampName=ts, walEnabled=false, columnCount=5]\n" +
+                    "CairoTable [name=" + tableName + ", id=1, directoryName=" + tableName + ", isDedup=false, isSoftLink=false, metadataVersion=2, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=" + partitionBy + ", timestampIndex=2, timestampName=ts, ttlHours=0, walEnabled=false, columnCount=5]\n" +
                             "\t\tCairoColumn [name=x, position=0, type=LONG, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=0]\n" +
                             "\t\tCairoColumn [name=m, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=true, indexBlockCapacity=256, writerIndex=1]\n" +
                             "\t\tCairoColumn [name=ts, position=2, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=2]\n" +
@@ -289,7 +303,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
             String tableName = params[i];
             String partitionBy = params[i + 1];
             assertCairoMetadata(
-                    "CairoTable [name=" + tableName + ", id=1, directoryName=" + tableName + ", isDedup=false, isSoftLink=false, metadataVersion=1, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=" + partitionBy + ", timestampIndex=2, timestampName=ts, walEnabled=false, columnCount=4]\n" +
+                    "CairoTable [name=" + tableName + ", id=1, directoryName=" + tableName + ", isDedup=false, isSoftLink=false, metadataVersion=1, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=" + partitionBy + ", timestampIndex=2, timestampName=ts, ttlHours=0, walEnabled=false, columnCount=4]\n" +
                             "\t\tCairoColumn [name=x, position=0, type=LONG, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=0]\n" +
                             "\t\tCairoColumn [name=m, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=true, indexBlockCapacity=256, writerIndex=1]\n" +
                             "\t\tCairoColumn [name=ts, position=2, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=2]\n" +
@@ -305,7 +319,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
             String tableName = params[i];
             String partitionBy = params[i + 1];
             assertCairoMetadata(
-                    "CairoTable [name=" + tableName + ", id=1, directoryName=" + tableName + "~14, isDedup=false, isSoftLink=false, metadataVersion=2, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=" + partitionBy + ", timestampIndex=2, timestampName=ts, walEnabled=true, columnCount=5]\n" +
+                    "CairoTable [name=" + tableName + ", id=1, directoryName=" + tableName + "~14, isDedup=false, isSoftLink=false, metadataVersion=2, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=" + partitionBy + ", timestampIndex=2, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=5]\n" +
                             "\t\tCairoColumn [name=x, position=0, type=LONG, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=0]\n" +
                             "\t\tCairoColumn [name=m, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=true, indexBlockCapacity=256, writerIndex=1]\n" +
                             "\t\tCairoColumn [name=ts, position=2, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=2]\n" +
@@ -336,7 +350,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
                 "\t\tCairoColumn [name=ts, position=15, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=15]";
 
         assertCairoMetadata(
-                "CairoTable [name=" + tableName + ", id=1, directoryName=" + tableName + ", isDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=" + partitionBy + ", timestampIndex=15, timestampName=ts, walEnabled=false, columnCount=16]\n" +
+                "CairoTable [name=" + tableName + ", id=1, directoryName=" + tableName + ", isDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=" + partitionBy + ", timestampIndex=15, timestampName=ts, ttlHours=0, walEnabled=false, columnCount=16]\n" +
                         columns,
                 tableName,
                 ignoreMaxLag
@@ -349,7 +363,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
             String partitionBy = params[i + 1];
             if (partitionBy.equals("NONE_NTS")) {
                 assertCairoMetadata(
-                        "CairoTable [name=" + tableName + ", id=1, directoryName=" + tableName + ", isDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=NONE, timestampIndex=-1, timestampName=, walEnabled=false, columnCount=15]\n" +
+                        "CairoTable [name=" + tableName + ", id=1, directoryName=" + tableName + ", isDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=NONE, timestampIndex=-1, timestampName=, ttlHours=0, walEnabled=false, columnCount=15]\n" +
                                 "\t\tCairoColumn [name=a, position=0, type=BYTE, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=0]\n" +
                                 "\t\tCairoColumn [name=b, position=1, type=CHAR, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=1]\n" +
                                 "\t\tCairoColumn [name=c, position=2, type=SHORT, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=2]\n" +

@@ -245,6 +245,15 @@ public class AlterOperationBuilder implements Mutable {
         return this;
     }
 
+    public AlterOperationBuilder ofSetTtlHoursOrMonths(int tableNamePosition, TableToken tableToken, int tableId, int ttlHoursOrMonths) {
+        this.command = SET_TTL_HOURS_OR_MONTHS;
+        this.tableNamePosition = tableNamePosition;
+        this.tableToken = tableToken;
+        this.extraInfo.add(ttlHoursOrMonths);
+        this.tableId = tableId;
+        return this;
+    }
+
     public AlterOperationBuilder ofSquashPartitions(int tableNamePosition, TableToken tableToken) {
         this.command = SQUASH_PARTITIONS;
         this.tableNamePosition = tableNamePosition;

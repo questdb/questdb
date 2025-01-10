@@ -55,7 +55,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
     private final boolean autoCreateNewTables;
     private final MillisecondClock clock;
     private final LineTcpReceiverConfiguration configuration;
-    private final MemoryMARW ddlMem = Vm.getMARWInstance();
+    private final MemoryMARW ddlMem = Vm.getCMARWInstance();
     private final DefaultColumnTypes defaultColumnTypes;
     private final CairoEngine engine;
     private final LowerCaseCharSequenceObjHashMap<TableUpdateDetails> idleTableUpdateDetailsUtf16;
