@@ -559,7 +559,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 if (transaction.operationList.size() > 0) {
                     var operation = transaction.operationList.getQuick(0);
                     if (operation instanceof FuzzDropCreateTableOperation || operation instanceof FuzzTruncateTableOperation
-                        || operation instanceof FuzzDropPartitionOperation) {
+                            || operation instanceof FuzzDropPartitionOperation) {
                         prevInsertTrans = null;
                     }
                 }
