@@ -168,7 +168,7 @@ public class TableUpdateDetails implements Closeable {
                     .$("network IO thread using table [workerId=").$(workerId)
                     .$(", tableName=").$(tableToken)
                     .$(", nNetworkIoWorkers=").$(networkIOOwnerCount)
-                    .$(']').$();
+                    .I$();
         }
     }
 

@@ -274,7 +274,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         Rnd rnd = new Rnd(outsideRnd.nextLong(), outsideRnd.nextLong());
         Thread th = new Thread(() -> {
             try {
-                MatViewRefreshJob refreshJob = new MatViewRefreshJob(engine);
+                MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
                 while (!stop.get()) {
                     refreshJob.run(0);
                     Os.sleep(rnd.nextInt(1000));

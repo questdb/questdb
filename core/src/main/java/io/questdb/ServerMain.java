@@ -434,7 +434,7 @@ public class ServerMain implements Closeable {
     ) {
         for (int i = 0, workerCount = workerPool.getWorkerCount(); i < workerCount; i++) {
             // create job per worker
-            final MatViewRefreshJob matViewRefreshJob = new MatViewRefreshJob(engine);
+            final MatViewRefreshJob matViewRefreshJob = new MatViewRefreshJob(i, engine);
             workerPool.assign(i, matViewRefreshJob);
             workerPool.freeOnExit(matViewRefreshJob);
         }

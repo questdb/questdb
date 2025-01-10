@@ -79,7 +79,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 );
                 drainWalQueue(main1.getEngine());
 
-                MatViewRefreshJob refreshJob = new MatViewRefreshJob(main1.getEngine());
+                MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main1.getEngine());
                 refreshJob.run(0);
                 drainWalQueue(main1.getEngine());
 
@@ -162,7 +162,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 );
                 drainWalQueue(main1.getEngine());
 
-                MatViewRefreshJob refreshJob = new MatViewRefreshJob(main1.getEngine());
+                MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main1.getEngine());
                 refreshJob.run(0);
                 drainWalQueue(main1.getEngine());
 
@@ -209,7 +209,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
 
                 drainWalQueue(main2.getEngine());
 
-                MatViewRefreshJob refreshJob = new MatViewRefreshJob(main2.getEngine());
+                MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main2.getEngine());
                 refreshJob.run(0);
                 drainWalQueue(main2.getEngine());
 
@@ -246,7 +246,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 );
                 drainWalQueue(main1.getEngine());
 
-                MatViewRefreshJob refreshJob = new MatViewRefreshJob(main1.getEngine());
+                MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main1.getEngine());
                 refreshJob.run(0);
                 drainWalQueue(main1.getEngine());
 
@@ -270,7 +270,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
                     PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
             )) {
-                MatViewRefreshJob refreshJob = new MatViewRefreshJob(main2.getEngine());
+                MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main2.getEngine());
                 refreshJob.run(0);
 
                 assertSql(
@@ -304,7 +304,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 );
                 drainWalQueue(main1.getEngine());
 
-                MatViewRefreshJob refreshJob = new MatViewRefreshJob(main1.getEngine());
+                MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main1.getEngine());
                 refreshJob.run(0);
                 drainWalQueue(main1.getEngine());
 
@@ -325,7 +325,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
                     PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
             )) {
-                MatViewRefreshJob refreshJob = new MatViewRefreshJob(main2.getEngine());
+                MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main2.getEngine());
                 refreshJob.run(0);
 
                 assertSql(

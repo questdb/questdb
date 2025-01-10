@@ -74,7 +74,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainWalQueue();
 
             currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
-            MatViewRefreshJob refreshJob = new MatViewRefreshJob(engine);
+            MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
             refreshJob.run(0);
             drainWalQueue();
 
@@ -167,7 +167,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            MatViewRefreshJob refreshJob = new MatViewRefreshJob(engine);
+            MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
             refreshJob.run(0);
             drainWalQueue();
 
@@ -221,7 +221,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            MatViewRefreshJob refreshJob = new MatViewRefreshJob(engine);
+            MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
             refreshJob.run(0);
             drainWalQueue();
 
@@ -290,7 +290,7 @@ public class MatViewTest extends AbstractCairoTest {
             );
             drainWalQueue();
 
-            MatViewRefreshJob refreshJob = new MatViewRefreshJob(engine);
+            MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
             refreshJob.run(0);
             drainWalQueue();
 
@@ -363,7 +363,7 @@ public class MatViewTest extends AbstractCairoTest {
             );
             drainWalQueue();
 
-            MatViewRefreshJob refreshJob = new MatViewRefreshJob(engine);
+            MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
             refreshJob.run(0);
 
             assertSql(

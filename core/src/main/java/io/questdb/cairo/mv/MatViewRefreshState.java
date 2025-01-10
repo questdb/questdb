@@ -107,6 +107,7 @@ public class MatViewRefreshState implements QuietCloseable {
         isDropped = true;
     }
 
+    // TODO(puzpuzpuz): more unused code?
     public boolean notifyTxnApplied(long seqTxn) {
         return newNotification.compareAndSet(false, true);
     }
@@ -129,13 +130,20 @@ public class MatViewRefreshState implements QuietCloseable {
     }
 
     public void refreshFail(CharSequence errorMessage, long refreshTimestamp) {
+        // should be called
         assert locked.get();
         this.lastRefreshTimestamp = refreshTimestamp;
         getErrorSink().put(errorMessage);
         this.errorCode = Integer.MIN_VALUE;
     }
 
-    public void refreshSuccess(RecordCursorFactory factory, RecordToRowCopier copier, long recordRowCopierMetadataVersion, long rowCount, long refreshTimestamp) {
+    public void refreshSuccess(
+            RecordCursorFactory factory,
+            RecordToRowCopier copier,
+            long recordRowCopierMetadataVersion,
+            long rowCount,
+            long refreshTimestamp
+    ) {
         assert locked.get();
         this.cursorFactory = factory;
         this.recordToRowCopier = copier;

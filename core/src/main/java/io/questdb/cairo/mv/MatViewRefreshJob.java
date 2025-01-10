@@ -49,7 +49,7 @@ import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.SynchronizedJob;
+import io.questdb.mp.Job;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
@@ -58,7 +58,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
-public class MatViewRefreshJob extends SynchronizedJob implements QuietCloseable {
+public class MatViewRefreshJob implements Job, QuietCloseable {
     private static final Log LOG = LogFactory.getLog(MatViewRefreshJob.class);
     private final ObjList<CharSequence> baseTables = new ObjList<>();
     private final ObjList<TableToken> childViewSink = new ObjList<>();
@@ -68,8 +68,10 @@ public class MatViewRefreshJob extends SynchronizedJob implements QuietCloseable
     private final MicrosecondClock microsecondClock;
     private final MatViewRefreshTask mvRefreshTask = new MatViewRefreshTask();
     private final WalTxnRangeLoader txnRangeLoader;
+    private final int workerId;
 
-    public MatViewRefreshJob(CairoEngine engine) {
+    public MatViewRefreshJob(int workerId, CairoEngine engine) {
+        this.workerId = workerId;
         this.engine = engine;
         this.matViewRefreshExecutionContext = new MatViewRefreshExecutionContext(engine);
         this.txnRangeLoader = new WalTxnRangeLoader(engine.getConfiguration().getFilesFacade());
@@ -78,7 +80,15 @@ public class MatViewRefreshJob extends SynchronizedJob implements QuietCloseable
 
     @Override
     public void close() {
+        LOG.info().$("materialized view refresh job closing [workerId=").$(workerId).I$();
         Misc.free(matViewRefreshExecutionContext);
+    }
+
+    @Override
+    public boolean run(int workerId, @NotNull RunStatus runStatus) {
+        // there is job instance per thread, the worker id must never change for this job
+        assert this.workerId == workerId;
+        return refreshNotifiedViews();
     }
 
     private boolean findCommitTimestampRanges(
@@ -223,8 +233,9 @@ public class MatViewRefreshJob extends SynchronizedJob implements QuietCloseable
                 } catch (TableReferenceOutOfDateException e) {
                     factory = Misc.free(factory);
                     if (i == maxRecompileAttempts - 1) {
-                        LOG.error().$("error refreshing materialized view, base table is under heavy DDL changes [view=")
-                                .$(viewDef.getMatViewToken()).$(", recompileAttempts=").$(maxRecompileAttempts).I$();
+                        LOG.error().$("error refreshing materialized view, base table is under heavy DDL changes [view=").$(viewDef.getMatViewToken())
+                                .$(", recompileAttempts=").$(maxRecompileAttempts)
+                                .I$();
                         state.refreshFail(e, refreshTimestamp);
                         return false;
                     }
@@ -247,6 +258,7 @@ public class MatViewRefreshJob extends SynchronizedJob implements QuietCloseable
         return rowCount > 0;
     }
 
+    // TODO(puzpuzpuz): unused code?
     private boolean refreshAll() {
         LOG.info().$("refreshing ALL materialized views").$();
         baseTables.clear();
@@ -261,8 +273,7 @@ public class MatViewRefreshJob extends SynchronizedJob implements QuietCloseable
                 refreshed |= refreshDependentViews(baseToken, viewGraph);
             } else {
                 // TODO: include more details of the views not to be refreshed
-                LOG.error().$("found materialized views dependent on deleted table that will not be refreshed [parent=")
-                        .$(baseName).I$();
+                LOG.error().$("found materialized views dependent on deleted table that will not be refreshed [parent=").$(baseName).I$();
             }
         }
         return refreshed;
@@ -273,8 +284,7 @@ public class MatViewRefreshJob extends SynchronizedJob implements QuietCloseable
         boolean refreshed = false;
 
         if (!baseToken.isWal()) {
-            LOG.error().$("Found materialized views dependent on non-WAL table that will not be refreshed [parent=")
-                    .$(baseToken.getTableName()).I$();
+            LOG.error().$("found materialized views dependent on non-WAL table that will not be refreshed [parent=").utf8(baseToken.getTableName()).I$();
         }
 
         viewGraph.getAffectedViews(baseToken, childViewSink);
@@ -291,9 +301,7 @@ public class MatViewRefreshJob extends SynchronizedJob implements QuietCloseable
                 MatViewRefreshState state = viewGraph.getViewRefreshState(viewToken);
                 assert state != null;
                 if (!state.tryLock()) {
-                    LOG.info().$("skipping mat view refresh, locked by another refresh run [viewToken=")
-                            .$(viewToken)
-                            .$();
+                    LOG.info().$("skipping mat view refresh, locked by another refresh run [viewToken=").$(viewToken).$();
                     continue;
                 }
 
@@ -322,7 +330,8 @@ public class MatViewRefreshJob extends SynchronizedJob implements QuietCloseable
                     engine.verifyTableToken(baseTable);
                 } catch (CairoException th) {
                     LOG.info().$("materialized view base table has name changed or dropped [table=").$(baseTable)
-                            .$(", error=").$(th.getFlyweightMessage()).I$();
+                            .$(", error=").$(th.getFlyweightMessage())
+                            .I$();
                     continue;
                 }
                 LOG.info().$("refreshing materialized views dependent on [table=").$(baseTable).I$();
@@ -330,7 +339,6 @@ public class MatViewRefreshJob extends SynchronizedJob implements QuietCloseable
             } else {
                 refreshed = refreshView(viewToken, materializedViewGraph);
             }
-
         }
         return refreshed;
     }
@@ -429,8 +437,7 @@ public class MatViewRefreshJob extends SynchronizedJob implements QuietCloseable
                         return changed;
                     } catch (CairoException ex) {
                         if (ex.isTableDropped() || ex.tableDoesNotExist()) {
-                            LOG.info().$("materialized view is dropped, removing it from materialized view graph" +
-                                    " [view=").$(viewToken).I$();
+                            LOG.info().$("materialized view is dropped, removing it from materialized view graph [view=").$(viewToken).I$();
                             viewGraph.dropViewIfExists(viewToken);
                         } else {
                             throw ex;
@@ -440,15 +447,11 @@ public class MatViewRefreshJob extends SynchronizedJob implements QuietCloseable
             } finally {
                 matViewRefreshExecutionContext.clean();
             }
-        } catch (SqlException sqlException) {
-            LOG.error().$("error refreshing materialized view [view=").$(viewToken).$(", error=")
-                    .$(sqlException.getFlyweightMessage()).I$();
+        } catch (SqlException e) {
+            LOG.error().$("error refreshing materialized view [view=").$(viewToken)
+                    .$(", error=").$(e.getFlyweightMessage())
+                    .I$();
         }
         return false;
-    }
-
-    @Override
-    protected boolean runSerially() {
-        return refreshNotifiedViews();
     }
 }
