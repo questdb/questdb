@@ -82,7 +82,7 @@ import io.questdb.griffin.engine.ops.CreateMatViewOperation;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
-import io.questdb.griffin.engine.ops.DropAllTablesOperation;
+import io.questdb.griffin.engine.ops.DropAllOperation;
 import io.questdb.griffin.engine.ops.DropMatViewOperation;
 import io.questdb.griffin.engine.ops.DropMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.DropTableOperation;
@@ -409,7 +409,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             case OperationCodes.DROP_MAT_VIEW:
                 executeDropMatView((DropMatViewOperation) op, executionContext);
                 break;
-            case OperationCodes.DROP_ALL_TABLES:
+            case OperationCodes.DROP_ALL:
                 executeDropAllTables(executionContext);
                 break;
             default:
@@ -1815,23 +1815,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 dropMatViewOperationBuilder.of(matViewNameInterned, tableNamePosition, hasIfExists);
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok != null && !Chars.equals(tok, ';')) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "expected [;]");
+                    throw SqlException.$(lexer.lastTokenPosition(), "expected ';'");
                 }
                 dropMatViewOperationBuilder.setSqlText(sqlText);
                 compiledQuery.ofDrop(dropMatViewOperationBuilder.build());
             } else if (SqlKeywords.isAllKeyword(tok)) {
-                // DROP ALL TABLES [;]
+                // DROP ALL[;] or legacy DROP ALL TABLES [;]
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok != null && SqlKeywords.isTablesKeyword(tok)) {
                     tok = SqlUtil.fetchNext(lexer);
-                    if (tok == null || Chars.equals(tok, ';')) {
-                        compiledQuery.ofDrop(DropAllTablesOperation.INSTANCE);
-                    } else {
-                        throw SqlException.$(lexer.lastTokenPosition(), "expected [;]");
-                    }
-                } else {
-                    throw SqlException.position(lexer.lastTokenPosition()).put("'tables' expected");
                 }
+                if (tok != null && !Chars.equals(tok, ';')) {
+                    throw SqlException.position(lexer.lastTokenPosition()).put("';' or 'tables' expected");
+                }
+                compiledQuery.ofDrop(DropAllOperation.INSTANCE);
             } else {
                 compileDropOther(executionContext, tok, lexer.lastTokenPosition());
             }

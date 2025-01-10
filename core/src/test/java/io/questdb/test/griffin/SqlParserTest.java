@@ -3538,6 +3538,33 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDropAll0() throws Exception {
+        assertSyntaxError(
+                "drop foobar",
+                5,
+                "'table' or 'all tables' or 'materialized view' expected"
+        );
+    }
+
+    @Test
+    public void testDropAll1() throws Exception {
+        assertSyntaxError(
+                "drop all foobar",
+                9,
+                "';' or 'tables' expected"
+        );
+    }
+
+    @Test
+    public void testDropAll2() throws Exception {
+        assertSyntaxError(
+                "drop all tables foobar",
+                16,
+                "';' or 'tables' expected"
+        );
+    }
+
+    @Test
     public void testDropMaterializedViewIfExistsMissingName() throws Exception {
         assertSyntaxError(
                 "drop materialized view if exists",

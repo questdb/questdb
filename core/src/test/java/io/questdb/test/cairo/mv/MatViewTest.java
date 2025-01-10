@@ -58,9 +58,7 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testBaseTableRename() throws Exception {
-
         assertMemoryLeak(() -> {
-
             execute("create table base_price (" +
                     "sym varchar, price double, ts timestamp" +
                     ") timestamp(ts) partition by DAY WAL"
@@ -116,7 +114,6 @@ public class MatViewTest extends AbstractCairoTest {
                     "views"
             );
         });
-
     }
 
     @Test
@@ -200,6 +197,60 @@ public class MatViewTest extends AbstractCairoTest {
 
             Assert.assertNull(engine.getMaterializedViewGraph().getViewRefreshState(matViewToken1));
             Assert.assertNotNull(engine.getMaterializedViewGraph().getViewRefreshState(matViewToken2));
+        });
+    }
+
+    @Test
+    public void testDropAll() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+            TableToken matViewToken = engine.verifyTableName("price_1h");
+
+            execute(
+                    "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            );
+
+            drainWalQueue();
+
+            MatViewRefreshJob refreshJob = new MatViewRefreshJob(engine);
+            refreshJob.run(0);
+            drainWalQueue();
+
+            assertSql(
+                    "sym\tprice\tts\n" +
+                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
+                    "price_1h order by ts, sym"
+            );
+
+            // mat view should be deleted
+            execute("drop all;");
+
+            refreshJob.run(0);
+            drainWalQueue();
+
+            assertSql(
+                    "count\n" +
+                            "0\n",
+                    "select count() from views();"
+            );
+            assertSql(
+                    "count\n" +
+                            "0\n",
+                    "select count() from tables();"
+            );
+
+            Assert.assertNull(engine.getMaterializedViewGraph().getViewRefreshState(matViewToken));
         });
     }
 
