@@ -98,6 +98,7 @@ public class ViewsFunctionFactory implements FunctionFactory {
         }
 
         private static class ViewsListCursor implements NoRandomAccessRecordCursor {
+            private final MatViewRefreshState.ErrorHolder errorHolder = new MatViewRefreshState.ErrorHolder();
             private final ViewsListRecord record = new ViewsListRecord();
             private final ObjList<TableToken> viewTokens = new ObjList<>();
             private MatViewGraph matViewGraph;
@@ -124,11 +125,12 @@ public class ViewsFunctionFactory implements FunctionFactory {
                     final TableToken viewToken = viewTokens.get(viewIndex);
                     final MatViewRefreshState viewState = matViewGraph.getViewRefreshState(viewToken);
                     if (viewState != null && !viewState.isDropped()) {
+                        viewState.copyError(errorHolder);
                         record.of(
                                 viewState.getViewDefinition(),
                                 viewState.getLastRefreshTimestamp(),
-                                viewState.getLastError(),
-                                viewState.getLastErrorCode(),
+                                errorHolder.getErrorMsg(),
+                                errorHolder.getErrorCode(),
                                 viewState.isRefreshPending()
                         );
                         viewIndex++;
@@ -204,7 +206,13 @@ public class ViewsFunctionFactory implements FunctionFactory {
                     return getStrA(col);
                 }
 
-                public void of(MatViewDefinition viewDefinition, long lastRefreshTimestamp, CharSequence lastError, int lastErrorCode, boolean refreshPending) {
+                public void of(
+                        MatViewDefinition viewDefinition,
+                        long lastRefreshTimestamp,
+                        CharSequence lastError,
+                        int lastErrorCode,
+                        boolean refreshPending
+                ) {
                     this.viewDefinition = viewDefinition;
                     this.lastRefreshTimestamp = lastRefreshTimestamp;
                     this.lastError = lastError != null && lastError.length() != 0 ? lastError : null;

@@ -36,6 +36,7 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.ThreadLocal;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 public class MatViewGraph implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(MatViewGraph.class);
@@ -44,6 +45,7 @@ public class MatViewGraph implements QuietCloseable {
     private final ConcurrentQueue<MatViewRefreshTask> refreshTaskQueue = new ConcurrentQueue<>(MatViewRefreshTask::new);
     private final ThreadLocal<MatViewRefreshTask> taskHolder = new ThreadLocal<>(MatViewRefreshTask::new);
 
+    @TestOnly
     public void clear() {
         close();
     }

@@ -31,9 +31,13 @@ import io.questdb.std.str.GcUtf8String;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 
+/**
+ * Stands for a WAL table, or a non-WAL table, or a materialized view.
+ */
 public class TableToken implements Sinkable {
     @NotNull
     private final GcUtf8String dirName;
+    private final boolean dirNameSameAsTableName;
     private final boolean isMatView;
     private final boolean isProtected;
     private final boolean isPublic;
@@ -42,7 +46,6 @@ public class TableToken implements Sinkable {
     private final int tableId;
     @NotNull
     private final String tableName;
-    private final boolean dirNameSameAsTableName;
 
     public TableToken(@NotNull String tableName, @NotNull String dirName, int tableId, boolean isWal, boolean isSystem, boolean isProtected) {
         this(tableName, new GcUtf8String(dirName), tableId, false, isWal, isSystem, isProtected, false);
@@ -64,8 +67,7 @@ public class TableToken implements Sinkable {
         String dirNameString = dirName.toString();
         this.dirNameSameAsTableName = Chars.startsWith(dirNameString, tableName) &&
                 (dirNameString.length() == tableName.length() ||
-                        (dirNameString.length() > tableName.length() && dirNameString.charAt(tableName.length()) == '~')
-                );
+                        (dirNameString.length() > tableName.length() && dirNameString.charAt(tableName.length()) == '~'));
     }
 
     @Override

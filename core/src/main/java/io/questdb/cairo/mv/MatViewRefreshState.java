@@ -31,19 +31,23 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.SimpleReadWriteLock;
 import io.questdb.std.str.StringSink;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MatViewRefreshState implements QuietCloseable {
-    private final AtomicBoolean locked = new AtomicBoolean(false);
+    // protects errorCode and errorSink
+    private final SimpleReadWriteLock errorLock = new SimpleReadWriteLock();
+    // used to avoid concurrent refresh runs
+    private final AtomicBoolean latch = new AtomicBoolean(false);
     private final AtomicBoolean newNotification = new AtomicBoolean();
     private final MatViewDefinition viewDefinition;
     private RecordCursorFactory cursorFactory;
     private int errorCode;
     private StringSink errorSink;
     private volatile boolean isDropped;
-    private long lastRefreshTimestamp = Numbers.LONG_NULL;
+    private volatile long lastRefreshTimestamp = Numbers.LONG_NULL;
     private long recordRowCopierMetadataVersion;
     private RecordToRowCopier recordToRowCopier;
 
@@ -52,6 +56,7 @@ public class MatViewRefreshState implements QuietCloseable {
     }
 
     public RecordCursorFactory acquireRecordFactory() {
+        assert latch.get();
         RecordCursorFactory factory = cursorFactory;
         cursorFactory = null;
         return factory;
@@ -63,20 +68,26 @@ public class MatViewRefreshState implements QuietCloseable {
     }
 
     public void compilationFail(SqlException e, long refreshTimestamp) {
-        assert locked.get();
+        assert latch.get();
         this.lastRefreshTimestamp = refreshTimestamp;
-        getErrorSink().put(e.getFlyweightMessage());
-        errorCode = e.getPosition();
+        errorLock.writeLock().lock();
+        try {
+            errorCode = e.getPosition();
+            getErrorSink().put(e.getFlyweightMessage());
+        } finally {
+            errorLock.writeLock().unlock();
+        }
     }
 
-    public CharSequence getLastError() {
-        // TODO(puzpuzpuz): synchronize read and write
-        return errorSink;
-    }
-
-    public int getLastErrorCode() {
-        // TODO(puzpuzpuz): synchronize read and write
-        return errorCode;
+    public void copyError(ErrorHolder holder) {
+        errorLock.readLock().lock();
+        try {
+            holder.errorSink.clear();
+            holder.errorSink.put(errorSink);
+            holder.errorCode = errorCode;
+        } finally {
+            errorLock.readLock().unlock();
+        }
     }
 
     public long getLastRefreshTimestamp() {
@@ -96,7 +107,7 @@ public class MatViewRefreshState implements QuietCloseable {
     }
 
     public boolean isDropped() {
-        return this.isDropped;
+        return isDropped;
     }
 
     public boolean isRefreshPending() {
@@ -113,38 +124,46 @@ public class MatViewRefreshState implements QuietCloseable {
     }
 
     public void refreshFail(Throwable th, long refreshTimestamp) {
-        assert locked.get();
+        assert latch.get();
         this.lastRefreshTimestamp = refreshTimestamp;
-        if (th instanceof CairoException) {
-            getErrorSink().put(((CairoException) th).getFlyweightMessage());
-            errorCode = ((CairoException) th).getErrno();
-        } else {
-            errorCode = -1;
-            StringSink sink = getErrorSink();
-            sink.put(th.getClass().getSimpleName());
-            if (th.getMessage() != null) {
-                sink.put(": ");
-                sink.put(th.getMessage());
+        errorLock.writeLock().lock();
+        try {
+            if (th instanceof CairoException) {
+                errorCode = ((CairoException) th).getErrno();
+                getErrorSink().put(((CairoException) th).getFlyweightMessage());
+            } else {
+                errorCode = -1;
+                StringSink sink = getErrorSink();
+                sink.put(th.getClass().getSimpleName());
+                if (th.getMessage() != null) {
+                    sink.put(": ");
+                    sink.put(th.getMessage());
+                }
             }
+        } finally {
+            errorLock.writeLock().unlock();
         }
     }
 
     public void refreshFail(CharSequence errorMessage, long refreshTimestamp) {
-        // should be called
-        assert locked.get();
+        assert latch.get();
         this.lastRefreshTimestamp = refreshTimestamp;
-        getErrorSink().put(errorMessage);
-        this.errorCode = Integer.MIN_VALUE;
+        errorLock.writeLock().lock();
+        try {
+            errorCode = Integer.MIN_VALUE;
+            getErrorSink().put(errorMessage);
+        } finally {
+            errorLock.writeLock().unlock();
+        }
     }
 
     public void refreshSuccess(
             RecordCursorFactory factory,
             RecordToRowCopier copier,
             long recordRowCopierMetadataVersion,
-            long rowCount,
             long refreshTimestamp
     ) {
-        assert locked.get();
+        assert latch.get();
         this.cursorFactory = factory;
         this.recordToRowCopier = copier;
         this.recordRowCopierMetadataVersion = recordRowCopierMetadataVersion;
@@ -152,16 +171,16 @@ public class MatViewRefreshState implements QuietCloseable {
     }
 
     public boolean tryLock() {
-        return locked.compareAndSet(false, true);
+        return latch.compareAndSet(false, true);
     }
 
     public void unlock() {
-        if (locked.get() && isDropped) {
+        if (latch.get() && isDropped) {
             // Dropped while it was in use.
             close();
         }
 
-        if (!locked.compareAndSet(true, false)) {
+        if (!latch.compareAndSet(true, false)) {
             throw new IllegalStateException("cannot unlock, not locked");
         }
     }
@@ -173,5 +192,18 @@ public class MatViewRefreshState implements QuietCloseable {
         }
         errorSink.clear();
         return errorSink;
+    }
+
+    public static class ErrorHolder {
+        private final StringSink errorSink = new StringSink();
+        private int errorCode;
+
+        public int getErrorCode() {
+            return errorCode;
+        }
+
+        public CharSequence getErrorMsg() {
+            return errorSink;
+        }
     }
 }
