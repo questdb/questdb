@@ -553,14 +553,24 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
     }
 
+    public void copyOrderBy(ObjList<ExpressionNode> orderBy) {
+        this.orderBy.clear();
+        this.orderBy.addAll(orderBy);
+    }
+
     public void copyOrderByAdvice(ObjList<ExpressionNode> orderByAdvice) {
         this.orderByAdvice.clear();
         this.orderByAdvice.addAll(orderByAdvice);
     }
 
-    public void copyOrderByDirectionAdvice(IntList orderByDirection) {
+    public void copyOrderByDirection(IntList orderByDirection) {
+        this.orderByDirection.clear();
+        this.orderByDirection.addAll(orderByDirection);
+    }
+
+    public void copyOrderByDirectionAdvice(IntList orderByDirectionAdvice) {
         this.orderByDirectionAdvice.clear();
-        this.orderByDirectionAdvice.addAll(orderByDirection);
+        this.orderByDirectionAdvice.addAll(orderByDirectionAdvice);
     }
 
     public void copyUpdateTableMetadata(QueryModel updateTableModel) {

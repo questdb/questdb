@@ -5909,6 +5909,26 @@ public class SqlOptimiser implements Mutable {
             root.setSetOperationType(model.getSetOperationType());
             root.setModelPosition(model.getModelPosition());
             root.moveFillFrom(model);
+            if (root.getFillValues() != null && root.getFillValues().size() > 0) {
+                QueryModel nested = root.getNestedModel();
+                if (nested.getOrderBy().size() > 0) {
+                    ExpressionNode orderBy = nested.getOrderBy().getQuick(0);
+                    if (orderBy.type == CONSTANT) {
+                        try {
+                            int i = Numbers.parseInt(orderBy.token);
+                            QueryColumn col = root.getColumns().get(i - 1);
+                            CharSequence toAdd = col.getName();
+                            root.addOrderBy(expressionNodePool.next().of(
+                                    LITERAL,
+                                    toAdd,
+                                    col.getAst().precedence,
+                                    col.getAst().position
+                            ), ORDER_DIRECTION_ASCENDING);
+                        } catch (NumericException ignore) {
+                        }
+                    }
+                }
+            }
             if (model.isUpdate()) {
                 root.setIsUpdate(true);
                 root.copyUpdateTableMetadata(model);
