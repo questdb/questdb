@@ -3507,11 +3507,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             @NotNull CharSequence tok,
             int position
     ) throws SqlException {
-        throw SqlException.position(position).put("'table' or 'all tables' or 'materialized view' expected");
+        throw SqlException.position(position).put("'table' or 'materialized view' or 'all' expected");
     }
 
     protected void compileDropReportExpected(int position) throws SqlException {
-        throw SqlException.position(position).put("'table' or 'all tables' or 'materialized view' expected");
+        throw SqlException.position(position).put("'table' or 'materialized view' or 'all' expected");
     }
 
     protected void compileDropTableExt(

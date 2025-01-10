@@ -3542,7 +3542,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "drop foobar",
                 5,
-                "'table' or 'all tables' or 'materialized view' expected"
+                "'table' or 'materialized view' or 'all' expected"
         );
     }
 
@@ -3596,7 +3596,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "drop tables tab1 tab2",
                 5,
-                "'table' or 'all tables' or 'materialized view' expected",
+                "'table' or 'materialized view' or 'all' expected",
                 modelOf("tab1").col("a", ColumnType.INT).col("b", ColumnType.INT),
                 modelOf("tab2").col("a", ColumnType.INT).col("b", ColumnType.INT)
         );
@@ -3607,7 +3607,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "drop tables tab1, ",
                 5,
-                "'table' or 'all tables' or 'materialized view' expected",
+                "'table' or 'materialized view' or 'all' expected",
                 modelOf("tab1").col("a", ColumnType.INT).col("b", ColumnType.INT),
                 modelOf("tab2").col("a", ColumnType.INT).col("b", ColumnType.INT)
         );
