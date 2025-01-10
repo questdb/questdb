@@ -96,8 +96,6 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         AbstractCairoTest.tearDownStatic();
     }
 
-
-
     @Test
     public void testAlreadyDetached1() throws Exception {
         assertFailure(
