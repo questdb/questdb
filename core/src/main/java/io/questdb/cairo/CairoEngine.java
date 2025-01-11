@@ -33,6 +33,7 @@ import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.pool.AbstractMultiTenantPool;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ReaderPool;
+import io.questdb.cairo.pool.ResourcePoolSupervisor;
 import io.questdb.cairo.pool.SequencerMetadataPool;
 import io.questdb.cairo.pool.SqlCompilerPool;
 import io.questdb.cairo.pool.TableMetadataPool;
@@ -362,6 +363,10 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public void closeNameRegistry() {
         tableNameRegistry.close();
+    }
+
+    public void configureThreadLocalReaderPoolSupervisor(@NotNull ResourcePoolSupervisor<ReaderPool.R> supervisor) {
+        readerPool.configureThreadLocalPoolSupervisor(supervisor);
     }
 
     public @NotNull TableToken createTable(
@@ -836,7 +841,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void load() {
         // Convert tables to WAL/non-WAL, if necessary.
-        final ObjList<TableToken> convertedTables = TableConverter.convertTables(this, tableSequencerAPI, tableFlagResolver);
+        final ObjList<TableToken> convertedTables = TableConverter.convertTables(this, tableSequencerAPI, tableFlagResolver, tableNameRegistry);
         tableNameRegistry.reload(convertedTables);
     }
 
@@ -1048,6 +1053,10 @@ public class CairoEngine implements Closeable, WriterSource {
                     (short) 0
             );
         }
+    }
+
+    public void removeThreadLocalReaderPoolSupervisor() {
+        readerPool.removeThreadLocalPoolSupervisor();
     }
 
     public TableToken rename(

@@ -2772,6 +2772,8 @@ if __name__ == "__main__":
 
     @Test
     public void testCancelRunningQuery() throws Exception {
+        // legacy code is liable to "resume" cursor after "cursor.close()", which would lead to undefined behaviour
+        Assume.assumeFalse(legacyMode);
         String[] queries = {
                 "create table new_tab as (select count(*) from tab t1 join tab t2 on t1.x = t2.x where sleep(120000))",
                 "select count(*) from tab t1 join tab t2 on t1.x = t2.x where sleep(120000)",
@@ -7394,7 +7396,7 @@ nodejs code:
                 ps1.executeQuery();
                 Assert.fail("PSQLException should be thrown");
             } catch (PSQLException e) {
-                assertContains(e.getMessage(), "there is no matching operator`!=` with the argument types: BOOLEAN != STRING");
+                assertContains(e.getMessage(), "there is no matching operator `!=` with the argument types: BOOLEAN != STRING");
             }
 
             try (PreparedStatement s = connection.prepareStatement("select 2 a,2 b from long_sequence(1) where x > 0 and x < 10")) {
@@ -7420,7 +7422,7 @@ nodejs code:
                 ps1.executeQuery();
                 Assert.fail("PSQLException should be thrown");
             } catch (PSQLException e) {
-                assertContains(e.getMessage(), "there is no matching operator`!=` with the argument types: BOOLEAN != STRING");
+                assertContains(e.getMessage(), "there is no matching operator `!=` with the argument types: BOOLEAN != STRING");
             }
 
             try (PreparedStatement s = connection.prepareStatement("select 2 a,2 b from long_sequence(1) where x > 0 and x < 10")) {

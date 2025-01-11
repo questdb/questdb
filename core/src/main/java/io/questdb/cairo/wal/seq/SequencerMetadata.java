@@ -67,7 +67,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         this.ff = ff;
         this.readonly = readonly;
         if (!readonly) {
-            roMetaMem = metaMem = Vm.getMARWInstance();
+            roMetaMem = metaMem = Vm.getCMARWInstance();
         } else {
             metaMem = null;
             roMetaMem = Vm.getCMRInstance();

@@ -117,7 +117,7 @@ class TableReaderMetadataTenantImpl extends TableReaderMetadata implements PoolT
     }
 
     @Override
-    public void refresh() {
+    public void refresh(ResourcePoolSupervisor<TableReaderMetadataTenantImpl> supervisor) {
         reload();
     }
 

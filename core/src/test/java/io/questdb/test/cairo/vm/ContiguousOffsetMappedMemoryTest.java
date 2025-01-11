@@ -58,8 +58,8 @@ public class ContiguousOffsetMappedMemoryTest extends AbstractTest {
                 try (MemoryCMORImpl memoryROffset = new MemoryCMORImpl()) {
                     memoryROffset.ofOffset(ff, path.$(), Files.PAGE_SIZE, Files.PAGE_SIZE, MemoryTag.NATIVE_DEFAULT);
                     memoryROffset.extend(Files.PAGE_SIZE);
-                    Assert.assertEquals(memoryROffset.size(), Files.PAGE_SIZE);
-                    Assert.assertEquals(memoryROffset.getOffset(), 0);
+                    Assert.assertEquals(Files.PAGE_SIZE, memoryROffset.size());
+                    Assert.assertEquals(0, memoryROffset.getOffset());
                 }
             });
         }
@@ -201,8 +201,8 @@ public class ContiguousOffsetMappedMemoryTest extends AbstractTest {
 
                     memoryROffset.growToFileSize();
                     Assert.assertEquals(2 * Files.PAGE_SIZE, memoryROffset.size());
-                    Assert.assertEquals(memoryROffset.size(), 2 * Files.PAGE_SIZE);
-                    Assert.assertEquals(memoryROffset.getOffset() + memoryROffset.size(), 3 * Files.PAGE_SIZE);
+                    Assert.assertEquals(2 * Files.PAGE_SIZE, memoryROffset.size());
+                    Assert.assertEquals(3 * Files.PAGE_SIZE, memoryROffset.getOffset() + memoryROffset.size());
                 }
             });
         }
@@ -255,7 +255,7 @@ public class ContiguousOffsetMappedMemoryTest extends AbstractTest {
         Assert.assertTrue(fd > 0);
 
         try (
-                MemoryMARW memoryW = Vm.getMARWInstance();
+                MemoryMARW memoryW = Vm.getCMARWInstance();
                 Path fileName = new Path().of(testName.getMethodName())
         ) {
             memoryW.of(ff, fd, fileName.$(), 16, 0);

@@ -239,7 +239,10 @@ public class TableWriterTest extends AbstractCairoTest {
             TableModel model = new TableModel(configuration, "testAddColumnConcurrentWithDataUpdates", PartitionBy.NONE);
             model.timestamp();
             TableToken token;
-            try (Path path = new Path(); MemoryMARW mem = Vm.getMARWInstance()) {
+            try (
+                    Path path = new Path();
+                    MemoryMARW mem = Vm.getCMARWInstance()
+            ) {
                 token = TestUtils.createTable(engine, mem, path, model, tableId, model.getTableName());
             }
 
@@ -1030,7 +1033,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             // this contraption will verify that all timestamps that are
             // supposed to be stored have matching partitions
-            try (MemoryARW vmem = Vm.getARWInstance(FF.getPageSize(), Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+            try (MemoryARW vmem = Vm.getCARWInstance(FF.getPageSize(), Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
                 try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
                     long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
                     int i = 0;
@@ -1209,7 +1212,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             // this contraption will verify that all timestamps that are
             // supposed to be stored have matching partitions
-            try (MemoryARW vmem = Vm.getARWInstance(ff.getPageSize(), Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+            try (MemoryARW vmem = Vm.getCARWInstance(ff.getPageSize(), Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
                 try (TableWriter writer = newOffPoolWriter(new DefaultTestCairoConfiguration(root) {
                     @Override
                     public @NotNull FilesFacade getFilesFacade() {
@@ -3180,6 +3183,31 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testUnCachedSymbol() {
         testSymbolCacheFlag(false);
+    }
+
+    @Test
+    public void testUncommittedEnforceTtl() throws Exception {
+        String tango = "tango";
+        TableModel model = new TableModel(configuration, tango, PartitionBy.HOUR)
+                .timestamp("ts")
+                .ttlHoursOrMonths(1);
+        AbstractCairoTest.create(model);
+        try (TableWriter writer = newOffPoolWriter(configuration, tango)) {
+            writer.newRow(1).append();
+            writer.newRow(Timestamps.HOUR_MICROS + 1).append();
+            writer.commit();
+        }
+        assertSql("ts\n" +
+                "1970-01-01T00:00:00.000001Z\n" +
+                "1970-01-01T01:00:00.000001Z\n", "tango");
+        try (TableWriter writer = newOffPoolWriter(configuration, tango)) {
+            writer.newRow(2 * Timestamps.HOUR_MICROS + 1).append();
+            writer.enforceTtl();
+            writer.commit();
+        }
+        assertSql("ts\n" +
+                "1970-01-01T01:00:00.000001Z\n" +
+                "1970-01-01T02:00:00.000001Z\n", "tango");
     }
 
     @Test
