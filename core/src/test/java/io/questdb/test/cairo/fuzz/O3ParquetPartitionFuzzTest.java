@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.cairo.o3;
+package io.questdb.test.cairo.fuzz;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.PartitionBy;
@@ -41,6 +41,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.cairo.o3.AbstractO3Test;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.fuzz.FuzzTransactionGenerator;
 import io.questdb.test.fuzz.FuzzTransactionOperation;
@@ -154,13 +155,14 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
                     0,
                     0,
                     0,
-                    0,
-                    0.0,
                     rnd.nextDouble(),
                     0,
+                    0.0,
+                    0,
+                    0,
+                    0.0,
                     5,
                     new String[]{"ABC", "CDE", "XYZ"},
-                    0,
                     0
             );
 

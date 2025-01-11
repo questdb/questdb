@@ -70,7 +70,8 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
 
     @Override
     public char getChar(Record rec) {
-        throw new UnsupportedOperationException();
+        CharSequence value = getSymbol(rec);
+        return value == null ? 0 : value.charAt(0);
     }
 
     @Override

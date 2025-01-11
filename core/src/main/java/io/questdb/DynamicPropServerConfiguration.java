@@ -39,6 +39,7 @@ import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfigurationWrapper;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.Files;
@@ -219,20 +220,24 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
         boolean changed = false;
         // Compare the new and existing properties
         for (Map.Entry<Object, Object> entry : newProperties.entrySet()) {
-            String key = (String) entry.getKey();
-            String oldVal = oldProperties.getProperty(key);
+            final String key = (String) entry.getKey();
+            final String oldVal = oldProperties.getProperty(key);
             if (oldVal == null || !oldVal.equals(entry.getValue())) {
-                ConfigPropertyKey config = keyResolver.apply(key);
-                if (config == null) {
+                final ConfigPropertyKey propKey = keyResolver.apply(key);
+                if (propKey == null) {
                     return false;
                 }
 
-                if (reloadableProps.contains(config)) {
-                    log.info()
-                            .$("reloaded config option [update, key=").$(key)
-                            .$(", old=").$(oldVal)
-                            .$(", new=").$((String) entry.getValue())
-                            .I$();
+                if (reloadableProps.contains(propKey)) {
+                    final LogRecord rec = log.info()
+                            .$("reloaded config option [update, key=").$(key);
+                    if (!propKey.isSensitive()) {
+                        rec
+                                .$(", oldValue=").$(oldVal)
+                                .$(", newValue=").$((String) entry.getValue());
+                    }
+                    rec.I$();
+
                     oldProperties.setProperty(key, (String) entry.getValue());
                     changed = true;
                 } else {
@@ -244,17 +249,20 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
         // Check for any old reloadable properties that have been removed in the new config
         Iterator<Object> oldPropsIter = oldProperties.keySet().iterator();
         while (oldPropsIter.hasNext()) {
-            Object key = oldPropsIter.next();
+            final Object key = oldPropsIter.next();
             if (!newProperties.containsKey(key)) {
-                ConfigPropertyKey prop = keyResolver.apply((String) key);
-                if (prop == null) {
+                final ConfigPropertyKey propKey = keyResolver.apply((String) key);
+                if (propKey == null) {
                     continue;
                 }
-                if (reloadableProps.contains(prop)) {
-                    log.info()
-                            .$("reloaded config option [remove, key=").$(key)
-                            .$(", value=").$(oldProperties.getProperty((String) key))
-                            .$();
+                if (reloadableProps.contains(propKey)) {
+                    final LogRecord rec = log.info()
+                            .$("reloaded config option [remove, key=").$(key);
+                    if (!propKey.isSensitive()) {
+                        rec.$(", value=").$(oldProperties.getProperty((String) key));
+                    }
+                    rec.I$();
+
                     oldPropsIter.remove();
                     changed = true;
                 } else {

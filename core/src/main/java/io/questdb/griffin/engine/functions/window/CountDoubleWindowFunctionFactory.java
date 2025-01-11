@@ -42,6 +42,6 @@ public class CountDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return CountFunctionFactoryHelper.newCountWindowFunction(this, position, args, argPositions, configuration, sqlExecutionContext, isRecordNotNull);
+        return CountFunctionFactoryHelper.newCountWindowFunction(this, position, args, configuration, sqlExecutionContext, isRecordNotNull);
     }
 }

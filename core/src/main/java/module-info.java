@@ -1,3 +1,5 @@
+import io.questdb.griffin.engine.functions.date.TimestampAddWithTimezoneFunctionFactory;
+
 /*******************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
@@ -382,6 +384,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.date.IsLeapYearFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampDiffFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampAddFunctionFactory,
+            io.questdb.griffin.engine.functions.date.TimestampAddWithTimezoneFunctionFactory,
             io.questdb.griffin.engine.functions.date.ToDateFunctionFactory,
             io.questdb.griffin.engine.functions.date.VarcharToDateFunctionFactory,
             io.questdb.griffin.engine.functions.date.ToPgDateFunctionFactory,
@@ -1012,6 +1015,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.window.RankFunctionFactory,
             io.questdb.griffin.engine.functions.window.AvgDoubleWindowFunctionFactory,
             io.questdb.griffin.engine.functions.window.FirstValueDoubleWindowFunctionFactory,
+            io.questdb.griffin.engine.functions.window.FirstNotNullValueDoubleWindowFunctionFactory,
             io.questdb.griffin.engine.functions.window.SumDoubleWindowFunctionFactory,
             io.questdb.griffin.engine.functions.window.CountConstWindowFunctionFactory,
             io.questdb.griffin.engine.functions.window.CountDoubleWindowFunctionFactory,
