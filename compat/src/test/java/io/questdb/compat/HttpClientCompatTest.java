@@ -33,18 +33,16 @@ import io.questdb.std.str.Utf8s;
 import org.eclipse.jetty.http.HttpMethod;
 import org.eclipse.jetty.http.HttpStatus;
 import org.eclipse.jetty.http.MimeTypes;
+import org.eclipse.jetty.server.Handler;
 import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.server.Server;
-import org.eclipse.jetty.server.handler.AbstractHandler;
+import org.eclipse.jetty.util.Callback;
 import org.junit.Assert;
 import org.junit.Test;
 
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
 import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.OutputStream;
 import java.io.OutputStreamWriter;
+import java.nio.ByteBuffer;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 
@@ -54,7 +52,7 @@ public class HttpClientCompatTest {
     @Test
     public void testSmoke() throws Exception {
         final String expectedResponse = "{\"foobar\": \"barbaz\"}";
-        Server server = startWebServer(HttpStatus.OK_200, expectedResponse);
+        Server server = startWebServer();
         try (HttpClient client = HttpClientFactory.newPlainTextInstance()) {
             try (HttpClient.ResponseHeaders respHeaders = client.newRequest("localhost", SERVER_PORT).GET().url("/test").send()) {
                 respHeaders.await();
@@ -78,14 +76,14 @@ public class HttpClientCompatTest {
         }
     }
 
-    private static Server startWebServer(int statusCode, String response) throws Exception {
+    private static Server startWebServer() throws Exception {
         Server server = new Server(SERVER_PORT);
-        server.setHandler(new TestHandler(statusCode, response));
+        server.setHandler(new TestHandler(HttpStatus.OK_200, "{\"foobar\": \"barbaz\"}"));
         server.start();
         return server;
     }
 
-    static class TestHandler extends AbstractHandler {
+    static class TestHandler extends Handler.Abstract {
         private final String response;
         private final int statusCode;
 
@@ -95,32 +93,30 @@ public class HttpClientCompatTest {
         }
 
         @Override
-        public void handle(
-                String s,
-                Request baseRequest,
-                HttpServletRequest request,
-                HttpServletResponse response
-        ) throws IOException {
-            baseRequest.setHandled(true);
+        public boolean handle(Request request, org.eclipse.jetty.server.Response response, Callback callback) {
+            if (HttpMethod.GET.is(request.getMethod())) {
+                try {
+                    response.setStatus(statusCode);
+                    response.getHeaders().add("Content-Type", MimeTypes.Type.APPLICATION_JSON.asString());
 
-            String method = baseRequest.getMethod();
-            if (HttpMethod.GET.is(method)) {
-                response.setStatus(statusCode);
-                response.setContentType(MimeTypes.Type.APPLICATION_JSON.toString());
-                try (
-                        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-                        OutputStreamWriter writer = new OutputStreamWriter(outputStream, UTF_8)
-                ) {
-                    writer.append(this.response);
-                    writer.flush();
+                    try (ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+                         OutputStreamWriter writer = new OutputStreamWriter(outputStream, UTF_8)) {
+                        writer.append(this.response);
+                        writer.flush();
 
-                    byte[] content = outputStream.toByteArray();
-                    response.setContentLength(content.length);
-                    try (OutputStream out = response.getOutputStream()) {
-                        out.write(content);
+                        byte[] content = outputStream.toByteArray();
+                        response.getHeaders().add("Content-Length", String.valueOf(content.length));
+
+                        ByteBuffer buffer = ByteBuffer.wrap(content);
+                        response.write(true, buffer, callback);
                     }
+                    return true; // Request was handled
+                } catch (Exception e) {
+                    callback.failed(e); // Signal failure with the exception
+                    return true; // Request was still handled, even though it failed
                 }
             }
+            return false; // Request was not handled (non-GET request)
         }
     }
 }
