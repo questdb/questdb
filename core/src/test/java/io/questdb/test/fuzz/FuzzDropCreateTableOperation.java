@@ -39,15 +39,18 @@ import io.questdb.std.str.Path;
 
 public class FuzzDropCreateTableOperation implements FuzzTransactionOperation {
     static final Log LOG = LogFactory.getLog(FuzzDropCreateTableOperation.class);
+    private boolean isWal;
+    private RecordMetadata recreateTableMetadata;
+    private String tableName;
     private boolean dedupTsColumn;
 
     @Override
     public boolean apply(Rnd rnd, CairoEngine engine, TableWriterAPI tableWriter, int virtualTimestampIndex) {
         TableToken tableToken = tableWriter.getTableToken();
-        String tableName = tableToken.getTableName();
-        boolean isWal = engine.isWalTable(tableToken);
+        tableName = tableToken.getTableName();
+        isWal = engine.isWalTable(tableToken);
         int timestampIndex = tableWriter.getMetadata().getTimestampIndex();
-        RecordMetadata copyDenseMeta = denseMetaCopy(tableWriter.getMetadata(), timestampIndex);
+        recreateTableMetadata = denseMetaCopy(tableWriter.getMetadata(), timestampIndex);
 
         try (MemoryMARW vm = Vm.getCMARWInstance(); Path path = new Path()) {
             engine.releaseInactive();
@@ -74,15 +77,40 @@ public class FuzzDropCreateTableOperation implements FuzzTransactionOperation {
                     new TableStructMetadataAdapter(
                             tableName,
                             isWal,
-                            copyDenseMeta,
+                            recreateTableMetadata,
                             engine.getConfiguration(),
                             PartitionBy.DAY,
-                            copyDenseMeta.getTimestampIndex()
+                            recreateTableMetadata.getTimestampIndex()
                     ),
                     false
             );
         }
         return true;
+    }
+
+    public boolean recreateTable(CairoEngine engine) {
+        // Retry the table create part of apply() method in case it failed.
+        if (recreateTableMetadata != null) {
+            try (MemoryMARW vm = Vm.getCMARWInstance(); Path path = new Path()) {
+                engine.createTable(
+                        AllowAllSecurityContext.INSTANCE,
+                        vm,
+                        path,
+                        false,
+                        new TableStructMetadataAdapter(
+                                tableName,
+                                isWal,
+                                recreateTableMetadata,
+                                engine.getConfiguration(),
+                                PartitionBy.DAY,
+                                recreateTableMetadata.getTimestampIndex()
+                        ),
+                        false
+                );
+            }
+            return true;
+        }
+        return false;
     }
 
     public void setDedupEnable(boolean dedupTsColumn) {
