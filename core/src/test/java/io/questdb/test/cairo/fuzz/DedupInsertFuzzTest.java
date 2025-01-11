@@ -53,10 +53,13 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
+import io.questdb.test.fuzz.FuzzDropCreateTableOperation;
+import io.questdb.test.fuzz.FuzzDropPartitionOperation;
 import io.questdb.test.fuzz.FuzzInsertOperation;
 import io.questdb.test.fuzz.FuzzStableInsertOperation;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.fuzz.FuzzTransactionOperation;
+import io.questdb.test.fuzz.FuzzTruncateTableOperation;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -401,7 +404,9 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 0.0,
                 0.0,
                 0.1 * rnd.nextDouble(),
-                0.1,
+                // This test does not support Drop Partition operations,
+                // it is not trivial to build the result set of data to assert against with drop partitions
+                0,
                 0.4
         );
 
@@ -547,9 +552,17 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                     duplicateTrans.operationList.add(operation);
                 }
 
+                duplicateTrans.reopenTable = transaction.reopenTable;
                 result.add(duplicateTrans);
                 prevInsertTrans = duplicateTrans;
             } else {
+                if (transaction.operationList.size() > 0) {
+                    var operation = transaction.operationList.getQuick(0);
+                    if (operation instanceof FuzzDropCreateTableOperation || operation instanceof FuzzTruncateTableOperation
+                            || operation instanceof FuzzDropPartitionOperation) {
+                        prevInsertTrans = null;
+                    }
+                }
                 result.add(transaction);
             }
         }
@@ -612,6 +625,13 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     private Rnd generateRandomAndProps() {
         Rnd rnd = fuzzer.generateRandom(io.questdb.test.AbstractCairoTest.LOG);
+        setFuzzProperties(rnd);
+        setRandomAppendPageSize(rnd);
+        return rnd;
+    }
+
+    private Rnd generateRandomAndProps(long seed1, long seed2) {
+        Rnd rnd = fuzzer.generateRandom(io.questdb.test.AbstractCairoTest.LOG, seed1, seed2);
         setFuzzProperties(rnd);
         setRandomAppendPageSize(rnd);
         return rnd;
@@ -972,7 +992,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     }
 
     private ObjList<FuzzTransaction> uniqueInserts(ObjList<FuzzTransaction> transactions) {
-        ObjList<FuzzTransaction> result = new ObjList<>();
+        ObjList<FuzzTransaction> uniqueTransactions = new ObjList<>();
         LongHashSet uniqueTimestamps = new LongHashSet();
 
         for (int i = 0; i < transactions.size(); i++) {
@@ -986,15 +1006,19 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                             unique.operationList.add(operation);
                         }
                     } else {
+                        if (operation instanceof FuzzDropCreateTableOperation) {
+                            ((FuzzDropCreateTableOperation) operation).setDedupEnable(true);
+                        }
                         unique.operationList.add(operation);
                     }
                 }
-                result.add(unique);
+                unique.reopenTable = transaction.reopenTable;
+                uniqueTransactions.add(unique);
             } else {
-                result.add(transaction);
+                uniqueTransactions.add(transaction);
             }
         }
-        return result;
+        return uniqueTransactions;
     }
 
     private void validateNoTimestampDuplicates(

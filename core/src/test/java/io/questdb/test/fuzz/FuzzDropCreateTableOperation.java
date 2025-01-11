@@ -42,6 +42,7 @@ public class FuzzDropCreateTableOperation implements FuzzTransactionOperation {
     private boolean isWal;
     private RecordMetadata recreateTableMetadata;
     private String tableName;
+    private boolean dedupTsColumn;
 
     @Override
     public boolean apply(Rnd rnd, CairoEngine engine, TableWriterAPI tableWriter, int virtualTimestampIndex) {
@@ -112,18 +113,33 @@ public class FuzzDropCreateTableOperation implements FuzzTransactionOperation {
         return false;
     }
 
+    public void setDedupEnable(boolean dedupTsColumn) {
+        this.dedupTsColumn = dedupTsColumn;
+    }
+
     private RecordMetadata denseMetaCopy(TableRecordMetadata metadata, int timestampIndex) {
         GenericRecordMetadata newMeta = new GenericRecordMetadata();
         int tsIndex = -1;
+        int denseIndex = 0;
+        int tableReaderIndex = 0;
         for (int i = 0; i < metadata.getColumnCount(); i++) {
             int type = metadata.getColumnType(i);
             if (type > 0) {
                 CharSequence name = metadata.getColumnName(i);
-                if (!ColumnType.isSymbol(type)) {
-                    newMeta.add(new TableColumnMetadata(Chars.toString(name), type));
-                } else {
-                    newMeta.add(new TableColumnMetadata(Chars.toString(name), type, true, 4096, true, null));
-                }
+
+                newMeta.add(
+                        new TableColumnMetadata(
+                                Chars.toString(name),
+                                type,
+                                metadata.isColumnIndexed(i),
+                                metadata.getIndexValueBlockCapacity(i),
+                                true,
+                                null,
+                                denseIndex++,
+                                i == timestampIndex && dedupTsColumn && metadata.getTableToken().isWal()
+                        )
+                );
+
                 if (i == timestampIndex) {
                     tsIndex = newMeta.getColumnCount() - 1;
                 }
