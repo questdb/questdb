@@ -75,7 +75,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             assert orderedGroupCount == orderedFunctions.size();
             this.orderedFunctions = orderedFunctions;
             this.comparators = comparators;
-            PlainRecordChain recordChain = new PlainRecordChain(
+            RecordArray recordChain = new RecordArray(
                     chainTypes,
                     recordSink,
                     configuration.getSqlWindowStorePageSize(),
@@ -273,14 +273,14 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
     class CachedWindowRecordCursor implements RecordCursor {
         private final IntList columnIndexes; // Used for symbol table lookups.
         private final ObjList<LongTreeChain> orderedSources;
-        private final PlainRecordChain recordChain;
+        private final RecordArray recordChain;
         private RecordCursor baseCursor;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isOpen;
         private boolean isRecordChainBuilt;
         private long recordChainOffset;
 
-        public CachedWindowRecordCursor(IntList columnIndexes, PlainRecordChain recordChain, ObjList<LongTreeChain> orderedSources) {
+        public CachedWindowRecordCursor(IntList columnIndexes, RecordArray recordChain, ObjList<LongTreeChain> orderedSources) {
             this.columnIndexes = columnIndexes;
             this.recordChain = recordChain;
             this.recordChain.setSymbolTableResolver(this);

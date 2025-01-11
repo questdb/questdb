@@ -32,20 +32,21 @@ import io.questdb.std.MemoryTag;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * PlainRecordChain is similar to RecordChain, except that it stores the record's startOffset in a separate memory
+ * RecordArray is similar to RecordChain, except that it stores the record's startOffset in a separate memory
  * location instead of at the record header.
  * This enhances its random access capability, making it behave more like an array,
  * while sacrificing the ability to access records like a linked list.
  */
-public class PlainRecordChain extends RecordChain {
+public class RecordArray extends RecordChain {
 
-    private final MemoryARW recordsStartOffset;
+    // auxMem is used to store records startOffset in dataMem
+    private final MemoryARW auxMem;
     private long size = 0L;
     private long nextRecordIndex = 0L;
 
-    public PlainRecordChain(@NotNull ColumnTypes columnTypes, @NotNull RecordSink recordSink, long pageSize, int maxPages) {
+    public RecordArray(@NotNull ColumnTypes columnTypes, @NotNull RecordSink recordSink, long pageSize, int maxPages) {
         super(columnTypes, recordSink, pageSize, maxPages);
-        this.recordsStartOffset = Vm.getCARWInstance(pageSize >> 3, maxPages, MemoryTag.NATIVE_RECORD_CHAIN);
+        this.auxMem = Vm.getCARWInstance(pageSize >> 3, maxPages, MemoryTag.NATIVE_RECORD_CHAIN);
     }
 
     public long put(Record record) {
@@ -56,7 +57,7 @@ public class PlainRecordChain extends RecordChain {
 
     public long beginRecord() {
         recordOffset = varAppendOffset;
-        recordsStartOffset.putLong(recordOffset);
+        auxMem.putLong(recordOffset);
         size++;
         mem.jumpTo(recordOffset + varOffset);
         varAppendOffset = recordOffset + varOffset + fixOffset;
@@ -66,7 +67,7 @@ public class PlainRecordChain extends RecordChain {
     @Override
     public boolean hasNext() {
         if (nextRecordIndex < size) {
-            final long offset = recordsStartOffset.getLong(nextRecordIndex * 8);
+            final long offset = auxMem.getLong(nextRecordIndex * 8);
             recordA.of(offset);
             nextRecordIndex++;
             return true;
@@ -85,7 +86,7 @@ public class PlainRecordChain extends RecordChain {
 
     public boolean hasPrev() {
         if (nextRecordIndex >= 0) {
-            final long offset = recordsStartOffset.getLong(nextRecordIndex * 8);
+            final long offset = auxMem.getLong(nextRecordIndex * 8);
             recordA.of(offset);
             nextRecordIndex--;
             return true;
@@ -102,7 +103,7 @@ public class PlainRecordChain extends RecordChain {
     public void clear() {
         super.clear();
         size = 0L;
-        recordsStartOffset.close();
+        auxMem.close();
     }
 
     @Override
@@ -112,11 +113,17 @@ public class PlainRecordChain extends RecordChain {
 
     @Override
     protected RecordChainRecord newChainRecord() {
-        return new RecordChainRecord(columnCount) {
-            @Override
-            public long getRowId() {
-                return baseOffset;
-            }
-        };
+        return new RecordArrayRecord(columnCount);
+    }
+
+    class RecordArrayRecord extends RecordChainRecord {
+        public RecordArrayRecord(int columnCount) {
+            super(columnCount);
+        }
+
+        @Override
+        public long getRowId() {
+            return baseOffset;
+        }
     }
 }

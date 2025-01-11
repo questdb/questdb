@@ -29,7 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.ListColumnFilter;
-import io.questdb.cairo.PlainRecordChain;
+import io.questdb.cairo.RecordArray;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.TableColumnMetadata;
@@ -53,7 +53,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class PlainRecordChainTest extends AbstractCairoTest {
+public class RecordArrayTest extends AbstractCairoTest {
     public static final long SIZE_4M = 2 * 1024 * 1024L;
     private static final BytecodeAssembler asm = new BytecodeAssembler();
     private static final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
@@ -69,7 +69,7 @@ public class PlainRecordChainTest extends AbstractCairoTest {
             ) {
                 entityColumnFilter.of(reader.getMetadata().getColumnCount());
                 RecordSink recordSink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter);
-                try (PlainRecordChain chain = new PlainRecordChain(reader.getMetadata(), recordSink, SIZE_4M, Integer.MAX_VALUE)) {
+                try (RecordArray chain = new RecordArray(reader.getMetadata(), recordSink, SIZE_4M, Integer.MAX_VALUE)) {
                     LongList rows = new LongList();
                     Record cursorRecord = cursor.getRecord();
                     chain.setSymbolTableResolver(cursor);
@@ -97,17 +97,17 @@ public class PlainRecordChainTest extends AbstractCairoTest {
 
     @Test
     public void testReuseWithClear() throws Exception {
-        testChainReuseWithClearFunction(PlainRecordChain::clear);
+        testChainReuseWithClearFunction(RecordArray::clear);
     }
 
     @Test
     public void testReuseWithClose() throws Exception {
-        testChainReuseWithClearFunction(PlainRecordChain::close);
+        testChainReuseWithClearFunction(RecordArray::close);
     }
 
     @Test
     public void testReuseWithReleaseCursor() throws Exception {
-        testChainReuseWithClearFunction(PlainRecordChain::close);
+        testChainReuseWithClearFunction(RecordArray::close);
     }
 
     @Test
@@ -154,7 +154,7 @@ public class PlainRecordChainTest extends AbstractCairoTest {
             });
 
             final VirtualRecord rec = new VirtualRecord(funcs);
-            try (PlainRecordChain chain = new PlainRecordChain(metadata, sink, SIZE_4M, Integer.MAX_VALUE)) {
+            try (RecordArray chain = new RecordArray(metadata, sink, SIZE_4M, Integer.MAX_VALUE)) {
                 cols[0] = 100;
                 cols[2] = 200;
                 long o = chain.put(rec);
@@ -203,7 +203,7 @@ public class PlainRecordChainTest extends AbstractCairoTest {
                         entityColumnFilter.of(reader.getMetadata().getColumnCount());
                         RecordSink recordSink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter);
 
-                        try (PlainRecordChain chain = new PlainRecordChain(reader.getMetadata(), recordSink, 4 * 1024 * 1024L, Integer.MAX_VALUE)) {
+                        try (RecordArray chain = new RecordArray(reader.getMetadata(), recordSink, 4 * 1024 * 1024L, Integer.MAX_VALUE)) {
                             populateChain(chain, reader);
                             assertChain(chain, N, reader);
                             assertChain(chain, N, reader);
@@ -213,7 +213,7 @@ public class PlainRecordChainTest extends AbstractCairoTest {
         );
     }
 
-    private static void populateChain(PlainRecordChain chain, TableReader reader) {
+    private static void populateChain(RecordArray chain, TableReader reader) {
         try (TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)) {
             final Record record = cursor.getRecord();
             chain.setSymbolTableResolver(cursor);
@@ -223,7 +223,7 @@ public class PlainRecordChainTest extends AbstractCairoTest {
         }
     }
 
-    private void assertChain(PlainRecordChain chain, long expectedCount, TableReader reader) {
+    private void assertChain(RecordArray chain, long expectedCount, TableReader reader) {
         long count = 0L;
         chain.toTop();
         Record chainRecord = chain.getRecord();
@@ -345,7 +345,7 @@ public class PlainRecordChainTest extends AbstractCairoTest {
 
                 entityColumnFilter.of(reader.getMetadata().getColumnCount());
                 RecordSink recordSink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter);
-                try (PlainRecordChain chain = new PlainRecordChain(reader.getMetadata(), recordSink, 4 * 1024 * 1024L, Integer.MAX_VALUE)) {
+                try (RecordArray chain = new RecordArray(reader.getMetadata(), recordSink, 4 * 1024 * 1024L, Integer.MAX_VALUE)) {
                     populateChain(chain, reader);
                     assertChain(chain, N, reader);
 
@@ -360,6 +360,6 @@ public class PlainRecordChainTest extends AbstractCairoTest {
 
     @FunctionalInterface
     private interface ClearFunc {
-        void clear(PlainRecordChain chain);
+        void clear(RecordArray chain);
     }
 }

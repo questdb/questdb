@@ -81,12 +81,12 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
 
         long offset = 1;
         if (args.size() >= 2) {
-            final Function OffsetFunc = args.getQuick(1);
-            if (!OffsetFunc.isConstant() && !OffsetFunc.isRuntimeConstant()) {
+            final Function offsetFunc = args.getQuick(1);
+            if (!offsetFunc.isConstant() && !offsetFunc.isRuntimeConstant()) {
                 throw SqlException.$(argPositions.getQuick(1), "offset must be a constant");
             }
 
-            offset = OffsetFunc.getLong(null);
+            offset = offsetFunc.getLong(null);
             if (offset < 0) {
                 throw SqlException.$(argPositions.getQuick(1), "offset must be a positive integer");
             }
@@ -117,6 +117,7 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
             MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                     configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER
             );
+
             return new LagOverPartitionFunction(
                     map,
                     windowContext.getPartitionByRecord(),
