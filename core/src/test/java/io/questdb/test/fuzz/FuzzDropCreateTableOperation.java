@@ -90,7 +90,7 @@ public class FuzzDropCreateTableOperation implements FuzzTransactionOperation {
     public boolean recreateTable(CairoEngine engine) {
         // Retry the table create part of apply() method in case it failed.
         if (recreateTableMetadata != null) {
-            try (MemoryMARW vm = Vm.getMARWInstance(); Path path = new Path()) {
+            try (MemoryMARW vm = Vm.getCMARWInstance(); Path path = new Path()) {
                 engine.createTable(
                         AllowAllSecurityContext.INSTANCE,
                         vm,
