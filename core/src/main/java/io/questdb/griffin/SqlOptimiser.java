@@ -6470,10 +6470,35 @@ public class SqlOptimiser implements Mutable {
             model.getBottomUpColumnAliases().clear();
 
             // add the group by column
-            model.addBottomUpColumn(queryColumnPool.next().of(
-                    nested.getGroupBy().getQuick(0).token,
-                    nested.getGroupBy().getQuick(0)
-            ));
+            for (int i = 0, n = nested.getGroupBy().size(); i < n; i++) {
+                ExpressionNode groupByExpr = nested.getGroupBy().getQuick(i);
+                if (groupByExpr.type == CONSTANT) {
+//                    try {
+//                        int colIndex = Numbers.parseInt(groupByExpr.token);
+//                        QueryColumn column = nested.getColumns().getQuick(colIndex - 1);
+//                        ExpressionNode reifiedExpr = expressionNodePool.next().of(
+//                                LITERAL,
+//                                column.getAlias(),
+//                                -1,
+//                                column.getAst().position
+//                        );
+//                        model.addBottomUpColumn(queryColumnPool.next().of(
+//                                        reifiedExpr.token,
+//                                        reifiedExpr
+//                                )
+//                        );
+//                    } catch (NumericException ignore) {
+//                    }
+                    // todo: find a way to match these up, perhaps by re-ordering calls in `optimise()`
+                    throw SqlException.$(groupByExpr.position, "cannot use positional group by inside `PIVOT`");
+
+                } else {
+                    model.addBottomUpColumn(queryColumnPool.next().of(
+                            nested.getGroupBy().getQuick(i).token,
+                            nested.getGroupBy().getQuick(i)
+                    ));
+                }
+            }
 
             // need to permute all of the FOR exprs
             // FOR year in (2000, 2010, 2020)
@@ -6514,7 +6539,6 @@ public class SqlOptimiser implements Mutable {
                     }
                 }
             }
-
 
             // for each output pivot column
             for (int i = 0; i < expectedPivotColumnsPerAggregateFunction; i++) {
