@@ -3558,18 +3558,6 @@ public class SqlOptimiser implements Mutable {
         if (model == null) {
             return;
         }
-        // don't propagate though group by, sample by, distinct or some window functions
-        if (model.getGroupBy().size() != 0
-                || model.getSampleBy() != null
-                || model.getSelectModelType() == QueryModel.SELECT_MODEL_DISTINCT
-                || model.windowStopPropagate()) {
-            model.setAllowPropagationOfOrderByAdvice(false);
-            return;
-        }
-        // placeholder for prefix-stripped advice
-        ObjList<ExpressionNode> advice;
-        // Check if the orderByAdvice has names qualified by table names i.e 't1.ts' versus 'ts'
-        final boolean orderByAdviceHasDot = checkForDot(orderByAdvice);
         // loop over the join models
         // get primary model
         QueryModel jm1 = jm.getQuiet(0);
@@ -3579,6 +3567,20 @@ public class SqlOptimiser implements Mutable {
         }
         // get secondary model
         QueryModel jm2 = jm1.getJoinModels().getQuiet(1);
+        // don't propagate though group by, sample by, distinct or some window functions
+        if (model.getGroupBy().size() != 0
+                || model.getSampleBy() != null
+                || model.getSelectModelType() == QueryModel.SELECT_MODEL_DISTINCT
+                || model.windowStopPropagate()) {
+            jm1.setAllowPropagationOfOrderByAdvice(false);
+            if (jm2 != null) {
+                jm2.setAllowPropagationOfOrderByAdvice(false);
+            }
+        }
+        // placeholder for prefix-stripped advice
+        ObjList<ExpressionNode> advice;
+        // Check if the orderByAdvice has names qualified by table names i.e 't1.ts' versus 'ts'
+        final boolean orderByAdviceHasDot = checkForDot(orderByAdvice);
         // if order by advice has no table prefixes, we preserve original behaviour and pass it on.
         if (!orderByAdviceHasDot) {
             if (allAdviceIsForThisTable(jm1, orderByAdvice)) {
