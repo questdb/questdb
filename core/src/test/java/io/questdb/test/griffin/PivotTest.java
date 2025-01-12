@@ -365,12 +365,55 @@ public class PivotTest extends AbstractSqlParserTest {
                     "  );";
 
             assertSql("timestamp\tETH-USDT_buy\tETH-USDT_sell\n" +
-                    "2024-12-19T08:10:00.700999Z\tnull\t3678.25\n" +
-                    "2024-12-19T08:10:00.736000Z\tnull\t3678.25\n" +
-                    "2024-12-19T08:10:00.759000Z\tnull\t3678.0\n" +
-                    "2024-12-19T08:10:00.772999Z\tnull\t3678.0\n" +
-                    "2024-12-19T08:10:00.887000Z\t3678.01\tnull\n" +
-                    "2024-12-19T08:10:00.950000Z\tnull\t3678.0\n", pivotQuery);
+                            "2024-12-19T08:10:00.700999Z\tnull\t3678.25\n" +
+                            "2024-12-19T08:10:00.736000Z\tnull\t3678.25\n" +
+                            "2024-12-19T08:10:00.759000Z\tnull\t3678.0\n" +
+                            "2024-12-19T08:10:00.772999Z\tnull\t3678.0\n" +
+                            "2024-12-19T08:10:00.887000Z\t3678.01\tnull\n" +
+                            "2024-12-19T08:10:00.950000Z\tnull\t3678.0\n",
+                    pivotQuery);
+        });
+    }
+
+    @Test
+    public void testStandardPivotWithTradesDataAndOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlTrades);
+            execute(dmlTrades);
+            drainWalQueue();
+
+            String pivotQuery = " select * from (select * from trades where symbol in 'ETH-USDT')\n" +
+                    "  pivot (\n" +
+                    "    sum(price)\n" +
+                    "    FOR \"symbol\" IN ('ETH-USDT')\n" +
+                    "        side in ('buy', 'sell')\n" +
+                    "    GROUP BY timestamp\n" +
+                    "    ORDER BY timestamp ASC\n" +
+                    "  );";
+
+            assertQuery("timestamp\tETH-USDT_buy\tETH-USDT_sell\n" +
+                            "2024-12-19T08:10:00.700999Z\tnull\t3678.25\n" +
+                            "2024-12-19T08:10:00.736000Z\tnull\t3678.25\n" +
+                            "2024-12-19T08:10:00.759000Z\tnull\t3678.0\n" +
+                            "2024-12-19T08:10:00.772999Z\tnull\t3678.0\n" +
+                            "2024-12-19T08:10:00.887000Z\t3678.01\tnull\n" +
+                            "2024-12-19T08:10:00.950000Z\tnull\t3678.0\n",
+                    pivotQuery,
+                    "timestamp###ASC",
+                    true,
+                    true);
+
+            assertQuery("timestamp\tETH-USDT_buy\tETH-USDT_sell\n" +
+                            "2024-12-19T08:10:00.950000Z\tnull\t3678.0\n" +
+                            "2024-12-19T08:10:00.887000Z\t3678.01\tnull\n" +
+                            "2024-12-19T08:10:00.772999Z\tnull\t3678.0\n" +
+                            "2024-12-19T08:10:00.759000Z\tnull\t3678.0\n" +
+                            "2024-12-19T08:10:00.736000Z\tnull\t3678.25\n" +
+                            "2024-12-19T08:10:00.700999Z\tnull\t3678.25\n",
+                    pivotQuery.replace("ASC", "DESC"),
+                    null,
+                    true,
+                    true);
         });
     }
 
