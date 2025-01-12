@@ -26,8 +26,6 @@ package io.questdb.test;
 
 import io.questdb.FactoryProvider;
 import io.questdb.MessageBus;
-import io.questdb.MessageBusImpl;
-import io.questdb.Metrics;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
@@ -160,7 +158,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static String inputWorkRoot = null;
     protected static IOURingFacade ioURingFacade = IOURingFacadeImpl.INSTANCE;
     protected static MessageBus messageBus;
-    protected static Metrics metrics;
     protected static QuestDBTestNode node1;
     protected static ObjList<QuestDBTestNode> nodes = new ObjList<>();
     protected static SecurityContext securityContext;
@@ -476,7 +473,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         node1 = newNode(Chars.toString(root), false, 1, staticOverrides, getEngineFactory(), getConfigurationFactory());
         configuration = node1.getConfiguration();
         securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getRootContext();
-        metrics = node1.getMetrics();
         engine = node1.getEngine();
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.clearCache();
@@ -534,6 +530,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         sqlExecutionContext.setParallelFilterEnabled(configuration.isSqlParallelFilterEnabled());
         // 30% chance to enable paranoia checking FD mode
         Files.PARANOIA_FD_MODE = new Rnd(System.nanoTime(), System.currentTimeMillis()).nextInt(100) > 70;
+        engine.getMetrics().clear();
     }
 
     @After
@@ -595,7 +592,13 @@ public abstract class AbstractCairoTest extends AbstractTest {
                         RecordCursorFactory factory = cq.getRecordCursorFactory();
                         RecordCursor cursor = factory.getCursor(sqlExecutionContext)
                 ) {
-                    cursor.hasNext();
+                    sink.clear();
+                    Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        // ignore the output, we're looking for an error
+                        TestUtils.println(record, factory.getMetadata(), sink);
+                        sink.clear();
+                    }
                 }
             } else if (cq.getOperation() != null) {
                 try (
@@ -1441,10 +1444,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return new TableReader(configuration, engine.verifyTableName(tableName));
     }
 
-    protected static TableWriter newOffPoolWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics) {
-        return TestUtils.newOffPoolWriter(configuration, engine.verifyTableName(tableName), metrics, new MessageBusImpl(configuration), engine);
-    }
-
     protected static TableWriter newOffPoolWriter(CairoConfiguration configuration, CharSequence tableName) {
         return TestUtils.newOffPoolWriter(configuration, engine.verifyTableName(tableName), engine);
     }
@@ -1973,7 +1972,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected TableToken createPopulateTable(int tableId, TableModel tableModel, int insertIterations, int totalRowsPerIteration, String startDate, int partitionCount) throws NumericException, SqlException {
         try (
-                MemoryMARW mem = Vm.getMARWInstance();
+                MemoryMARW mem = Vm.getCMARWInstance();
                 Path path = new Path()
         ) {
             TableToken token = TestUtils.createTable(engine, mem, path, tableModel, tableId, tableModel.getTableName());
@@ -2016,8 +2015,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return engine.isWalTable(engine.verifyTableName(tableName));
     }
 
-    protected TableWriter newOffPoolWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics, MessageBus messageBus) {
-        return TestUtils.newOffPoolWriter(configuration, engine.verifyTableName(tableName), metrics, messageBus, engine);
+    protected TableWriter newOffPoolWriter(CairoConfiguration configuration, CharSequence tableName, MessageBus messageBus) {
+        return TestUtils.newOffPoolWriter(configuration, engine.verifyTableName(tableName), messageBus, engine);
     }
 
     protected long update(CharSequence updateSql) throws SqlException {

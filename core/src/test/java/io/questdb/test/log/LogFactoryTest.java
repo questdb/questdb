@@ -967,6 +967,58 @@ public class LogFactoryTest {
     }
 
     @Test
+    public void testSpaceInRollEvery() throws Exception {
+        final String logFile = temp.getRoot().getAbsolutePath() + Files.SEPARATOR + "mylog-${date:yyyy-MM-dd}.log";
+
+        final MicrosecondClock clock = new TestMicrosecondClock(
+                TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"),
+                1,
+                IntervalUtils.parseFloorPartialTimestamp("2019-12-31")
+        );
+
+        final RingQueue<LogRecordUtf8Sink> queue = new RingQueue<>(
+                LogRecordUtf8Sink::new,
+                1024,
+                1024,
+                MemoryTag.NATIVE_DEFAULT
+        );
+
+        final SPSequence pubSeq = new SPSequence(queue.getCycle());
+        final SCSequence subSeq = new SCSequence();
+        pubSeq.then(subSeq).then(pubSeq);
+
+        try (final LogRollingFileWriter writer = new LogRollingFileWriter(
+                TestFilesFacadeImpl.INSTANCE,
+                clock,
+                queue,
+                subSeq,
+                LogLevel.INFO
+        )) {
+            writer.setLocation(logFile);
+            writer.setRollEvery("day  ");
+            writer.bindProperties(LogFactory.getInstance());
+
+            Assert.assertNotEquals(writer.getRollDeadlineFunction().getDeadline(), Long.MAX_VALUE);
+            Assert.assertEquals(writer.getRollDeadlineFunction().getDeadline(), 1430697600000000L);
+        }
+
+        try (final LogRollingFileWriter writer = new LogRollingFileWriter(
+                TestFilesFacadeImpl.INSTANCE,
+                clock,
+                queue,
+                subSeq,
+                LogLevel.INFO
+        )) {
+            writer.setLocation(logFile);
+            writer.setRollEvery(" minute ");
+            writer.bindProperties(LogFactory.getInstance());
+
+            Assert.assertNotEquals(writer.getRollDeadlineFunction().getDeadline(), Long.MAX_VALUE);
+            Assert.assertEquals(writer.getRollDeadlineFunction().getDeadline(), 1430649360000000L);
+        }
+    }
+
+    @Test
     public void testUninitializedFactory() {
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, Files.getResourcePath(getClass().getResource("/test-log.conf")));
 

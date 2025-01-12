@@ -35,7 +35,7 @@ import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.http.HttpContextConfiguration;
-import io.questdb.cutlass.http.HttpMinServerConfiguration;
+import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.http.MimeTypesCache;
 import io.questdb.cutlass.http.WaitProcessorConfiguration;
@@ -62,7 +62,10 @@ import io.questdb.cutlass.text.types.InputFormatConfiguration;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetVersion;
 import io.questdb.log.Log;
+import io.questdb.metrics.Counter;
+import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.MetricsConfiguration;
+import io.questdb.metrics.MetricsRegistryImpl;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.EpollFacade;
 import io.questdb.network.EpollFacadeImpl;
@@ -76,6 +79,7 @@ import io.questdb.network.SelectFacade;
 import io.questdb.network.SelectFacadeImpl;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
+import io.questdb.std.ConcurrentCacheConfiguration;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
@@ -192,6 +196,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final FactoryProviderFactory fpf;
     private final PropHttpContextConfiguration httpContextConfiguration;
     private final boolean httpFrozenClock;
+    private final PropHttpConcurrentCacheConfiguration httpMinConcurrentCacheConfiguration = new PropHttpConcurrentCacheConfiguration();
     private final PropHttpContextConfiguration httpMinContextConfiguration;
     private final boolean httpMinServerEnabled;
     private final boolean httpNetConnectionHint;
@@ -269,6 +274,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int maxUncommittedRows;
     private final MemoryConfiguration memoryConfiguration;
     private final int metadataStringPoolCapacity;
+    private final Metrics metrics;
     private final MetricsConfiguration metricsConfiguration = new PropMetricsConfiguration();
     private final boolean metricsEnabled;
     private final MicrosecondClock microsecondClock;
@@ -296,13 +302,13 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean partitionEncoderParquetStatisticsEnabled;
     private final int partitionEncoderParquetVersion;
     private final boolean pgEnabled;
+    private final PropPGWireConcurrentCacheConfiguration pgWireConcurrentCacheConfiguration = new PropPGWireConcurrentCacheConfiguration();
     private final PGWireConfiguration pgWireConfiguration = new PropPGWireConfiguration();
     private final String posthogApiKey;
     private final boolean posthogEnabled;
     private final String publicDirectory;
     private final PublicPassthroughConfiguration publicPassthroughConfiguration = new PropPublicPassthroughConfiguration();
     private final int queryCacheEventQueueCapacity;
-    private final long queryTimeout;
     private final int readerPoolMaxSegments;
     private final int repeatMigrationFromVersion;
     private final double rerunExponentialWaitMultiplier;
@@ -463,8 +469,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long writerMiscAppendPageSize;
     private final boolean writerMixedIOEnabled;
     private final int writerTickRowsCountMod;
-    protected HttpMinServerConfiguration httpMinServerConfiguration = new PropHttpMinServerConfiguration();
-    protected HttpServerConfiguration httpServerConfiguration = new PropHttpServerConfiguration();
+    protected HttpServerConfiguration httpMinServerConfiguration = new PropHttpMinServerConfiguration();
+    protected HttpFullFatServerConfiguration httpServerConfiguration = new PropHttpServerConfiguration();
     protected JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new PropJsonQueryProcessorConfiguration();
     protected StaticContentProcessorConfiguration staticContentProcessorConfiguration;
     protected long walSegmentRolloverSize;
@@ -583,6 +589,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long pgWorkerNapThreshold;
     private long pgWorkerSleepThreshold;
     private long pgWorkerYieldThreshold;
+    private long queryTimeout;
     private boolean stringToCharCastAllowed;
     private long symbolCacheWaitBeforeReload;
 
@@ -641,9 +648,11 @@ public class PropServerConfiguration implements ServerConfiguration {
             boolean loadAdditionalConfigurations
     ) throws ServerConfigurationException, JsonException {
         this.log = log;
+        this.metricsEnabled = getBoolean(properties, env, PropertyKey.METRICS_ENABLED, false);
+        this.metrics = metricsEnabled ? new Metrics(true, new MetricsRegistryImpl()) : Metrics.DISABLED;
         this.logSqlQueryProgressExe = getBoolean(properties, env, PropertyKey.LOG_SQL_QUERY_PROGRESS_EXE, true);
         this.logLevelVerbose = getBoolean(properties, env, PropertyKey.LOG_LEVEL_VERBOSE, false);
-        this.logTimestampTimezone = getString(properties, env, PropertyKey.LOG_TIMESTAMP_TIMEZONE, "UTC");
+        this.logTimestampTimezone = getString(properties, env, PropertyKey.LOG_TIMESTAMP_TIMEZONE, "Z");
         final String logTimestampFormatStr = getString(properties, env, PropertyKey.LOG_TIMESTAMP_FORMAT, "yyyy-MM-ddTHH:mm:ss.SSSUUUz");
         final String logTimestampLocaleStr = getString(properties, env, PropertyKey.LOG_TIMESTAMP_LOCALE, "en");
         this.logTimestampLocale = DateLocaleFactory.INSTANCE.getLocale(logTimestampLocaleStr);
@@ -756,6 +765,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.cairoSqlCopyRoot = null;
             this.cairoSqlCopyWorkRoot = null;
         }
+
 
         this.cairoAttachPartitionSuffix = getString(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX, TableUtils.ATTACHABLE_DIR_MARKER);
         this.cairoAttachPartitionCopy = getBoolean(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_COPY, false);
@@ -1039,7 +1049,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.rerunMaxProcessingQueueSize = getIntSize(properties, env, PropertyKey.HTTP_BUSY_RETRY_MAX_PROCESSING_QUEUE_SIZE, 4096);
 
             this.circuitBreakerThrottle = getInt(properties, env, PropertyKey.CIRCUIT_BREAKER_THROTTLE, 2_000_000);
+            // obsolete
             this.queryTimeout = (long) (getDouble(properties, env, PropertyKey.QUERY_TIMEOUT_SEC, "60") * Timestamps.SECOND_MILLIS);
+            this.queryTimeout = getMillis(properties, env, PropertyKey.QUERY_TIMEOUT, this.queryTimeout);
+
             this.netTestConnectionBufferSize = getInt(properties, env, PropertyKey.CIRCUIT_BREAKER_BUFFER_SIZE, 64);
             this.netTestConnectionBufferSize = getInt(properties, env, PropertyKey.NET_TEST_CONNECTION_BUFFER_SIZE, netTestConnectionBufferSize);
 
@@ -1490,7 +1503,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlParquetFrameCacheCapacity = Math.max(getInt(properties, env, PropertyKey.CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY, 3), 3);
             this.sqlOrderBySortEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, true);
             this.sqlOrderByRadixSortThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_ORDER_BY_RADIX_SORT_THRESHOLD, 600);
-            this.metricsEnabled = getBoolean(properties, env, PropertyKey.METRICS_ENABLED, false);
             this.writerAsyncCommandBusyWaitTimeout = getMillis(properties, env, PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 500);
             this.writerAsyncCommandMaxWaitTimeout = getMillis(properties, env, PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT, 30_000);
             this.writerTickRowsCountMod = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_WRITER_TICK_ROWS_COUNT, 1024)) - 1;
@@ -1554,12 +1566,12 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public HttpMinServerConfiguration getHttpMinServerConfiguration() {
+    public HttpServerConfiguration getHttpMinServerConfiguration() {
         return httpMinServerConfiguration;
     }
 
     @Override
-    public HttpServerConfiguration getHttpServerConfiguration() {
+    public HttpFullFatServerConfiguration getHttpServerConfiguration() {
         return httpServerConfiguration;
     }
 
@@ -1576,6 +1588,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     @Override
     public MemoryConfiguration getMemoryConfiguration() {
         return memoryConfiguration;
+    }
+
+    @Override
+    public Metrics getMetrics() {
+        return metrics;
     }
 
     @Override
@@ -2047,6 +2064,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             registerDeprecated(
                     PropertyKey.CIRCUIT_BREAKER_BUFFER_SIZE,
                     PropertyKey.NET_TEST_CONNECTION_BUFFER_SIZE
+            );
+            registerDeprecated(
+                    PropertyKey.QUERY_TIMEOUT_SEC,
+                    PropertyKey.QUERY_TIMEOUT
             );
             registerDeprecated(
                     PropertyKey.CAIRO_PAGE_FRAME_TASK_POOL_CAPACITY
@@ -2622,6 +2643,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getMetadataPoolCapacity() {
             return sqlModelPoolCapacity;
+        }
+
+        @Override
+        public Metrics getMetrics() {
+            return metrics;
         }
 
         @Override
@@ -3405,8 +3431,34 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    public class PropHttpMinServerConfiguration implements HttpMinServerConfiguration {
+    public class PropHttpConcurrentCacheConfiguration implements ConcurrentCacheConfiguration {
+        @Override
+        public int getBlocks() {
+            return httpSqlCacheBlockCount;
+        }
 
+        @Override
+        public LongGauge getCachedGauge() {
+            return metrics.jsonQueryMetrics().cachedQueriesGauge();
+        }
+
+        @Override
+        public Counter getHiCounter() {
+            return metrics.jsonQueryMetrics().cacheHitCounter();
+        }
+
+        @Override
+        public Counter getMissCounter() {
+            return metrics.jsonQueryMetrics().cacheMissCounter();
+        }
+
+        @Override
+        public int getRows() {
+            return httpSqlCacheRowCount;
+        }
+    }
+
+    public class PropHttpMinServerConfiguration implements HttpServerConfiguration {
         @Override
         public int getBindIPv4Address() {
             return httpMinBindIPv4Address;
@@ -3420,6 +3472,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public MillisecondClock getClock() {
             return MillisecondClockImpl.INSTANCE;
+        }
+
+        @Override
+        public LongGauge getConnectionCountGauge() {
+            return metrics.httpMetrics().connectionCountGauge();
         }
 
         @Override
@@ -3460,6 +3517,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getLimit() {
             return httpMinNetConnectionLimit;
+        }
+
+        @Override
+        public Metrics getMetrics() {
+            return metrics;
         }
 
         @Override
@@ -3568,6 +3630,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public Counter listenerStateChangeCounter() {
+            return metrics.httpMetrics().listenerStateChangeCounter();
+        }
+
+        @Override
         public boolean preAllocateBuffers() {
             return true;
         }
@@ -3578,7 +3645,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    public class PropHttpServerConfiguration implements HttpServerConfiguration {
+    public class PropHttpServerConfiguration implements HttpFullFatServerConfiguration {
 
         @Override
         public int getBindIPv4Address() {
@@ -3593,6 +3660,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public MillisecondClock getClock() {
             return MillisecondClockImpl.INSTANCE;
+        }
+
+        @Override
+        public ConcurrentCacheConfiguration getConcurrentCacheConfiguration() {
+            return httpMinConcurrentCacheConfiguration;
+        }
+
+        @Override
+        public LongGauge getConnectionCountGauge() {
+            return metrics.httpMetrics().connectionCountGauge();
         }
 
         @Override
@@ -3646,6 +3723,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public Metrics getMetrics() {
+            return metrics;
+        }
+
+        @Override
         public long getNapThreshold() {
             return httpWorkerNapThreshold;
         }
@@ -3673,16 +3755,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public String getPoolName() {
             return "http";
-        }
-
-        @Override
-        public int getQueryCacheBlockCount() {
-            return httpSqlCacheBlockCount;
-        }
-
-        @Override
-        public int getQueryCacheRowCount() {
-            return httpSqlCacheRowCount;
         }
 
         @Override
@@ -3778,6 +3850,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isQueryCacheEnabled() {
             return httpSqlCacheEnabled;
+        }
+
+        @Override
+        public Counter listenerStateChangeCounter() {
+            return metrics.httpMetrics().listenerStateChangeCounter();
         }
 
         @Override
@@ -3905,6 +3982,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     private class PropLineTcpIOWorkerPoolConfiguration implements WorkerPoolConfiguration {
 
         @Override
+        public Metrics getMetrics() {
+            return metrics;
+        }
+
+        @Override
         public long getNapThreshold() {
             return lineTcpIOWorkerNapThreshold;
         }
@@ -3941,7 +4023,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropLineTcpReceiverConfiguration implements LineTcpReceiverConfiguration {
-
         @Override
         public String getAuthDB() {
             return lineTcpAuthDB;
@@ -3988,6 +4069,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public double getCommitIntervalFraction() {
             return lineTcpCommitIntervalFraction;
+        }
+
+        @Override
+        public LongGauge getConnectionCountGauge() {
+            return metrics.lineMetrics().connectionCountGauge();
         }
 
         @Override
@@ -4073,6 +4159,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getMaxMeasurementSize() {
             return lineTcpMaxMeasurementSize;
+        }
+
+        @Override
+        public Metrics getMetrics() {
+            return metrics;
         }
 
         @Override
@@ -4171,12 +4262,22 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public Counter listenerStateChangeCounter() {
+            return metrics.lineMetrics().aboveMaxConnectionCountCounter();
+        }
+
+        @Override
         public boolean logMessageOnError() {
             return lineLogMessageOnError;
         }
     }
 
     private class PropLineTcpWriterWorkerPoolConfiguration implements WorkerPoolConfiguration {
+        @Override
+        public Metrics getMetrics() {
+            return metrics;
+        }
+
         @Override
         public long getNapThreshold() {
             return lineTcpWriterWorkerNapThreshold;
@@ -4328,6 +4429,33 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
+    private class PropPGWireConcurrentCacheConfiguration implements ConcurrentCacheConfiguration {
+        @Override
+        public int getBlocks() {
+            return pgSelectCacheBlockCount;
+        }
+
+        @Override
+        public LongGauge getCachedGauge() {
+            return metrics.pgWireMetrics().cachedSelectsGauge();
+        }
+
+        @Override
+        public Counter getHiCounter() {
+            return metrics.pgWireMetrics().selectCacheHitCounter();
+        }
+
+        @Override
+        public Counter getMissCounter() {
+            return metrics.pgWireMetrics().selectCacheMissCounter();
+        }
+
+        @Override
+        public int getRows() {
+            return pgSelectCacheRowCount;
+        }
+    }
+
     private class PropPGWireConfiguration implements PGWireConfiguration {
 
         @Override
@@ -4363,6 +4491,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public MillisecondClock getClock() {
             return MillisecondClockImpl.INSTANCE;
+        }
+
+        @Override
+        public ConcurrentCacheConfiguration getConcurrentCacheConfiguration() {
+            return pgWireConcurrentCacheConfiguration;
+        }
+
+        @Override
+        public LongGauge getConnectionCountGauge() {
+            return metrics.pgWireMetrics().connectionCountGauge();
         }
 
         @Override
@@ -4446,6 +4584,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public Metrics getMetrics() {
+            return metrics;
+        }
+
+        @Override
         public int getNamedStatementCacheCapacity() {
             return pgNamedStatementCacheCapacity;
         }
@@ -4508,16 +4651,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getRecvBufferSize() {
             return pgRecvBufferSize;
-        }
-
-        @Override
-        public int getSelectCacheBlockCount() {
-            return pgSelectCacheBlockCount;
-        }
-
-        @Override
-        public int getSelectCacheRowCount() {
-            return pgSelectCacheRowCount;
         }
 
         @Override
@@ -4613,6 +4746,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isUpdateCacheEnabled() {
             return pgUpdateCacheEnabled;
+        }
+
+        @Override
+        public Counter listenerStateChangeCounter() {
+            return metrics.pgWireMetrics().listenerStateChangeCounter();
         }
 
         @Override
@@ -4847,6 +4985,11 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     private class PropWalApplyPoolConfiguration implements WorkerPoolConfiguration {
         @Override
+        public Metrics getMetrics() {
+            return metrics;
+        }
+
+        @Override
         public long getNapThreshold() {
             return walApplyWorkerNapThreshold;
         }
@@ -4893,6 +5036,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropWorkerPoolConfiguration implements WorkerPoolConfiguration {
+        @Override
+        public Metrics getMetrics() {
+            return metrics;
+        }
+
         @Override
         public long getNapThreshold() {
             return sharedWorkerNapThreshold;

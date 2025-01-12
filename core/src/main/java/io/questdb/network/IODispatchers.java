@@ -24,7 +24,6 @@
 
 package io.questdb.network;
 
-import io.questdb.metrics.LongGauge;
 import io.questdb.std.Os;
 
 public class IODispatchers {
@@ -34,17 +33,16 @@ public class IODispatchers {
 
     public static <C extends IOContext<C>> IODispatcher<C> create(
             IODispatcherConfiguration configuration,
-            IOContextFactory<C> ioContextFactory,
-            LongGauge connectionCountGauge
+            IOContextFactory<C> ioContextFactory
     ) {
         switch (Os.type) {
             case Os.LINUX:
-                return new IODispatcherLinux<>(configuration, ioContextFactory, connectionCountGauge);
+                return new IODispatcherLinux<>(configuration, ioContextFactory);
             case Os.DARWIN:
             case Os.FREEBSD:
-                return new IODispatcherOsx<>(configuration, ioContextFactory, connectionCountGauge);
+                return new IODispatcherOsx<>(configuration, ioContextFactory);
             case Os.WINDOWS:
-                return new IODispatcherWindows<>(configuration, ioContextFactory, connectionCountGauge);
+                return new IODispatcherWindows<>(configuration, ioContextFactory);
             default:
                 throw new RuntimeException();
         }

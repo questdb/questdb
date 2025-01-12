@@ -78,7 +78,7 @@ pub fn varchar_to_page(
                 let entry: &AuxEntrySplit = unsafe { mem::transmute(entry) };
                 let header = entry.header;
                 let size = (header >> HEADER_FLAGS_WIDTH) as usize;
-                let offset = entry.offset_lo as usize | (entry.offset_hi as usize) << 16;
+                let offset = entry.offset_lo as usize | ((entry.offset_hi as usize) << 16);
                 assert!(
                     offset + size <= data.len(),
                     "Data corruption in VARCHAR column"
@@ -107,7 +107,7 @@ pub fn varchar_to_page(
             return Err(fmt_err!(
                 Unsupported,
                 "unsupported encoding {encoding:?} while writing a string column"
-            ))
+            ));
         }
     };
 
@@ -183,7 +183,7 @@ pub fn append_varchar(
         append_offset(aux_mem, data_mem.len())
     } else {
         assert!(value_size <= LENGTH_LIMIT_BYTES);
-        let header = (value_size as u32) << HEADER_FLAGS_WIDTH | is_ascii(value);
+        let header = ((value_size as u32) << HEADER_FLAGS_WIDTH) | is_ascii(value);
         aux_mem.extend_from_slice(&header.to_le_bytes())?;
         aux_mem.extend_from_slice(&value[0..VARCHAR_INLINED_PREFIX_BYTES])?;
         data_mem.extend_from_slice(value)?;

@@ -28,6 +28,7 @@ import io.questdb.BuildInformation;
 import io.questdb.ConfigPropertyKey;
 import io.questdb.ConfigPropertyValue;
 import io.questdb.FactoryProvider;
+import io.questdb.Metrics;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
@@ -70,6 +71,10 @@ public interface CairoConfiguration {
     }
 
     boolean enableTestFactories();
+
+    default boolean freeLeakedReaders() {
+        return true;
+    }
 
     /**
      * All effective configuration values are seen by the server instance.
@@ -670,4 +675,6 @@ public interface CairoConfiguration {
     }
 
     boolean useFastAsOfJoin();
+
+    Metrics getMetrics();
 }

@@ -26,7 +26,7 @@ package io.questdb.metrics;
 
 import org.jetbrains.annotations.TestOnly;
 
-public interface Counter extends Scrapable {
+public interface Counter extends Target {
 
     void add(long value);
 

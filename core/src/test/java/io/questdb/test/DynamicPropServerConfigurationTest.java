@@ -128,7 +128,8 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                     w.write("http.net.connection.limit=10\n");
                 }
 
-                TestUtils.assertEventually(() -> Assert.assertEquals(0, metrics.jsonQuery().connectionCountGauge().getValue()));
+                TestUtils.assertEventually(() -> Assert.assertEquals(0, metrics.httpMetrics().connectionCountGauge().getValue()));
+                TestUtils.assertEventually(() -> Assert.assertTrue(3 < metrics.httpMetrics().listenerStateChangeCounter().getValue()));
 
                 assertReloadConfig(true);
 
@@ -195,6 +196,9 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 }
 
                 assertReloadConfig(true);
+
+                // second reload should not reload (no changes)
+                assertReloadConfig(false);
 
                 try (TestHttpClient testHttpClient = new TestHttpClient()) {
                     testHttpClient.assertGet(
@@ -295,12 +299,16 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                     w.write("pg.net.connection.limit=10\n");
                 }
 
-                TestUtils.assertEventually(() -> Assert.assertEquals(0, metrics.pgWire().connectionCountGauge().getValue()));
+                TestUtils.assertEventually(() -> Assert.assertEquals(0, metrics.pgWireMetrics().connectionCountGauge().getValue()));
+                TestUtils.assertEventually(() -> Assert.assertTrue(3 < metrics.pgWireMetrics().listenerStateChangeCounter().getValue()));
 
                 // call the reload method directly instead of using the reload_config() SQL function
                 // to avoid opening a PGWire connection;
                 // there is no reliable way to wait until the server listener is re-registered
                 serverMain.getEngine().getConfigReloader().reload();
+
+                // while configuration was reloaded, metrics must not be reset
+                TestUtils.assertEventually(() -> Assert.assertTrue(3 < metrics.pgWireMetrics().listenerStateChangeCounter().getValue()));
 
                 // we should be able to open two connections eventually
                 TestUtils.assertEventually(() -> {

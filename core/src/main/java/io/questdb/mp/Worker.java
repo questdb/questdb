@@ -151,10 +151,12 @@ public class Worker extends Thread {
                         try {
                             runAsap |= jobs.get(i).run(workerId, runStatus);
                         } catch (Throwable e) {
-                            try {
-                                metrics.health().incrementUnhandledErrors();
-                            } catch (Throwable t) {
-                                stdErrCritical(t);
+                            if (metrics.isEnabled()) {
+                                try {
+                                    metrics.healthMetrics().incrementUnhandledErrors();
+                                } catch (Throwable t) {
+                                    stdErrCritical(t);
+                                }
                             }
                             if (log != null) {
                                 log.critical().$("unhandled error [job=").$(jobs.get(i).toString()).$(", ex=").$(e).I$();

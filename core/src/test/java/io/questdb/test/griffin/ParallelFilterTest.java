@@ -226,9 +226,10 @@ public class ParallelFilterTest extends AbstractCairoTest {
     @Test
     public void testEarlyCursorClose() throws Exception {
         // This scenario used to lead to an NPE on `circuitBreaker.cancelledFlag` access in PageFrameReduceJob.
-        WorkerPool pool = new WorkerPool((() -> 4));
+        WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
-                pool, (engine, compiler, sqlExecutionContext) -> {
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE x (" +
                                     "  ts TIMESTAMP," +
@@ -262,9 +263,10 @@ public class ParallelFilterTest extends AbstractCairoTest {
         final int threadCount = 4;
         final int workerCount = 4;
 
-        WorkerPool pool = new WorkerPool((() -> workerCount));
+        WorkerPool pool = new WorkerPool(() -> workerCount);
         TestUtils.execute(
-                pool, (engine, compiler, sqlExecutionContext) -> {
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE 'test1' " +
                                     "(column1 SYMBOL capacity 256 CACHE index capacity 256, timestamp TIMESTAMP) " +
@@ -694,9 +696,10 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     private void testAsyncSubQueryWithFilter(String query) throws Exception {
-        WorkerPool pool = new WorkerPool((() -> 4));
+        WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
-                pool, (engine, compiler, sqlExecutionContext) -> {
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE price (" +
                                     "  ts TIMESTAMP," +
@@ -730,7 +733,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     private void testAsyncTimestampSubQueryWithFilter(String query, String expected) throws Exception {
-        WorkerPool pool = new WorkerPool((() -> 4));
+        WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
@@ -760,9 +763,10 @@ public class ParallelFilterTest extends AbstractCairoTest {
     private void testIn(int jitMode) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
 
-        WorkerPool pool = new WorkerPool((() -> 4));
+        WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
-                pool, (engine, compiler, sqlExecutionContext) -> {
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE tab (\n" +
                                     "  ts TIMESTAMP," +
@@ -799,9 +803,10 @@ public class ParallelFilterTest extends AbstractCairoTest {
     private void testInAndInTimestamp(int jitMode) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
 
-        WorkerPool pool = new WorkerPool((() -> 4));
+        WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
-                pool, (engine, compiler, sqlExecutionContext) -> {
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE tab (\n" +
                                     "  ts TIMESTAMP," +
@@ -845,9 +850,10 @@ public class ParallelFilterTest extends AbstractCairoTest {
     private void testInTimestamp(int jitMode) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
 
-        WorkerPool pool = new WorkerPool((() -> 4));
+        WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
-                pool, (engine, compiler, sqlExecutionContext) -> {
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE tab (\n" +
                                     "  ts TIMESTAMP," +
@@ -889,7 +895,8 @@ public class ParallelFilterTest extends AbstractCairoTest {
 
         WorkerPool pool = new WorkerPool(() -> workerCount);
         TestUtils.execute(
-                pool, (engine, compiler, sqlExecutionContext) -> {
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "create table x ( " +
                                     " v long, " +
@@ -944,7 +951,8 @@ public class ParallelFilterTest extends AbstractCairoTest {
 
         WorkerPool pool = new WorkerPool(() -> workerCount);
         TestUtils.execute(
-                pool, (engine, compiler, sqlExecutionContext) -> {
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "create table x ( " +
                                     " l long, " +
@@ -996,9 +1004,10 @@ public class ParallelFilterTest extends AbstractCairoTest {
     private void testStrBindVariable(String columnType, int jitMode) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
 
-        WorkerPool pool = new WorkerPool((() -> 4));
+        WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
-                pool, (engine, compiler, sqlExecutionContext) -> {
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE price (\n" +
                                     "  ts TIMESTAMP," +

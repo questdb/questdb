@@ -22,8 +22,33 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cutlass.http.processors;
 
-public class AlterTableUtils {
-    public static final String ALTER_TABLE_EXPECTED_TOKEN_DESCR = "'add', 'alter', 'attach', 'detach', 'drop', 'convert', 'resume', 'rename', 'set' or 'squash'";
+import io.questdb.metrics.Counter;
+import io.questdb.metrics.LongGauge;
+import io.questdb.metrics.MetricsRegistry;
+import io.questdb.std.Mutable;
+
+public class HttpMetrics implements Mutable {
+    private final Counter listenerStateChangeCounter;
+    private final LongGauge connectionCountGauge;
+
+    public HttpMetrics(MetricsRegistry metricsRegistry) {
+        this.connectionCountGauge = metricsRegistry.newLongGauge("http_connections");
+        this.listenerStateChangeCounter = metricsRegistry.newCounter("http_listener_state_change_count");
+    }
+
+    @Override
+    public void clear() {
+        connectionCountGauge.setValue(0);
+        listenerStateChangeCounter.reset();
+    }
+
+    public Counter listenerStateChangeCounter() {
+        return listenerStateChangeCounter;
+    }
+
+    public LongGauge connectionCountGauge() {
+        return connectionCountGauge;
+    }
 }

@@ -161,8 +161,7 @@ public class WalWriter implements TableWriterAPI {
             TableToken tableToken,
             TableSequencerAPI tableSequencerAPI,
             DdlListener ddlListener,
-            WalDirectoryPolicy walDirectoryPolicy,
-            Metrics metrics
+            WalDirectoryPolicy walDirectoryPolicy
     ) {
         LOG.info().$("open '").utf8(tableToken.getDirName()).$('\'').$();
         this.sequencer = tableSequencerAPI;
@@ -179,9 +178,9 @@ public class WalWriter implements TableWriterAPI {
         this.pathRootSize = path.size();
         this.path.concat(tableToken).concat(walName);
         this.pathSize = path.size();
-        this.metrics = metrics;
+        this.metrics = configuration.getMetrics();
         this.open = true;
-        this.symbolMapMem = Vm.getMARInstance(configuration);
+        this.symbolMapMem = Vm.getPMARInstance(configuration);
 
         try {
             lockWal();
@@ -301,9 +300,8 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
-    // Returns sequencer transaction number
     @Override
-    public long commit() {
+    public void commit() {
         checkDistressed();
         try {
             if (inTransaction()) {
@@ -320,8 +318,7 @@ public class WalWriter implements TableWriterAPI {
                         .$(", minTs=").$ts(txnMinTimestamp).$(", maxTs=").$ts(txnMaxTimestamp).I$();
                 resetDataTxnProperties();
                 mayRollSegmentOnNextRow();
-                metrics.wal().addRowsWritten(rowsToCommit);
-                return seqTxn;
+                metrics.walMetrics().addRowsWritten(rowsToCommit);
             }
         } catch (CairoException ex) {
             distressed = true;
@@ -335,7 +332,6 @@ public class WalWriter implements TableWriterAPI {
         } finally {
             isCommittingData = false;
         }
-        return NO_TXN;
     }
 
     public void doClose(boolean truncate) {
@@ -934,7 +930,7 @@ public class WalWriter implements TableWriterAPI {
     private void configureColumn(int columnIndex, int columnType) {
         final int dataColumnOffset = getDataColumnOffset(columnIndex);
         if (columnType > 0) {
-            final MemoryMA dataMem = Vm.getMAInstance(configuration);
+            final MemoryMA dataMem = Vm.getPMARInstance(configuration);
             final MemoryMA auxMem = createAuxColumnMem(columnType);
             columns.extendAndSet(dataColumnOffset, dataMem);
             columns.extendAndSet(dataColumnOffset + 1, auxMem);
@@ -1127,7 +1123,7 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private MemoryMA createAuxColumnMem(int columnType) {
-        return ColumnType.isVarSize(columnType) ? Vm.getMAInstance(configuration) : null;
+        return ColumnType.isVarSize(columnType) ? Vm.getPMARInstance(configuration) : null;
     }
 
     private SegmentColumnRollSink createSegmentColumnRollSink() {

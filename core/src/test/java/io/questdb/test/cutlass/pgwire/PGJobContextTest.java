@@ -2620,6 +2620,30 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testByteBindingVariable() throws Exception {
+        skipOnWalRun();
+        skipInLegacyMode();
+
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            final PreparedStatement statement = connection.prepareStatement("create table x (a byte)");
+            statement.execute();
+
+            try (final PreparedStatement insert = connection.prepareStatement("insert into x values (?)")) {
+                // the parameter must be null so client does not know the type and parse message won't have types specified
+                // this makes the compiler to derive the type from the column type as BYTE
+                insert.setObject(1, null);
+                insert.execute();
+            }
+
+            try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
+                sink.clear();
+                assertResultSet("a[SMALLINT]\n" +
+                        "0\n", sink, resultSet);
+            }
+        });
+    }
+
+    @Test
     public void testCairoException() throws Exception {
         skipOnWalRun(); // non-partitioned
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
@@ -2748,6 +2772,8 @@ if __name__ == "__main__":
 
     @Test
     public void testCancelRunningQuery() throws Exception {
+        // legacy code is liable to "resume" cursor after "cursor.close()", which would lead to undefined behaviour
+        Assume.assumeFalse(legacyMode);
         String[] queries = {
                 "create table new_tab as (select count(*) from tab t1 join tab t2 on t1.x = t2.x where sleep(120000))",
                 "select count(*) from tab t1 join tab t2 on t1.x = t2.x where sleep(120000)",
@@ -7370,7 +7396,7 @@ nodejs code:
                 ps1.executeQuery();
                 Assert.fail("PSQLException should be thrown");
             } catch (PSQLException e) {
-                assertContains(e.getMessage(), "there is no matching operator`!=` with the argument types: BOOLEAN != STRING");
+                assertContains(e.getMessage(), "there is no matching operator `!=` with the argument types: BOOLEAN != STRING");
             }
 
             try (PreparedStatement s = connection.prepareStatement("select 2 a,2 b from long_sequence(1) where x > 0 and x < 10")) {
@@ -7396,7 +7422,7 @@ nodejs code:
                 ps1.executeQuery();
                 Assert.fail("PSQLException should be thrown");
             } catch (PSQLException e) {
-                assertContains(e.getMessage(), "there is no matching operator`!=` with the argument types: BOOLEAN != STRING");
+                assertContains(e.getMessage(), "there is no matching operator `!=` with the argument types: BOOLEAN != STRING");
             }
 
             try (PreparedStatement s = connection.prepareStatement("select 2 a,2 b from long_sequence(1) where x > 0 and x < 10")) {
@@ -7816,7 +7842,7 @@ nodejs code:
                 }
             };
 
-            final WorkerPool workerPool = new TestWorkerPool(4, metrics);
+            final WorkerPool workerPool = new TestWorkerPool(4, conf.getMetrics());
             try (final IPGWireServer server = createPGWireServer(
                     conf,
                     engine,
@@ -8442,26 +8468,26 @@ nodejs code:
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             execute("create table x as (select x id from long_sequence(10))");
             // table
-            metrics.pgWire().resetQueryCounters();
+            configuration.getMetrics().pgWireMetrics().resetQueryCounters();
             try (
                     PreparedStatement stmt = connection.prepareStatement("select count() from x;");
                     ResultSet rs = stmt.executeQuery()
             ) {
                 rs.next();
                 Assert.assertEquals(10, rs.getLong(1));
-                Assert.assertEquals(1, metrics.pgWire().startedQueriesCount());
-                Assert.assertEquals(1, metrics.pgWire().completedQueriesCount());
+                Assert.assertEquals(1, configuration.getMetrics().pgWireMetrics().startedQueriesCount());
+                Assert.assertEquals(1, configuration.getMetrics().pgWireMetrics().completedQueriesCount());
             }
             // virtual
-            metrics.pgWire().resetQueryCounters();
+            configuration.getMetrics().pgWireMetrics().resetQueryCounters();
             try (
                     PreparedStatement stmt = connection.prepareStatement("select 1;");
                     ResultSet rs = stmt.executeQuery()
             ) {
                 rs.next();
                 Assert.assertEquals(1, rs.getLong(1));
-                Assert.assertEquals(1, metrics.pgWire().startedQueriesCount());
-                Assert.assertEquals(1, metrics.pgWire().completedQueriesCount());
+                Assert.assertEquals(1, configuration.getMetrics().pgWireMetrics().startedQueriesCount());
+                Assert.assertEquals(1, configuration.getMetrics().pgWireMetrics().completedQueriesCount());
             }
         });
     }
@@ -11930,7 +11956,7 @@ create table tab as (
             }
         };
 
-        WorkerPool workerPool = new TestWorkerPool(2, metrics);
+        WorkerPool workerPool = new TestWorkerPool(2, conf.getMetrics());
         DefaultCircuitBreakerRegistry registry = new DefaultCircuitBreakerRegistry(conf, engine.getConfiguration());
         try {
             return createPGWireServer(
@@ -12040,7 +12066,7 @@ create table tab as (
 
         try (
                 DefaultCircuitBreakerRegistry registry = new DefaultCircuitBreakerRegistry(conf, engine.getConfiguration());
-                WorkerPool pool = new WorkerPool(conf, metrics)
+                WorkerPool pool = new WorkerPool(conf)
         ) {
             pool.assign(engine.getEngineMaintenanceJob());
             try (

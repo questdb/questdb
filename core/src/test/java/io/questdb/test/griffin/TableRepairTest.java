@@ -57,7 +57,7 @@ public class TableRepairTest extends AbstractCairoTest {
 
                 // repair by opening and closing writer
 
-                try (TableWriter writer = newOffPoolWriter(configuration, "tst", metrics)) {
+                try (TableWriter writer = newOffPoolWriter(configuration, "tst")) {
                     Assert.assertTrue(reader.reload());
                     Assert.assertEquals(95040, reader.size());
                     Assert.assertEquals(950390000000L, writer.getMaxTimestamp());
@@ -96,7 +96,7 @@ public class TableRepairTest extends AbstractCairoTest {
 
                 // repair by opening and closing writer
 
-                newOffPoolWriter(configuration, "tst", metrics).close();
+                newOffPoolWriter(configuration, "tst").close();
 
                 Assert.assertTrue(reader.reload());
                 Assert.assertEquals(91360, reader.size());

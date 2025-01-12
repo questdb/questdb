@@ -99,7 +99,7 @@ public class UpdateOperation extends AbstractOperation {
             if (state == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
                 throw CairoException.queryCancelled(circuitBreaker.getFd());
             } else {
-                throw CairoException.queryTimedOut(circuitBreaker.getFd());
+                throw CairoException.queryTimedOut(circuitBreaker.getFd(), 0, 0);
             }
         }
     }
@@ -137,7 +137,7 @@ public class UpdateOperation extends AbstractOperation {
 
     public void testTimeout() {
         if (requesterTimeout) {
-            throw CairoException.queryTimedOut(circuitBreaker.getFd());
+            throw CairoException.queryTimedOut(circuitBreaker.getFd(), 0, 0);
         }
 
         circuitBreaker.statefulThrowExceptionIfTripped();

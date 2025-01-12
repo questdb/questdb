@@ -29,7 +29,7 @@ import io.questdb.std.str.BorrowableUtf8Sink;
 /**
  * Anything that can be scraped for Prometheus metrics.
  */
-public interface Scrapable {
+public interface Target {
 
     // We need a sink that we can borrow from and append to in native code.
     void scrapeIntoPrometheus(BorrowableUtf8Sink sink);

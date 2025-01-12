@@ -27,7 +27,7 @@ package io.questdb;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cutlass.http.HttpMinServerConfiguration;
+import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpMinServerConfigurationWrapper;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.http.HttpServerConfigurationWrapper;
@@ -39,6 +39,7 @@ import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfigurationWrapper;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.Files;
@@ -87,20 +88,21 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             PropertyKey.LINE_TCP_NET_CONNECTION_LIMIT
     ));
     private final BuildInformation buildInformation;
-    private final CairoConfigurationImpl cairoConfig;
+    private final CairoConfigurationWrapper cairoConfig;
     private final java.nio.file.Path confPath;
     private final boolean configReloadEnabled;
     private final @Nullable Map<String, String> env;
     private final FilesFacade filesFacade;
     private final FactoryProviderFactory fpf;
-    private final HttpServerConfigurationImpl httpServerConfig;
-    private final LineTcpReceiverConfigurationImpl lineTcpConfig;
+    private final HttpServerConfigurationWrapper httpServerConfig;
+    private final LineTcpReceiverConfigurationWrapper lineTcpConfig;
     private final boolean loadAdditionalConfigurations;
     private final Log log;
-    private final MemoryConfigurationImpl memoryConfig;
+    private final MemoryConfigurationWrapper memoryConfig;
+    private final Metrics metrics;
     private final MicrosecondClock microsecondClock;
-    private final HttpMinServerConfigurationImpl minHttpServerConfig;
-    private final PGWireConfigurationImpl pgWireConfig;
+    private final HttpMinServerConfigurationWrapper minHttpServerConfig;
+    private final PGWireConfigurationWrapper pgWireConfig;
     private final Properties properties;
     private final Object reloadLock = new Object();
     private final String root;
@@ -139,13 +141,14 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
                 fpf,
                 loadAdditionalConfigurations
         );
+        this.metrics = serverConfig.getMetrics();
         this.serverConfig = new AtomicReference<>(serverConfig);
-        this.cairoConfig = new CairoConfigurationImpl();
-        this.minHttpServerConfig = new HttpMinServerConfigurationImpl();
-        this.httpServerConfig = new HttpServerConfigurationImpl();
-        this.lineTcpConfig = new LineTcpReceiverConfigurationImpl();
-        this.memoryConfig = new MemoryConfigurationImpl();
-        this.pgWireConfig = new PGWireConfigurationImpl();
+        this.cairoConfig = new CairoConfigurationWrapper(this.metrics);
+        this.minHttpServerConfig = new HttpMinServerConfigurationWrapper(this.metrics);
+        this.httpServerConfig = new HttpServerConfigurationWrapper(this.metrics);
+        this.lineTcpConfig = new LineTcpReceiverConfigurationWrapper(this.metrics);
+        this.memoryConfig = new MemoryConfigurationWrapper();
+        this.pgWireConfig = new PGWireConfigurationWrapper(this.metrics);
         reloadNestedConfigurations(serverConfig);
         this.version = 0;
         this.confPath = Paths.get(getCairoConfiguration().getConfRoot().toString(), Bootstrap.CONFIG_FILE);
@@ -217,20 +220,24 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
         boolean changed = false;
         // Compare the new and existing properties
         for (Map.Entry<Object, Object> entry : newProperties.entrySet()) {
-            String key = (String) entry.getKey();
-            String oldVal = oldProperties.getProperty(key);
+            final String key = (String) entry.getKey();
+            final String oldVal = oldProperties.getProperty(key);
             if (oldVal == null || !oldVal.equals(entry.getValue())) {
-                ConfigPropertyKey config = keyResolver.apply(key);
-                if (config == null) {
+                final ConfigPropertyKey propKey = keyResolver.apply(key);
+                if (propKey == null) {
                     return false;
                 }
 
-                if (reloadableProps.contains(config)) {
-                    log.info()
-                            .$("reloaded config option [update, key=").$(key)
-                            .$(", old=").$(oldVal)
-                            .$(", new=").$((String) entry.getValue())
-                            .I$();
+                if (reloadableProps.contains(propKey)) {
+                    final LogRecord rec = log.info()
+                            .$("reloaded config option [update, key=").$(key);
+                    if (!propKey.isSensitive()) {
+                        rec
+                                .$(", oldValue=").$(oldVal)
+                                .$(", newValue=").$((String) entry.getValue());
+                    }
+                    rec.I$();
+
                     oldProperties.setProperty(key, (String) entry.getValue());
                     changed = true;
                 } else {
@@ -242,17 +249,20 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
         // Check for any old reloadable properties that have been removed in the new config
         Iterator<Object> oldPropsIter = oldProperties.keySet().iterator();
         while (oldPropsIter.hasNext()) {
-            Object key = oldPropsIter.next();
+            final Object key = oldPropsIter.next();
             if (!newProperties.containsKey(key)) {
-                ConfigPropertyKey prop = keyResolver.apply((String) key);
-                if (prop == null) {
+                final ConfigPropertyKey propKey = keyResolver.apply((String) key);
+                if (propKey == null) {
                     continue;
                 }
-                if (reloadableProps.contains(prop)) {
-                    log.info()
-                            .$("reloaded config option [remove, key=").$(key)
-                            .$(", value=").$(oldProperties.getProperty((String) key))
-                            .$();
+                if (reloadableProps.contains(propKey)) {
+                    final LogRecord rec = log.info()
+                            .$("reloaded config option [remove, key=").$(key);
+                    if (!propKey.isSensitive()) {
+                        rec.$(", value=").$(oldProperties.getProperty((String) key));
+                    }
+                    rec.I$();
+
                     oldPropsIter.remove();
                     changed = true;
                 } else {
@@ -274,12 +284,12 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     }
 
     @Override
-    public HttpMinServerConfiguration getHttpMinServerConfiguration() {
+    public HttpServerConfiguration getHttpMinServerConfiguration() {
         return minHttpServerConfig;
     }
 
     @Override
-    public HttpServerConfiguration getHttpServerConfiguration() {
+    public HttpFullFatServerConfiguration getHttpServerConfiguration() {
         return httpServerConfig;
     }
 
@@ -297,6 +307,11 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     @Override
     public MemoryConfiguration getMemoryConfiguration() {
         return memoryConfig;
+    }
+
+    @Override
+    public Metrics getMetrics() {
+        return metrics;
     }
 
     @Override
@@ -410,83 +425,5 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
         lineTcpConfig.setDelegate(serverConfig.getLineTcpReceiverConfiguration());
         memoryConfig.setDelegate(serverConfig.getMemoryConfiguration());
         pgWireConfig.setDelegate(serverConfig.getPGWireConfiguration());
-    }
-
-    private static class CairoConfigurationImpl extends CairoConfigurationWrapper {
-        private final AtomicReference<CairoConfiguration> delegate = new AtomicReference<>();
-
-        @Override
-        public CairoConfiguration getDelegate() {
-            return delegate.get();
-        }
-
-        public void setDelegate(CairoConfiguration delegate) {
-            this.delegate.set(delegate);
-        }
-    }
-
-    private static class HttpMinServerConfigurationImpl extends HttpMinServerConfigurationWrapper {
-        private final AtomicReference<HttpMinServerConfiguration> delegate = new AtomicReference<>();
-
-        @Override
-        public HttpMinServerConfiguration getDelegate() {
-            return delegate.get();
-        }
-
-        public void setDelegate(HttpMinServerConfiguration delegate) {
-            this.delegate.set(delegate);
-        }
-    }
-
-    private static class HttpServerConfigurationImpl extends HttpServerConfigurationWrapper {
-        private final AtomicReference<HttpServerConfiguration> delegate = new AtomicReference<>();
-
-        @Override
-        public HttpServerConfiguration getDelegate() {
-            return delegate.get();
-        }
-
-        public void setDelegate(HttpServerConfiguration delegate) {
-            this.delegate.set(delegate);
-        }
-    }
-
-    private static class LineTcpReceiverConfigurationImpl extends LineTcpReceiverConfigurationWrapper {
-        private final AtomicReference<LineTcpReceiverConfiguration> delegate = new AtomicReference<>();
-
-        @Override
-        public LineTcpReceiverConfiguration getDelegate() {
-            return delegate.get();
-        }
-
-        public void setDelegate(LineTcpReceiverConfiguration delegate) {
-            this.delegate.set(delegate);
-        }
-    }
-
-    private static class MemoryConfigurationImpl extends MemoryConfigurationWrapper {
-        private final AtomicReference<MemoryConfiguration> delegate = new AtomicReference<>();
-
-        @Override
-        public MemoryConfiguration getDelegate() {
-            return delegate.get();
-        }
-
-        public void setDelegate(MemoryConfiguration delegate) {
-            this.delegate.set(delegate);
-        }
-    }
-
-    private static class PGWireConfigurationImpl extends PGWireConfigurationWrapper {
-        private final AtomicReference<PGWireConfiguration> delegate = new AtomicReference<>();
-
-        @Override
-        public PGWireConfiguration getDelegate() {
-            return delegate.get();
-        }
-
-        public void setDelegate(PGWireConfiguration delegate) {
-            this.delegate.set(delegate);
-        }
     }
 }

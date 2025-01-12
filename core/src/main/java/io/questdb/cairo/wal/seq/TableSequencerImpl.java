@@ -124,8 +124,8 @@ public class TableSequencerImpl implements TableSequencer {
             if (ex.isTableDropped()) {
                 throw ex;
             }
-            if (ex.errnoReadPathDoesNotExist()) {
-                LOG.info().$("could not open sequencer, files deleted, assuming dropped [name=").utf8(tableToken.getDirName())
+            if (ex.errnoReadPathDoesNotExist() && engine.isTableDropped(tableToken)) {
+                LOG.info().$("could not open sequencer, table is dropped [name=").utf8(tableToken.getDirName())
                         .$(", path=").$(path)
                         .$(", error=").$(ex.getMessage())
                         .I$();
@@ -133,6 +133,7 @@ public class TableSequencerImpl implements TableSequencer {
             }
             LOG.critical().$("could not open sequencer [name=").utf8(tableToken.getDirName())
                     .$(", path=").$(path)
+                    .$(", errno=").$(ex.getErrno())
                     .$(", error=").$(ex.getMessage())
                     .I$();
             throw ex;

@@ -25,20 +25,28 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.FactoryProvider;
+import io.questdb.Metrics;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.metrics.Counter;
+import io.questdb.metrics.LongGauge;
 import io.questdb.network.EpollFacade;
 import io.questdb.network.KqueueFacade;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.SelectFacade;
+import io.questdb.std.ConcurrentCacheConfiguration;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
-public class PGWireConfigurationWrapper implements PGWireConfiguration {
-    private final PGWireConfiguration delegate;
+import java.util.concurrent.atomic.AtomicReference;
 
-    protected PGWireConfigurationWrapper() {
-        delegate = null;
+public class PGWireConfigurationWrapper implements PGWireConfiguration {
+    private final AtomicReference<PGWireConfiguration> delegate = new AtomicReference<>();
+    private final Metrics metrics;
+
+    public PGWireConfigurationWrapper(Metrics metrics) {
+        this.metrics = metrics;
+        delegate.set(null);
     }
 
     @Override
@@ -74,6 +82,16 @@ public class PGWireConfigurationWrapper implements PGWireConfiguration {
     @Override
     public MillisecondClock getClock() {
         return getDelegate().getClock();
+    }
+
+    @Override
+    public ConcurrentCacheConfiguration getConcurrentCacheConfiguration() {
+        return getDelegate().getConcurrentCacheConfiguration();
+    }
+
+    @Override
+    public LongGauge getConnectionCountGauge() {
+        return metrics.pgWireMetrics().connectionCountGauge();
     }
 
     @Override
@@ -187,6 +205,11 @@ public class PGWireConfigurationWrapper implements PGWireConfiguration {
     }
 
     @Override
+    public Metrics getMetrics() {
+        return metrics;
+    }
+
+    @Override
     public int getNamedStatementCacheCapacity() {
         return getDelegate().getNamedStatementCacheCapacity();
     }
@@ -259,16 +282,6 @@ public class PGWireConfigurationWrapper implements PGWireConfiguration {
     @Override
     public int getRecvBufferSize() {
         return getDelegate().getRecvBufferSize();
-    }
-
-    @Override
-    public int getSelectCacheBlockCount() {
-        return getDelegate().getSelectCacheBlockCount();
-    }
-
-    @Override
-    public int getSelectCacheRowCount() {
-        return getDelegate().getSelectCacheRowCount();
     }
 
     @Override
@@ -372,8 +385,17 @@ public class PGWireConfigurationWrapper implements PGWireConfiguration {
     }
 
     @Override
+    public Counter listenerStateChangeCounter() {
+        return getDelegate().listenerStateChangeCounter();
+    }
+
+    @Override
     public boolean readOnlySecurityContext() {
         return getDelegate().readOnlySecurityContext();
+    }
+
+    public void setDelegate(PGWireConfiguration delegate) {
+        this.delegate.set(delegate);
     }
 
     @Override
@@ -382,6 +404,6 @@ public class PGWireConfigurationWrapper implements PGWireConfiguration {
     }
 
     protected PGWireConfiguration getDelegate() {
-        return delegate;
+        return delegate.get();
     }
 }

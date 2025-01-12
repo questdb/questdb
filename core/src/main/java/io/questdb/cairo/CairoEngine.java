@@ -33,6 +33,7 @@ import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.pool.AbstractMultiTenantPool;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ReaderPool;
+import io.questdb.cairo.pool.ResourcePoolSupervisor;
 import io.questdb.cairo.pool.SequencerMetadataPool;
 import io.questdb.cairo.pool.SqlCompilerPool;
 import io.questdb.cairo.pool.TableMetadataPool;
@@ -56,8 +57,8 @@ import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalListener;
 import io.questdb.cairo.wal.WalReader;
 import io.questdb.cairo.wal.WalWriter;
-import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cutlass.text.CopyContext;
 import io.questdb.griffin.CompiledQuery;
@@ -146,13 +147,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
     private @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
 
-    // Kept for embedded API purposes. The second constructor (the one with metrics)
-    // should be preferred for internal use.
     public CairoEngine(CairoConfiguration configuration) {
-        this(configuration, Metrics.disabled());
-    }
-
-    public CairoEngine(CairoConfiguration configuration, Metrics metrics) {
         try {
             ffCache = new FunctionFactoryCache(
                     configuration,
@@ -163,7 +158,7 @@ public class CairoEngine implements Closeable, WriterSource {
             this.copyContext = new CopyContext(configuration);
             this.tableSequencerAPI = new TableSequencerAPI(this, configuration);
             this.messageBus = new MessageBusImpl(configuration);
-            this.metrics = metrics;
+            this.metrics = configuration.getMetrics();
             // Message bus and metrics must be initialized before the pools.
             this.writerPool = new WriterPool(configuration, this);
             this.readerPool = new ReaderPool(configuration, messageBus, partitionOverwriteControl);
@@ -370,6 +365,10 @@ public class CairoEngine implements Closeable, WriterSource {
         tableNameRegistry.close();
     }
 
+    public void configureThreadLocalReaderPoolSupervisor(@NotNull ResourcePoolSupervisor<ReaderPool.R> supervisor) {
+        readerPool.configureThreadLocalPoolSupervisor(supervisor);
+    }
+
     public @NotNull TableToken createTable(
             SecurityContext securityContext,
             MemoryMARW mem,
@@ -455,7 +454,6 @@ public class CairoEngine implements Closeable, WriterSource {
                 backupDirName,
                 getDdlListener(tableToken),
                 checkpointAgent,
-                Metrics.disabled(),
                 this
         );
     }
@@ -843,7 +841,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void load() {
         // Convert tables to WAL/non-WAL, if necessary.
-        final ObjList<TableToken> convertedTables = TableConverter.convertTables(this, tableSequencerAPI, tableFlagResolver);
+        final ObjList<TableToken> convertedTables = TableConverter.convertTables(this, tableSequencerAPI, tableFlagResolver, tableNameRegistry);
         tableNameRegistry.reload(convertedTables);
     }
 
@@ -1055,6 +1053,10 @@ public class CairoEngine implements Closeable, WriterSource {
                     (short) 0
             );
         }
+    }
+
+    public void removeThreadLocalReaderPoolSupervisor() {
+        readerPool.removeThreadLocalPoolSupervisor();
     }
 
     public TableToken rename(
