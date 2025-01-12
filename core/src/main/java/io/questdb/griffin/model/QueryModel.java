@@ -193,8 +193,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     // Expression clause that is actually part of left/outer join but not in join model.
     // Inner join expressions
     private ExpressionNode outerJoinExpressionClause;
-    private @Nullable ObjList<QueryColumn> pivotColumns = new ObjList<>();
-    private @Nullable ObjList<ExpressionNode> pivotFor = new ObjList<>();
+    private @Nullable ObjList<QueryColumn> pivotColumns = null;
+    private @Nullable ObjList<ExpressionNode> pivotFor = null;
     private ExpressionNode postJoinWhereClause;
     private ExpressionNode sampleBy;
     private ExpressionNode sampleByFrom;

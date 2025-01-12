@@ -1851,13 +1851,61 @@ public class SqlParser {
         // expect [group by]
 
         if (tok != null && isGroupKeyword(tok)) {
-            tok = parseGroupBy(model, lexer, sqlParserCallback);
+            expectBy(lexer);
+            do {
+                tokIncludingLocalBrace(lexer, "literal");
+                lexer.unparseLast();
+                ExpressionNode n = expr(lexer, model, sqlParserCallback, model.getDecls());
+                if (n == null || (n.type != ExpressionNode.LITERAL && n.type != ExpressionNode.CONSTANT && n.type != ExpressionNode.FUNCTION && n.type != ExpressionNode.OPERATION)) {
+                    throw SqlException.$(n == null ? lexer.lastTokenPosition() : n.position, "literal expected");
+                }
+
+                model.addGroupBy(n);
+
+                tok = optTok(lexer);
+            } while (tok != null && Chars.equals(tok, ','));
         }
 
         // expect [order by]
 
         if (tok != null && isOrderKeyword(tok)) {
-            tok = parseGroupBy(model, lexer, sqlParserCallback);
+            model.setOrderByPosition(lexer.lastTokenPosition());
+            expectBy(lexer);
+            do {
+                tokIncludingLocalBrace(lexer, "literal");
+                lexer.unparseLast();
+
+                ExpressionNode n = expr(lexer, model, sqlParserCallback, model.getDecls());
+                if (n == null || (n.type == ExpressionNode.QUERY || n.type == ExpressionNode.SET_OPERATION)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "literal or expression expected");
+                }
+
+                if ((n.type == ExpressionNode.CONSTANT && Chars.equals("''", n.token)) ||
+                        (n.type == ExpressionNode.LITERAL && n.token.length() == 0)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "non-empty literal or expression expected");
+                }
+
+                tok = optTok(lexer);
+
+                if (tok != null && isDescKeyword(tok)) {
+
+                    model.addOrderBy(n, QueryModel.ORDER_DIRECTION_DESCENDING);
+                    tok = optTok(lexer);
+
+                } else {
+
+                    model.addOrderBy(n, QueryModel.ORDER_DIRECTION_ASCENDING);
+
+                    if (tok != null && isAscKeyword(tok)) {
+                        tok = optTok(lexer);
+                    }
+                }
+
+                if (model.getOrderBy().size() >= MAX_ORDER_BY_COLUMNS) {
+                    throw err(lexer, tok, "Too many columns");
+                }
+
+            } while (tok != null && Chars.equals(tok, ','));
         }
 
         // expect [limit]
@@ -1893,7 +1941,7 @@ public class SqlParser {
         do {
             tokIncludingLocalBrace(lexer, "literal");
             lexer.unparseLast();
-            ExpressionNode n = expr(lexer, model, sqlParserCallback);
+            ExpressionNode n = expr(lexer, model, sqlParserCallback, model.getDecls());
             if (n == null || (n.type != ExpressionNode.LITERAL && n.type != ExpressionNode.CONSTANT && n.type != ExpressionNode.FUNCTION && n.type != ExpressionNode.OPERATION)) {
                 throw SqlException.$(n == null ? lexer.lastTokenPosition() : n.position, "literal expected");
             }
@@ -2344,7 +2392,7 @@ public class SqlParser {
             throw SqlException.$(lexer.lastTokenPosition(), "expected `GROUP`");
         }
 
-        tok = parseGroupBy(model, lexer, sqlParserCallback, model.getDecls());
+        tok = parseGroupBy(model, lexer, sqlParserCallback);
 
         if (tok != null && isOrderKeyword(tok)) {
             tok = parseOrderBy(model, lexer, sqlParserCallback);
