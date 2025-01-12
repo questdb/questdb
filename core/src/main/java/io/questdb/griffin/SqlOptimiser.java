@@ -3565,6 +3565,7 @@ public class SqlOptimiser implements Mutable {
         if (jm1 == null) {
             return;
         }
+
         // get secondary model
         QueryModel jm2 = jm1.getJoinModels().getQuiet(1);
         // don't propagate though group by, sample by, distinct or some window functions
