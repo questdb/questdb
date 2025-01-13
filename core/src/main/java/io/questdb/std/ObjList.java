@@ -221,7 +221,7 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
 
     public int indexOfNull() {
         for (int i = 0, n = pos; i < n; i++) {
-            if (null == getQuick(i)) {
+            if (getQuick(i) == null) {
                 return i;
             }
         }

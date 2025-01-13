@@ -6344,7 +6344,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             MemoryARW o3IndexMem = o3MemColumns1.get(getSecondaryColumnIndex(columnIndex));
 
             long size;
-            if (null == o3IndexMem) {
+            if (o3IndexMem == null) {
                 // Fixed size column
                 size = o3RowCount << ColumnType.pow2SizeOf(columnType);
             } else {

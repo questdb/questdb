@@ -1213,10 +1213,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             try {
                 maxUncommittedRows = Numbers.parseInt(value);
             } catch (NumericException e) {
-                throw SqlException.$(
-                        paramNamePosition,
-                        "invalid value [value="
-                ).put(value).put(",parameter=").put(paramName).put(']');
+                throw SqlException.$(paramNamePosition, "invalid value [value=").put(value)
+                        .put(",parameter=").put(paramName)
+                        .put(']');
             }
             if (maxUncommittedRows < 0) {
                 throw SqlException.$(paramNamePosition, "maxUncommittedRows must be non negative");
@@ -3795,7 +3794,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         RecordMetadata writerMetadata = backupWriter.getMetadata();
                         srcPath.of(tableName).slash().put(reader.getMetadataVersion()).$();
                         RecordToRowCopier recordToRowCopier = tableBackupRowCopiedCache.get(srcPath);
-                        if (null == recordToRowCopier) {
+                        if (recordToRowCopier == null) {
                             entityColumnFilter.of(writerMetadata.getColumnCount());
                             recordToRowCopier = RecordToRowCopierUtils.generateCopier(
                                     asm,
@@ -3892,11 +3891,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         private void sqlBackup(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
-            if (null == configuration.getBackupRoot()) {
+            if (configuration.getBackupRoot() == null) {
                 throw CairoException.nonCritical().put("backup is disabled, server.conf property 'cairo.sql.backup.root' is not set");
             }
             CharSequence tok = SqlUtil.fetchNext(lexer);
-            if (null != tok) {
+            if (tok != null) {
                 if (isTableKeyword(tok)) {
                     sqlTableBackup(executionContext);
                     return;
@@ -3907,7 +3906,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
                 if (isMaterializedKeyword(tok)) {
                     tok = SqlUtil.fetchNext(lexer);
-                    if (null != tok && isViewKeyword(tok)) {
+                    if (tok != null && isViewKeyword(tok)) {
                         sqlTableBackup(executionContext);
                         return;
                     }
@@ -3968,14 +3967,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 tableTokens.clear();
                 while (true) {
                     CharSequence tok = SqlUtil.fetchNext(lexer);
-                    if (null == tok) {
+                    if (tok == null) {
                         throw SqlException.position(lexer.getPosition()).put("expected a table name");
                     }
                     final CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition());
                     TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tableName, executionContext);
                     tableTokens.add(tableToken);
                     tok = SqlUtil.fetchNext(lexer);
-                    if (null == tok || Chars.equals(tok, ';')) {
+                    if (tok == null || Chars.equals(tok, ';')) {
                         break;
                     }
                     if (!Chars.equals(tok, ',')) {

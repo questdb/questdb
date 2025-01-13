@@ -896,7 +896,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public String lockAll(TableToken tableToken, String lockReason, boolean ignoreInProgressCheckpoint) {
-        assert null != lockReason;
+        assert lockReason != null;
         if (!ignoreInProgressCheckpoint && checkpointAgent.isInProgress()) {
             // prevent reader locking before checkpoint is released
             return REASON_CHECKPOINT_IN_PROGRESS;

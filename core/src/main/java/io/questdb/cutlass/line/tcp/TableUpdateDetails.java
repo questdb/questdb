@@ -636,7 +636,7 @@ public class TableUpdateDetails implements Closeable {
             columnTypeByNameUtf8.clear();
             for (int n = 0, sz = symbolCacheByColumnIndex.size(); n < sz; n++) {
                 SymbolCache symCache = symbolCacheByColumnIndex.getQuick(n);
-                if (null != symCache) {
+                if (symCache != null) {
                     symCache.close();
                     symbolCachePool.push(symCache);
                 }

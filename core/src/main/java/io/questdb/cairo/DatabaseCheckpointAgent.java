@@ -320,17 +320,16 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     private void rebuildSymbolFiles(Path tablePath, AtomicInteger recoveredSymbolFiles, int pathTableLen) {
         tablePath.trimTo(pathTableLen);
         for (int i = 0; i < tableMetadata.getColumnCount(); i++) {
-
-            int columnType = tableMetadata.getColumnType(i);
+            final int columnType = tableMetadata.getColumnType(i);
             if (ColumnType.isSymbol(columnType)) {
-                int cleanSymbolCount = txWriter.getSymbolValueCount(tableMetadata.getDenseSymbolIndex(i));
-                String columnName = tableMetadata.getColumnName(i);
+                final int cleanSymbolCount = txWriter.getSymbolValueCount(tableMetadata.getDenseSymbolIndex(i));
+                final String columnName = tableMetadata.getColumnName(i);
                 LOG.info().$("rebuilding symbol files [table=").$(tablePath)
-                        .$(", column=").$(columnName)
+                        .$(", column=").utf8(columnName)
                         .$(", count=").$(cleanSymbolCount)
                         .I$();
 
-                int writerIndex = tableMetadata.getWriterIndex(i);
+                final int writerIndex = tableMetadata.getWriterIndex(i);
                 symbolMapUtil.rebuildSymbolFiles(
                         configuration,
                         tablePath,

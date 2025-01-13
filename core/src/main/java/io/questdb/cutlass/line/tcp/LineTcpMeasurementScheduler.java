@@ -509,7 +509,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
     }
 
     private boolean isOpen() {
-        return null != pubSeq;
+        return pubSeq != null;
     }
 
     @NotNull

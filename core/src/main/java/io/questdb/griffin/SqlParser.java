@@ -1181,7 +1181,7 @@ public class SqlParser {
                                 .put(expr.lhs.token).put(" after WITH");
                     }
                     tok = optTok(lexer);
-                    if (null != tok && Chars.equals(tok, ',')) {
+                    if (tok != null && Chars.equals(tok, ',')) {
                         CharSequence peek = optTok(lexer);
                         if (peek != null && isInKeyword(peek)) { // in volume
                             tok = peek;
