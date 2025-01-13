@@ -190,6 +190,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int defaultSymbolCapacity;
     private final int detachedMkdirMode;
     private final boolean devModeEnabled;
+    private final Set<? extends ConfigPropertyKey> dynamicProperties;
     private final boolean enableTestFactories;
     private final int fileOperationRetryCount;
     private final FilesFacade filesFacade;
@@ -599,11 +600,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             Properties properties,
             @Nullable Map<String, String> env,
             Log log,
-            final BuildInformation buildInformation
+            BuildInformation buildInformation
     ) throws ServerConfigurationException, JsonException {
         this(
                 root,
                 properties,
+                null,
                 env,
                 log,
                 buildInformation,
@@ -617,9 +619,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     public PropServerConfiguration(
             String root,
             Properties properties,
+            @Nullable Set<? extends ConfigPropertyKey> dynamicProperties,
             @Nullable Map<String, String> env,
             Log log,
-            final BuildInformation buildInformation,
+            BuildInformation buildInformation,
             FilesFacade filesFacade,
             MicrosecondClock microsecondClock,
             FactoryProviderFactory fpf
@@ -627,6 +630,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this(
                 root,
                 properties,
+                dynamicProperties,
                 env,
                 log,
                 buildInformation,
@@ -642,7 +646,32 @@ public class PropServerConfiguration implements ServerConfiguration {
             Properties properties,
             @Nullable Map<String, String> env,
             Log log,
-            final BuildInformation buildInformation,
+            BuildInformation buildInformation,
+            FilesFacade filesFacade,
+            MicrosecondClock microsecondClock,
+            FactoryProviderFactory fpf
+    ) throws ServerConfigurationException, JsonException {
+        this(
+                root,
+                properties,
+                null,
+                env,
+                log,
+                buildInformation,
+                filesFacade,
+                microsecondClock,
+                fpf,
+                true
+        );
+    }
+
+    public PropServerConfiguration(
+            String root,
+            Properties properties,
+            @Nullable Set<? extends ConfigPropertyKey> dynamicProperties,
+            @Nullable Map<String, String> env,
+            Log log,
+            BuildInformation buildInformation,
             FilesFacade filesFacade,
             MicrosecondClock microsecondClock,
             FactoryProviderFactory fpf,
@@ -657,13 +686,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         final String logTimestampFormatStr = getString(properties, env, PropertyKey.LOG_TIMESTAMP_FORMAT, "yyyy-MM-ddTHH:mm:ss.SSSUUUz");
         final String logTimestampLocaleStr = getString(properties, env, PropertyKey.LOG_TIMESTAMP_LOCALE, "en");
         this.logTimestampLocale = DateLocaleFactory.INSTANCE.getLocale(logTimestampLocaleStr);
-        if (this.logTimestampLocale == null) {
+        if (logTimestampLocale == null) {
             throw new ServerConfigurationException("Invalid log locale: '" + logTimestampLocaleStr + "'");
         }
         TimestampFormatCompiler formatCompiler = new TimestampFormatCompiler();
         this.logTimestampFormat = formatCompiler.compile(logTimestampFormatStr);
         try {
-            this.logTimestampTimezoneRules = Timestamps.getTimezoneRules(this.logTimestampLocale, logTimestampTimezone);
+            this.logTimestampTimezoneRules = Timestamps.getTimezoneRules(logTimestampLocale, logTimestampTimezone);
         } catch (NumericException e) {
             throw new ServerConfigurationException("Invalid log timezone: '" + logTimestampTimezone + "'");
         }
@@ -672,6 +701,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.microsecondClock = microsecondClock;
         this.validator = newValidator();
         this.staticContentProcessorConfiguration = new PropStaticContentProcessorConfiguration();
+        this.dynamicProperties = dynamicProperties;
         boolean configValidationStrict = getBoolean(properties, env, PropertyKey.CONFIG_VALIDATION_STRICT, false);
         validateProperties(properties, configValidationStrict);
 
@@ -1902,7 +1932,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         // Sometimes there can be spaces coming from environment variables, cut them off
         result = (result != null) ? result.trim() : null;
         if (!key.isDebug()) {
-            allPairs.put(key, new ConfigPropertyValueImpl(result, valueSource, false));
+            boolean dynamic = dynamicProperties != null && dynamicProperties.contains(key);
+            allPairs.put(key, new ConfigPropertyValueImpl(result, valueSource, dynamic));
         }
         return result;
     }
