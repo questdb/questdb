@@ -64,6 +64,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.fuzz.FuzzDropCreateTableOperation;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.fuzz.FuzzTransactionGenerator;
 import io.questdb.test.fuzz.FuzzTransactionOperation;
@@ -279,7 +280,25 @@ public class FuzzRunner {
                         LOG.info().$("expected IO failure observed: ").$(e).$();
                         writer = Misc.free(writer);
 
-                        writer = TestUtils.getWriter(engine, tableName);
+                        transaction = transactions.getQuick(i);
+
+                        try {
+                            writer = TestUtils.getWriter(engine, tableName);
+                        } catch (CairoException ex) {
+                            if (ex.isTableDoesNotExist() && transaction.operationList.get(0) instanceof FuzzDropCreateTableOperation) {
+                                // Table is dropped, but failed to recreate.
+                                // Create it again.
+                                FuzzDropCreateTableOperation dropCreateTableOperation = (FuzzDropCreateTableOperation) transaction.operationList.get(0);
+                                if (dropCreateTableOperation.recreateTable(engine)) {
+                                    writer = TestUtils.getWriter(engine, tableName);
+                                    // Drop and create cycle now complete, move to next transaction.
+                                    i++;
+                                } else {
+                                    throw ex;
+                                }
+                            }
+                        }
+                        // Retry the last transaction now that the failure is handled.
                         i--;
                     } else {
                         throw e;
