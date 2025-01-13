@@ -320,6 +320,40 @@ public class MatViewTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testSubQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base_price (" +
+                    "  sym varchar, price double, ts timestamp" +
+                    ") timestamp(ts) partition by DAY WAL"
+            );
+
+            final String viewSql = "select sym0, last(price0) price, ts0 " +
+                    "from (select ts as ts0, sym as sym0, price as price0 from base_price) " +
+                    "sample by 1h";
+
+            createMatView(viewSql);
+            execute("insert into base_price " +
+                    "select 'gbpusd', 1.320 + x / 1000.0, timestamp_sequence('2024-09-10T12:02', 1000000*60*5) " +
+                    "from long_sequence(24 * 20 * 5)"
+            );
+            drainWalQueue();
+
+            MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
+            refreshJob.run(0);
+            drainWalQueue();
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                TestUtils.assertEquals(
+                        compiler,
+                        sqlExecutionContext,
+                        viewSql + " order by ts0, sym0",
+                        "price_1h order by ts0, sym0"
+                );
+            }
+        });
+    }
+
     private static void assertCannotModifyMatView(String updateSql) {
         try {
             execute(updateSql);

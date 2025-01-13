@@ -118,7 +118,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 minTs = sampler.round(minTs);
                 maxTs = sampler.nextTimestamp(sampler.round(maxTs));
 
-                executionContext.setRanges(minTs, maxTs - 1);
+                executionContext.setRange(minTs, maxTs - 1);
 
                 LOG.info().$("refreshing materialized view [view=").$(viewDefinition.getMatViewToken())
                         .$(", base=").$(baseTableReader.getTableToken())
@@ -131,7 +131,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 return true;
             }
         } else {
-            executionContext.setRanges(Long.MIN_VALUE + 1, Long.MAX_VALUE);
+            executionContext.setRange(Long.MIN_VALUE + 1, Long.MAX_VALUE);
 
             LOG.info().$("refreshing materialized view, full refresh [view=").$(viewDefinition.getMatViewToken())
                     .$(", base=").$(baseTableReader.getTableToken())
