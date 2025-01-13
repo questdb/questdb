@@ -53,7 +53,7 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
     // 0 unknown
     // 1 not suspended
     private volatile int suspendedState = 0;
-    private long walBackoffUntil = -1;
+    private volatile long walBackoffUntil = -1;
     private volatile long writerTxn = UNINITIALIZED_TXN;
 
     public String getErrorMessage() {
@@ -189,7 +189,10 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
                 memoryPressureRegulationValue--;
             }
             int delayMicros = rnd.nextInt(4_000_000);
-            LOG.info().$("Memory pressure is high [table=").$(tableName).$(", backoffCounter=").$(-memoryPressureRegulationValue).$(", delay=").$(delayMicros).$(" us]").$();
+            LOG.info().$("memory pressure is high [table=").utf8(tableName)
+                    .$(", backoffCounter=").$(-memoryPressureRegulationValue)
+                    .$(", delay=").$(delayMicros).$(" us]")
+                    .$();
             walBackoffUntil = nowMicros + delayMicros;
             return true;
         }

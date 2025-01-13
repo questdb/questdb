@@ -262,14 +262,14 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testIncrementalRefreshWithViewWhereClauseSymbolFilters() throws Exception {
         testIncrementalRefresh0("select sym, last(price) as price, ts from base_price " +
-                "WHERE sym = 'gbpusd' or sym = 'jpyusd'" +
+                "WHERE sym = 'gbpusd' or sym = 'jpyusd' " +
                 "sample by 1h");
     }
 
     @Test
     public void testIncrementalRefreshWithViewWhereClauseTimestampFilters() throws Exception {
         testIncrementalRefresh0("select sym, last(price) price, ts from base_price " +
-                "WHERE ts > 0 or ts < '2040-01-01'" +
+                "WHERE ts > 0 or ts < '2040-01-01' " +
                 "sample by 1h");
     }
 

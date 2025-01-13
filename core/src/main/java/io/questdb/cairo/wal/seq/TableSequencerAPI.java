@@ -192,7 +192,6 @@ public class TableSequencerAPI implements QuietCloseable {
 
     public long getLastRefreshBaseTxn(TableToken tableToken) {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {
-            TableMetadataChangeLog metadataChangeLog;
             try {
                 return tableSequencer.getLastRefreshBaseTxn();
             } finally {
