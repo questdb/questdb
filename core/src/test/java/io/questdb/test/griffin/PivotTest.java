@@ -564,4 +564,33 @@ public class PivotTest extends AbstractSqlParserTest {
         });
     }
 
+    @Test
+    public void testPivotWithTradesDataAndWithClause2() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlTrades);
+            execute(dmlTrades);
+            drainWalQueue();
+
+            assertSql("timestamp\tBTC-USD_buy\tBTC-USD_sell\n" +
+                            "2024-12-19T08:10:00.000000Z\t101501.27999999998\t101500.15000000002\n",
+                    "WITH t AS\n" +
+                            "        (\n" +
+                            "\n" +
+                            "                SELECT timestamp, symbol,  side, AVG(price) price, AVG(amount) amount FROM btc_trades WHERE symbol IN 'BTC-USD'\n" +
+                            "SAMPLE BY 1m\n" +
+                            "), P AS (\n" +
+                            "        SELECT * FROM t\n" +
+                            "        PIVOT (\n" +
+                            "        sum(price)\n" +
+                            "FOR symbol IN ('BTC-USD')\n" +
+                            "side IN ('buy', 'sell')\n" +
+                            "GROUP BY timestamp\n" +
+                            ") )\n" +
+                            "SELECT * FROM P;");
+        });
+    }
+
 }
+
+
+
