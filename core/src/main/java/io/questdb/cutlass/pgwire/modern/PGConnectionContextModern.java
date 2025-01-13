@@ -884,7 +884,9 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             if (pipelineCurrentEntry == null) {
                 pipelineCurrentEntry = entryPool.next();
             }
-        } else {
+            // we are liable to look up the current entry, depending on how protocol is used
+            // if this the case, we should not attempt to save the current entry prematurely
+        } else if (lookedUpPipelineEntry != pipelineCurrentEntry) {
             addPipelineEntry();
             pipelineCurrentEntry = lookedUpPipelineEntry;
         }

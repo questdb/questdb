@@ -22,8 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.pool;
 
-public class AlterTableUtils {
-    public static final String ALTER_TABLE_EXPECTED_TOKEN_DESCR = "'add', 'alter', 'attach', 'detach', 'drop', 'convert', 'resume', 'rename', 'set' or 'squash'";
+public interface ResourcePoolSupervisor<T> {
+    void onResourceBorrowed(T resource);
+
+    void onResourceReturned(T resource);
 }

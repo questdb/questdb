@@ -422,6 +422,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE("debug.http.force.send.fragmentation.chunk.size", false, true),
     DEBUG_HTTP_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE("debug.http.force.recv.fragmentation.chunk.size", false, true),
     QUERY_TIMEOUT_SEC("query.timeout.sec"),
+    QUERY_TIMEOUT("query.timeout"),
     SHARED_WORKER_COUNT("shared.worker.count"),
     SHARED_WORKER_AFFINITY("shared.worker.affinity"),
     SHARED_WORKER_HALT_ON_ERROR("shared.worker.haltOnError"),

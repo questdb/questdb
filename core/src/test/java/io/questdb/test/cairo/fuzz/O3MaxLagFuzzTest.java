@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.cairo.o3;
+package io.questdb.test.cairo.fuzz;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriter;
@@ -37,6 +37,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.test.cairo.o3.AbstractO3Test;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.fuzz.FuzzTransactionGenerator;
 import io.questdb.test.fuzz.FuzzTransactionOperation;
@@ -146,13 +147,14 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
                     rnd.nextDouble(),
                     // do not generate truncate on windows because it cannot be executed
                     // successfully due to readers being open
-                    Os.type == Os.WINDOWS ? 0 : 0.2, // insert only
-                    0.0,
                     rnd.nextDouble(),
                     0,
+                    0.0,
+                    Os.type == Os.WINDOWS ? 0 : 0.2, // insert only
+                    0,
+                    0.0,
                     5,
                     new String[]{"ABC", "CDE", "XYZ"},
-                    0,
                     0
             );
 

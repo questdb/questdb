@@ -190,6 +190,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int defaultSymbolCapacity;
     private final int detachedMkdirMode;
     private final boolean devModeEnabled;
+    private final Set<? extends ConfigPropertyKey> dynamicProperties;
     private final boolean enableTestFactories;
     private final int fileOperationRetryCount;
     private final FilesFacade filesFacade;
@@ -309,7 +310,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String publicDirectory;
     private final PublicPassthroughConfiguration publicPassthroughConfiguration = new PropPublicPassthroughConfiguration();
     private final int queryCacheEventQueueCapacity;
-    private final long queryTimeout;
     private final int readerPoolMaxSegments;
     private final int repeatMigrationFromVersion;
     private final double rerunExponentialWaitMultiplier;
@@ -591,6 +591,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long pgWorkerNapThreshold;
     private long pgWorkerSleepThreshold;
     private long pgWorkerYieldThreshold;
+    private long queryTimeout;
     private boolean stringToCharCastAllowed;
     private long symbolCacheWaitBeforeReload;
 
@@ -599,11 +600,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             Properties properties,
             @Nullable Map<String, String> env,
             Log log,
-            final BuildInformation buildInformation
+            BuildInformation buildInformation
     ) throws ServerConfigurationException, JsonException {
         this(
                 root,
                 properties,
+                null,
                 env,
                 log,
                 buildInformation,
@@ -617,9 +619,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     public PropServerConfiguration(
             String root,
             Properties properties,
+            @Nullable Set<? extends ConfigPropertyKey> dynamicProperties,
             @Nullable Map<String, String> env,
             Log log,
-            final BuildInformation buildInformation,
+            BuildInformation buildInformation,
             FilesFacade filesFacade,
             MicrosecondClock microsecondClock,
             FactoryProviderFactory fpf
@@ -627,6 +630,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this(
                 root,
                 properties,
+                dynamicProperties,
                 env,
                 log,
                 buildInformation,
@@ -642,7 +646,32 @@ public class PropServerConfiguration implements ServerConfiguration {
             Properties properties,
             @Nullable Map<String, String> env,
             Log log,
-            final BuildInformation buildInformation,
+            BuildInformation buildInformation,
+            FilesFacade filesFacade,
+            MicrosecondClock microsecondClock,
+            FactoryProviderFactory fpf
+    ) throws ServerConfigurationException, JsonException {
+        this(
+                root,
+                properties,
+                null,
+                env,
+                log,
+                buildInformation,
+                filesFacade,
+                microsecondClock,
+                fpf,
+                true
+        );
+    }
+
+    public PropServerConfiguration(
+            String root,
+            Properties properties,
+            @Nullable Set<? extends ConfigPropertyKey> dynamicProperties,
+            @Nullable Map<String, String> env,
+            Log log,
+            BuildInformation buildInformation,
             FilesFacade filesFacade,
             MicrosecondClock microsecondClock,
             FactoryProviderFactory fpf,
@@ -653,17 +682,17 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.metrics = metricsEnabled ? new Metrics(true, new MetricsRegistryImpl()) : Metrics.DISABLED;
         this.logSqlQueryProgressExe = getBoolean(properties, env, PropertyKey.LOG_SQL_QUERY_PROGRESS_EXE, true);
         this.logLevelVerbose = getBoolean(properties, env, PropertyKey.LOG_LEVEL_VERBOSE, false);
-        this.logTimestampTimezone = getString(properties, env, PropertyKey.LOG_TIMESTAMP_TIMEZONE, "UTC");
+        this.logTimestampTimezone = getString(properties, env, PropertyKey.LOG_TIMESTAMP_TIMEZONE, "Z");
         final String logTimestampFormatStr = getString(properties, env, PropertyKey.LOG_TIMESTAMP_FORMAT, "yyyy-MM-ddTHH:mm:ss.SSSUUUz");
         final String logTimestampLocaleStr = getString(properties, env, PropertyKey.LOG_TIMESTAMP_LOCALE, "en");
         this.logTimestampLocale = DateLocaleFactory.INSTANCE.getLocale(logTimestampLocaleStr);
-        if (this.logTimestampLocale == null) {
+        if (logTimestampLocale == null) {
             throw new ServerConfigurationException("Invalid log locale: '" + logTimestampLocaleStr + "'");
         }
         TimestampFormatCompiler formatCompiler = new TimestampFormatCompiler();
         this.logTimestampFormat = formatCompiler.compile(logTimestampFormatStr);
         try {
-            this.logTimestampTimezoneRules = Timestamps.getTimezoneRules(this.logTimestampLocale, logTimestampTimezone);
+            this.logTimestampTimezoneRules = Timestamps.getTimezoneRules(logTimestampLocale, logTimestampTimezone);
         } catch (NumericException e) {
             throw new ServerConfigurationException("Invalid log timezone: '" + logTimestampTimezone + "'");
         }
@@ -672,6 +701,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.microsecondClock = microsecondClock;
         this.validator = newValidator();
         this.staticContentProcessorConfiguration = new PropStaticContentProcessorConfiguration();
+        this.dynamicProperties = dynamicProperties;
         boolean configValidationStrict = getBoolean(properties, env, PropertyKey.CONFIG_VALIDATION_STRICT, false);
         validateProperties(properties, configValidationStrict);
 
@@ -1050,7 +1080,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.rerunMaxProcessingQueueSize = getIntSize(properties, env, PropertyKey.HTTP_BUSY_RETRY_MAX_PROCESSING_QUEUE_SIZE, 4096);
 
             this.circuitBreakerThrottle = getInt(properties, env, PropertyKey.CIRCUIT_BREAKER_THROTTLE, 2_000_000);
+            // obsolete
             this.queryTimeout = (long) (getDouble(properties, env, PropertyKey.QUERY_TIMEOUT_SEC, "60") * Timestamps.SECOND_MILLIS);
+            this.queryTimeout = getMillis(properties, env, PropertyKey.QUERY_TIMEOUT, this.queryTimeout);
+
             this.netTestConnectionBufferSize = getInt(properties, env, PropertyKey.CIRCUIT_BREAKER_BUFFER_SIZE, 64);
             this.netTestConnectionBufferSize = getInt(properties, env, PropertyKey.NET_TEST_CONNECTION_BUFFER_SIZE, netTestConnectionBufferSize);
 
@@ -1893,7 +1926,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         // Sometimes there can be spaces coming from environment variables, cut them off
         result = (result != null) ? result.trim() : null;
         if (!key.isDebug()) {
-            allPairs.put(key, new ConfigPropertyValueImpl(result, valueSource, false));
+            boolean dynamic = dynamicProperties != null && dynamicProperties.contains(key);
+            allPairs.put(key, new ConfigPropertyValueImpl(result, valueSource, dynamic));
         }
         return result;
     }
@@ -2063,6 +2097,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             registerDeprecated(
                     PropertyKey.CIRCUIT_BREAKER_BUFFER_SIZE,
                     PropertyKey.NET_TEST_CONNECTION_BUFFER_SIZE
+            );
+            registerDeprecated(
+                    PropertyKey.QUERY_TIMEOUT_SEC,
+                    PropertyKey.QUERY_TIMEOUT
             );
             registerDeprecated(
                     PropertyKey.CAIRO_PAGE_FRAME_TASK_POOL_CAPACITY

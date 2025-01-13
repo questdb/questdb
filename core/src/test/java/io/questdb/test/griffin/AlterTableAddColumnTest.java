@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.AlterTableUtils;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.EntryUnavailableException;
@@ -32,6 +31,7 @@ import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
@@ -335,6 +335,31 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
     @Test
     public void testAddDuplicateColumn() throws Exception {
         assertFailure("alter table x add column d int", 25, "column 'd' already exists");
+    }
+
+    @Test
+    public void testAddColumnIfNotExists() throws Exception {
+        createX();
+        execute("alter table x add column if not exists a int");
+        execute("alter table x add column description string");
+    }
+
+    @Test
+    public void testAddDuplicateColumnIfNotExists() throws Exception {
+        createX();
+        execute("alter table x add column a int");
+        execute("alter table x add column if not exists a int");
+    }
+
+    @Test
+    public void testAddColumnINotExistsWithMissingNotToken() throws Exception {
+        assertFailure("alter table x add column if exists b int", 28, "'not' expected");
+    }
+
+    @Test
+    public void testAddColumnIfNoExistsUnexpectedToken() throws Exception {
+        assertFailure("alter table x add column if not a int", 32,
+                "unexpected token 'a' for if not exists");
     }
 
     @Test
@@ -654,7 +679,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
 
     @Test
     public void testExpectActionKeyword() throws Exception {
-        assertFailure("alter table x", 13, AlterTableUtils.ALTER_TABLE_EXPECTED_TOKEN_DESCR);
+        assertFailure("alter table x", 13, SqlCompilerImpl.ALTER_TABLE_EXPECTED_TOKEN_DESCR);
     }
 
     @Test

@@ -405,8 +405,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
         execute("alter table " + tableName + " set type bypass wal", sqlExecutionContext);
         engine.releaseInactive();
-        ObjList<TableToken> convertedTables = TableConverter.convertTables(engine, engine.getTableSequencerAPI(), engine.getTableFlagResolver());
-        engine.reloadTableNames(convertedTables);
+        engine.load();
 
         try (TxWriter tw = new TxWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration())) {
             Path p = Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(tt).concat(TXN_FILE_NAME);
@@ -426,8 +425,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
         execute("alter table " + tableName + " set type wal", sqlExecutionContext);
         engine.releaseInactive();
-        ObjList<TableToken> convertedTables2 = TableConverter.convertTables(engine, engine.getTableSequencerAPI(), engine.getTableFlagResolver());
-        engine.reloadTableNames(convertedTables2);
+        engine.load();
 
         try (TxWriter tw = new TxWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration())) {
             Path p = Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(tt).concat(TXN_FILE_NAME);
@@ -454,8 +452,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             execute("alter table " + tableName + " add col1 int");
             execute("alter table " + tableName + " set type wal", sqlExecutionContext);
             engine.releaseInactive();
-            ObjList<TableToken> convertedTables = TableConverter.convertTables(engine, engine.getTableSequencerAPI(), engine.getTableFlagResolver());
-            engine.reloadTableNames(convertedTables);
+            engine.load();
 
             execute("alter table " + tableName + " add col2 int");
             execute("insert into " + tableName + "(ts, col1, col2) values('2022-02-24T01', 1, 2)");
@@ -470,8 +467,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             execute("alter table " + tableName + " set type bypass wal");
             engine.releaseInactive();
-            convertedTables = TableConverter.convertTables(engine, engine.getTableSequencerAPI(), engine.getTableFlagResolver());
-            engine.reloadTableNames(convertedTables);
+            engine.load();
 
             execute("alter table " + tableName + " drop column col2");
             execute("alter table " + tableName + " add col3 int");

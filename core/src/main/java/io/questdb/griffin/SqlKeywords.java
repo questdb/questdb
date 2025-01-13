@@ -369,6 +369,17 @@ public class SqlKeywords {
                 && (tok.charAt(5) | 32) == 'e';
     }
 
+    public static boolean isDeclareKeyword(CharSequence tok) {
+        return tok.length() == 7
+                && (tok.charAt(0) | 32) == 'd'
+                && (tok.charAt(1) | 32) == 'e'
+                && (tok.charAt(2) | 32) == 'c'
+                && (tok.charAt(3) | 32) == 'l'
+                && (tok.charAt(4) | 32) == 'a'
+                && (tok.charAt(5) | 32) == 'r'
+                && (tok.charAt(6) | 32) == 'e';
+    }
+
     public static boolean isDedupKeyword(CharSequence tok) {
         return tok.length() == 5
                 && (tok.charAt(0) | 32) == 'd'
@@ -1795,6 +1806,13 @@ public class SqlKeywords {
                 && (tok.byteAt(1) | 32) == 'r'
                 && (tok.byteAt(2) | 32) == 'u'
                 && (tok.byteAt(3) | 32) == 'e';
+    }
+
+    public static boolean isTtlKeyword(CharSequence tok) {
+        return tok.length() == 3
+                && (tok.charAt(0) | 32) == 't'
+                && (tok.charAt(1) | 32) == 't'
+                && (tok.charAt(2) | 32) == 'l';
     }
 
     public static boolean isTxnKeyword(CharSequence tok) {
