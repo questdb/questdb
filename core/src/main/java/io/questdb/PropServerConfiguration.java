@@ -237,7 +237,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String keepAliveHeader;
     private final int latestByQueueCapacity;
     private final String legacyCheckpointRoot;
-    private final String lineHttpContextPath;
     private final boolean lineHttpEnabled;
     private final CharSequence lineHttpPingVersion;
     private final LineHttpProcessorConfiguration lineHttpProcessorConfiguration = new PropLineHttpProcessorConfiguration();
@@ -996,7 +995,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpRecvBufferSize = getIntSize(properties, env, PropertyKey.HTTP_RECEIVE_BUFFER_SIZE, 2 * Numbers.SIZE_1MB);
             this.httpRecvBufferSize = getIntSize(properties, env, PropertyKey.HTTP_RECV_BUFFER_SIZE, httpRecvBufferSize);
 
-            this.httpContextPath = getContextPath(properties, env, PropertyKey.HTTP_CONTEXT_PATH, "");
+            this.httpContextPath = getContextPath(properties, env);
 
             this.dateAdapterPoolCapacity = getInt(properties, env, PropertyKey.HTTP_TEXT_DATE_ADAPTER_POOL_CAPACITY, 16);
             this.jsonCacheLimit = getIntSize(properties, env, PropertyKey.HTTP_TEXT_JSON_CACHE_LIMIT, 16384);
@@ -1366,7 +1365,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.lineTcpEnabled = getBoolean(properties, env, PropertyKey.LINE_TCP_ENABLED, true);
             this.lineHttpEnabled = getBoolean(properties, env, PropertyKey.LINE_HTTP_ENABLED, true);
             this.lineHttpPingVersion = getString(properties, env, PropertyKey.LINE_HTTP_PING_VERSION, "v2.7.4");
-            this.lineHttpContextPath = getContextPath(properties, env, PropertyKey.LINE_HTTP_CONTEXT_PATH, httpContextPath);
             if (lineTcpEnabled || lineHttpEnabled) {
                 // obsolete
                 lineTcpNetConnectionLimit = getInt(properties, env, PropertyKey.LINE_TCP_NET_ACTIVE_CONNECTION_LIMIT, 256);
@@ -1765,8 +1763,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    protected String getContextPath(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, String defaultValue) {
-        final String contextPath = getString(properties, env, key, defaultValue);
+    protected String getContextPath(Properties properties, @Nullable Map<String, String> env) {
+        final String contextPath = getString(properties, env, PropertyKey.HTTP_CONTEXT_PATH, "");
         return !contextPath.isEmpty() && !contextPath.startsWith("/") ? "/" + contextPath : contextPath;
     }
 
@@ -3936,11 +3934,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean autoCreateNewTables() {
             return ilpAutoCreateNewTables;
-        }
-
-        @Override
-        public String getContextPath() {
-            return lineHttpContextPath;
         }
 
         @Override

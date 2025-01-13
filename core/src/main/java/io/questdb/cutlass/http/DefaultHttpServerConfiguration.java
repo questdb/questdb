@@ -262,11 +262,6 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
         }
 
         @Override
-        public String getContextPath() {
-            return "";
-        }
-
-        @Override
         public short getDefaultColumnTypeForFloat() {
             return lineHttpProcessorConfiguration.getDefaultColumnTypeForInteger();
         }

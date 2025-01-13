@@ -152,11 +152,10 @@ public class HttpServer implements Closeable {
         final LineHttpProcessorConfiguration lineHttpProcessorConfiguration = httpServerConfiguration.getLineHttpProcessorConfiguration();
         // Disable ILP HTTP if the instance configured to be read-only for HTTP requests
         if (httpServerConfiguration.isEnabled() && lineHttpProcessorConfiguration.isEnabled() && !httpServerConfiguration.getHttpContextConfiguration().readOnlySecurityContext()) {
-            final String lineHttpContextPath = lineHttpProcessorConfiguration.getContextPath();
             server.bind(new HttpRequestProcessorFactory() {
                 @Override
                 public String getUrl() {
-                    return lineHttpContextPath + "/write";
+                    return "/write";
                 }
 
                 @Override
@@ -168,7 +167,7 @@ public class HttpServer implements Closeable {
             server.bind(new HttpRequestProcessorFactory() {
                 @Override
                 public String getUrl() {
-                    return lineHttpContextPath + "/api/v2/write";
+                    return "/api/v2/write";
                 }
 
                 @Override
@@ -183,7 +182,7 @@ public class HttpServer implements Closeable {
             server.bind(new HttpRequestProcessorFactory() {
                 @Override
                 public String getUrl() {
-                    return lineHttpContextPath + "/ping";
+                    return "/ping";
                 }
 
                 @Override
