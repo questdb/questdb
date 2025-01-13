@@ -25,7 +25,6 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.AlterTableUtils;
 import io.questdb.cairo.AttachDetachStatus;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
@@ -39,6 +38,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Files;
@@ -941,7 +941,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
             TableModel brokenMeta = new TableModel(configuration, brokenTableName, PartitionBy.DAY);
             try (
-                    MemoryMARW mem = Vm.getMARWInstance()
+                    MemoryMARW mem = Vm.getCMARWInstance()
             ) {
                 String timestampDay = "2022-06-01";
                 createPopulateTable(
@@ -1368,7 +1368,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
             TableModel brokenMeta = new TableModel(configuration, brokenTableName, PartitionBy.DAY);
             try (
-                    MemoryMARW mem = Vm.getMARWInstance()
+                    MemoryMARW mem = Vm.getCMARWInstance()
             ) {
                 String timestampDay = "2022-06-01";
                 createPopulateTable(
@@ -1445,7 +1445,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             TableModel brokenMeta = new TableModel(configuration, brokenTableName, PartitionBy.DAY);
 
             try (
-                    MemoryMARW mem = Vm.getMARWInstance()
+                    MemoryMARW mem = Vm.getCMARWInstance()
             ) {
                 String timestampDay = "2022-06-01";
                 createPopulateTable(
@@ -1524,7 +1524,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             TableModel brokenMeta = new TableModel(configuration, brokenTableName, PartitionBy.DAY);
 
             try (
-                    MemoryMARW mem = Vm.getMARWInstance()
+                    MemoryMARW mem = Vm.getCMARWInstance()
             ) {
                 String timestampDay = "2022-06-01";
                 createPopulateTable(
@@ -2251,7 +2251,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         AbstractSqlParserTest.assertSyntaxError(
                 "ALTER TABLE tab foobar",
                 16,
-                AlterTableUtils.ALTER_TABLE_EXPECTED_TOKEN_DESCR,
+                SqlCompilerImpl.ALTER_TABLE_EXPECTED_TOKEN_DESCR,
                 tableModel
         );
     }
@@ -2330,7 +2330,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
             TableModel brokenMeta = new TableModel(configuration, brokenTableName, PartitionBy.DAY);
             try (
-                    MemoryMARW mem = Vm.getMARWInstance()
+                    MemoryMARW mem = Vm.getCMARWInstance()
             ) {
                 createPopulateTable(
                         1,

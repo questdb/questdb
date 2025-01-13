@@ -78,7 +78,7 @@ public class CairoMemoryTest extends AbstractTest {
         int failureCount = 0;
         try (Path path = new Path()) {
             path.of(temp.newFile().getAbsolutePath());
-            try (MemoryMA mem = Vm.getMAInstance(null)) {
+            try (MemoryMA mem = Vm.getPMARInstance(null)) {
                 mem.of(ff, path.$(), ff.getPageSize() * 2, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
                 int i = 0;
                 while (i < N) {
@@ -159,7 +159,7 @@ public class CairoMemoryTest extends AbstractTest {
         try (Path path = new Path()) {
             path.of(temp.getRoot().getAbsolutePath());
             int prefixLen = path.size();
-            try (MemoryMA mem = Vm.getMAInstance(null)) {
+            try (MemoryMA mem = Vm.getPMARInstance(null)) {
                 Rnd rnd = new Rnd();
                 for (int k = 0; k < 10; k++) {
                     path.trimTo(prefixLen).concat(rnd.nextString(10));

@@ -61,7 +61,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     public WalWriterMetadata(FilesFacade ff, boolean readonly) {
         this.ff = ff;
         if (!readonly) {
-            roMetaMem = metaMem = Vm.getMARWInstance();
+            roMetaMem = metaMem = Vm.getCMARWInstance();
         } else {
             metaMem = null;
             roMetaMem = Vm.getCMRInstance();

@@ -175,11 +175,12 @@ public class CairoEngineTest extends AbstractCairoTest {
             TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.INT);
             AbstractCairoTest.create(model);
             try (
-                    Path path = new Path();
-                    MemoryMARW mem = Vm.getMARWInstance()
+                    Path path = new Path()
             ) {
-                engine.createTable(securityContext, mem, path, false, model, false);
-                fail("duplicated tables should not be permitted!");
+                try (MemoryMARW mem = Vm.getCMARWInstance()) {
+                    engine.createTable(securityContext, mem, path, false, model, false);
+                    fail("duplicated tables should not be permitted!");
+                }
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "table exists");
             }
@@ -297,7 +298,7 @@ public class CairoEngineTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 createX(engine);
-                try (MemoryMARW mem = Vm.getMARWInstance()) {
+                try (MemoryMARW mem = Vm.getCMARWInstance()) {
                     TableToken y = engine.rename(securityContext, path, mem, "x", otherPath, "y");
                     assertWriter(engine, y);
                     assertReader(engine, y);
@@ -400,7 +401,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 assertReader(engine, x);
 
 
-                try (MemoryMARW mem = Vm.getMARWInstance()) {
+                try (MemoryMARW mem = Vm.getCMARWInstance()) {
                     TableToken y = engine.rename(securityContext, path, mem, "x", otherPath, "y");
 
                     assertWriter(engine, y);
@@ -425,7 +426,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                     } catch (CairoException ignored) {
                     }
 
-                    try (MemoryMARW mem = Vm.getMARWInstance()) {
+                    try (MemoryMARW mem = Vm.getCMARWInstance()) {
                         engine.rename(securityContext, path, mem, "x", otherPath, "y");
                         Assert.fail();
                     } catch (CairoException e) {
@@ -455,7 +456,10 @@ public class CairoEngineTest extends AbstractCairoTest {
             };
             AbstractCairoTest.ff = ff;
 
-            try (CairoEngine engine = new CairoEngine(configuration); MemoryMARW mem = Vm.getMARWInstance()) {
+            try (
+                    CairoEngine engine = new CairoEngine(configuration);
+                    MemoryMARW mem = Vm.getCMARWInstance()
+            ) {
                 TableToken x = createX(engine);
 
                 assertReader(engine, x);
@@ -482,11 +486,13 @@ public class CairoEngineTest extends AbstractCairoTest {
     @Test
     public void testRenameNonExisting() throws Exception {
         assertMemoryLeak(() -> {
-
             TableModel model = new TableModel(configuration, "z", PartitionBy.NONE).col("a", ColumnType.INT);
             AbstractCairoTest.create(model);
 
-            try (CairoEngine engine = new CairoEngine(configuration); MemoryMARW mem = Vm.getMARWInstance()) {
+            try (
+                    CairoEngine engine = new CairoEngine(configuration);
+                    MemoryMARW mem = Vm.getCMARWInstance()
+            ) {
                 engine.rename(securityContext, path, mem, "x", otherPath, "y");
                 Assert.fail();
             } catch (CairoException e) {
@@ -505,7 +511,7 @@ public class CairoEngineTest extends AbstractCairoTest {
 
                 assertWriter(engine, x);
                 assertReader(engine, x);
-                try (MemoryMARW mem = Vm.getMARWInstance()) {
+                try (MemoryMARW mem = Vm.getCMARWInstance()) {
                     engine.rename(securityContext, path, mem, "x", otherPath, "y");
                     Assert.fail();
                 } catch (CairoException e) {

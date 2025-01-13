@@ -43,8 +43,8 @@ public class BitmapIndexWriter implements Closeable, Mutable {
     private final CairoConfiguration configuration;
     private final Cursor cursor = new Cursor();
     private final FilesFacade ff;
-    private final MemoryMARW keyMem = Vm.getMARWInstance();
-    private final MemoryMARW valueMem = Vm.getMARWInstance();
+    private final MemoryMARW keyMem = Vm.getCMARWInstance();
+    private final MemoryMARW valueMem = Vm.getCMARWInstance();
     private int blockCapacity;
     private int blockValueCountMod;
     private int keyCount = -1;
