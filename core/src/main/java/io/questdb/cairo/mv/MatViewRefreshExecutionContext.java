@@ -42,41 +42,36 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
 
     public MatViewRefreshExecutionContext(CairoEngine engine) {
         super(engine, 1);
-        with(new ReadOnlySecurityContext() {
-                 @Override
-                 public void authorizeInsert(TableToken tableToken) {
-                     if (!tableToken.equals(viewTableToken)) {
-                         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-                     }
-                 }
-             }, new BindVariableServiceImpl(engine.getConfiguration())
+        with(
+                new ReadOnlySecurityContext() {
+                    @Override
+                    public void authorizeInsert(TableToken tableToken) {
+                        if (!tableToken.equals(viewTableToken)) {
+                            throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+                        }
+                    }
+                },
+                new BindVariableServiceImpl(engine.getConfiguration())
         );
-    }
-
-    public void clean() {
-        getCairoEngine().attachReader(baseTableReader);
     }
 
     @Override
     public TableReader getReader(TableToken tableToken) {
         if (tableToken.equals(baseTableReader.getTableToken())) {
-            // Fix the reader to not read transactions we don't want to read yet
+            // The base table reader is fixed throughout the mat view refresh.
             return baseTableReader;
         }
         return getCairoEngine().getReader(tableToken);
     }
 
+    @Override
+    public boolean isOverriddenIntrinsics(TableToken tableToken) {
+        return tableToken == baseTableReader.getTableToken();
+    }
+
     public void of(TableReader baseTableReader) {
         this.viewTableToken = baseTableReader.getTableToken();
         this.baseTableReader = baseTableReader;
-
-        // Operate sql on a fixed reader that has known max transactions visible
-        getCairoEngine().detachReader(baseTableReader);
-    }
-
-    @Override
-    public boolean overrideIntrinsics(TableToken tableToken) {
-        return tableToken == baseTableReader.getTableToken();
     }
 
     @Override
@@ -84,7 +79,6 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
         if (tableToken != baseTableReader.getTableToken()) {
             return;
         }
-
         // Cannot re-use function instances, they will be cached in the query plan
         // and then can be re-used in another execution context.
         intrinsicModel.setBetweenBoundary(new IndexedParameterLinkFunction(1, ColumnType.TIMESTAMP, 0));

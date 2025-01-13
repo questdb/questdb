@@ -318,7 +318,6 @@ public class MatViewTest extends AbstractCairoTest {
             assertSql(expected, "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
             assertSql(expected, "price_1h order by ts, sym");
         });
-
     }
 
     private static void assertCannotModifyMatView(String updateSql) {

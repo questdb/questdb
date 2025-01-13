@@ -5287,8 +5287,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         boolean shouldGenerateBackwardsScan = orderDescendingByDesignatedTimestampOnly
                 || isOrderByStartingWithDescDesignatedTimestampAndLimited(model);
 
-        if (withinExtracted != null || executionContext.overrideIntrinsics(reader.getTableToken())) {
-
+        if (withinExtracted != null || executionContext.isOverriddenIntrinsics(reader.getTableToken())) {
             final IntrinsicModel intrinsicModel;
             if (withinExtracted != null) {
                 CharSequence preferredKeyColumn = null;

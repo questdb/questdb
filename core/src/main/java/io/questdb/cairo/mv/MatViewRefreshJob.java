@@ -54,7 +54,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
@@ -105,15 +104,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             long maxTs = txnRangeLoader.getMaxTimestamp();
 
             if (minTs <= maxTs && minTs >= viewDefinition.getFromMicros()) {
-                // TODO: reuse the sampler instance
-                // TODO: Handle sample by with timezones
-                TimestampSampler sampler = TimestampSamplerFactory.getInstance(
+                // TODO(glasstiger): reuse the sampler instance
+                // TODO(glasstiger): Handle sample by with timezones
+                final TimestampSampler sampler = TimestampSamplerFactory.getInstance(
                         viewDefinition.getSamplingInterval(),
                         viewDefinition.getSamplingIntervalUnit(),
                         0
                 );
 
-                long sampleByFromEpoch = viewDefinition.getFromMicros();
+                final long sampleByFromEpoch = viewDefinition.getFromMicros();
                 sampler.setStart(sampleByFromEpoch);
 
                 minTs = sampler.round(minTs);
@@ -158,25 +157,22 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         .put(" type: ")
                         .put(ColumnType.nameOf(writerMetadata.getColumnType(i)));
             }
-
         }
         columnFilter.of(cursorMetadata.getColumnCount());
         return columnFilter;
     }
 
     private RecordToRowCopier getRecordToRowCopier(TableWriterAPI tableWriter, RecordCursorFactory factory, SqlCompiler compiler) throws SqlException {
-        RecordToRowCopier copier;
-        ColumnFilter entityColumnFilter = generatedColumnFilter(
+        final ColumnFilter entityColumnFilter = generatedColumnFilter(
                 factory.getMetadata(),
                 tableWriter.getMetadata()
         );
-        copier = RecordToRowCopierUtils.generateCopier(
+        return RecordToRowCopierUtils.generateCopier(
                 compiler.getAsm(),
                 factory.getMetadata(),
                 tableWriter.getMetadata(),
                 entityColumnFilter
         );
-        return copier;
     }
 
     private boolean insertAsSelect(MatViewRefreshState state, MatViewDefinition viewDef, TableWriterAPI tableWriter) throws SqlException {
@@ -205,15 +201,16 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             }
                         } catch (SqlException e) {
                             Misc.free(factory);
-                            LOG.error().$("error refreshing materialized view, compilation error [view=").$(viewDef.getMatViewToken()).$(", error=").$(e.getFlyweightMessage()).I$();
+                            LOG.error().$("error refreshing materialized view, compilation error [view=").$(viewDef.getMatViewToken())
+                                    .$(", error=").$(e.getFlyweightMessage())
+                                    .I$();
                             state.compilationFail(e, refreshTimestamp);
                             return false;
                         }
                     }
 
-                    int cursorTimestampIndex = factory.getMetadata().getColumnIndex(
-                            tableWriter.getMetadata().getColumnName(tableWriter.getMetadata().getTimestampIndex())
-                    );
+                    final CharSequence timestampName = tableWriter.getMetadata().getColumnName(tableWriter.getMetadata().getTimestampIndex());
+                    final int cursorTimestampIndex = factory.getMetadata().getColumnIndex(timestampName);
 
                     if (cursorTimestampIndex < 0) {
                         throw SqlException.invalidColumn(0, "timestamp column '")
@@ -280,25 +277,26 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     private boolean refreshDependentViews(TableToken baseToken, MatViewGraph viewGraph) {
+        if (!baseToken.isWal()) {
+            LOG.error().$("found materialized views dependent on non-WAL table that will not be refreshed [parent=").utf8(baseToken.getTableName()).I$();
+            return false;
+        }
+
         childViewSink.clear();
         boolean refreshed = false;
 
-        if (!baseToken.isWal()) {
-            LOG.error().$("found materialized views dependent on non-WAL table that will not be refreshed [parent=").utf8(baseToken.getTableName()).I$();
-        }
-
         viewGraph.getAffectedViews(baseToken, childViewSink);
-        SeqTxnTracker baseSeqTracker = engine.getTableSequencerAPI().getTxnTracker(baseToken);
-        long minRefreshToTxn = baseSeqTracker.getWriterTxn();
+        final SeqTxnTracker baseSeqTracker = engine.getTableSequencerAPI().getTxnTracker(baseToken);
+        final long minRefreshToTxn = baseSeqTracker.getWriterTxn();
 
         for (int v = 0, n = childViewSink.size(); v < n; v++) {
-            TableToken viewToken = childViewSink.get(v);
-            SeqTxnTracker viewSeqTracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
-            long appliedToParentTxn = viewSeqTracker.getLastRefreshBaseTxn();
-            long lastBaseQueryableTxn = baseSeqTracker.getWriterTxn();
+            final TableToken viewToken = childViewSink.get(v);
+            final SeqTxnTracker viewSeqTracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
+            final long appliedToViewTxn = viewSeqTracker.getLastRefreshBaseTxn();
+            final long lastBaseQueryableTxn = baseSeqTracker.getWriterTxn();
 
-            if (appliedToParentTxn < 0 || appliedToParentTxn < lastBaseQueryableTxn) {
-                MatViewRefreshState state = viewGraph.getViewRefreshState(viewToken);
+            if (appliedToViewTxn < 0 || appliedToViewTxn < lastBaseQueryableTxn) {
+                final MatViewRefreshState state = viewGraph.getViewRefreshState(viewToken);
                 assert state != null;
                 if (!state.tryLock()) {
                     LOG.info().$("skipping mat view refresh, locked by another refresh run [viewToken=").$(viewToken).$();
@@ -306,7 +304,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 }
 
                 try {
-                    refreshed = refreshView(viewGraph, state, baseToken, viewSeqTracker, viewToken, appliedToParentTxn, lastBaseQueryableTxn);
+                    refreshed = refreshView(viewGraph, state, baseToken, viewSeqTracker, viewToken, appliedToViewTxn, lastBaseQueryableTxn);
                 } catch (Throwable th) {
                     state.refreshFail(th, microsecondClock.getTicks());
                 } finally {
@@ -396,7 +394,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             long fromBaseTxn,
             long toBaseTxn
     ) {
-        MatViewDefinition viewDef = state.getViewDefinition();
+        final MatViewDefinition viewDef = state.getViewDefinition();
         if (viewDef == null) {
             // View must be deleted
             LOG.info().$("not refreshing mat view, new definition does not exist [view=").$(viewToken).$(", base=").$(baseToken).I$();
@@ -417,13 +415,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             }
         }
 
-        if (viewTxnTracker.shouldBackOffDueToMemoryPressure(MicrosecondClockImpl.INSTANCE.getTicks())) {
+        if (viewTxnTracker.shouldBackOffDueToMemoryPressure(microsecondClock.getTicks())) {
             // rely on another pass of refresh job to re-try
             return false;
         }
 
         try (TableReader baseTableReader = engine.getReader(baseToken)) {
             mvRefreshExecutionContext.of(baseTableReader);
+            // Operate SQL on a fixed reader that has known max transaction visible.
+            engine.detachReader(baseTableReader);
             try {
                 if (findCommitTimestampRanges(mvRefreshExecutionContext, baseTableReader, fromBaseTxn, viewDef)) {
                     toBaseTxn = baseTableReader.getSeqTxn();
@@ -445,7 +445,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     }
                 }
             } finally {
-                mvRefreshExecutionContext.clean();
+                engine.attachReader(baseTableReader);
             }
         } catch (SqlException e) {
             LOG.error().$("error refreshing materialized view [view=").$(viewToken)

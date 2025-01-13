@@ -170,6 +170,11 @@ public interface SqlExecutionContext extends Closeable {
 
     boolean isColumnPreTouchEnabled();
 
+    // Returns true when where intrinsics are overridden, i.e. by a materialized view refresh
+    default boolean isOverriddenIntrinsics(TableToken tableToken) {
+        return false;
+    }
+
     boolean isParallelFilterEnabled();
 
     boolean isTimestampRequired();
@@ -180,12 +185,8 @@ public interface SqlExecutionContext extends Closeable {
 
     boolean isWalApplication();
 
-    default boolean overrideIntrinsics(TableToken tableToken) {
-        return false;
-    }
-
     // This method is used to override intrinsic values in the query execution context
-    // It is initial usage is in the Materialized view refresh
+    // Its initial usage is in the materialized view refresh
     // where the queried timestamp of the base table is limited to the range affected since last refresh
     default void overrideWhereIntrinsics(TableToken tableToken, IntrinsicModel intrinsicModel) {
     }
