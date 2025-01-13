@@ -58,6 +58,8 @@ public class TablesFunctionFactory implements FunctionFactory {
     private static final int O3_MAX_LAG_COLUMN = 5;
     private static final int PARTITION_BY_COLUMN = 3;
     private static final int TABLE_NAME = 1;
+    private static final int TTL_UNIT_COLUMN = 10;
+    private static final int TTL_VALUE_COLUMN = 9;
     private static final int WAL_ENABLED_COLUMN = 6;
 
     @Override
@@ -181,6 +183,9 @@ public class TablesFunctionFactory implements FunctionFactory {
                     if (col == ID_COLUMN) {
                         return table.getId();
                     }
+                    if (col == TTL_VALUE_COLUMN) {
+                        return getTtlValue(table.getTtlHoursOrMonths());
+                    }
                     assert col == MAX_UNCOMMITTED_ROWS_COLUMN;
                     return table.getMaxUncommittedRows();
                 }
@@ -198,6 +203,8 @@ public class TablesFunctionFactory implements FunctionFactory {
                             return table.getTableName();
                         case PARTITION_BY_COLUMN:
                             return table.getPartitionByName();
+                        case TTL_UNIT_COLUMN:
+                            return getTtlUnit(table.getTtlHoursOrMonths());
                         case DESIGNATED_TIMESTAMP_COLUMN:
                             return table.getTimestampName();
                         case DIRECTORY_NAME_COLUMN:
@@ -226,6 +233,35 @@ public class TablesFunctionFactory implements FunctionFactory {
                     return str != null ? str.length() : -1;
                 }
 
+                private String getTtlUnit(int ttl) {
+                    if (ttl == 0) {
+                        return "HOUR";
+                    }
+                    if (ttl < 0) {
+                        return -ttl % 12 != 0 ? "MONTH" : "YEAR";
+                    }
+                    if (ttl % 24 != 0) {
+                        return "HOUR";
+                    }
+                    ttl /= 24;
+                    return ttl % 7 != 0 ? "DAY" : "WEEK";
+                }
+
+                private int getTtlValue(int ttl) {
+                    if (ttl == 0) {
+                        return 0;
+                    }
+                    if (ttl > 0) {
+                        if (ttl % 24 != 0) {
+                            return ttl;
+                        }
+                        ttl /= 24;
+                        return (ttl % 7 == 0) ? (ttl / 7) : ttl;
+                    }
+                    ttl = -ttl;
+                    return (ttl % 12 == 0) ? (ttl / 12) : ttl;
+                }
+
                 private void of(CairoTable table) {
                     this.table = table;
                 }
@@ -244,6 +280,8 @@ public class TablesFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("walEnabled", ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("directoryName", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("dedup", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("ttlValue", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("ttlUnit", ColumnType.STRING));
         METADATA = metadata;
     }
 }

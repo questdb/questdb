@@ -113,6 +113,7 @@ public final class TableUtils {
     public static final long META_OFFSET_VERSION = 12;
     public static final long META_OFFSET_WAL_ENABLED = 40; // BOOLEAN
     public static final long META_OFFSET_META_FORMAT_MINOR_VERSION = META_OFFSET_WAL_ENABLED + 1; // INT
+    public static final long META_OFFSET_TTL_HOURS_OR_MONTHS = META_OFFSET_META_FORMAT_MINOR_VERSION + 4; // INT
     public static final String META_PREV_FILE_NAME = "_meta.prev";
     /**
      * TXN file structure
@@ -421,11 +422,18 @@ public final class TableUtils {
             throw CairoException.critical(ff.errno()).put("table directory already exists [path=").put(path).put(']');
         }
         int rootLen = path.size();
+        boolean dirCreated = false;
         try {
             if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
                 throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path.trimTo(rootLen).$()).put(']');
             }
+            dirCreated = true;
             createTableFiles(ff, memory, path, rootLen, tableDir, structure, tableVersion, tableId);
+        } catch (Throwable e) {
+            if (dirCreated) {
+                ff.rmdir(path.trimTo(rootLen).slash());
+            }
+            throw e;
         } finally {
             path.trimTo(rootLen);
         }
@@ -1742,6 +1750,7 @@ public final class TableUtils {
         mem.putLong(0); // Structure version.
         mem.putBool(tableStruct.isWalEnabled());
         mem.putInt(TableUtils.calculateMetadataMinorFormatVersion(count));
+        mem.putInt(tableStruct.getTtlHoursOrMonths());
         mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
         assert count > 0;

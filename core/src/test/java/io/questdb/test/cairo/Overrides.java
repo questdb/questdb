@@ -70,6 +70,14 @@ public class Overrides {
         resetToDefaultTestProperties(defaultProperties);
     }
 
+    public void freeLeakedReaders(boolean freeLeakedReaders) {
+        this.freeLeakedReaders = freeLeakedReaders;
+    }
+
+    public boolean freeLeakedReaders() {
+        return freeLeakedReaders;
+    }
+
     public CairoConfiguration getConfiguration(String root) {
         if (!properties.isEmpty()) {
             if (changed) {
@@ -120,14 +128,6 @@ public class Overrides {
 
     public boolean mangleTableDirNames() {
         return mangleTableDirNames;
-    }
-
-    public void freeLeakedReaders(boolean freeLeakedReaders) {
-        this.freeLeakedReaders = freeLeakedReaders;
-    }
-
-    public boolean freeLeakedReaders() {
-        return freeLeakedReaders;
     }
 
     public void reset() {
@@ -201,6 +201,7 @@ public class Overrides {
             propCairoConfiguration = new PropServerConfiguration(
                     root,
                     props,
+                    null,
                     new HashMap<>(),
                     LOG,
                     buildInformationHolder,

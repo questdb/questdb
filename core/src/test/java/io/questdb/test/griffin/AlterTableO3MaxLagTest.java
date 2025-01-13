@@ -25,7 +25,14 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoError;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
 import io.questdb.std.NumericException;
@@ -334,7 +341,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
         assertException("ALTER TABLE X PARAM o3MaxLag = 111ms",
                 "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
                 14,
-                AlterTableUtils.ALTER_TABLE_EXPECTED_TOKEN_DESCR);
+                SqlCompilerImpl.ALTER_TABLE_EXPECTED_TOKEN_DESCR);
     }
 
     @Test

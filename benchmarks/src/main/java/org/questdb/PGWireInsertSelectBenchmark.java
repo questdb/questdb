@@ -44,29 +44,18 @@ import static java.util.concurrent.TimeUnit.SECONDS;
 
 public class PGWireInsertSelectBenchmark {
     public static final int COOLDOWN_PERIOD_SECONDS = 30;
-    private static final int INSERT_BATCH_SIZE = 500;
+    private static final int INSERT_BATCH_SIZE = 100;
+    private static final int N_INSERTERS = 1;
+    private static final int N_SELECTORS = 1;
     private static final long RUNTIME_SECONDS = 10;
-
-    private static int nInserters;
-    private static int nSelectors;
     private static boolean useIlp;
 
     public static void main(String[] args) throws Exception {
-        int[][] inserterSelectorCounts = {
-                {1, 1}, {1, 2}, {2, 1}, {2, 2},
-                {3, 1}, {3, 2}, {1, 3}, {2, 3}, {3, 3},
-                {4, 1}, {4, 2}, {4, 3}, {1, 4}, {2, 4}, {3, 4}, {4, 4}
-        };
-        for (int[] inserterSelectorCount : inserterSelectorCounts) {
-            nInserters = inserterSelectorCount[0];
-            nSelectors = inserterSelectorCount[1];
-            useIlp = false;
-            runBenchmark();
-            Thread.sleep(SECONDS.toMillis(COOLDOWN_PERIOD_SECONDS));
-            useIlp = true;
-            runBenchmark();
-            Thread.sleep(SECONDS.toMillis(COOLDOWN_PERIOD_SECONDS));
-        }
+        useIlp = false;
+        runBenchmark();
+        Thread.sleep(SECONDS.toMillis(COOLDOWN_PERIOD_SECONDS));
+        useIlp = true;
+        runBenchmark();
     }
 
     private static Connection createConnection() throws Exception {
@@ -106,25 +95,26 @@ public class PGWireInsertSelectBenchmark {
                         "%,d inserts per second, %,d selects per second\n" +
                         "Per-thread performance:\n" +
                         "%,d inserts per second, %,d selects per second\n\n",
-                nInserters, useIlp ? "ILP" : "JDBC", nSelectors, insertsPerSecond, selectsPerSecond,
-                nInserters != 0 ? insertsPerSecond / nInserters : 0,
-                nSelectors != 0 ? selectsPerSecond / nSelectors : 0);
+                N_INSERTERS, useIlp ? "ILP" : "JDBC", N_SELECTORS, insertsPerSecond, selectsPerSecond,
+                N_INSERTERS != 0 ? insertsPerSecond / N_INSERTERS : 0,
+                N_SELECTORS != 0 ? selectsPerSecond / N_SELECTORS : 0);
     }
 
     static void runBenchmark() {
-        AtomicLongArray inserterProgress = new AtomicLongArray(nInserters);
-        AtomicLongArray selectorProgress = new AtomicLongArray(nSelectors);
-        ExecutorService pool = Executors.newFixedThreadPool(nInserters + nSelectors);
+        AtomicLongArray inserterProgress = new AtomicLongArray(N_INSERTERS);
+        AtomicLongArray selectorProgress = new AtomicLongArray(N_SELECTORS);
+        ExecutorService pool = Executors.newFixedThreadPool(N_INSERTERS + N_SELECTORS);
         try {
             try (Connection connection = createConnection();
                  Statement ddlStatement = connection.createStatement()
             ) {
-                ddlStatement.execute("drop table if exists tango");
-                ddlStatement.execute("create table tango (ts timestamp, n long) timestamp(ts) partition by hour");
+                ddlStatement.execute("DROP TABLE IF EXISTS tango");
+                ddlStatement.execute(
+                        "CREATE TABLE tango (ts TIMESTAMP, n LONG) TIMESTAMP(ts) PARTITION BY HOUR TTL 1000 YEARS");
             }
             long start = System.nanoTime();
             long deadline = start + SECONDS.toNanos(RUNTIME_SECONDS);
-            for (int taskid = 0; taskid < nInserters; taskid++) {
+            for (int taskid = 0; taskid < N_INSERTERS; taskid++) {
                 final int taskId = taskid;
                 pool.submit(() -> {
                     if (useIlp) {
@@ -147,7 +137,7 @@ public class PGWireInsertSelectBenchmark {
                         }
                     } else {
                         try (Connection connection = createConnection();
-                             PreparedStatement st = connection.prepareStatement("insert into tango values (?, ?)")
+                             PreparedStatement st = connection.prepareStatement("INSERT INTO tango VALUES (?, ?)")
                         ) {
                             for (long i = 1; ; i++) {
                                 st.setLong(1, makeTimestampMicros(taskId, i));
@@ -172,11 +162,11 @@ public class PGWireInsertSelectBenchmark {
                     }
                 });
             }
-            for (int taskid = 0; taskid < nSelectors; taskid++) {
+            for (int taskid = 0; taskid < N_SELECTORS; taskid++) {
                 final int taskId = taskid;
                 pool.submit(() -> {
                     try (Connection connection = createConnection();
-                         PreparedStatement st = connection.prepareStatement("select ts, n from tango limit -1")
+                         PreparedStatement st = connection.prepareStatement("SELECT ts, n FROM tango LIMIT -1")
                     ) {
                         for (long i = 1; ; i++) {
                             ResultSet rs = st.executeQuery();

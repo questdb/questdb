@@ -157,7 +157,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                     final Set<String> actualProps = new HashSet<>(asList(actualSink.toString().split("\n")));
 
                     final String[] expectedProps =
-                            ("property_path\tenv_var_name\tvalue\tvalue_source\tsensitive\tdynamic\n" +
+                            ("property_path\tenv_var_name\tvalue\tvalue_source\tsensitive\treloadable\n" +
                                     "binarydata.encoding.maxlength\tQDB_BINARYDATA_ENCODING_MAXLENGTH\t32768\tdefault\tfalse\tfalse\n" +
                                     "cairo.attach.partition.copy\tQDB_CAIRO_ATTACH_PARTITION_COPY\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.attach.partition.suffix\tQDB_CAIRO_ATTACH_PARTITION_SUFFIX\t.attachable\tdefault\tfalse\tfalse\n" +
@@ -401,19 +401,19 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.min.worker.sleep.timeout\tQDB_HTTP_MIN_WORKER_SLEEP_TIMEOUT\t50\tdefault\tfalse\tfalse\n" +
                                     "http.min.worker.nap.threshold\tQDB_HTTP_MIN_WORKER_NAP_THRESHOLD\t100\tdefault\tfalse\tfalse\n" +
                                     "http.min.worker.yield.threshold\tQDB_HTTP_MIN_WORKER_YIELD_THRESHOLD\t10\tdefault\tfalse\tfalse\n" +
-                                    "http.multipart.header.buffer.size\tQDB_HTTP_MULTIPART_HEADER_BUFFER_SIZE\t512\tdefault\tfalse\tfalse\n" +
+                                    "http.multipart.header.buffer.size\tQDB_HTTP_MULTIPART_HEADER_BUFFER_SIZE\t512\tdefault\tfalse\ttrue\n" +
                                     "http.multipart.idle.spin.count\tQDB_HTTP_MULTIPART_IDLE_SPIN_COUNT\t10000\tdefault\tfalse\tfalse\n" +
                                     "http.net.snd.buf.size\tQDB_HTTP_NET_SND_BUF_SIZE\t-1\tdefault\tfalse\tfalse\n" +
                                     "http.net.connection.sndbuf\tQDB_HTTP_NET_CONNECTION_SNDBUF\t-1\tdefault\tfalse\tfalse\n" +
-                                    "http.send.buffer.size\tQDB_HTTP_SEND_BUFFER_SIZE\t2097152\tdefault\tfalse\tfalse\n" +
+                                    "http.send.buffer.size\tQDB_HTTP_SEND_BUFFER_SIZE\t2097152\tdefault\tfalse\ttrue\n" +
                                     "http.net.rcv.buf.size\tQDB_HTTP_NET_RCV_BUF_SIZE\t-1\tdefault\tfalse\tfalse\n" +
                                     "http.net.connection.rcvbuf\tQDB_HTTP_NET_CONNECTION_RCVBUF\t-1\tdefault\tfalse\tfalse\n" +
                                     "http.receive.buffer.size\tQDB_HTTP_RECEIVE_BUFFER_SIZE\t2097152\tdefault\tfalse\tfalse\n" +
-                                    "http.recv.buffer.size\tQDB_HTTP_RECV_BUFFER_SIZE\t2097152\tdefault\tfalse\tfalse\n" +
+                                    "http.recv.buffer.size\tQDB_HTTP_RECV_BUFFER_SIZE\t2097152\tdefault\tfalse\ttrue\n" +
                                     "http.net.active.connection.limit\tQDB_HTTP_NET_ACTIVE_CONNECTION_LIMIT\t256\tdefault\tfalse\tfalse\n" +
                                     "http.net.bind.to\tQDB_HTTP_NET_BIND_TO\t0.0.0.0:9010\tdefault\tfalse\tfalse\n" +
                                     "http.net.connection.hint\tQDB_HTTP_NET_CONNECTION_HINT\tfalse\tdefault\tfalse\tfalse\n" +
-                                    "http.net.connection.limit\tQDB_HTTP_NET_CONNECTION_LIMIT\t256\tdefault\tfalse\tfalse\n" +
+                                    "http.net.connection.limit\tQDB_HTTP_NET_CONNECTION_LIMIT\t256\tdefault\tfalse\ttrue\n" +
                                     "http.net.connection.queue.timeout\tQDB_HTTP_NET_CONNECTION_QUEUE_TIMEOUT\t5000\tdefault\tfalse\tfalse\n" +
                                     "http.net.connection.timeout\tQDB_HTTP_NET_CONNECTION_TIMEOUT\t300000\tdefault\tfalse\tfalse\n" +
                                     "http.net.idle.connection.timeout\tQDB_HTTP_NET_IDLE_CONNECTION_TIMEOUT\t300000\tdefault\tfalse\tfalse\n" +
@@ -422,7 +422,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.query.cache.block.count\tQDB_HTTP_QUERY_CACHE_BLOCK_COUNT\t8\tdefault\tfalse\tfalse\n" +
                                     "http.query.cache.enabled\tQDB_HTTP_QUERY_CACHE_ENABLED\tfalse\tconf\tfalse\tfalse\n" +
                                     "http.query.cache.row.count\tQDB_HTTP_QUERY_CACHE_ROW_COUNT\t2\tdefault\tfalse\tfalse\n" +
-                                    "http.request.header.buffer.size\tQDB_HTTP_REQUEST_HEADER_BUFFER_SIZE\t64448\tdefault\tfalse\tfalse\n" +
+                                    "http.request.header.buffer.size\tQDB_HTTP_REQUEST_HEADER_BUFFER_SIZE\t64448\tdefault\tfalse\ttrue\n" +
                                     "http.security.interrupt.on.closed.connection\tQDB_HTTP_SECURITY_INTERRUPT_ON_CLOSED_CONNECTION\ttrue\tdefault\tfalse\tfalse\n" +
                                     "http.security.max.response.rows\tQDB_HTTP_SECURITY_MAX_RESPONSE_ROWS\t9223372036854775807\tdefault\tfalse\tfalse\n" +
                                     "http.security.readonly\tQDB_HTTP_SECURITY_READONLY\tfalse\tdefault\tfalse\tfalse\n" +
@@ -480,7 +480,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "line.tcp.net.bind.to\tQDB_LINE_TCP_NET_BIND_TO\t0.0.0.0:9009\tconf\tfalse\tfalse\n" +
                                     "line.tcp.net.connection.heartbeat.interval\tQDB_LINE_TCP_NET_CONNECTION_HEARTBEAT_INTERVAL\t500\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.net.connection.hint\tQDB_LINE_TCP_NET_CONNECTION_HINT\tfalse\tdefault\tfalse\tfalse\n" +
-                                    "line.tcp.net.connection.limit\tQDB_LINE_TCP_NET_CONNECTION_LIMIT\t256\tdefault\tfalse\tfalse\n" +
+                                    "line.tcp.net.connection.limit\tQDB_LINE_TCP_NET_CONNECTION_LIMIT\t256\tdefault\tfalse\ttrue\n" +
                                     "line.tcp.net.connection.queue.timeout\tQDB_LINE_TCP_NET_CONNECTION_QUEUE_TIMEOUT\t5000\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.net.connection.timeout\tQDB_LINE_TCP_NET_CONNECTION_TIMEOUT\t0\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.net.idle.timeout\tQDB_LINE_TCP_NET_IDLE_TIMEOUT\t0\tdefault\tfalse\tfalse\n" +
@@ -527,7 +527,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "pg.net.active.connection.limit\tQDB_PG_NET_ACTIVE_CONNECTION_LIMIT\t64\tdefault\tfalse\tfalse\n" +
                                     "pg.net.bind.to\tQDB_PG_NET_BIND_TO\t0.0.0.0:8822\tconf\tfalse\tfalse\n" +
                                     "pg.net.connection.hint\tQDB_PG_NET_CONNECTION_HINT\tfalse\tdefault\tfalse\tfalse\n" +
-                                    "pg.net.connection.limit\tQDB_PG_NET_CONNECTION_LIMIT\t64\tdefault\tfalse\tfalse\n" +
+                                    "pg.net.connection.limit\tQDB_PG_NET_CONNECTION_LIMIT\t64\tdefault\tfalse\ttrue\n" +
                                     "pg.net.connection.queue.timeout\tQDB_PG_NET_CONNECTION_QUEUE_TIMEOUT\t300000\tdefault\tfalse\tfalse\n" +
                                     "pg.net.connection.timeout\tQDB_PG_NET_CONNECTION_TIMEOUT\t300000\tdefault\tfalse\tfalse\n" +
                                     "pg.net.idle.timeout\tQDB_PG_NET_IDLE_TIMEOUT\t300000\tdefault\tfalse\tfalse\n" +
@@ -535,27 +535,27 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "pg.net.send.buf.size\tQDB_PG_NET_SEND_BUF_SIZE\t-1\tdefault\tfalse\tfalse\n" +
                                     "pg.net.connection.rcvbuf\tQDB_PG_NET_CONNECTION_RCVBUF\t-1\tdefault\tfalse\tfalse\n" +
                                     "pg.net.recv.buf.size\tQDB_PG_NET_RECV_BUF_SIZE\t-1\tdefault\tfalse\tfalse\n" +
-                                    "pg.password\tQDB_PG_PASSWORD\t****\tdefault\ttrue\tfalse\n" +
+                                    "pg.password\tQDB_PG_PASSWORD\t****\tdefault\ttrue\ttrue\n" +
                                     "pg.pending.writers.cache.capacity\tQDB_PG_PENDING_WRITERS_CACHE_CAPACITY\t16\tdefault\tfalse\tfalse\n" +
-                                    "pg.readonly.password\tQDB_PG_READONLY_PASSWORD\t****\tdefault\ttrue\tfalse\n" +
-                                    "pg.readonly.user\tQDB_PG_READONLY_USER\tuser\tdefault\tfalse\tfalse\n" +
-                                    "pg.readonly.user.enabled\tQDB_PG_READONLY_USER_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
-                                    "pg.recv.buffer.size\tQDB_PG_RECV_BUFFER_SIZE\t1048576\tdefault\tfalse\tfalse\n" +
+                                    "pg.readonly.password\tQDB_PG_READONLY_PASSWORD\t****\tdefault\ttrue\ttrue\n" +
+                                    "pg.readonly.user\tQDB_PG_READONLY_USER\tuser\tdefault\tfalse\ttrue\n" +
+                                    "pg.readonly.user.enabled\tQDB_PG_READONLY_USER_ENABLED\tfalse\tdefault\tfalse\ttrue\n" +
+                                    "pg.recv.buffer.size\tQDB_PG_RECV_BUFFER_SIZE\t1048576\tdefault\tfalse\ttrue\n" +
                                     "pg.security.readonly\tQDB_PG_SECURITY_READONLY\tfalse\tdefault\tfalse\tfalse\n" +
                                     "pg.select.cache.block.count\tQDB_PG_SELECT_CACHE_BLOCK_COUNT\t8\tdefault\tfalse\tfalse\n" +
                                     "pg.select.cache.enabled\tQDB_PG_SELECT_CACHE_ENABLED\tfalse\tconf\tfalse\tfalse\n" +
                                     "pg.select.cache.row.count\tQDB_PG_SELECT_CACHE_ROW_COUNT\t2\tdefault\tfalse\tfalse\n" +
-                                    "pg.send.buffer.size\tQDB_PG_SEND_BUFFER_SIZE\t1048576\tdefault\tfalse\tfalse\n" +
+                                    "pg.send.buffer.size\tQDB_PG_SEND_BUFFER_SIZE\t1048576\tdefault\tfalse\ttrue\n" +
                                     "pg.update.cache.block.count\tQDB_PG_UPDATE_CACHE_BLOCK_COUNT\t4\tdefault\tfalse\tfalse\n" +
                                     "pg.update.cache.enabled\tQDB_PG_UPDATE_CACHE_ENABLED\tfalse\tconf\tfalse\tfalse\n" +
                                     "pg.update.cache.row.count\tQDB_PG_UPDATE_CACHE_ROW_COUNT\t4\tdefault\tfalse\tfalse\n" +
-                                    "pg.user\tQDB_PG_USER\tadmin\tdefault\tfalse\tfalse\n" +
+                                    "pg.user\tQDB_PG_USER\tadmin\tdefault\tfalse\ttrue\n" +
                                     "pg.worker.affinity\tQDB_PG_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
                                     "pg.worker.count\tQDB_PG_WORKER_COUNT\t1\tconf\tfalse\tfalse\n" +
                                     "pg.worker.sleep.threshold\tQDB_PG_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
                                     "pg.worker.nap.threshold\tQDB_PG_WORKER_NAP_THRESHOLD\t7000\tdefault\tfalse\tfalse\n" +
                                     "pg.worker.yield.threshold\tQDB_PG_WORKER_YIELD_THRESHOLD\t10\tdefault\tfalse\tfalse\n" +
-                                    "pg.named.statement.limit\tQDB_PG_NAMED_STATEMENT_LIMIT\t10000\tdefault\tfalse\tfalse\n" +
+                                    "pg.named.statement.limit\tQDB_PG_NAMED_STATEMENT_LIMIT\t10000\tdefault\tfalse\ttrue\n" +
                                     "posthog.enabled\tQDB_POSTHOG_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "posthog.api.key\tQDB_POSTHOG_API_KEY\t\tdefault\tfalse\tfalse\n" +
                                     "query.timeout.sec\tQDB_QUERY_TIMEOUT_SEC\t60\tdefault\tfalse\tfalse\n" +
