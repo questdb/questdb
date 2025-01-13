@@ -146,7 +146,7 @@ public class PivotTest extends AbstractSqlParserTest {
             " ('ETH-USD','sell',3678.0,0.2,'2024-12-19T08:10:00.950000Z');";
 
     @Test
-    public void testStandardPivot() throws Exception {
+    public void testPivot() throws Exception {
         assertMemoryLeak(() -> {
             execute(ddlCities);
             execute(dmlCities);
@@ -183,7 +183,7 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testStandardPivotWithAliasedAggregate() throws Exception {
+    public void testPivotWithAliasedAggregate() throws Exception {
         assertMemoryLeak(() -> {
             execute(ddlCities);
             execute(dmlCities);
@@ -220,7 +220,7 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testStandardPivotWithMultipleAggregates() throws Exception {
+    public void testPivotWithMultipleAggregates() throws Exception {
         assertMemoryLeak(() -> {
             execute(ddlCities);
             execute(dmlCities);
@@ -261,7 +261,7 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testStandardPivotWithMultipleForExprs() throws Exception {
+    public void testPivotWithMultipleForExprs() throws Exception {
         assertMemoryLeak(() -> {
             execute(ddlCities);
             execute(dmlCities);
@@ -302,7 +302,7 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testStandardPivotWithMultipleForExprsAndMultipleAggregates() throws Exception {
+    public void testPivotWithMultipleForExprsAndMultipleAggregates() throws Exception {
         assertMemoryLeak(() -> {
             execute(ddlCities);
             execute(dmlCities);
@@ -350,7 +350,7 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testStandardPivotWithTradesData() throws Exception {
+    public void testPivotWithTradesData() throws Exception {
         assertMemoryLeak(() -> {
             execute(ddlTrades);
             execute(dmlTrades);
@@ -376,7 +376,34 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testStandardPivotWithTradesDataAndOrderBy() throws Exception {
+    public void testPivotWithTradesDataAndLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlTrades);
+            execute(dmlTrades);
+            drainWalQueue();
+
+            String pivotQuery = " select * from (select * from trades where symbol in 'ETH-USDT')\n" +
+                    "  pivot (\n" +
+                    "    sum(price)\n" +
+                    "    FOR \"symbol\" IN ('ETH-USDT')\n" +
+                    "        side in ('buy', 'sell')\n" +
+                    "    GROUP BY timestamp\n" +
+                    "    LIMIT 3\n" +
+                    "  );";
+
+            String model = "select-group-by timestamp, sum(case(symbol = 'ETH-USDT' and side = 'buy',price,null)) ETH-USDT_buy, sum(case(symbol = 'ETH-USDT' and side = 'sell',price,null)) ETH-USDT_sell from (select-choose [timestamp, price, symbol, side] symbol, side, price, amount, timestamp from (select [timestamp, price, symbol, side] from trades timestamp (timestamp) where symbol in 'ETH-USDT')) limit 3";
+            assertModel(model, pivotQuery, ExecutionModel.QUERY);
+
+            assertSql("timestamp\tETH-USDT_buy\tETH-USDT_sell\n" +
+                            "2024-12-19T08:10:00.700999Z\tnull\t3678.25\n" +
+                            "2024-12-19T08:10:00.736000Z\tnull\t3678.25\n" +
+                            "2024-12-19T08:10:00.759000Z\tnull\t3678.0\n",
+                    pivotQuery);
+        });
+    }
+
+    @Test
+    public void testPivotWithTradesDataAndOrderBy() throws Exception {
         assertMemoryLeak(() -> {
             execute(ddlTrades);
             execute(dmlTrades);
@@ -418,7 +445,7 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testStandardPivotWithTradesDataAndOrderByPositional() throws Exception {
+    public void testPivotWithTradesDataAndOrderByPositional() throws Exception {
         assertMemoryLeak(() -> {
             execute(ddlTrades);
             execute(dmlTrades);
@@ -464,7 +491,7 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testStandardPivotWithoutExplicitGroupBy() throws Exception {
+    public void testPivotWithoutExplicitGroupBy() throws Exception {
         assertException("SELECT *\n" +
                 "FROM cities\n" +
                 "PIVOT (\n" +

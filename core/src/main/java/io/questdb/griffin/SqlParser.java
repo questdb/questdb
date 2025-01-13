@@ -2213,6 +2213,22 @@ public class SqlParser {
         }
     }
 
+    private CharSequence parseLimit(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
+        CharSequence tok;
+        model.setLimitPosition(lexer.lastTokenPosition());
+        ExpressionNode lo = expr(lexer, model, sqlParserCallback, model.getDecls());
+        ExpressionNode hi = null;
+
+        tok = optTok(lexer);
+        if (tok != null && Chars.equals(tok, ',')) {
+            hi = expr(lexer, model, sqlParserCallback, model.getDecls());
+        } else {
+            lexer.unparseLast();
+        }
+        model.setLimit(lo, hi);
+        return tok;
+    }
+
     private CharSequence parseOrderBy(QueryModel model, GenericLexer lexer, SqlParserCallback sqlParserCallback) throws SqlException {
         CharSequence tok;
         model.setOrderByPosition(lexer.lastTokenPosition());
@@ -2398,8 +2414,12 @@ public class SqlParser {
             tok = parseOrderBy(model, lexer, sqlParserCallback);
         }
 
+        if (tok != null && isLimitKeyword(tok)) {
+            tok = parseLimit(lexer, model, sqlParserCallback);
+        }
+
         if (tok != null && Chars.equals(tok, ")")) {
-            return optTok(lexer);
+            optTok(lexer);
         }
 
         return optTok(lexer);
