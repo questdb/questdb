@@ -320,7 +320,6 @@ public enum PropertyKey implements ConfigPropertyKey {
     LINE_UDP_TIMESTAMP("line.udp.timestamp"),
     LINE_TCP_ENABLED("line.tcp.enabled"),
     LINE_HTTP_ENABLED("line.http.enabled"),
-    LINE_HTTP_CONTEXT_PATH("line.http.context.path"),
     LINE_HTTP_PING_VERSION("line.http.ping.version"),
     LINE_TCP_NET_ACTIVE_CONNECTION_LIMIT("line.tcp.net.active.connection.limit"),
     LINE_TCP_NET_CONNECTION_LIMIT("line.tcp.net.connection.limit"),

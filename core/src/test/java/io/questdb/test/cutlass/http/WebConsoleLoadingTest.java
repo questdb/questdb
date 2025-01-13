@@ -36,10 +36,12 @@ import io.questdb.cutlass.http.client.Response;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
+import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.net.HttpURLConnection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -62,6 +64,13 @@ public class WebConsoleLoadingTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testHttpContextPathExecEndpoint() throws Exception {
+        testHttpContextPathExecEndpoint("");
+        testHttpContextPathExecEndpoint("/");
+        testHttpContextPathExecEndpoint("/context");
+    }
+
+    @Test
     public void testWebConsoleLoadsWhenPgDisabled() throws Exception {
         testWebConsoleLoads("", false);
         testWebConsoleLoads("/", false);
@@ -73,6 +82,18 @@ public class WebConsoleLoadingTest extends AbstractBootstrapTest {
         testWebConsoleLoads("", true);
         testWebConsoleLoads("/", true);
         testWebConsoleLoads("/context", true);
+    }
+
+    private void assertExecRequest(
+            HttpClient httpClient,
+            String contextPath,
+            String sql,
+            int expectedResponseCode,
+            String expectedResponse
+    ) {
+        final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
+        request.GET().url(contextPath + "/exec").query("query", sql);
+        assertRequest(request, expectedResponseCode, expectedResponse);
     }
 
     private void assertRequest(HttpClient.Request request, int responseCode, String expectedResponse) {
@@ -101,6 +122,22 @@ public class WebConsoleLoadingTest extends AbstractBootstrapTest {
             request.header(HEADER_IF_NONE_MATCH.toString(), "\"" + indexFileLastModified + "\"");
         }
         assertRequest(request, cachedResponse ? 304 : 200, cachedResponse ? "" : WebConsoleLoadingTest.TEST_PAYLOAD);
+    }
+
+    private void testHttpContextPathExecEndpoint(String contextPath) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_CONTEXT_PATH.getEnvVarName(), contextPath
+            )) {
+                serverMain.start();
+
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    assertExecRequest(httpClient, contextPath, "select 1", HttpURLConnection.HTTP_OK,
+                            "{\"query\":\"select 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}"
+                    );
+                }
+            }
+        });
     }
 
     private void testWebConsoleLoads(String contextPath, boolean pgEnabled) throws Exception {
