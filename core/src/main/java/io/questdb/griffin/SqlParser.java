@@ -2226,6 +2226,7 @@ public class SqlParser {
             lexer.unparseLast();
         }
         model.setLimit(lo, hi);
+        tok = optTok(lexer);
         return tok;
     }
 
@@ -2419,10 +2420,10 @@ public class SqlParser {
         }
 
         if (tok != null && Chars.equals(tok, ")")) {
-            optTok(lexer);
+            tok = optTok(lexer);
         }
 
-        return optTok(lexer);
+        return tok;
     }
 
     private ExecutionModel parseRenameStatement(GenericLexer lexer) throws SqlException {

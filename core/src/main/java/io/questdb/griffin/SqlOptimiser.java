@@ -152,7 +152,7 @@ public class SqlOptimiser implements Mutable {
     private final ObjList<RecordCursorFactory> tableFactoriesInFlight = new ObjList<>();
     private final FlyweightCharSequence tableLookupSequence = new FlyweightCharSequence();
     private final IntHashSet tablesSoFar = new IntHashSet();
-    private final ObjList<QueryColumn> tempColumns = new ObjList<QueryColumn>();
+    private final ObjList<QueryColumn> tempColumns = new ObjList<>();
     private final IntList tempCrossIndexes = new IntList();
     private final IntList tempCrosses = new IntList();
     private final IntList tempList = new IntList();
@@ -6515,7 +6515,7 @@ public class SqlOptimiser implements Mutable {
             IntList forMaxes = new IntList(pivotForSize);
             IntList forDepths = new IntList(pivotForSize);
             int expectedPivotColumnsPerAggregateFunction = 0;
-            for (int i = 0, n = pivotForSize; i < n; i++) {
+            for (int i = 0; i < pivotForSize; i++) {
                 // initialise depth to 0
                 forDepths.add(0);
 

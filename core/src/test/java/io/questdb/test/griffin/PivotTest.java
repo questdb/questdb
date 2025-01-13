@@ -501,4 +501,67 @@ public class PivotTest extends AbstractSqlParserTest {
                 ");\n", 101, "expected `GROUP`");
     }
 
+    @Test
+    public void testPivotWithTradesDataAndSubquery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlTrades);
+            execute(dmlTrades);
+            drainWalQueue();
+
+            assertSql("timestamp\tBTC-USD_buy\tBTC-USD_sell\n" +
+                            "2024-12-19T08:10:00.136000Z\t101502.2\tnull\n" +
+                            "2024-12-19T08:10:00.138000Z\tnull\t101502.1\n" +
+                            "2024-12-19T08:10:00.244000Z\t101502.2\tnull\n" +
+                            "2024-12-19T08:10:00.424000Z\t101502.2\tnull\n" +
+                            "2024-12-19T08:10:00.600000Z\t101502.2\tnull\n" +
+                            "2024-12-19T08:10:00.665999Z\t101502.2\tnull\n" +
+                            "2024-12-19T08:10:00.693000Z\t101502.2\tnull\n" +
+                            "2024-12-19T08:10:00.716999Z\t101502.2\tnull\n" +
+                            "2024-12-19T08:10:00.724000Z\t101502.2\tnull\n" +
+                            "2024-12-19T08:10:00.732999Z\tnull\t101501.06\n" +
+                            "2024-12-19T08:10:00.733999Z\tnull\t101500.0\n" +
+                            "2024-12-19T08:10:00.734999Z\tnull\t101499.95\n" +
+                            "2024-12-19T08:10:00.744000Z\t101497.6\tnull\n" +
+                            "2024-12-19T08:10:00.926000Z\t101497.6\tnull\n" +
+                            "2024-12-19T08:10:00.932000Z\tnull\t101497.25\n",
+                    "SELECT * FROM (\n" +
+                            "SELECT * FROM (\n" +
+                            "     SELECT timestamp, symbol,  side, AVG(price) price, AVG(amount) amount FROM trades WHERE symbol IN 'BTC-USD'\n" +
+                            ")\n" +
+                            "PIVOT (\n" +
+                            "    sum(price)\n" +
+                            "    FOR symbol IN ('BTC-USD')\n" +
+                            "        side IN ('buy', 'sell')\n" +
+                            "    GROUP BY  timestamp\n" +
+                            ") \n" +
+                            ");");
+        });
+    }
+
+    @Test
+    public void testPivotWithTradesDataAndWithClause() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlTrades);
+            execute(dmlTrades);
+            drainWalQueue();
+
+            assertSql("timestamp\tBTC-USD_buy\tBTC-USD_sell\n" +
+                            "2024-12-19T08:10:00.000000Z\t101501.27999999998\t101500.15000000002\n",
+                    "WITH p AS \n" +
+                            "(WITH t AS\n" +
+                            "(\n" +
+                            "\n" +
+                            "    SELECT timestamp, symbol,  side, AVG(price) price, AVG(amount) amount FROM trades WHERE symbol IN 'BTC-USD'\n" +
+                            "    SAMPLE BY 1m\n" +
+                            ")\n" +
+                            "SELECT * FROM t\n" +
+                            "PIVOT (\n" +
+                            "    sum(price)\n" +
+                            "    FOR symbol IN ('BTC-USD')    \n" +
+                            "    side IN ('buy', 'sell')   \n" +
+                            "    GROUP BY timestamp\n" +
+                            ") ) SELECT * from p where `BTC-USD_buy` > 25780 or `BTC-USD_sell` > 25780;");
+        });
+    }
+
 }
