@@ -6557,8 +6557,6 @@ public class SqlOptimiser implements Mutable {
                     ExpressionNode pivotColumnParam = pivotColumn.getAst().rhs;
                     CharSequence pivotColumnAlias = pivotColumn.getAlias();
                     CharSequence pivotDefaultValue = "null";
-//                    CharSequence pivotDefaultValue = Chars.equalsIgnoreCase(pivotColumnName, "sum") ? "0" : "null";
-
 
                     ExpressionNode caseValue = null;
                     ExpressionNode inValue = null;
@@ -6566,13 +6564,15 @@ public class SqlOptimiser implements Mutable {
 
                     // for each forValue combination
                     for (int k = 0; k < pivotForSize; k++) {
-
                         // build name
                         forInExpr = nested.getPivotFor().getQuick(k);
+
+                        // select with the args in the IN list is relevant
                         inValue = rewritePivotGetAppropriateArgFromInExpr(forInExpr, forMaxes.get(k) - forDepths.get(k));
 
                         assert inValue != null;
 
+                        // start building the name
                         nameSink.put(GenericLexer.unquote(inValue.token)).put('_');
 
                         // build AND expr
@@ -6586,16 +6586,19 @@ public class SqlOptimiser implements Mutable {
                         }
                     }
 
-                    if (pivotColumn.getAlias() != null) {
+                    // if an alias has been for the aggregate column, we should apply it
+                    if (pivotColumnAlias != null) {
                         // add the alias
-                        nameSink.put(pivotColumn.getAlias());
+                        nameSink.put(pivotColumnAlias);
                     } else if (nested.getPivotColumns().size() > 1) {
                         if (duplicateAggregateFunctions) {
+                            // if there are duplicates, we need to distinguish them with the name of the column being aggregated over
                             nameSink.put(pivotColumnParamToken).put('_'); // to handle duplicate aggregate i.e sum twice
                         }
+                        // then add the pivot column
                         nameSink.put(pivotColumnName); // todo: handle duplicate aggregates
                     } else {
-                        // remove the '_'
+                        // remove the '_', since we have finished our name
                         nameSink.clear(nameSink.length() - 1);
                     }
 
