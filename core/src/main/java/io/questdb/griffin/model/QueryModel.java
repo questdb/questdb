@@ -909,12 +909,26 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return parsedWhere;
     }
 
-    public ObjList<QueryColumn> getPivotColumns() {
+    public @Nullable ObjList<QueryColumn> getPivotColumns() {
         return pivotColumns;
     }
 
-    public ObjList<ExpressionNode> getPivotFor() {
+    public void addPivotColumn(QueryColumn column) {
+        if (pivotColumns == null) {
+            pivotColumns = new ObjList<>();
+        }
+        pivotColumns.add(column);
+    }
+
+    public @Nullable ObjList<ExpressionNode> getPivotFor() {
         return pivotFor;
+    }
+
+    public void addPivotFor(ExpressionNode _for) {
+        if (pivotFor == null) {
+            pivotFor = new ObjList<>();
+        }
+        pivotFor.add(_for);
     }
 
     public ExpressionNode getPostJoinWhereClause() {
@@ -1394,11 +1408,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.outerJoinExpressionClause = outerJoinExpressionClause;
     }
 
-    public void setPivotColumns(ObjList<QueryColumn> pivotColumns) {
+    public void setPivotColumns(@Nullable ObjList<QueryColumn> pivotColumns) {
         this.pivotColumns = pivotColumns;
     }
 
-    public void setPivotFor(ObjList<ExpressionNode> pivotFor) {
+    public void setPivotFor(@Nullable ObjList<ExpressionNode> pivotFor) {
         this.pivotFor = pivotFor;
     }
 

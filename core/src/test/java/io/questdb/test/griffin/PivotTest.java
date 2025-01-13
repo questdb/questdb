@@ -472,17 +472,6 @@ public class PivotTest extends AbstractSqlParserTest {
                     true,
                     true);
 
-//            assertQuery("timestamp\tETH-USDT_buy\tETH-USDT_sell\n" +
-//                            "2024-12-19T08:10:00.700999Z\tnull\t3678.25\n" +
-//                            "2024-12-19T08:10:00.736000Z\tnull\t3678.25\n" +
-//                            "2024-12-19T08:10:00.759000Z\tnull\t3678.0\n" +
-//                            "2024-12-19T08:10:00.772999Z\tnull\t3678.0\n" +
-//                            "2024-12-19T08:10:00.887000Z\t3678.01\tnull\n" +
-//                            "2024-12-19T08:10:00.950000Z\tnull\t3678.0\n",
-//                    pivotQuery.replace("GROUP BY timestamp", "GROUP BY 1"),
-//                    "timestamp###ASC",
-//                    true,
-//                    true);
             assertException(
                     pivotQuery.replace("GROUP BY timestamp", "GROUP BY 1"),
                     168,

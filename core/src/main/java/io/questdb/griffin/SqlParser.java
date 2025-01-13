@@ -2353,11 +2353,7 @@ public class SqlParser {
                 col.setAlias(alias);
             }
 
-            if (model.getPivotColumns() == null) {
-                model.setPivotColumns(new ObjList<>());
-            }
-
-            model.getPivotColumns().add(col);
+            model.addPivotColumn(col);
 
             if (isForKeyword(tok)) {
                 break;
@@ -2383,12 +2379,7 @@ public class SqlParser {
                 throw SqlException.$(expr.position, "expected `IN` clause");
             }
 
-
-            if (model.getPivotFor() == null) {
-                model.setPivotFor(new ObjList<>());
-            }
-
-            model.getPivotFor().add(expr);
+            model.addPivotFor(expr);
 
             tok = optTok(lexer);
 
