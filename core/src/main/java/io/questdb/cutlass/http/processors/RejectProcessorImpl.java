@@ -26,6 +26,7 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.cutlass.http.HttpResponseSink;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 
@@ -39,6 +40,7 @@ public class RejectProcessorImpl implements RejectProcessor {
     protected CharSequence rejectCookieName = null;
     protected CharSequence rejectCookieValue = null;
     protected CharSequence rejectMessage = null;
+    protected boolean shutdownWrite = false;
 
     public RejectProcessorImpl(HttpConnectionContext httpConnectionContext) {
         this.httpConnectionContext = httpConnectionContext;
@@ -65,22 +67,27 @@ public class RejectProcessorImpl implements RejectProcessor {
 
     @Override
     public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        final HttpResponseSink.SimpleResponseImpl response = httpConnectionContext.simpleResponse();
         if (rejectCode == HTTP_UNAUTHORIZED) {
-            httpConnectionContext.simpleResponse().sendStatusTextContent(HTTP_UNAUTHORIZED);
-            httpConnectionContext.reset();
+            response.sendStatusTextContent(HTTP_UNAUTHORIZED);
         } else {
-            httpConnectionContext.simpleResponse().sendStatusWithCookie(rejectCode, rejectMessage, rejectCookieName, rejectCookieValue);
-            httpConnectionContext.reset();
+            response.sendStatusWithCookie(rejectCode, rejectMessage, rejectCookieName, rejectCookieValue);
         }
+
+        if (shutdownWrite) {
+            response.shutdownWrite();
+        }
+        httpConnectionContext.reset();
     }
 
     @Override
-    public HttpRequestProcessor rejectRequest(int code, CharSequence userMessage, CharSequence cookieName, CharSequence cookieValue, byte authenticationType) {
+    public HttpRequestProcessor rejectRequest(int code, CharSequence userMessage, CharSequence cookieName, CharSequence cookieValue, byte authenticationType, boolean shutdownWrite) {
         this.rejectCode = code;
         this.rejectMessage = userMessage;
         this.rejectCookieName = cookieName;
         this.rejectCookieValue = cookieValue;
         this.authenticationType = authenticationType;
+        this.shutdownWrite = shutdownWrite;
         return this;
     }
 }

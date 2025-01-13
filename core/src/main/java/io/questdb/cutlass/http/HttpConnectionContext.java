@@ -356,17 +356,21 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     public HttpRequestProcessor rejectRequest(int code, CharSequence userMessage) {
-        return rejectRequest(code, userMessage, null, null);
+        return rejectRequest(code, userMessage, false);
+    }
+
+    public HttpRequestProcessor rejectRequest(int code, CharSequence userMessage, boolean shutdownWrite) {
+        return rejectProcessor.rejectRequest(code, userMessage, null, null, AUTH_TYPE_NONE, shutdownWrite);
     }
 
     public HttpRequestProcessor rejectRequest(int code, byte authenticationType) {
         LOG.error().$("rejecting request [code=").$(code).I$();
-        return rejectProcessor.rejectRequest(code, null, null, null, authenticationType);
+        return rejectProcessor.rejectRequest(code, null, null, null, authenticationType, false);
     }
 
     public HttpRequestProcessor rejectRequest(int code, CharSequence userMessage, CharSequence cookieName, CharSequence cookieValue) {
         LOG.error().$(userMessage).$(" [code=").$(code).I$();
-        return rejectProcessor.rejectRequest(code, userMessage, cookieName, cookieValue, AUTH_TYPE_NONE);
+        return rejectProcessor.rejectRequest(code, userMessage, cookieName, cookieValue, AUTH_TYPE_NONE, false);
     }
 
     public void reset() {
@@ -482,10 +486,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             do {
                 numOfConnections = connectionCounter.get();
                 if (numOfConnections >= connectionLimit) {
-                    return rejectRequest(HTTP_BAD_REQUEST, "exceeded HTTP connection soft limit [name=" + connectionCounter.getName() + ']');
+                    return rejectRequest(HTTP_BAD_REQUEST, "exceeded HTTP connection soft limit [name=" + connectionCounter.getName() + ']', true);
                 }
                 if (numOfConnections == connectionLimit - 1 && !securityContext.isSystemAdmin()) {
-                    return rejectRequest(HTTP_BAD_REQUEST, "non-admin user exceeded HTTP connection soft limit [name=" + connectionCounter.getName() + ']');
+                    return rejectRequest(HTTP_BAD_REQUEST, "non-admin user exceeded HTTP connection soft limit [name=" + connectionCounter.getName() + ']', true);
                 }
             } while (!connectionCounter.compareAndSet(numOfConnections, numOfConnections + 1));
             this.connectionCounter = connectionCounter;
@@ -955,11 +959,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     } catch (CairoException e) {
                         processor = rejectRequest(HTTP_FORBIDDEN, e.getFlyweightMessage());
                     }
-
-                    if (!connectionCounted) {
-                        processor = checkConnectionLimit(processor);
-                        connectionCounted = true;
-                    }
                 }
 
                 processor = checkProcessorValidForRequest(
@@ -970,6 +969,11 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                         contentLength,
                         multipartProcessor
                 );
+
+                if (!connectionCounted) {
+                    processor = checkConnectionLimit(processor);
+                    connectionCounted = true;
+                }
 
                 if (chunked) {
                     busyRecv = consumeChunked(processor, headerEnd, read, newRequest);

@@ -48,7 +48,7 @@ public interface RejectProcessor extends HttpRequestProcessor, HttpMultipartCont
     default void onPartEnd() {
     }
 
-    HttpRequestProcessor rejectRequest(int code, CharSequence userMessage, CharSequence cookieName, CharSequence cookieValue, byte authenticationType);
+    HttpRequestProcessor rejectRequest(int code, CharSequence userMessage, CharSequence cookieName, CharSequence cookieValue, byte authenticationType, boolean shutdownWrite);
 
     default void resumeSend(
             HttpConnectionContext context
