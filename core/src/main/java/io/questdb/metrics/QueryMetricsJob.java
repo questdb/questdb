@@ -36,7 +36,7 @@ import io.questdb.std.ValueHolderList;
 import io.questdb.std.str.Utf8StringSink;
 
 public class QueryMetricsJob extends SynchronizedJob {
-    public static final String TABLE_NAME = "_query_metrics_";
+    public static final String TABLE_NAME = "query_metrics";
     private static final int BATCH_LIMIT = 1024;
     private static final int INITIAL_CAPACITY = 128;
     private static final Log LOG = LogFactory.getLog(QueryMetricsJob.class.getName());
