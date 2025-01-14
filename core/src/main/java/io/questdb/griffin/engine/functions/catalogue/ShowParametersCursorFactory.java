@@ -178,6 +178,6 @@ public class ShowParametersCursorFactory extends AbstractRecordCursorFactory {
         METADATA.add(new TableColumnMetadata("value", ColumnType.STRING));
         METADATA.add(new TableColumnMetadata("value_source", ColumnType.STRING));
         METADATA.add(new TableColumnMetadata("sensitive", ColumnType.BOOLEAN));
-        METADATA.add(new TableColumnMetadata("dynamic", ColumnType.BOOLEAN));
+        METADATA.add(new TableColumnMetadata("reloadable", ColumnType.BOOLEAN));
     }
 }
