@@ -30,6 +30,7 @@ import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
+import io.questdb.metrics.QueryTracingJob;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
@@ -393,6 +394,11 @@ public class MetadataCache implements QuietCloseable {
                     && (Chars.equals(tableName, TelemetryTask.TABLE_NAME)
                     || Chars.equals(tableName, TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME))
             ) {
+                return false;
+            }
+
+            // query tracing table
+            if (Chars.equals(tableName, QueryTracingJob.TABLE_NAME)) {
                 return false;
             }
 
