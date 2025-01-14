@@ -25,7 +25,6 @@
 package io.questdb.metrics;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlException;
@@ -34,32 +33,24 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.ValueHolderList;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Utf8StringSink;
-
-import java.util.concurrent.TimeUnit;
 
 public class QueryMetricsJob extends SynchronizedJob {
     public static final String TABLE_NAME = "_query_metrics_";
     private static final int BATCH_LIMIT = 1024;
-    private static final long CLEANUP_INTERVAL_MICROS = TimeUnit.SECONDS.toMicros(10);
     private static final int INITIAL_CAPACITY = 128;
     private static final Log LOG = LogFactory.getLog(QueryMetricsJob.class.getName());
-    private static final long METRICS_LIFETIME_MICROS = TimeUnit.MINUTES.toMicros(61);
     private final ValueHolderList<QueryMetrics> buffer;
-    private final MicrosecondClock clock;
     private final CairoEngine engine;
     private final QueryMetrics metrics = new QueryMetrics();
     private final MemCappedQueryMetricsQueue queue;
     private final Utf8StringSink utf8sink = new Utf8StringSink();
-    private long lastCleanupTs;
     private TableToken tableToken;
 
     public QueryMetricsJob(CairoEngine engine) {
         this.queue = engine.getMessageBus().getQueryMetricsQueue();
         this.buffer = new ValueHolderList<>(MemCappedQueryMetricsQueue.ITEM_FACTORY, INITIAL_CAPACITY);
         this.engine = engine;
-        this.clock = engine.getConfiguration().getMicrosecondClock();
     }
 
     public static void assignToPool(WorkerPool pool, CairoEngine engine) {
@@ -69,29 +60,10 @@ public class QueryMetricsJob extends SynchronizedJob {
         }
     }
 
-    private void discardOldData() {
-        final long now = clock.getTicks();
-        if (now - lastCleanupTs > CLEANUP_INTERVAL_MICROS) {
-            try {
-                engine.execute("ALTER TABLE " + TABLE_NAME + " DROP PARTITION WHERE ts < " +
-                        (clock.getTicks() - METRICS_LIFETIME_MICROS));
-                lastCleanupTs = now;
-            } catch (SqlException e) {
-                if (!e.getMessage().contains("table does not exist [table=_query_metrics_]")) {
-                    LOG.error().$("Failed to discard old query metrics").$((Throwable) e).$();
-                }
-            } catch (CairoException e) {
-                if (!e.getMessage().contains("no partitions matched WHERE clause")) {
-                    LOG.error().$("Failed to discard old query metrics").$((Throwable) e).$();
-                }
-            }
-        }
-    }
-
     private void init() throws SqlException {
         engine.execute("CREATE TABLE IF NOT EXISTS " + TABLE_NAME +
                 " (ts TIMESTAMP, query VARCHAR, execution_micros LONG)" +
-                " TIMESTAMP(ts) PARTITION BY HOUR BYPASS WAL");
+                " TIMESTAMP(ts) PARTITION BY HOUR TTL 1 DAY BYPASS WAL");
         tableToken = engine.verifyTableName(TABLE_NAME);
     }
 
@@ -104,7 +76,6 @@ public class QueryMetricsJob extends SynchronizedJob {
         if (buffer.size() <= 0) {
             return false;
         }
-        discardOldData();
         TableWriter tableWriter0;
         try {
             tableWriter0 = engine.getWriter(tableToken, "query_tracing");
