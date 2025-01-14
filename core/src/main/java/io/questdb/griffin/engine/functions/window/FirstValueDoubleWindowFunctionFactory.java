@@ -53,8 +53,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
-import javax.print.attribute.standard.MediaSize;
-
 // Returns value evaluated at the row that is the first row of the window frame.
 public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
