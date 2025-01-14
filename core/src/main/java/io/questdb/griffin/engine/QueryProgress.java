@@ -55,6 +55,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.TimeUnit;
@@ -82,14 +83,19 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         this.jit = base.usesCompiledFilter();
     }
 
-    public static void logEnd(long sqlId, CharSequence sqlText, SqlExecutionContext executionContext, long beginNanos) {
+    public static void logEnd(
+            long sqlId,
+            @NotNull CharSequence sqlText,
+            @NotNull SqlExecutionContext executionContext,
+            long beginNanos
+    ) {
         logEnd(sqlId, sqlText, executionContext, beginNanos, null, null);
     }
 
     public static void logEnd(
             long sqlId,
-            CharSequence sqlText,
-            SqlExecutionContext executionContext,
+            @NotNull CharSequence sqlText,
+            @NotNull SqlExecutionContext executionContext,
             long beginNanos,
             @Nullable ObjList<TableReader> leakedReaders,
             @Nullable QueryMetrics queryMetrics
@@ -138,20 +144,20 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     }
 
     public static void logError(
-            Throwable e,
+            @Nullable Throwable e,
             long sqlId,
-            CharSequence sqlText,
-            SqlExecutionContext executionContext,
+            @NotNull CharSequence sqlText,
+            @NotNull SqlExecutionContext executionContext,
             long beginNanos
     ) {
         logError(e, sqlId, sqlText, executionContext, beginNanos, null);
     }
 
     public static void logError(
-            Throwable e,
+            @Nullable Throwable e,
             long sqlId,
-            CharSequence sqlText,
-            SqlExecutionContext executionContext,
+            @NotNull CharSequence sqlText,
+            @NotNull SqlExecutionContext executionContext,
             long beginNanos,
             @Nullable ObjList<TableReader> leakedReaders
     ) {
@@ -212,8 +218,8 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
 
     public static void logStart(
             long sqlId,
-            CharSequence sqlText,
-            SqlExecutionContext executionContext,
+            @NotNull CharSequence sqlText,
+            @NotNull SqlExecutionContext executionContext,
             boolean jit
     ) {
         if (executionContext.getCairoEngine().getConfiguration().getLogSqlQueryProgressExe()) {
