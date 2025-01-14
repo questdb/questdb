@@ -1401,6 +1401,17 @@ public class SqlKeywords {
                 && (tok.charAt(4) | 32) == 't';
     }
 
+    public static boolean isUnpivotKeyword(CharSequence tok) {
+        return tok.length() == 7
+                && (tok.charAt(0) | 32) == 'u'
+                && (tok.charAt(1) | 32) == 'n'
+                && (tok.charAt(2) | 32) == 'p'
+                && (tok.charAt(3) | 32) == 'i'
+                && (tok.charAt(4) | 32) == 'v'
+                && (tok.charAt(5) | 32) == 'o'
+                && (tok.charAt(6) | 32) == 't';
+    }
+
     public static boolean isPrecedingKeyword(CharSequence tok) {
         return tok.length() == 9
                 && (tok.charAt(0) | 32) == 'p'
