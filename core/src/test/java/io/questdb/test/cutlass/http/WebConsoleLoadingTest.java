@@ -84,18 +84,6 @@ public class WebConsoleLoadingTest extends AbstractBootstrapTest {
         testWebConsoleLoads("/context", true);
     }
 
-    private void assertExecRequest(
-            HttpClient httpClient,
-            String contextPath,
-            String sql,
-            int expectedResponseCode,
-            String expectedResponse
-    ) {
-        final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
-        request.GET().url(contextPath + "/exec").query("query", sql);
-        assertRequest(request, expectedResponseCode, expectedResponse);
-    }
-
     private void assertRequest(HttpClient.Request request, int responseCode, String expectedResponse) {
         try (HttpClient.ResponseHeaders responseHeaders = request.send()) {
             responseHeaders.await();
@@ -124,15 +112,19 @@ public class WebConsoleLoadingTest extends AbstractBootstrapTest {
         assertRequest(request, cachedResponse ? 304 : 200, cachedResponse ? "" : WebConsoleLoadingTest.TEST_PAYLOAD);
     }
 
-    private void testHttpContextPathExecEndpoint(String contextPath) throws Exception {
+    private void testHttpContextPathExecEndpoint(String contextPathWebConsole) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_CONTEXT_PATH.getEnvVarName(), contextPath
+                    PropertyKey.HTTP_CONTEXT_WEB_CONSOLE.getEnvVarName(), contextPathWebConsole
             )) {
                 serverMain.start();
 
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
-                    assertExecRequest(httpClient, contextPath, "select 1", HttpURLConnection.HTTP_OK,
+                    final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
+                    request.GET().url(contextPathWebConsole + "/exec").query("query", "select 1");
+                    assertRequest(
+                            request,
+                            HttpURLConnection.HTTP_OK,
                             "{\"query\":\"select 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}"
                     );
                 }
@@ -147,7 +139,7 @@ public class WebConsoleLoadingTest extends AbstractBootstrapTest {
                     public Map<String, String> getEnv() {
                         final Map<String, String> env = new HashMap<>(super.getEnv());
                         env.put(PropertyKey.PG_ENABLED.getEnvVarName(), Boolean.toString(pgEnabled));
-                        env.put(PropertyKey.HTTP_CONTEXT_PATH.getEnvVarName(), contextPath);
+                        env.put(PropertyKey.HTTP_CONTEXT_WEB_CONSOLE.getEnvVarName(), contextPath);
                         return Collections.unmodifiableMap(env);
                     }
 

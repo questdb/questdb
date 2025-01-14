@@ -141,7 +141,7 @@ public class WarningsEndpointTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
                 put(PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true");
-                put(PropertyKey.HTTP_CONTEXT_PATH.getEnvVarName(), contextPath);
+                put(PropertyKey.HTTP_CONTEXT_WEB_CONSOLE.getEnvVarName(), contextPath);
             }})
             ) {
                 serverMain.start();

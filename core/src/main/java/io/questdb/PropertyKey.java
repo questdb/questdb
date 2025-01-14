@@ -237,7 +237,6 @@ public enum PropertyKey implements ConfigPropertyKey {
     HTTP_MIN_NET_CONNECTION_RCVBUF("http.min.net.connection.rcvbuf"),
     HTTP_MIN_NET_CONNECTION_HINT("http.min.net.connection.hint"),
     HTTP_ENABLED("http.enabled"),
-    HTTP_CONTEXT_PATH("http.context.path"),
     HTTP_MULTIPART_HEADER_BUFFER_SIZE("http.multipart.header.buffer.size"),
     HTTP_MULTIPART_IDLE_SPIN_COUNT("http.multipart.idle.spin.count"),
     HTTP_REQUEST_HEADER_BUFFER_SIZE("http.request.header.buffer.size"),
@@ -514,7 +513,18 @@ public enum PropertyKey implements ConfigPropertyKey {
     HTTP_MIN_MULTIPART_IDLE_SPIN_COUNT("http.min.multipart.idle.spin.count"),
     HTTP_MIN_ALLOW_DEFLATE_BEFORE_SEND("http.min.allow.deflate.before.send"),
     HTTP_MIN_SERVER_KEEP_ALIVE("http.min.server.keep.alive"),
-    HTTP_MIN_REQUEST_HEADER_BUFFER_SIZE("http.min.request.header.buffer.size");
+    HTTP_MIN_REQUEST_HEADER_BUFFER_SIZE("http.min.request.header.buffer.size"),
+    HTTP_REDIRECT_COUNT("http.redirect.count"),
+    HTTP_REDIRECT_PREFIX("http.redirect."),
+    HTTP_CONTEXT_WEB_CONSOLE("http.context.web.console"),
+    HTTP_CONTEXT_IMPORT("http.context.import"),
+    HTTP_CONTEXT_EXPORT("http.context.export"),
+    HTTP_CONTEXT_ILP("http.context.ilp"),
+    HTTP_CONTEXT_ILP_PING("http.context.ilp.ping"),
+    HTTP_CONTEXT_SETTINGS("http.context.settings"),
+    HTTP_CONTEXT_WARNINGS("http.context.warnings"),
+    HTTP_CONTEXT_TABLE_STATUS("http.context.table.status"),
+    HTTP_CONTEXT_EXECUTE("http.context.execute"),;
 
     private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;

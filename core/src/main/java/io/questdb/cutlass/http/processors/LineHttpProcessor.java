@@ -54,7 +54,7 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
     private final CairoEngine engine;
     private final int maxResponseContentLength;
     private final int recvBufferSize;
-    LineHttpProcessorState state;
+    private LineHttpProcessorState state;
 
     public LineHttpProcessor(CairoEngine engine, int recvBufferSize, int maxResponseContentLength, LineHttpProcessorConfiguration configuration) {
         this.engine = engine;

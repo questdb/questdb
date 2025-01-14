@@ -310,7 +310,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048",
-                    PropertyKey.HTTP_CONTEXT_PATH.getEnvVarName(), "context1"
+                    PropertyKey.HTTP_CONTEXT_WEB_CONSOLE.getEnvVarName(), "context1"
             )) {
                 serverMain.start();
 

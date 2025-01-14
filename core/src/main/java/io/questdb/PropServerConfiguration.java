@@ -90,12 +90,14 @@ import io.questdb.std.NanosecondClock;
 import io.questdb.std.NanosecondClockImpl;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.StationaryMillisClock;
 import io.questdb.std.StationaryNanosClock;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Utf8SequenceObjHashMap;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
@@ -111,6 +113,8 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -196,7 +200,15 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final FilesFacade filesFacade;
     private final FactoryProviderFactory fpf;
     private final PropHttpContextConfiguration httpContextConfiguration;
-    private final String httpContextPath;
+    private final ObjList<String> httpContextPathExec = new ObjList<>();
+    private final ObjList<String> httpContextPathExport = new ObjList<>();
+    private final ObjList<String> httpContextPathILP = new ObjList<>();
+    private final ObjList<String> httpContextPathILPPing = new ObjList<>();
+    private final ObjList<String> httpContextPathImport = new ObjList<>();
+    private final ObjList<String> httpContextPathSettings = new ObjList<>();
+    private final ObjList<String> httpContextPathTableStatus = new ObjList<>();
+    private final ObjList<String> httpContextPathWarnings = new ObjList<>();
+    private final String httpContextWebConsole;
     private final boolean httpFrozenClock;
     private final PropHttpConcurrentCacheConfiguration httpMinConcurrentCacheConfiguration = new PropHttpConcurrentCacheConfiguration();
     private final PropHttpContextConfiguration httpMinContextConfiguration;
@@ -225,7 +237,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long inactiveReaderTTL;
     private final long inactiveWalWriterTTL;
     private final long inactiveWriterTTL;
-    private final CharSequence indexFileName;
     private final int indexValueBlockSize;
     private final InputFormatConfiguration inputFormatConfiguration;
     private final long instanceHashHi;
@@ -312,6 +323,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final PublicPassthroughConfiguration publicPassthroughConfiguration = new PropPublicPassthroughConfiguration();
     private final int queryCacheEventQueueCapacity;
     private final int readerPoolMaxSegments;
+    private final Utf8SequenceObjHashMap<Utf8Sequence> redirectMap;
     private final int repeatMigrationFromVersion;
     private final double rerunExponentialWaitMultiplier;
     private final int rerunInitialWaitQueueSize;
@@ -918,7 +930,68 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpWorkerNapThreshold = getLong(properties, env, PropertyKey.HTTP_WORKER_NAP_THRESHOLD, 7_000);
             this.httpWorkerSleepThreshold = getLong(properties, env, PropertyKey.HTTP_WORKER_SLEEP_THRESHOLD, 10_000);
             this.httpWorkerSleepTimeout = getMillis(properties, env, PropertyKey.HTTP_WORKER_SLEEP_TIMEOUT, 10);
-            this.indexFileName = getString(properties, env, PropertyKey.HTTP_STATIC_INDEX_FILE_NAME, "index.html");
+
+            // context paths
+            this.httpContextWebConsole = stripTrailingSlash(getString(properties, env, PropertyKey.HTTP_CONTEXT_WEB_CONSOLE, "/"));
+            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_ILP, this.httpContextPathILP, "/write", "/api/v2/write");
+            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_ILP_PING, this.httpContextPathILPPing, "/ping");
+            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_IMPORT, this.httpContextPathImport, "/imp");
+            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_EXPORT, this.httpContextPathExport, "/exp");
+            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_SETTINGS, this.httpContextPathSettings, "/settings");
+            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_TABLE_STATUS, this.httpContextPathTableStatus, "/chk");
+            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_EXECUTE, this.httpContextPathExec, "/exec");
+            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_WARNINGS, this.httpContextPathWarnings, "/warnings");
+
+            // if the Web Console does not run on the root context, we need to add all the dependent services
+            // to the new context. For compatibility reasons we leave the old context paths as they are.
+
+            // The following paths need to be added for the Web Console to work properly. This
+            // deals with the cases where context path was overridden by the user. Adding duplicate
+            // paths is ok, because duplicates are squashed by the HTTP server.
+            // 1. import, to support CSV import UI
+            // 2. export, to support CSV export UI
+            // 3. settings, that is what the Web Console loads on startup
+            // 4. table status, to support CSV import UI
+            // 5. JSON query execution, e.g. exec
+            // 6. warnings, that displays warnings in the table view
+
+            // we use defaults, because this is what the Web Console expects
+            httpContextPathImport.add(httpContextWebConsole + "/imp");
+            httpContextPathExport.add(httpContextWebConsole + "/exp");
+            httpContextPathSettings.add(httpContextWebConsole + "/settings");
+            httpContextPathTableStatus.add(httpContextWebConsole + "/chk");
+            httpContextPathExec.add(httpContextWebConsole + "/exec");
+            httpContextPathWarnings.add(httpContextWebConsole + "/warnings");
+
+            // read the redirect map
+            this.redirectMap = new Utf8SequenceObjHashMap<>();
+            int redirectCount = getInt(properties, env, PropertyKey.HTTP_REDIRECT_COUNT, 0);
+            if (redirectCount > 0) {
+                // read the redirect map
+                for (int i = 0; i < redirectCount; i++) {
+                    // all redirect values must be read to reconcile with the count
+                    final RedirectPropertyKey key = new RedirectPropertyKey(i + 1);
+                    String redirectConfig = getString(properties, env, key, null);
+                    if (redirectConfig != null) {
+                        String[] parts = redirectConfig.split("->");
+                        if (parts.length == 2) {
+                            String from = parts[0].trim();
+                            String to = parts[1].trim();
+                            if (!from.isEmpty() && !to.isEmpty()) {
+                                redirectMap.put(new Utf8String(from), new Utf8String("Location: " + to + Misc.EOL));
+                            }
+                        } else {
+                            throw new ServerConfigurationException("could not parse redirect value [key=" + key.getPropertyPath() + ", value=" + redirectConfig + ']');
+                        }
+                    } else {
+                        throw new ServerConfigurationException("undefined redirect value [" + key.getPropertyPath() + "]");
+                    }
+                }
+            }
+            // also add web console redirect for custom context
+            Utf8String redirectTarget = new Utf8String("Location: " + httpContextWebConsole + "/index.html" + Misc.EOL);
+            redirectMap.put(new Utf8String(httpContextWebConsole), redirectTarget);
+            redirectMap.put(new Utf8String(httpContextWebConsole + "/"), redirectTarget);
 
             String httpVersion = getString(properties, env, PropertyKey.HTTP_VERSION, "HTTP/1.1");
             if (!httpVersion.endsWith(" ")) {
@@ -1024,8 +1097,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.HTTP_NET_CONNECTION_RCVBUF, httpNetConnectionRcvBuf);
             this.httpRecvBufferSize = getIntSize(properties, env, PropertyKey.HTTP_RECEIVE_BUFFER_SIZE, 2 * Numbers.SIZE_1MB);
             this.httpRecvBufferSize = getIntSize(properties, env, PropertyKey.HTTP_RECV_BUFFER_SIZE, httpRecvBufferSize);
-
-            this.httpContextPath = getContextPath(properties, env);
 
             this.dateAdapterPoolCapacity = getInt(properties, env, PropertyKey.HTTP_TEXT_DATE_ADAPTER_POOL_CAPACITY, 16);
             this.jsonCacheLimit = getIntSize(properties, env, PropertyKey.HTTP_TEXT_JSON_CACHE_LIMIT, 16384);
@@ -1671,6 +1742,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.factoryProvider = factoryProvider;
     }
 
+    private static @NotNull String stripTrailingSlash(@NotNull String httpContextWebConsole) {
+        int n = 0;
+        for (int j = httpContextWebConsole.length() - 1; j > -1; j--) {
+            if (httpContextWebConsole.charAt(j) == '/') {
+                n++;
+            } else {
+                break;
+            }
+        }
+        if (n > 0) {
+            httpContextWebConsole = httpContextWebConsole.substring(0, httpContextWebConsole.length() - n);
+        }
+        return httpContextWebConsole;
+    }
+
     private int[] getAffinity(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, int workerCount) throws ServerConfigurationException {
         final int[] result = new int[workerCount];
         String value = getString(properties, env, key, null);
@@ -1793,10 +1879,12 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
+/*
     protected String getContextPath(Properties properties, @Nullable Map<String, String> env) {
         final String contextPath = getString(properties, env, PropertyKey.HTTP_CONTEXT_PATH, "");
         return !contextPath.isEmpty() && !contextPath.startsWith("/") ? "/" + contextPath : contextPath;
     }
+*/
 
     protected double getDouble(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, String defaultValue) throws ServerConfigurationException {
         final String value = getString(properties, env, key, defaultValue);
@@ -1936,6 +2024,50 @@ public class PropServerConfiguration implements ServerConfiguration {
             allPairs.put(key, new ConfigPropertyValueImpl(result, valueSource, dynamic));
         }
         return result;
+    }
+
+    protected void getUrls(
+            Properties properties,
+            @Nullable Map<String, String> env,
+            ConfigPropertyKey key,
+            ObjList<String> target,
+            String... defaultValue
+    ) throws ServerConfigurationException {
+        String envCandidate = key.getEnvVarName();
+        String unparsedResult = env != null ? env.get(envCandidate) : null;
+        final int valueSource;
+        if (unparsedResult != null) {
+            log.info().$("env config [key=").$(envCandidate).I$();
+            valueSource = ConfigPropertyValue.VALUE_SOURCE_ENV;
+        } else {
+            unparsedResult = properties.getProperty(key.getPropertyPath());
+            if (unparsedResult == null) {
+                valueSource = ConfigPropertyValue.VALUE_SOURCE_DEFAULT;
+            } else {
+                valueSource = ConfigPropertyValue.VALUE_SOURCE_CONF;
+            }
+        }
+
+        String[] parts;
+        if (valueSource == ConfigPropertyValue.VALUE_SOURCE_DEFAULT) {
+            parts = defaultValue;
+        } else {
+            parts = unparsedResult.split(",");
+        }
+        for (int i = 0, n = defaultValue.length; i < n; i++) {
+            String url = parts[i].trim();
+            if (url.isEmpty()) {
+                throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), "empty URL in the list");
+            }
+            target.add(stripTrailingSlash(url));
+        }
+
+        // Sometimes there can be spaces coming from environment variables, cut them off
+        unparsedResult = (unparsedResult != null) ? unparsedResult.trim() : null;
+        if (!key.isDebug()) {
+            boolean dynamic = dynamicProperties != null && dynamicProperties.contains(key);
+            allPairs.put(key, new ConfigPropertyValueImpl(unparsedResult, valueSource, dynamic));
+        }
     }
 
     protected PropertyValidator newValidator() {
@@ -2262,6 +2394,36 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         protected void registerObsolete(String old, ConfigPropertyKey... replacements) {
             registerReplacements(obsoleteSettings, old, replacements);
+        }
+    }
+
+    private static class RedirectPropertyKey implements ConfigPropertyKey {
+        final String envVarName;
+        final String propertyPath;
+
+        public RedirectPropertyKey(int index) {
+            this.propertyPath = PropertyKey.HTTP_REDIRECT_PREFIX.getPropertyPath() + index;
+            this.envVarName = ServerMain.propertyPathToEnvVarName(propertyPath);
+        }
+
+        @Override
+        public String getEnvVarName() {
+            return envVarName;
+        }
+
+        @Override
+        public String getPropertyPath() {
+            return propertyPath;
+        }
+
+        @Override
+        public boolean isDebug() {
+            return false;
+        }
+
+        @Override
+        public boolean isSensitive() {
+            return false;
         }
     }
 
@@ -3712,8 +3874,48 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public String getContextPath() {
-            return httpContextPath;
+        public ObjList<String> getContextPathExec() {
+            return httpContextPathExec;
+        }
+
+        @Override
+        public ObjList<String> getContextPathExport() {
+            return httpContextPathExport;
+        }
+
+        @Override
+        public ObjList<String> getContextPathILP() {
+            return httpContextPathILP;
+        }
+
+        @Override
+        public ObjList<String> getContextPathILPPing() {
+            return httpContextPathILPPing;
+        }
+
+        @Override
+        public ObjList<String> getContextPathImport() {
+            return httpContextPathImport;
+        }
+
+        @Override
+        public ObjList<String> getContextPathSettings() {
+            return httpContextPathSettings;
+        }
+
+        @Override
+        public ObjList<String> getContextPathTableStatus() {
+            return httpContextPathTableStatus;
+        }
+
+        @Override
+        public ObjList<String> getContextPathWarnings() {
+            return httpContextPathWarnings;
+        }
+
+        @Override
+        public String getContextPathWebConsole() {
+            return httpContextWebConsole;
         }
 
         @Override
@@ -4868,11 +5070,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public CharSequence getIndexFileName() {
-            return indexFileName;
-        }
-
-        @Override
         public String getKeepAliveHeader() {
             return keepAliveHeader;
         }
@@ -4890,6 +5087,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public CharSequence getPublicDirectory() {
             return publicDirectory;
+        }
+
+        @Override
+        public Utf8SequenceObjHashMap<Utf8Sequence> getRedirectMap() {
+            return redirectMap;
         }
 
         @Override

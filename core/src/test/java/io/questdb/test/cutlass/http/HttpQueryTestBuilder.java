@@ -34,14 +34,13 @@ import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
-import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.HttpRequestProcessorFactory;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.processors.HealthCheckProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
-import io.questdb.cutlass.http.processors.StaticContentProcessor;
+import io.questdb.cutlass.http.processors.StaticContentProcessorFactory;
 import io.questdb.cutlass.http.processors.TableStatusCheckProcessor;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.cutlass.http.processors.TextQueryProcessor;
@@ -188,22 +187,14 @@ public class HttpQueryTestBuilder {
                     workerPool.freeOnExit(copyRequestJob);
                 }
 
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public String getUrl() {
-                        return HttpFullFatServerConfiguration.DEFAULT_PROCESSOR_URL;
-                    }
-
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration);
-                    }
-                });
+                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
 
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
-                    public String getUrl() {
-                        return "/upload";
+                    public ObjList<String> getUrls() {
+                        return new ObjList<>() {{
+                            add("/upload");
+                        }};
                     }
 
                     @Override
@@ -220,8 +211,10 @@ public class HttpQueryTestBuilder {
 
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
-                    public String getUrl() {
-                        return "/query";
+                    public ObjList<String> getUrls() {
+                        return new ObjList<>() {{
+                            add("/query");
+                        }};
                     }
 
                     @Override
@@ -245,8 +238,8 @@ public class HttpQueryTestBuilder {
 
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
-                    public String getUrl() {
-                        return "/exp";
+                    public ObjList<String> getUrls() {
+                        return httpConfiguration.getContextPathExport();
                     }
 
                     @Override
@@ -261,8 +254,8 @@ public class HttpQueryTestBuilder {
 
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
-                    public String getUrl() {
-                        return "/chk";
+                    public ObjList<String> getUrls() {
+                        return httpConfiguration.getContextPathTableStatus();
                     }
 
                     @Override
@@ -273,8 +266,8 @@ public class HttpQueryTestBuilder {
 
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
-                    public String getUrl() {
-                        return "/exec";
+                    public ObjList<String> getUrls() {
+                        return httpConfiguration.getContextPathExec();
                     }
 
                     @Override
@@ -285,8 +278,10 @@ public class HttpQueryTestBuilder {
 
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
-                    public String getUrl() {
-                        return "/status";
+                    public ObjList<String> getUrls() {
+                        return new ObjList<>() {{
+                            add("/status");
+                        }};
                     }
 
                     @Override

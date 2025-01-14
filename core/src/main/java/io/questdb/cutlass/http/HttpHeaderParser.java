@@ -61,7 +61,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
     private final DirectUtf8String temp = new DirectUtf8String();
     private final Utf8SequenceObjHashMap<DirectUtf8String> urlParams = new Utf8SequenceObjHashMap<>();
     protected boolean incomplete;
-    protected Utf8Sequence url;
+    protected DirectUtf8String url;
     private long _lo;
     private long _wptr;
     private DirectUtf8String boundary;
@@ -227,7 +227,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
     }
 
     @Override
-    public Utf8Sequence getUrl() {
+    public DirectUtf8String getUrl() {
         return url;
     }
 

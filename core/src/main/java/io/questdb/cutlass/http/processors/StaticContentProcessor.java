@@ -43,11 +43,11 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.Utf8SequenceObjHashMap;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.FileNameExtractorUtf8Sequence;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.PrefixedPath;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
@@ -56,33 +56,32 @@ import io.questdb.std.str.Utf8s;
 import java.io.Closeable;
 
 import static io.questdb.cutlass.http.HttpConstants.*;
-import static java.net.HttpURLConnection.HTTP_MOVED_TEMP;
+import static java.net.HttpURLConnection.HTTP_MOVED_PERM;
 import static java.net.HttpURLConnection.HTTP_NOT_FOUND;
 
 public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
     private static final Log LOG = LogFactory.getLog(StaticContentProcessor.class);
     private static final LocalValue<StaticContentProcessorState> LV = new LocalValue<>();
-    private final Utf8Sequence contextPath;
+    private final Utf8Sequence webConsoleContextPath;
     private final FilesFacade ff;
     private final String httpProtocolVersion;
-    private final CharSequence indexFileName;
     private final String keepAliveHeader;
     private final MimeTypesCache mimeTypes;
     private final PrefixedPath prefixedPath;
     private final HttpRangeParser rangeParser = new HttpRangeParser();
     private final byte requiredAuthType;
-    private final StringSink utf16Sink = new StringSink();
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
+    private final StaticContentProcessorConfiguration configuration;
 
     public StaticContentProcessor(HttpFullFatServerConfiguration configuration) {
+        this.configuration = configuration.getStaticContentProcessorConfiguration();
         this.mimeTypes = configuration.getStaticContentProcessorConfiguration().getMimeTypesCache();
         this.prefixedPath = new PrefixedPath(configuration.getStaticContentProcessorConfiguration().getPublicDirectory());
-        this.indexFileName = configuration.getStaticContentProcessorConfiguration().getIndexFileName();
         this.ff = configuration.getStaticContentProcessorConfiguration().getFilesFacade();
         this.keepAliveHeader = configuration.getStaticContentProcessorConfiguration().getKeepAliveHeader();
         this.httpProtocolVersion = configuration.getHttpContextConfiguration().getHttpVersion();
         this.requiredAuthType = configuration.getStaticContentProcessorConfiguration().getRequiredAuthType();
-        this.contextPath = new Utf8String(configuration.getContextPath());
+        this.webConsoleContextPath = new Utf8String(configuration.getContextPathWebConsole());
     }
 
     @Override
@@ -111,35 +110,28 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
             return;
         }
 
-        if (!Utf8s.startsWith(url, contextPath)) {
-            sendStatusTextContent(context, HTTP_NOT_FOUND);
+        // hit redirects first, they can be outside the context path for the static files
+        final Utf8SequenceObjHashMap<Utf8Sequence> redirectMap = configuration.getRedirectMap();
+        int index = redirectMap.keyIndex(url);
+        if (index < 0) {
+            context.simpleResponse().sendStatusNoContent(HTTP_MOVED_PERM, redirectMap.valueAt(index));
             return;
         }
 
-        utf8Sink.clear();
-        if (Utf8s.endsWithAscii(url, '/')) {
-            Utf8s.strCpy(url, 0, url.size() - 1, utf8Sink);
-        } else {
-            utf8Sink.put(url);
-        }
-        if (Utf8s.equals(utf8Sink, contextPath)) {
-            utf16Sink.clear();
-            utf16Sink.put("Location: ").put(utf8Sink).put('/').put(indexFileName);
-            context.simpleResponse().sendStatusNoContent(HTTP_MOVED_TEMP, utf16Sink);
-            return;
+        if (Utf8s.startsWith(url, webConsoleContextPath)) {
+            utf8Sink.clear();
+            Utf8s.strCpy(url, webConsoleContextPath.size(), url.size(), utf8Sink);
+            final PrefixedPath path = prefixedPath.rewind();
+            final LPSZ lpsz = path.concat(utf8Sink).$();
+            if (ff.exists(lpsz)) {
+                send(context, lpsz, headers.getUrlParam(URL_PARAM_ATTACHMENT) != null);
+                return;
+            } else {
+                logInfoWithFd(context).$("not found [path=").$(path).$(']').$();
+            }
         }
 
-        utf8Sink.clear();
-        Utf8s.strCpy(url, contextPath.size(), url.size(), utf8Sink);
-
-        final PrefixedPath path = prefixedPath.rewind();
-        final LPSZ lpsz = path.concat(utf8Sink).$();
-        if (ff.exists(lpsz)) {
-            send(context, lpsz, headers.getUrlParam(URL_PARAM_ATTACHMENT) != null);
-        } else {
-            logInfoWithFd(context).$("not found [path=").$(path).$(']').$();
-            sendStatusTextContent(context, HTTP_NOT_FOUND);
-        }
+        sendStatusTextContent(context, HTTP_NOT_FOUND);
     }
 
     @Override

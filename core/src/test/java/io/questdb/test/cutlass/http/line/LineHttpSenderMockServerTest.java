@@ -35,6 +35,7 @@ import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.PlainSocketFactory;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.cutlass.http.HttpServerConfigurationBuilder;
@@ -528,8 +529,10 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                  HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
-                    public String getUrl() {
-                        return "/write";
+                    public ObjList<String> getUrls() {
+                        return new ObjList<>() {{
+                            add("/write");
+                        }};
                     }
 
                     @Override

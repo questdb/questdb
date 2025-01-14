@@ -27,8 +27,21 @@ package io.questdb.cutlass.http;
 import io.questdb.FactoryProvider;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.std.ObjList;
 
 public interface HttpServerConfiguration extends IODispatcherConfiguration, WorkerPoolConfiguration {
+
+    default ObjList<String> getContextPathMetrics() {
+        return new ObjList<>() {{
+            add("/metrics");
+        }};
+    }
+
+    default ObjList<String> getContextPathStatus() {
+        return new ObjList<>() {{
+            add(getHttpContextConfiguration().getMetrics().isEnabled() ? "/status" : "*");
+        }};
+    }
 
     FactoryProvider getFactoryProvider();
 

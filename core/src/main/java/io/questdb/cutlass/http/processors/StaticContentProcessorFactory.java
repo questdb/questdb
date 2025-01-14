@@ -22,39 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http;
+package io.questdb.cutlass.http.processors;
 
+import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
+import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.cutlass.http.HttpRequestProcessorFactory;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.DirectUtf8Sequence;
-import io.questdb.std.str.DirectUtf8String;
-import io.questdb.std.str.Utf8Sequence;
 
-public interface HttpRequestHeader {
-    DirectUtf8Sequence getBoundary();
+public class StaticContentProcessorFactory implements HttpRequestProcessorFactory {
+    private final HttpFullFatServerConfiguration httpConfiguration;
 
-    DirectUtf8Sequence getCharset();
+    public StaticContentProcessorFactory(HttpFullFatServerConfiguration httpConfiguration) {
+        this.httpConfiguration = httpConfiguration;
+    }
 
-    DirectUtf8Sequence getContentDisposition();
+    @Override
+    public ObjList<String> getUrls() {
+        return httpConfiguration.getContextPathDefault();
+    }
 
-    DirectUtf8Sequence getContentDispositionFilename();
+    @Override
+    public HttpRequestProcessor newInstance() {
+        return new StaticContentProcessor(httpConfiguration);
+    }
 
-    DirectUtf8Sequence getContentDispositionName();
-
-    long getContentLength();
-
-    DirectUtf8Sequence getContentType();
-
-    DirectUtf8Sequence getHeader(Utf8Sequence name);
-
-    ObjList<? extends Utf8Sequence> getHeaderNames();
-
-    DirectUtf8Sequence getMethod();
-
-    DirectUtf8Sequence getMethodLine();
-
-    long getStatementTimeout();
-
-    DirectUtf8String getUrl();
-
-    DirectUtf8Sequence getUrlParam(Utf8Sequence name);
 }

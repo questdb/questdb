@@ -676,14 +676,14 @@ public class Bootstrap {
             final HttpFullFatServerConfiguration httpConf = config.getHttpServerConfiguration();
             final int bindIP = httpConf.getBindIPv4Address();
             final int bindPort = httpConf.getBindPort();
-            final String contextPath = httpConf.getContextPath();
+            final String contextPathWebConsole = httpConf.getContextPathWebConsole();
             if (bindIP == 0) {
                 try {
                     for (Enumeration<NetworkInterface> ni = NetworkInterface.getNetworkInterfaces(); ni.hasMoreElements(); ) {
                         for (Enumeration<InetAddress> addr = ni.nextElement().getInetAddresses(); addr.hasMoreElements(); ) {
                             InetAddress inetAddress = addr.nextElement();
                             if (inetAddress instanceof Inet4Address) {
-                                String leftCol = schema + "://" + inetAddress.getHostAddress() + ':' + bindPort + contextPath;
+                                String leftCol = schema + "://" + inetAddress.getHostAddress() + ':' + bindPort + contextPathWebConsole;
                                 sb.append(indent).append(leftCol);
                                 if (ilpEnabled) {
                                     padToNextCol(sb, leftCol.length());
