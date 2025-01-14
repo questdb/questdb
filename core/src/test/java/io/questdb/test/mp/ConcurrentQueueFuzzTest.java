@@ -177,6 +177,11 @@ public class ConcurrentQueueFuzzTest {
         int value;
 
         @Override
+        public void clear() {
+            value = 0;
+        }
+
+        @Override
         public void copyTo(IntHolderQueue intHolder) {
             intHolder.value = value;
         }
