@@ -302,11 +302,12 @@ public class ServerMain implements Closeable {
     private synchronized void initialize() {
         initialized = true;
         final ServerConfiguration config = bootstrap.getConfiguration();
-        // create the worker pool manager, and configure the shared pool
-        final boolean walSupported = config.getCairoConfiguration().isWalSupported();
-        final boolean isReadOnly = config.getCairoConfiguration().isReadOnlyInstance();
-        final boolean walApplyEnabled = config.getCairoConfiguration().isWalApplyEnabled();
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
+        // create the worker pool manager, and configure the shared pool
+        final boolean walSupported = cairoConfig.isWalSupported();
+        final boolean isReadOnly = cairoConfig.isReadOnlyInstance();
+        final boolean walApplyEnabled = cairoConfig.isWalApplyEnabled();
+        final boolean matViewEnabled = cairoConfig.isMatViewEnabled();
 
         workerPoolManager = new WorkerPoolManager(config) {
             @Override
@@ -345,7 +346,7 @@ public class ServerMain implements Closeable {
                             sharedPool.freeOnExit(copyRequestJob);
                         }
 
-                        if (cairoConfig.isMatViewEnabled()) {
+                        if (matViewEnabled && !config.getMatViewRefreshPoolConfiguration().isEnabled()) {
                             setupMatViewRefreshJob(sharedPool, engine, sharedPool.getWorkerCount());
                         }
                     }
@@ -364,6 +365,15 @@ public class ServerMain implements Closeable {
                 }
             }
         };
+
+        if (matViewEnabled && !isReadOnly && config.getMatViewRefreshPoolConfiguration().isEnabled()) {
+            // create dedicated worker pool for materialized view refresh
+            WorkerPool matViewRefreshWorkerPool = workerPoolManager.getInstance(
+                    config.getMatViewRefreshPoolConfiguration(),
+                    WorkerPoolManager.Requester.MAT_VIEW_REFRESH
+            );
+            setupMatViewRefreshJob(matViewRefreshWorkerPool, engine, workerPoolManager.getSharedWorkerCount());
+        }
 
         if (walApplyEnabled && !isReadOnly && walSupported && config.getWalApplyPoolConfiguration().isEnabled()) {
             WorkerPool walApplyWorkerPool = workerPoolManager.getInstance(
@@ -434,7 +444,7 @@ public class ServerMain implements Closeable {
     ) {
         for (int i = 0, workerCount = workerPool.getWorkerCount(); i < workerCount; i++) {
             // create job per worker
-            final MatViewRefreshJob matViewRefreshJob = new MatViewRefreshJob(i, engine);
+            final MatViewRefreshJob matViewRefreshJob = new MatViewRefreshJob(i, engine, workerCount, sharedWorkerCount);
             workerPool.assign(i, matViewRefreshJob);
             workerPool.freeOnExit(matViewRefreshJob);
         }

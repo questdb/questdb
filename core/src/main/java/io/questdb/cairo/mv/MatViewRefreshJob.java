@@ -56,6 +56,7 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 public class MatViewRefreshJob implements Job, QuietCloseable {
     private static final Log LOG = LogFactory.getLog(MatViewRefreshJob.class);
@@ -69,12 +70,18 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private final WalTxnRangeLoader txnRangeLoader;
     private final int workerId;
 
-    public MatViewRefreshJob(int workerId, CairoEngine engine) {
+    public MatViewRefreshJob(int workerId, CairoEngine engine, int workerCount, int sharedWorkerCount) {
         this.workerId = workerId;
         this.engine = engine;
-        this.mvRefreshExecutionContext = new MatViewRefreshExecutionContext(engine);
+        this.mvRefreshExecutionContext = new MatViewRefreshExecutionContext(engine, workerCount, sharedWorkerCount);
         this.txnRangeLoader = new WalTxnRangeLoader(engine.getConfiguration().getFilesFacade());
         this.microsecondClock = engine.getConfiguration().getMicrosecondClock();
+    }
+
+
+    @TestOnly
+    public MatViewRefreshJob(int workerId, CairoEngine engine) {
+        this(workerId, engine, 1, 1);
     }
 
     @Override

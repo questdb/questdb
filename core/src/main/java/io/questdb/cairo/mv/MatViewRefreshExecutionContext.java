@@ -40,8 +40,8 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
     private TableReader baseTableReader;
     private TableToken viewTableToken;
 
-    public MatViewRefreshExecutionContext(CairoEngine engine) {
-        super(engine, 1);
+    public MatViewRefreshExecutionContext(CairoEngine engine, int workerCount, int sharedWorkerCount) {
+        super(engine, workerCount, sharedWorkerCount);
         with(
                 new ReadOnlySecurityContext() {
                     @Override
