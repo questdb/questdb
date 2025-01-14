@@ -46,7 +46,7 @@ public class RecordArray extends RecordChain {
 
     public RecordArray(@NotNull ColumnTypes columnTypes, @NotNull RecordSink recordSink, long pageSize, int maxPages) {
         super(columnTypes, recordSink, pageSize, maxPages);
-        this.auxMem = Vm.getCARWInstance(pageSize >> 3, maxPages, MemoryTag.NATIVE_RECORD_CHAIN);
+        this.auxMem = Vm.getCARWInstance(pageSize >> 4, maxPages, MemoryTag.NATIVE_RECORD_CHAIN);
     }
 
     public long put(Record record) {
