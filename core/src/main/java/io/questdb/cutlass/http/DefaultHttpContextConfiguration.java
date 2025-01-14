@@ -88,6 +88,16 @@ public class DefaultHttpContextConfiguration implements HttpContextConfiguration
     }
 
     @Override
+    public int getJsonQueryConnectionLimit() {
+        return -1;
+    }
+
+    @Override
+    public Metrics getMetrics() {
+        return Metrics.ENABLED;
+    }
+
+    @Override
     public MillisecondClock getMillisecondClock() {
         return MillisecondClockImpl.INSTANCE;
     }
@@ -113,11 +123,6 @@ public class DefaultHttpContextConfiguration implements HttpContextConfiguration
     }
 
     @Override
-    public int getQueryConnectionLimit() {
-        return -1;
-    }
-
-    @Override
     public int getRequestHeaderBufferSize() {
         return 4096;
     }
@@ -130,10 +135,5 @@ public class DefaultHttpContextConfiguration implements HttpContextConfiguration
     @Override
     public boolean readOnlySecurityContext() {
         return false;
-    }
-
-    @Override
-    public Metrics getMetrics() {
-        return Metrics.ENABLED;
     }
 }

@@ -28,8 +28,6 @@ public interface MetricsRegistry extends Target {
 
     void addTarget(Target target);
 
-    AtomicCounter newAtomicCounter(CharSequence name);
-
     CounterWithOneLabel newCounter(CharSequence name, CharSequence labelName0, CharSequence[] labelValues0);
 
     CounterWithTwoLabels newCounter(

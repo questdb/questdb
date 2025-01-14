@@ -24,30 +24,16 @@
 
 package io.questdb.cutlass.http.processors;
 
-import io.questdb.Metrics;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.HttpConnectionContext;
-import io.questdb.cutlass.http.HttpContextConfiguration;
-import io.questdb.cutlass.http.HttpRequestProcessor;
-import io.questdb.metrics.AtomicCounter;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 
-public class LineHttpPingProcessor implements HttpRequestProcessor {
+public class LineHttpPingProcessor implements LineHttpProcessor {
     private final String header;
 
     public LineHttpPingProcessor(CharSequence version) {
         this.header = "X-Influxdb-Version: " + version;
-    }
-
-    @Override
-    public AtomicCounter getConnectionCounter(Metrics metrics) {
-        return metrics.lineMetrics().httpConnectionCounter();
-    }
-
-    @Override
-    public int getConnectionLimit(HttpContextConfiguration configuration) {
-        return configuration.getIlpConnectionLimit();
     }
 
     @Override

@@ -34,7 +34,6 @@ import io.questdb.metrics.MetricsRegistry;
 import io.questdb.metrics.NullMetricsRegistry;
 import io.questdb.metrics.Target;
 import io.questdb.metrics.VirtualLongGauge;
-import io.questdb.metrics.AtomicCounter;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.str.BorrowableUtf8Sink;
 import io.questdb.std.str.DirectUtf8Sink;
@@ -158,12 +157,6 @@ public class MetricsTest {
 
         public Set<CharSequence> getNotUniqueMetrics() {
             return notUniqueMetrics;
-        }
-
-        @Override
-        public AtomicCounter newAtomicCounter(CharSequence name) {
-            addMetricName(name);
-            return delegate.newAtomicCounter(name);
         }
 
         @Override

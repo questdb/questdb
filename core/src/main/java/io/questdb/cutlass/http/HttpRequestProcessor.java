@@ -26,13 +26,17 @@ package io.questdb.cutlass.http;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.SecurityContext;
-import io.questdb.metrics.AtomicCounter;
+import io.questdb.metrics.LongGauge;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.QueryPausedException;
 import io.questdb.network.ServerDisconnectException;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 public interface HttpRequestProcessor {
+    AtomicInteger jsonQueryConnectionsCounter = new AtomicInteger();
+
     // after this callback is invoked the server will disconnect the client
     // if processor desires to write a goodbye letter to the client
     // it must also send TCP FIN by invoking socket.shutdownWrite()
@@ -42,12 +46,16 @@ public interface HttpRequestProcessor {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
     }
 
-    default AtomicCounter getConnectionCounter(Metrics metrics) {
-        return metrics.jsonQueryMetrics().jsonConnectionCounter();
+    default int getConnectionLimit(HttpContextConfiguration configuration) {
+        return configuration.getJsonQueryConnectionLimit();
     }
 
-    default int getConnectionLimit(HttpContextConfiguration configuration) {
-        return configuration.getQueryConnectionLimit();
+    default AtomicInteger getConnectionsCounter() {
+        return jsonQueryConnectionsCounter;
+    }
+
+    default LongGauge getConnectionsGauge(Metrics metrics) {
+        return metrics.jsonQueryMetrics().connectionsGauge();
     }
 
     default byte getRequiredAuthType() {

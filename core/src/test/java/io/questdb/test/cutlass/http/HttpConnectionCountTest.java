@@ -39,7 +39,7 @@ import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.client.Response;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
-import io.questdb.cutlass.http.processors.LineHttpProcessor;
+import io.questdb.cutlass.http.processors.LineHttpProcessorImpl;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
@@ -99,7 +99,7 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
 
                                     @Override
                                     public HttpRequestProcessor newInstance() {
-                                        return new LineHttpProcessor(
+                                        return new LineHttpProcessorImpl(
                                                 cairoEngine,
                                                 configuration.getHttpServerConfiguration().getRecvBufferSize(),
                                                 configuration.getHttpServerConfiguration().getSendBufferSize(),
@@ -158,7 +158,7 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                         sender.flush();
                         fail("sender should fail with soft limit breach");
                     } catch (LineSenderException e) {
-                        assertContains(e.getMessage(), "Could not flush buffer: exceeded HTTP connection soft limit [name=line_http_connections]");
+                        assertContains(e.getMessage(), "Could not flush buffer: exceeded connection limit [name=line_http_connections, numOfConnections=5, connectionLimit=4]");
                     }
                 } catch (Throwable e) {
                     errorCount.incrementAndGet();
@@ -188,7 +188,7 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
         unchecked(() -> createDummyConfiguration(
                 METRICS_ENABLED + "=true",
                 HTTP_WORKER_COUNT + "=6",
-                HTTP_QUERY_CONNECTION_LIMIT + "=4"
+                HTTP_JSON_QUERY_CONNECTION_LIMIT + "=4"
         ));
 
         final int numOfThreads = 4;
@@ -261,7 +261,7 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                 // http query, should fail with soft limit breach
                 try (final HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
                     assertExecRequest(httpClient, EXEC_URI, "select 2", HTTP_BAD_REQUEST,
-                            "exceeded HTTP connection soft limit [name=json_http_connections]\r\n"
+                            "exceeded connection limit [name=json_queries_connections, numOfConnections=5, connectionLimit=4]\r\n"
                     );
                 } catch (Throwable e) {
                     errorCount.incrementAndGet();

@@ -121,7 +121,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(10_000, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getMultipartIdleSpinCount());
         Assert.assertEquals(64448, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getRequestHeaderBufferSize());
         Assert.assertFalse(configuration.getHttpServerConfiguration().haltOnError());
-        Assert.assertEquals(-1, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getQueryConnectionLimit());
+        Assert.assertEquals(-1, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getJsonQueryConnectionLimit());
         Assert.assertEquals(-1, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getIlpConnectionLimit());
         Assert.assertEquals("index.html", configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getIndexFileName());
         Assert.assertEquals(SecurityContext.AUTH_TYPE_NONE, configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getRequiredAuthType());
@@ -695,8 +695,8 @@ public class PropServerConfigurationTest {
         properties.setProperty("cairo.legacy.string.column.type.default", "false");
         env.put("QDB_CAIRO_LEGACY_STRING_COLUMN_TYPE_DEFAULT", "true");
 
-        properties.setProperty("http.query.connection.limit", "6");
-        env.put("QDB_HTTP_QUERY_CONNECTION_LIMIT", "12");
+        properties.setProperty("http.json.query.connection.limit", "6");
+        env.put("QDB_HTTP_JSON_QUERY_CONNECTION_LIMIT", "12");
         properties.setProperty("http.ilp.connection.limit", "4");
         env.put("QDB_HTTP_ILP_CONNECTION_LIMIT", "8");
 
@@ -707,7 +707,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(3, configuration.getWorkerPoolConfiguration().getWorkerCount());
         Assert.assertArrayEquals(new int[]{5, 6, 7}, configuration.getWorkerPoolConfiguration().getWorkerAffinity());
         Assert.assertEquals(12288, configuration.getHttpServerConfiguration().getSendBufferSize());
-        Assert.assertEquals(12, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getQueryConnectionLimit());
+        Assert.assertEquals(12, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getJsonQueryConnectionLimit());
         Assert.assertEquals(8, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getIlpConnectionLimit());
         Assert.assertEquals(900, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getMultipartIdleSpinCount());
         Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().readOnlySecurityContext());
@@ -728,6 +728,64 @@ public class PropServerConfigurationTest {
         Properties properties = new Properties();
         properties.setProperty("http.json.query.float.scale", Integer.toString(Numbers.MAX_FLOAT_SCALE + 1));
         newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+    }
+
+    @Test
+    public void testHttpConnectionLimits() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.HTTP_NET_CONNECTION_LIMIT.getPropertyPath(), "10");
+        properties.setProperty(PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT.getPropertyPath(), "6");
+        newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        properties.setProperty(PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT.getPropertyPath(), "10");
+        newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        properties.setProperty(PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT.getPropertyPath(), "11");
+        try {
+            newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "Json query connection limit cannot be greater than the overall " +
+                    "HTTP connection limit [http.json.query.connection.limit=11, http.net.connection.limit=10]");
+        }
+
+        properties = new Properties();
+        properties.setProperty(PropertyKey.HTTP_NET_CONNECTION_LIMIT.getPropertyPath(), "10");
+        properties.setProperty(PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath(), "4");
+        newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        properties.setProperty(PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath(), "10");
+        newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        properties.setProperty(PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath(), "11");
+        try {
+            newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "HTTP over ILP connection limit cannot be greater than the overall " +
+                    "HTTP connection limit [http.ilp.connection.limit=11, http.net.connection.limit=10]");
+        }
+
+        properties = new Properties();
+        properties.setProperty(PropertyKey.HTTP_NET_CONNECTION_LIMIT.getPropertyPath(), "10");
+
+        properties.setProperty(PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT.getPropertyPath(), "6");
+        properties.setProperty(PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath(), "4");
+        newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+
+        properties.setProperty(PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT.getPropertyPath(), "7");
+        properties.setProperty(PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath(), "4");
+        try {
+            newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "The sum of the json query and HTTP over ILP connection limits " +
+                    "cannot be greater than the overall HTTP connection limit [http.json.query.connection.limit=7, " +
+                    "http.ilp.connection.limit=4, http.net.connection.limit=10]");
+        }
+
+        properties.setProperty(PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT.getPropertyPath(), "5");
+        properties.setProperty(PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath(), "6");
+        try {
+            newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "The sum of the json query and HTTP over ILP connection limits " +
+                    "cannot be greater than the overall HTTP connection limit [http.json.query.connection.limit=5, " +
+                    "http.ilp.connection.limit=6, http.net.connection.limit=10]");
+        }
     }
 
     @Test
@@ -1094,7 +1152,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(6, configuration.getHttpServerConfiguration().getWorkerCount());
             Assert.assertArrayEquals(new int[]{1, 2, 3, 4, 5, 6}, configuration.getHttpServerConfiguration().getWorkerAffinity());
             Assert.assertTrue(configuration.getHttpServerConfiguration().haltOnError());
-            Assert.assertEquals(6, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getQueryConnectionLimit());
+            Assert.assertEquals(6, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getJsonQueryConnectionLimit());
             Assert.assertEquals(2, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getIlpConnectionLimit());
             Assert.assertEquals("index2.html", configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getIndexFileName());
             Assert.assertEquals(SecurityContext.AUTH_TYPE_NONE, configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getRequiredAuthType());

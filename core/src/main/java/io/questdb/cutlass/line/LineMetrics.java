@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.line;
 
-import io.questdb.metrics.AtomicCounter;
 import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.MetricsRegistry;
@@ -34,13 +33,13 @@ public class LineMetrics implements Mutable {
 
     private final Counter aboveMaxConnectionCountCounter;
     private final Counter belowMaxConnectionCountCounter;
-    private final AtomicCounter httpConnectionCounter;
+    private final LongGauge httpConnectionCountGauge;
     private final LongGauge tcpConnectionCountGauge;
     private final LongGauge totalIlpHttpBytesGauge;
     private final LongGauge totalIlpTcpBytesGauge;
 
     public LineMetrics(MetricsRegistry metricsRegistry) {
-        this.httpConnectionCounter = metricsRegistry.newAtomicCounter("line_http_connections");
+        this.httpConnectionCountGauge = metricsRegistry.newLongGauge("line_http_connections");
         this.tcpConnectionCountGauge = metricsRegistry.newLongGauge("line_tcp_connections");
         this.totalIlpTcpBytesGauge = metricsRegistry.newLongGauge("line_tcp_recv_bytes");
         this.totalIlpHttpBytesGauge = metricsRegistry.newLongGauge("line_http_recv_bytes");
@@ -58,7 +57,7 @@ public class LineMetrics implements Mutable {
 
     @Override
     public void clear() {
-        httpConnectionCounter.reset();
+        httpConnectionCountGauge.setValue(0);
         tcpConnectionCountGauge.setValue(0);
         totalIlpTcpBytesGauge.setValue(0);
         totalIlpHttpBytesGauge.setValue(0);
@@ -66,8 +65,8 @@ public class LineMetrics implements Mutable {
         belowMaxConnectionCountCounter.reset();
     }
 
-    public AtomicCounter httpConnectionCounter() {
-        return httpConnectionCounter;
+    public LongGauge httpConnectionCountGauge() {
+        return httpConnectionCountGauge;
     }
 
     public LongGauge tcpConnectionCountGauge() {

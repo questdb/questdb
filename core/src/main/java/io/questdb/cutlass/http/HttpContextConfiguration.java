@@ -52,6 +52,10 @@ public interface HttpContextConfiguration {
 
     int getIlpConnectionLimit();
 
+    int getJsonQueryConnectionLimit();
+
+    Metrics getMetrics();
+
     MillisecondClock getMillisecondClock();
 
     int getMultipartHeaderBufferSize();
@@ -62,13 +66,9 @@ public interface HttpContextConfiguration {
 
     NetworkFacade getNetworkFacade();
 
-    int getQueryConnectionLimit();
-
     int getRequestHeaderBufferSize();
 
     boolean getServerKeepAlive();
 
     boolean readOnlySecurityContext();
-
-    Metrics getMetrics();
 }

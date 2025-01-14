@@ -37,13 +37,6 @@ public class MetricsRegistryImpl implements MetricsRegistry {
     }
 
     @Override
-    public AtomicCounter newAtomicCounter(CharSequence name) {
-        AtomicCounter counter = new AtomicCounterImpl(name);
-        metrics.add(counter);
-        return counter;
-    }
-
-    @Override
     public Counter newCounter(CharSequence name) {
         Counter counter = new CounterImpl(name);
         metrics.add(counter);

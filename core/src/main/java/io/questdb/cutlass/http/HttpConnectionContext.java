@@ -38,7 +38,7 @@ import io.questdb.cutlass.http.ex.TooFewBytesReceivedException;
 import io.questdb.cutlass.http.processors.RejectProcessor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.metrics.AtomicCounter;
+import io.questdb.metrics.LongGauge;
 import io.questdb.network.HeartBeatException;
 import io.questdb.network.IOContext;
 import io.questdb.network.IODispatcher;
@@ -67,6 +67,8 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
+
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.SecurityContext.AUTH_TYPE_NONE;
 import static io.questdb.cutlass.http.HttpConstants.HEADER_CONTENT_ACCEPT_ENCODING;
@@ -102,7 +104,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private final AssociativeCache<RecordCursorFactory> selectCache;
     private long authenticationNanos = 0L;
     private boolean connectionCounted;
-    private AtomicCounter connectionCounter;
+    private AtomicInteger connectionsCounter;
+    private LongGauge connectionsGauge;
     private int nCompletedRequests;
     private boolean pendingRetry = false;
     private int receivedBytes;
@@ -184,10 +187,12 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         }
         this.localValueMap.disconnect();
 
-        if (connectionCounter != null) {
-            connectionCounter.dec();
-            connectionCounter = null;
+        if (connectionsCounter != null) {
+            connectionsCounter.decrementAndGet();
+            connectionsGauge.dec();
             connectionCounted = false;
+            connectionsCounter = null;
+            connectionsGauge = null;
         }
     }
 
@@ -481,18 +486,22 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private HttpRequestProcessor checkConnectionLimit(HttpRequestProcessor processor) {
         final int connectionLimit = processor.getConnectionLimit(configuration.getHttpContextConfiguration());
         if (connectionLimit > -1) {
-            final AtomicCounter connectionCounter = processor.getConnectionCounter(metrics);
-            long numOfConnections;
-            do {
-                numOfConnections = connectionCounter.get();
-                if (numOfConnections >= connectionLimit) {
-                    return rejectRequest(HTTP_BAD_REQUEST, "exceeded HTTP connection soft limit [name=" + connectionCounter.getName() + ']', true);
-                }
-                if (numOfConnections == connectionLimit - 1 && !securityContext.isSystemAdmin()) {
-                    return rejectRequest(HTTP_BAD_REQUEST, "non-admin user exceeded HTTP connection soft limit [name=" + connectionCounter.getName() + ']', true);
-                }
-            } while (!connectionCounter.compareAndSet(numOfConnections, numOfConnections + 1));
-            this.connectionCounter = connectionCounter;
+            connectionsGauge = processor.getConnectionsGauge(metrics);
+            connectionsCounter = processor.getConnectionsCounter();
+            connectionsGauge.inc();
+            final int numOfConnections = connectionsCounter.incrementAndGet();
+            if (numOfConnections > connectionLimit) {
+                return rejectRequest(HTTP_BAD_REQUEST, "exceeded connection limit [name=" + connectionsGauge.getName()
+                        + ", numOfConnections=" + numOfConnections
+                        + ", connectionLimit=" + connectionLimit
+                        + ']', true);
+            }
+            if (numOfConnections == connectionLimit && !securityContext.isSystemAdmin()) {
+                return rejectRequest(HTTP_BAD_REQUEST, "non-admin user exceeded connection limit [name=" + connectionsGauge.getName()
+                        + ", numOfConnections=" + numOfConnections
+                        + ", connectionLimit=" + connectionLimit
+                        + ']', true);
+            }
         }
         return processor;
     }

@@ -43,7 +43,7 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
     private final int httpForceSendFragmentationChunkSize;
     private final boolean httpFrozenClock;
     private final int httpIlpConnectionLimit;
-    private final int httpQueryConnectionLimit;
+    private final int httpJsonQueryConnectionLimit;
     private final boolean httpReadOnlySecurityContext;
     private final boolean httpServerCookiesEnabled;
     private final boolean httpServerKeepAlive;
@@ -108,7 +108,7 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
             int multipartHeaderBufferSize,
             long multipartIdleSpinCount,
             int requestHeaderBufferSize,
-            int httpQueryConnectionLimit,
+            int httpJsonQueryConnectionLimit,
             int httpIlpConnectionLimit
     ) {
         this.connectionPoolInitialCapacity = connectionPoolInitialCapacity;
@@ -126,7 +126,7 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
         this.multipartHeaderBufferSize = multipartHeaderBufferSize;
         this.multipartIdleSpinCount = multipartIdleSpinCount;
         this.requestHeaderBufferSize = requestHeaderBufferSize;
-        this.httpQueryConnectionLimit = httpQueryConnectionLimit;
+        this.httpJsonQueryConnectionLimit = httpJsonQueryConnectionLimit;
         this.httpIlpConnectionLimit = httpIlpConnectionLimit;
     }
 
@@ -181,6 +181,11 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
     }
 
     @Override
+    public int getJsonQueryConnectionLimit() {
+        return httpJsonQueryConnectionLimit;
+    }
+
+    @Override
     public Metrics getMetrics() {
         return serverConfiguration.getMetrics();
     }
@@ -208,11 +213,6 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
     @Override
     public NetworkFacade getNetworkFacade() {
         return NetworkFacadeImpl.INSTANCE;
-    }
-
-    @Override
-    public int getQueryConnectionLimit() {
-        return httpQueryConnectionLimit;
     }
 
     @Override
