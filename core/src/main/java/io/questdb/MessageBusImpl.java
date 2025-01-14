@@ -28,7 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cutlass.text.CopyRequestTask;
 import io.questdb.cutlass.text.CopyTask;
-import io.questdb.metrics.MemCappedQueryMetricsQueue;
+import io.questdb.metrics.MemCappedQueryTraceQueue;
 import io.questdb.mp.FanOut;
 import io.questdb.mp.MCSequence;
 import io.questdb.mp.MPSequence;
@@ -88,7 +88,7 @@ public class MessageBusImpl implements MessageBus {
     private final MCSequence[] pageFrameReduceSubSeq;
     private final MPSequence queryCacheEventPubSeq;
     private final MCSequence queryCacheEventSubSeq;
-    private final MemCappedQueryMetricsQueue queryMetricsQueue;
+    private final MemCappedQueryTraceQueue queryMetricsQueue;
     private final MPSequence tableWriterEventPubSeq;
     private final RingQueue<TableWriterTask> tableWriterEventQueue;
     private final FanOut tableWriterEventSubSeq;
@@ -213,7 +213,7 @@ public class MessageBusImpl implements MessageBus {
             this.queryCacheEventSubSeq = new MCSequence(configuration.getQueryCacheEventQueueCapacity());
             queryCacheEventPubSeq.then(queryCacheEventSubSeq).then(queryCacheEventPubSeq);
 
-            this.queryMetricsQueue = new MemCappedQueryMetricsQueue();
+            this.queryMetricsQueue = new MemCappedQueryTraceQueue();
         } catch (Throwable th) {
             close();
             throw th;
@@ -440,7 +440,7 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public MemCappedQueryMetricsQueue getQueryMetricsQueue() {
+    public MemCappedQueryTraceQueue getQueryTraceQueue() {
         return queryMetricsQueue;
     }
 

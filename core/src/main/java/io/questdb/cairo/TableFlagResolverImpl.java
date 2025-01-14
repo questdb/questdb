@@ -1,7 +1,7 @@
 package io.questdb.cairo;
 
 import io.questdb.TelemetryConfigLogger;
-import io.questdb.metrics.QueryMetricsJob;
+import io.questdb.metrics.QueryTraceJob;
 import io.questdb.std.Chars;
 import io.questdb.tasks.TelemetryTask;
 import io.questdb.tasks.TelemetryWalTask;
@@ -37,6 +37,6 @@ public class TableFlagResolverImpl implements TableFlagResolver {
         return Chars.startsWith(tableName, systemTableNamePrefix)
                 || Chars.equalsIgnoreCase(tableName, TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME)
                 || Chars.equalsIgnoreCase(tableName, TelemetryTask.TABLE_NAME)
-                || Chars.equalsIgnoreCase(tableName, QueryMetricsJob.TABLE_NAME);
+                || Chars.equalsIgnoreCase(tableName, QueryTraceJob.TABLE_NAME);
     }
 }

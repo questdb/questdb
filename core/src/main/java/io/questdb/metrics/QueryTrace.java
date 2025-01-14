@@ -29,7 +29,7 @@ import io.questdb.std.Misc;
 
 import java.io.Closeable;
 
-public class QueryMetrics implements ValueHolder<QueryMetrics> {
+public class QueryTrace implements ValueHolder<QueryTrace> {
     public static final int OBJECT_SIZE =
             Long.BYTES                 // executionNanos
                     + 24               // queryText ref + assumed CharSequence object size without its data
@@ -53,7 +53,7 @@ public class QueryMetrics implements ValueHolder<QueryMetrics> {
     }
 
     @Override
-    public void copyTo(QueryMetrics dest) {
+    public void copyTo(QueryTrace dest) {
         dest.executionNanos = executionNanos;
         dest.isJit = isJit;
         dest.queryText = queryText;

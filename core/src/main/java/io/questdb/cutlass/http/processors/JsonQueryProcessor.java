@@ -55,7 +55,7 @@ import io.questdb.griffin.SqlTimeoutException;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.metrics.QueryMetrics;
+import io.questdb.metrics.QueryTrace;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
@@ -95,7 +95,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private final MicrosecondClock microsecondClock;
     private final NanosecondClock nanosecondClock;
     private final Path path;
-    private final QueryMetrics queryMetrics = new QueryMetrics();
+    private final QueryTrace queryTrace = new QueryTrace();
     private final byte requiredAuthType;
     private final SqlExecutionContextImpl sqlExecutionContext;
 

@@ -30,19 +30,19 @@ import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.atomic.AtomicLong;
 
-public class MemCappedQueryMetricsQueue {
-    public static final ObjectFactory<QueryMetrics> ITEM_FACTORY = QueryMetrics::new;
+public class MemCappedQueryTraceQueue {
+    public static final ObjectFactory<QueryTrace> ITEM_FACTORY = QueryTrace::new;
     private static final long QUERY_MEM_USAGE_LIMIT = 64 << 20;
     private final AtomicLong droppedItemCount = new AtomicLong();
     private final AtomicLong queryTextMemUsage = new AtomicLong();
-    private final @NotNull ConcurrentQueue<QueryMetrics> queue;
+    private final @NotNull ConcurrentQueue<QueryTrace> queue;
 
-    public MemCappedQueryMetricsQueue() {
+    public MemCappedQueryTraceQueue() {
         this.queue = new ConcurrentQueue<>(ITEM_FACTORY);
     }
 
-    public void offer(@NotNull QueryMetrics item) {
-        int size = QueryMetrics.OBJECT_SIZE + item.queryText.length();
+    public void offer(@NotNull QueryTrace item) {
+        int size = QueryTrace.OBJECT_SIZE + item.queryText.length();
         long memUsage = queryTextMemUsage.addAndGet(size);
         if (memUsage > QUERY_MEM_USAGE_LIMIT) {
             droppedItemCount.addAndGet(1);
@@ -52,7 +52,7 @@ public class MemCappedQueryMetricsQueue {
         queue.enqueue(item);
     }
 
-    public boolean tryDequeue(@NotNull QueryMetrics dest) {
+    public boolean tryDequeue(@NotNull QueryTrace dest) {
         boolean didDequeue = queue.tryDequeue(dest);
         if (didDequeue) {
             queryTextMemUsage.addAndGet(-dest.queryText.length());

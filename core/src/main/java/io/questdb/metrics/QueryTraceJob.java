@@ -35,26 +35,26 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.ValueHolderList;
 import io.questdb.std.str.Utf8StringSink;
 
-public class QueryMetricsJob extends SynchronizedJob {
-    public static final String TABLE_NAME = "query_metrics";
+public class QueryTraceJob extends SynchronizedJob {
+    public static final String TABLE_NAME = "query_trace";
     private static final int BATCH_LIMIT = 1024;
     private static final int INITIAL_CAPACITY = 128;
-    private static final Log LOG = LogFactory.getLog(QueryMetricsJob.class.getName());
-    private final ValueHolderList<QueryMetrics> buffer;
+    private static final Log LOG = LogFactory.getLog(QueryTraceJob.class.getName());
+    private final ValueHolderList<QueryTrace> buffer;
     private final CairoEngine engine;
-    private final QueryMetrics metrics = new QueryMetrics();
-    private final MemCappedQueryMetricsQueue queue;
+    private final MemCappedQueryTraceQueue queue;
+    private final QueryTrace trace = new QueryTrace();
     private final Utf8StringSink utf8sink = new Utf8StringSink();
     private TableToken tableToken;
 
-    public QueryMetricsJob(CairoEngine engine) {
-        this.queue = engine.getMessageBus().getQueryMetricsQueue();
-        this.buffer = new ValueHolderList<>(MemCappedQueryMetricsQueue.ITEM_FACTORY, INITIAL_CAPACITY);
+    public QueryTraceJob(CairoEngine engine) {
+        this.queue = engine.getMessageBus().getQueryTraceQueue();
+        this.buffer = new ValueHolderList<>(MemCappedQueryTraceQueue.ITEM_FACTORY, INITIAL_CAPACITY);
         this.engine = engine;
     }
 
     public static void assignToPool(WorkerPool pool, CairoEngine engine) {
-        QueryMetricsJob job = new QueryMetricsJob(engine);
+        QueryTraceJob job = new QueryTraceJob(engine);
         for (int i = 0, n = pool.getWorkerCount(); i < n; i++) {
             pool.assign(i, job);
         }
@@ -79,27 +79,27 @@ public class QueryMetricsJob extends SynchronizedJob {
         TableWriter tableWriter0;
         try {
             tableWriter0 = engine.getWriter(tableToken, "query_tracing");
-        } catch (Exception firstException) {
+        } catch (Exception recoverable) {
             try {
                 init();
                 tableWriter0 = engine.getWriter(tableToken, "query_tracing");
             } catch (Exception e) {
-                LOG.error().$("Failed to save query metrics").$(e).$();
+                LOG.error().$("Failed to save query trace").$(e).$();
                 return false;
             }
         }
         try (TableWriter tableWriter = tableWriter0) {
             for (int n = buffer.size(), i = 0; i < n; i++) {
-                buffer.moveQuick(i, metrics);
-                final TableWriter.Row row = tableWriter.newRow(metrics.timestamp);
+                buffer.moveQuick(i, trace);
+                final TableWriter.Row row = tableWriter.newRow(trace.timestamp);
                 utf8sink.clear();
-                utf8sink.put(metrics.queryText);
+                utf8sink.put(trace.queryText);
                 row.putVarchar(1, utf8sink);
-                row.putLong(2, metrics.executionNanos);
+                row.putLong(2, trace.executionNanos);
                 row.append();
             }
             tableWriter.commit();
-            metrics.clear();
+            trace.clear();
         }
         return false;
     }

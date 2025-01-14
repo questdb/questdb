@@ -49,7 +49,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.metrics.QueryMetrics;
+import io.questdb.metrics.QueryTrace;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.FlyweightMessageContainer;
@@ -66,7 +66,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     private final RecordCursorFactory base;
     private final RegisteredRecordCursor cursor;
     private final boolean jit;
-    private final QueryMetrics queryMetrics = new QueryMetrics();
+    private final QueryTrace queryTrace = new QueryTrace();
     private final ObjList<TableReader> readers = new ObjList<>();
     private final QueryRegistry registry;
     private final String sqlText;
@@ -98,7 +98,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             @NotNull SqlExecutionContext executionContext,
             long beginNanos,
             @Nullable ObjList<TableReader> leakedReaders,
-            @Nullable QueryMetrics queryMetrics
+            @Nullable QueryTrace queryTrace
     ) {
         CairoEngine engine = executionContext.getCairoEngine();
         CairoConfiguration config = engine.getConfiguration();
@@ -134,12 +134,12 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                 log.I$();
             }
         }
-        if (queryMetrics != null && engine.getConfiguration().isQueryMetricsEnabled()) {
-            queryMetrics.isJit = isJit;
-            queryMetrics.timestamp = config.getMicrosecondClock().getTicks();
-            queryMetrics.queryText = sqlText;
-            queryMetrics.executionNanos = TimeUnit.NANOSECONDS.toMicros(durationNanos);
-            engine.getMessageBus().getQueryMetricsQueue().offer(queryMetrics);
+        if (queryTrace != null && engine.getConfiguration().isQueryTracingEnabled()) {
+            queryTrace.isJit = isJit;
+            queryTrace.timestamp = config.getMicrosecondClock().getTicks();
+            queryTrace.queryText = sqlText;
+            queryTrace.executionNanos = TimeUnit.NANOSECONDS.toMicros(durationNanos);
+            engine.getMessageBus().getQueryTraceQueue().offer(queryTrace);
         }
     }
 
@@ -475,7 +475,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                 if (executionContext != null) {
                     try {
                         if (th == null) {
-                            logEnd(sqlId, sqlText, executionContext, beginNanos, readers, queryMetrics);
+                            logEnd(sqlId, sqlText, executionContext, beginNanos, readers, queryTrace);
                         } else {
                             logError(th, sqlId, sqlText, executionContext, beginNanos, readers);
                         }
