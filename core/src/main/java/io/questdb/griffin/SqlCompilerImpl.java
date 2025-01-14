@@ -2620,7 +2620,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
 
                     final TableToken baseTableToken = engine.getTableTokenIfExists(matViewDefinition.getBaseTableName());
-                    engine.getMaterializedViewGraph().createView(baseTableToken, matViewDefinition);
+                    engine.getMatViewGraph().createView(baseTableToken, matViewDefinition);
                     createMatViewOp.updateOperationFutureTableToken(matViewToken);
                 } else {
                     throw SqlException.$(createTableOp.getTableNamePosition(), "materialized view requires a SELECT statement");
@@ -3779,7 +3779,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         }
 
                         if (tableToken.isMatView()) {
-                            MatViewDefinition matViewDefinition = engine.getMaterializedViewGraph().getMatView(tableToken);
+                            MatViewDefinition matViewDefinition = engine.getMatViewGraph().getMatView(tableToken);
                             assert matViewDefinition != null;
                             TableUtils.createMatViewMetaFiles(ff, mem, auxPath, tableRootLen, matViewDefinition);
                         }

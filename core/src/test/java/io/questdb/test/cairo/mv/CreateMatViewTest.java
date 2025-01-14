@@ -62,7 +62,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
         super.setUp();
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
-        engine.getMaterializedViewGraph().clear();
+        engine.getMatViewGraph().clear();
     }
 
     @Test
@@ -607,7 +607,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
         if (matViewToken == null) {
             return null;
         }
-        return engine.getMaterializedViewGraph().getMatView(matViewToken);
+        return engine.getMatViewGraph().getMatView(matViewToken);
     }
 
     private static long mapRO(FilesFacade ff, Path path, MemoryCMR mem, String fileName) {

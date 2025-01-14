@@ -83,15 +83,14 @@ public class RefreshMatViewFunctionFactory implements FunctionFactory {
                 return false;
             }
 
-            CharSequence viewName = function.getStrA(rec);
+            final CharSequence viewName = function.getStrA(rec);
             if (viewName == null) {
                 return false;
             }
-            TableToken token = executionContext.getTableTokenIfExists(viewName);
+            final TableToken token = executionContext.getTableTokenIfExists(viewName);
             if (token == null) {
                 return false;
             }
-
             matViewGraph.refresh(token);
             return true;
         }
@@ -99,7 +98,7 @@ public class RefreshMatViewFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
-            matViewGraph = executionContext.getCairoEngine().getMaterializedViewGraph();
+            matViewGraph = executionContext.getCairoEngine().getMatViewGraph();
             this.executionContext = executionContext;
         }
 

@@ -34,6 +34,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import static io.questdb.griffin.model.IntervalUtils.parseFloorPartialTimestamp;
@@ -148,6 +149,40 @@ public class MatViewTest extends AbstractCairoTest {
         });
     }
 
+    // TODO(puzpuzpuz): enable when we handle updates in mat view refresh;
+    //                  we should at least mark the mat view as invalidated
+    @Ignore
+    @Test
+    public void testColumnRenameChangesMatViewKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base_price (" +
+                    "  sym varchar, sym2 varchar, price double, ts timestamp " +
+                    ") timestamp(ts) partition by DAY WAL"
+            );
+
+            final String viewSql = "select sym, max(price) max_price, ts from base_price sample by 1h";
+
+            createMatView(viewSql);
+            execute("insert into base_price values('gbpusd', 'gbpbgn', 1.2, '2024-09-10T12:02:00.000000Z');");
+            execute("insert into base_price values('gbpusd', 'gbpbgn', 1.3, '2024-09-10T12:03:00.000000Z');");
+            execute("insert into base_price values('gbpusd', 'gbpbgn', 1.4, '2024-09-10T12:04:00.000000Z');");
+            drainWalQueue();
+
+            MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
+            refreshJob.run(0);
+            drainWalQueue();
+
+            execute("alter table base_price drop column 'sym';");
+            execute("alter table base_price rename column 'sym2' to 'sym';");
+            drainWalQueue();
+
+            refreshJob.run(0);
+            drainWalQueue();
+
+            assertViewMatchesSqlOverBaseTable(viewSql);
+        });
+    }
+
     @Test
     public void testCreateDropCreate() throws Exception {
         assertMemoryLeak(() -> {
@@ -195,8 +230,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "price_1h order by ts, sym"
             );
 
-            Assert.assertNull(engine.getMaterializedViewGraph().getViewRefreshState(matViewToken1));
-            Assert.assertNotNull(engine.getMaterializedViewGraph().getViewRefreshState(matViewToken2));
+            Assert.assertNull(engine.getMatViewGraph().getViewRefreshState(matViewToken1));
+            Assert.assertNotNull(engine.getMatViewGraph().getViewRefreshState(matViewToken2));
         });
     }
 
@@ -250,7 +285,39 @@ public class MatViewTest extends AbstractCairoTest {
                     "select count() from tables();"
             );
 
-            Assert.assertNull(engine.getMaterializedViewGraph().getViewRefreshState(matViewToken));
+            Assert.assertNull(engine.getMatViewGraph().getViewRefreshState(matViewToken));
+        });
+    }
+
+    // TODO(puzpuzpuz): enable when we support partition drop in mat view refresh
+    @Ignore
+    @Test
+    public void testDropPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base_price (" +
+                    "  sym varchar, price double, ts timestamp " +
+                    ") timestamp(ts) partition by hour WAL;"
+            );
+
+            final String viewSql = "select sym, max(price) max_price, ts from base_price sample by 1h";
+
+            createMatView(viewSql);
+            execute("insert into base_price values('gbpusd', 1.2, '2024-09-10T12:00:00.000000Z');");
+            execute("insert into base_price values('gbpusd', 1.3, '2024-09-10T13:00:00.000000Z');");
+            execute("insert into base_price values('gbpusd', 1.4, '2024-09-10T14:00:00.000000Z');");
+            drainWalQueue();
+
+            MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
+            refreshJob.run(0);
+            drainWalQueue();
+
+            execute("alter table base_price drop partition list '2024-09-10T13';");
+            drainWalQueue();
+
+            refreshJob.run(0);
+            drainWalQueue();
+
+            assertViewMatchesSqlOverBaseTable(viewSql);
         });
     }
 
@@ -271,6 +338,42 @@ public class MatViewTest extends AbstractCairoTest {
         testIncrementalRefresh0("select sym, last(price) price, ts from base_price " +
                 "WHERE ts > 0 or ts < '2040-01-01' " +
                 "sample by 1h");
+    }
+
+    // TODO(puzpuzpuz): enable when we handle upserts in mat view refresh
+    @Ignore
+    @Test
+    public void testInsertChangesMatViewKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base_price (" +
+                    "  sym varchar, price double, ts timestamp " +
+                    ") timestamp(ts) partition by DAY WAL " +
+                    "DEDUP UPSERT KEYS(ts);" // sym is not dedup key
+            );
+
+            final String viewSql = "select sym, max(price) max_price, ts from base_price sample by 1h";
+
+            createMatView(viewSql);
+            execute("insert into base_price values('gbpusd', 1.2, '2024-09-10T12:02:00.000000Z');");
+            execute("insert into base_price values('gbpusd', 1.3, '2024-09-10T12:03:00.000000Z');");
+            execute("insert into base_price values('gbpusd', 1.4, '2024-09-10T12:04:00.000000Z');");
+            drainWalQueue();
+
+            MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
+            refreshJob.run(0);
+            drainWalQueue();
+
+            // same ts, but different sym
+            execute("insert into base_price values('gbpbgn', 1.2, '2024-09-10T12:02:00.000000Z');");
+            execute("insert into base_price values('gbpbgn', 1.3, '2024-09-10T12:03:00.000000Z');");
+            execute("insert into base_price values('gbpbgn', 1.4, '2024-09-10T12:04:00.000000Z');");
+            drainWalQueue();
+
+            refreshJob.run(0);
+            drainWalQueue();
+
+            assertViewMatchesSqlOverBaseTable(viewSql);
+        });
     }
 
     @Test
@@ -351,6 +454,39 @@ public class MatViewTest extends AbstractCairoTest {
                         "price_1h order by ts0, sym0"
                 );
             }
+        });
+    }
+
+    // TODO(puzpuzpuz): enable when we handle updates in mat view refresh
+    @Ignore
+    @Test
+    public void testUpdateChangesMatViewKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base_price (" +
+                    "  sym varchar, price double, ts timestamp" +
+                    ") timestamp(ts) partition by DAY WAL"
+            );
+
+            final String viewSql = "select sym, max(price) max_price, ts from base_price sample by 1h";
+
+            createMatView(viewSql);
+            execute("insert into base_price " +
+                    "select 'gbpusd', 1.320 + x / 1000.0, timestamp_sequence('2024-09-10T12:02', 1000000*60*5) " +
+                    "from long_sequence(60)"
+            );
+            drainWalQueue();
+
+            MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
+            refreshJob.run(0);
+            drainWalQueue();
+
+            update("update base_price set sym = 'gbpbgn' where sym = 'gbpusd';");
+            drainWalQueue();
+
+            refreshJob.run(0);
+            drainWalQueue();
+
+            assertViewMatchesSqlOverBaseTable(viewSql);
         });
     }
 

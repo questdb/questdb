@@ -562,7 +562,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return getSequencerMetadata(tableToken, desiredVersion);
     }
 
-    public MatViewGraph getMaterializedViewGraph() {
+    public MatViewGraph getMatViewGraph() {
         return matViewGraph;
     }
 

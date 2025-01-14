@@ -259,6 +259,7 @@ public final class TestUtils {
 
                 // something changed, reset the store
                 timestampValue = -1;
+                deferred = null;
 
                 mapL.clear();
                 mapR.clear();
@@ -295,6 +296,15 @@ public final class TestUtils {
                     addRecordToMap(sink, l, metadataActual, mapL, genericStringMatch);
                     addRecordToMap(sink, r, metadataExpected, mapR, genericStringMatch);
                 }
+            }
+        }
+
+        if (deferred != null) {
+            // looks like there was no more rows to do the comparison, so do it now
+            try {
+                Assert.assertEquals(mapL, mapR);
+            } catch (AssertionError ignore) {
+                throw deferred;
             }
         }
 
@@ -537,10 +547,11 @@ public final class TestUtils {
             SqlCompiler compiler, SqlExecutionContext sqlExecutionContext,
             String expectedSql, String actualSql
     ) throws SqlException {
-        try (RecordCursorFactory f1 = compiler.compile(expectedSql, sqlExecutionContext).getRecordCursorFactory();
-             RecordCursorFactory f2 = compiler.compile(actualSql, sqlExecutionContext).getRecordCursorFactory();
-             RecordCursor c1 = f1.getCursor(sqlExecutionContext);
-             RecordCursor c2 = f2.getCursor(sqlExecutionContext)
+        try (
+                RecordCursorFactory f1 = compiler.compile(expectedSql, sqlExecutionContext).getRecordCursorFactory();
+                RecordCursorFactory f2 = compiler.compile(actualSql, sqlExecutionContext).getRecordCursorFactory();
+                RecordCursor c1 = f1.getCursor(sqlExecutionContext);
+                RecordCursor c2 = f2.getCursor(sqlExecutionContext)
         ) {
             assertEquals(c1, f1.getMetadata(), c2, f2.getMetadata(), true);
         }

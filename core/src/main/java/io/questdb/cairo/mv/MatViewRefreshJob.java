@@ -99,6 +99,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         long lastTxn = baseTableReader.getSeqTxn();
 
         if (lastRefreshTxn > 0) {
+            // TODO(puzpuzpuz): this call fails if any of the txns are non-DATA, e.g. UPDATE
             txnRangeLoader.load(engine, Path.PATH.get(), baseTableReader.getTableToken(), lastRefreshTxn, lastTxn);
             long minTs = txnRangeLoader.getMinTimestamp();
             long maxTs = txnRangeLoader.getMaxTimestamp();
@@ -259,7 +260,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private boolean refreshAll() {
         LOG.info().$("refreshing ALL materialized views").$();
         baseTables.clear();
-        MatViewGraph viewGraph = engine.getMaterializedViewGraph();
+        MatViewGraph viewGraph = engine.getMatViewGraph();
         viewGraph.getAllBaseTables(baseTables);
         boolean refreshed = false;
         for (int i = 0, size = baseTables.size(); i < size; i++) {
@@ -318,7 +319,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     private boolean refreshNotifiedViews() {
-        MatViewGraph materializedViewGraph = engine.getMaterializedViewGraph();
+        MatViewGraph materializedViewGraph = engine.getMatViewGraph();
         boolean refreshed = false;
         while (materializedViewGraph.tryDequeueRefreshTask(mvRefreshTask)) {
             TableToken baseTable = mvRefreshTask.baseTable;
