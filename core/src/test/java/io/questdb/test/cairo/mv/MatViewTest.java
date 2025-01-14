@@ -340,42 +340,6 @@ public class MatViewTest extends AbstractCairoTest {
                 "sample by 1h");
     }
 
-    // TODO(puzpuzpuz): enable when we handle upserts in mat view refresh
-    @Ignore
-    @Test
-    public void testInsertChangesMatViewKeys() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table base_price (" +
-                    "  sym varchar, price double, ts timestamp " +
-                    ") timestamp(ts) partition by DAY WAL " +
-                    "DEDUP UPSERT KEYS(ts);" // sym is not dedup key
-            );
-
-            final String viewSql = "select sym, max(price) max_price, ts from base_price sample by 1h";
-
-            createMatView(viewSql);
-            execute("insert into base_price values('gbpusd', 1.2, '2024-09-10T12:02:00.000000Z');");
-            execute("insert into base_price values('gbpusd', 1.3, '2024-09-10T12:03:00.000000Z');");
-            execute("insert into base_price values('gbpusd', 1.4, '2024-09-10T12:04:00.000000Z');");
-            drainWalQueue();
-
-            MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
-            refreshJob.run(0);
-            drainWalQueue();
-
-            // same ts, but different sym
-            execute("insert into base_price values('gbpbgn', 1.2, '2024-09-10T12:02:00.000000Z');");
-            execute("insert into base_price values('gbpbgn', 1.3, '2024-09-10T12:03:00.000000Z');");
-            execute("insert into base_price values('gbpbgn', 1.4, '2024-09-10T12:04:00.000000Z');");
-            drainWalQueue();
-
-            refreshJob.run(0);
-            drainWalQueue();
-
-            assertViewMatchesSqlOverBaseTable(viewSql);
-        });
-    }
-
     @Test
     public void testSimpleRefresh() throws Exception {
         assertMemoryLeak(() -> {
@@ -481,6 +445,42 @@ public class MatViewTest extends AbstractCairoTest {
             drainWalQueue();
 
             update("update base_price set sym = 'gbpbgn' where sym = 'gbpusd';");
+            drainWalQueue();
+
+            refreshJob.run(0);
+            drainWalQueue();
+
+            assertViewMatchesSqlOverBaseTable(viewSql);
+        });
+    }
+
+    // TODO(puzpuzpuz): enable when we handle upserts in mat view refresh
+    @Ignore
+    @Test
+    public void testUpsertChangesMatViewKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base_price (" +
+                    "  sym varchar, price double, ts timestamp " +
+                    ") timestamp(ts) partition by DAY WAL " +
+                    "DEDUP UPSERT KEYS(ts);" // sym is not dedup key
+            );
+
+            final String viewSql = "select sym, max(price) max_price, ts from base_price sample by 1h";
+
+            createMatView(viewSql);
+            execute("insert into base_price values('gbpusd', 1.2, '2024-09-10T12:02:00.000000Z');");
+            execute("insert into base_price values('gbpusd', 1.3, '2024-09-10T12:03:00.000000Z');");
+            execute("insert into base_price values('gbpusd', 1.4, '2024-09-10T12:04:00.000000Z');");
+            drainWalQueue();
+
+            MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
+            refreshJob.run(0);
+            drainWalQueue();
+
+            // same ts, but different sym
+            execute("insert into base_price values('gbpbgn', 1.2, '2024-09-10T12:02:00.000000Z');");
+            execute("insert into base_price values('gbpbgn', 1.3, '2024-09-10T12:03:00.000000Z');");
+            execute("insert into base_price values('gbpbgn', 1.4, '2024-09-10T12:04:00.000000Z');");
             drainWalQueue();
 
             refreshJob.run(0);
