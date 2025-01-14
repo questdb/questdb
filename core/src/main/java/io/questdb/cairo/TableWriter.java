@@ -242,8 +242,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final AtomicLong physicallyWrittenRowsSinceLastCommit = new AtomicLong();
     private final Row row = new RowImpl();
     private final LongList rowValueIsNotNull = new LongList();
-    private final SegmentCopyTasks segmentCopyTasks = new SegmentCopyTasks();
-    private final DirectLongList segmentRowIndexMap = new DirectLongList(4, MemoryTag.NATIVE_O3);
+    private final SegmentCopyInfo segmentCopyInfo = new SegmentCopyInfo();
     private final TxReader slaveTxReader;
     private final ObjList<MapWriter> symbolMapWriters;
     private final IntList symbolRewriteMap = new IntList();
@@ -5224,8 +5223,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(parquetDecoder);
         Misc.free(parquetStatBuffers);
         Misc.free(parquetColumnIdsAndTypes);
-        Misc.free(segmentCopyTasks);
-        Misc.free(segmentRowIndexMap);
+        Misc.free(segmentCopyInfo);
         closeWalFiles();
         updateOperatorImpl = Misc.free(updateOperatorImpl);
         convertOperatorImpl = Misc.free(convertOperatorImpl);
@@ -5883,7 +5881,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void mmapWalColumns(SegmentCopyTasks copyTasks) {
+    private void mmapWalColumns(SegmentCopyInfo copyTasks) {
         this.walMappedColumns.clear();
         try {
             path.concat(WalUtils.WAL_NAME_BASE);
@@ -7215,17 +7213,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int blockTransactionCount,
             O3JobParallelismRegulator regulator
     ) {
-        segmentRowIndexMap.clear();
-        segmentCopyTasks.clear();
-        walTxnDetails.prepareCopySegments(startSeqTxn, blockTransactionCount, segmentCopyTasks, segmentRowIndexMap);
+        segmentCopyInfo.clear();
+        walTxnDetails.prepareCopySegments(startSeqTxn, blockTransactionCount, segmentCopyInfo);
 
-        mmapWalColumns(segmentCopyTasks);
-        processWalCommitBlockSortWalSegmentTimestamps(segmentCopyTasks, walMappedColumns, segmentRowIndexMap);
+        mmapWalColumns(segmentCopyInfo);
+        processWalCommitBlockSortWalSegmentTimestamps(segmentCopyInfo, walMappedColumns);
 
         throw new IllegalStateException("still a TODO");
     }
 
-    private void processWalCommitBlockSortWalSegmentTimestamps(SegmentCopyTasks copyTasks, ObjList<MemoryCMOR> walMappedColumns, DirectLongList rowIndexMap) {
+    private void processWalCommitBlockSortWalSegmentTimestamps(SegmentCopyInfo copyTasks, ObjList<MemoryCMOR> walMappedColumns) {
         int timestampIndex = metadata.getTimestampIndex() * 2;
         int walColumnCountPerSegment = metadata.getColumnCount() * 2;
 
@@ -7255,14 +7252,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 try {
 
-                    Vect.radixSortManyLongIndexAsc(
-                            copyTasks.getAddress(),
-                            tsAddresses.getAddress(),
-                            copyTasks.size(),
-                            copyTasks.getMaxSegmentRowCount(),
-                            copyTasks.getMinTimestamp(),
-                            copyTasks.getMaxTimestamp()
-                    );
+//                    Vect.radixSortManySegmentsIndexAsc(
+//                            copyTasks.getSegmentInfoAddress(),
+//                            tsAddresses.getAddress(),
+//                            copyTasks.size(),
+//                            copyTasks.getMaxSegmentRowCount(),
+//                            copyTasks.getMinTimestamp(),
+//                            copyTasks.getMaxTimestamp()
+//                    );
                 } finally {
                     mapAppendColumnBufferRelease(tsLagBufferAddr, tsLagOffset, tsLagSize);
                 }

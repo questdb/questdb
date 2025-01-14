@@ -29,27 +29,36 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
 
-public class SegmentCopyTasks implements QuietCloseable {
+public class SegmentCopyInfo implements QuietCloseable {
     private int distinctWalSegmentCount;
     private long maxSegmentRowCount;
     private long maxTimestamp;
     private long minTimestamp;
-    private DirectLongList tasks = new DirectLongList(4, MemoryTag.NATIVE_TABLE_WRITER);
+    private DirectLongList segments = new DirectLongList(4, MemoryTag.NATIVE_TABLE_WRITER);
+    private DirectLongList txns = new DirectLongList(4, MemoryTag.NATIVE_TABLE_WRITER);
     private long totalRows;
 
     public void add(int walId, int segmentId, long segmentLo, long segmentHi, long minTimestamp, long maxTimestamp) {
-        tasks.add(walId);
-        tasks.add(segmentId);
-        tasks.add(segmentLo);
-        tasks.add(segmentHi);
+        segments.add(walId);
+        segments.add(segmentId);
+        segments.add(segmentLo);
+        segments.add(segmentHi);
         totalRows += segmentHi - segmentLo;
         maxSegmentRowCount = Math.max(maxSegmentRowCount, segmentHi - segmentLo);
         this.minTimestamp = Math.min(this.minTimestamp, minTimestamp);
         this.maxTimestamp = Math.max(this.maxTimestamp, maxTimestamp);
     }
 
+    public void addTxn(long segmentRowOffset, int seqTxn, long committedRowsCount, int copyTaskCount) {
+        txns.add(segmentRowOffset);
+        txns.add(seqTxn);
+        txns.add(committedRowsCount);
+        txns.add(copyTaskCount);
+    }
+
     public void clear() {
-        tasks.clear();
+        segments.clear();
+        txns.clear();
         totalRows = 0;
         maxSegmentRowCount = 0;
         minTimestamp = Long.MAX_VALUE;
@@ -58,11 +67,16 @@ public class SegmentCopyTasks implements QuietCloseable {
 
     @Override
     public void close() {
-        tasks = Misc.free(tasks);
+        segments = Misc.free(segments);
+        txns = Misc.free(txns);
     }
 
-    public long getAddress() {
-        return tasks.getAddress();
+    public long getRowHi(int i) {
+        return segments.get(i * 4L + 3);
+    }
+
+    public long getRowLo(int i) {
+        return segments.get(i * 4L + 2);
     }
 
     public long getMaxSegmentRowCount() {
@@ -77,23 +91,23 @@ public class SegmentCopyTasks implements QuietCloseable {
         return minTimestamp;
     }
 
-    public long getRowHi(int i) {
-        return tasks.get(i * 4L + 3);
-    }
-
-    public long getRowLo(int i) {
-        return tasks.get(i * 4L + 2);
-    }
-
     public int getSegmentId(int i) {
-        return (int) tasks.get(i * 4L + 1);
+        return (int) segments.get(i * 4L + 1);
+    }
+
+    public long getSegmentInfoAddress() {
+        return segments.getAddress();
+    }
+
+    public long getTxnInfoAddress() {
+        return txns.getAddress();
     }
 
     public int getWalId(int i) {
-        return (int) tasks.get(i * 4L);
+        return (int) segments.get(i * 4L);
     }
 
     public int size() {
-        return (int) (tasks.size() / 4);
+        return (int) (segments.size() / 4);
     }
 }

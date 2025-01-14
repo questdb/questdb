@@ -27,6 +27,8 @@
 #include "util.h"
 #include "simd.h"
 #include "ooo_dispatch.h"
+#include <algorithm>
+#include "ooo_radix.h"
 
 #ifdef OOO_CPP_PROFILE_TIMING
 #include <atomic>
@@ -64,29 +66,6 @@ struct long_3x {
 #define RADIX_SHUFFLE 0
 
 #if RADIX_SHUFFLE == 0
-
-template<uint16_t sh, typename T>
-inline void radix_shuffle(uint64_t *counts, const T *src, T *dest, const uint64_t size) {
-    MM_PREFETCH_T0(counts);
-    for (uint64_t x = 0; x < size; x++) {
-        const auto digit = (src[x] >> sh) & 0xffu;
-        dest[counts[digit]] = src[x];
-        counts[digit]++;
-        MM_PREFETCH_T2(src + x + 64);
-    }
-}
-
-template<uint16_t sh, typename T1>
-inline void radix_shuffle(uint64_t *counts, const T1 *src, index_l *dest, const uint64_t size, int64_t minValue) {
-    MM_PREFETCH_T0(counts);
-    for (uint64_t x = 0; x < size; x++) {
-        const auto digit = (src[x] >> sh) & 0xffu;
-        dest[counts[digit]].ts = (int64_t) (minValue + src[x].ts);
-        dest[counts[digit]].i = src[x].i;
-        counts[digit]++;
-        MM_PREFETCH_T2(src + x + 64);
-    }
-}
 
 template<uint16_t sh>
 inline void radix_shuffle_ab(uint64_t *counts, const int64_t *srcA, const uint64_t sizeA, const index_l *srcB,
@@ -255,26 +234,18 @@ void radix_sort_long_index_asc_in_place(T *array, uint64_t size, T *cpy) {
     radix_shuffle<56u>(counts.c1, cpy, array, size);
 }
 
-template<auto Start, auto End, auto Inc, class F>
-constexpr void constexpr_for(F &&f) {
-    if constexpr (Start < End) {
-        f(std::integral_constant<decltype(Start), Start>());
-        constexpr_for<Start + Inc, End, Inc>(f);
-    }
-}
 
 template<uint16_t n>
 void
 radix_sort_ab_long_index_asc(const int64_t *arrayA, const uint64_t sizeA, const index_l *arrayB, const uint64_t sizeB,
                              index_l *out, index_l *cpy, int64_t minValue) {
     uint64_t counts[n][256] = {{0}};
-    uint64_t o[n] = {0};
     uint64_t x;
 
     // calculate counts
     for (x = 0; x < sizeA; x++) {
         uint64_t value = arrayA[x] - minValue;
-        // should be unrolled by compiler, n is compile time const
+        // should be unrolled by compiler, n is a compile time const
         constexpr_for<0, n, 1>(
                 [&](auto i) {
                     constexpr uint64_t shift = 8u * (n - i - 1);
@@ -287,7 +258,7 @@ radix_sort_ab_long_index_asc(const int64_t *arrayA, const uint64_t sizeA, const 
 
     for (x = 0; x < sizeB; x++) {
         uint64_t value = arrayB[x].ts - minValue;
-        // should be unrolled by compiler, n is compile time const
+        // should be unrolled by compiler, n is a compile time const
         constexpr_for<0, n, 1>(
                 [&](auto i) {
                     constexpr uint64_t shift = 8u * (n - i - 1);
@@ -300,8 +271,9 @@ radix_sort_ab_long_index_asc(const int64_t *arrayA, const uint64_t sizeA, const 
 
     // convert counts to offsets
     MM_PREFETCH_T0(&counts);
+    uint64_t o[n] = {0};
     for (x = 0; x < 256; x++) {
-        // should be unrolled by compiler, n is compile time const
+        // should be unrolled by compiler, n is a compile time const
         constexpr_for<0, n, 1>(
                 [&](auto i) {
                     auto t0 = o[i] + counts[i][x];
@@ -779,6 +751,62 @@ Java_io_questdb_std_Vect_radixSortABLongIndexAsc(JNIEnv *env, jclass cl, jlong p
     }
 
 }
+
+
+JNIEXPORT jint JNICALL
+Java_io_questdb_std_Vect_radixSortManySegmentsIndexAsc(
+        JNIEnv *env,
+        jclass cl,
+        jlong pDataOut,
+        jlong pDataCpy,
+        jlong segmentAddresses,
+        jint segmentCount,
+        jlong txnInfo,
+        jlong txnCount,
+        jlong maxSegmentRowCount,
+        jlong lagTsAddr,
+        jlong lagRowCount,
+        jlong minTimestamp,
+        jlong maxTimestamp
+) {
+    auto *out = reinterpret_cast<index_l *>(pDataOut);
+    auto *cpy = reinterpret_cast<index_l *>(pDataCpy);
+    auto **segment_map_addresses = reinterpret_cast<const index_l **>(segmentAddresses);
+    auto *lag_ts_addr = reinterpret_cast<const int64_t *>(lagTsAddr);
+    auto *txn_info_addr = reinterpret_cast<const txn_info *>(txnInfo);
+
+    auto segment_count = (uint32_t) segmentCount;
+    auto max_segment_row_count = __JLONG_REINTERPRET_CAST__(uint64_t, maxSegmentRowCount);
+    auto min_ts = __JLONG_REINTERPRET_CAST__(int64_t, minTimestamp);
+    auto max_ts = __JLONG_REINTERPRET_CAST__(int64_t, maxTimestamp);
+    auto lag_row_count = __JLONG_REINTERPRET_CAST__(uint64_t, lagRowCount);
+    auto txn_count = __JLONG_REINTERPRET_CAST__(uint64_t, txnCount);
+
+    auto ts_range_bytes = range_bytes(max_ts - min_ts);
+    auto txn_bytes = range_bytes(txn_count);
+
+    // Check that ts + seq_txn fits 64 bits
+    if (ts_range_bytes + txn_bytes > 8 || ts_range_bytes < 0 || txn_bytes < 0) {
+        return -1;
+    }
+
+    auto row_count_range_bytes = range_bytes(std::max(max_segment_row_count, lag_row_count));
+    auto segments_range_bytes = range_bytes(segment_count + (lag_row_count > 0));
+
+    // Check that segment index + segment row offset fits 64 bits
+    if (row_count_range_bytes + segments_range_bytes > 8 || row_count_range_bytes < 0 || segments_range_bytes < 0) {
+        return -2;
+    }
+
+    radix_copy_segments_index_asc_precompiled(ts_range_bytes * 8u, txn_bytes * 8u, segments_range_bytes * 8u,
+                                              lag_ts_addr, lag_row_count,
+                                              segment_map_addresses, txn_info_addr, txn_count, out, cpy,
+                                              segment_count,
+                                              min_ts);
+
+    return segments_range_bytes;
+}
+
 
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_sortULongAscInPlace(JNIEnv *env, jclass cl, jlong pLong, jlong len) {
@@ -1299,7 +1327,8 @@ Java_io_questdb_std_Vect_sortVarcharColumn(JNIEnv *env, jclass cl, jlong mergedT
         if ((flags & 5) == 0) {
             // not inlined and not null
             const int64_t size = ((a1 >> 4) & 0xffffff);
-            platform_memcpy(reinterpret_cast<void *>(tgt_data + offset), reinterpret_cast<const void *>(src_data + (a2 >> 16)),
+            platform_memcpy(reinterpret_cast<void *>(tgt_data + offset),
+                            reinterpret_cast<const void *>(src_data + (a2 >> 16)),
                             size);
             offset += size;
         }

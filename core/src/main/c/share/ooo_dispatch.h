@@ -26,6 +26,7 @@
 #define QUESTDB_OOO_DISPATCH_H
 
 #include "dispatcher.h"
+#include "util.h"
 
 typedef struct index_l {
     int64_t ts;

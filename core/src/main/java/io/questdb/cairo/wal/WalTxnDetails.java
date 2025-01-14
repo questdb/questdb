@@ -25,10 +25,9 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.SegmentCopyTasks;
+import io.questdb.cairo.SegmentCopyInfo;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.std.CharSequenceIntHashMap;
-import io.questdb.std.DirectLongList;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -219,7 +218,7 @@ public class WalTxnDetails {
 
     }
 
-    public void prepareCopySegments(long startSeqTxn, int blockTransactionCount, SegmentCopyTasks copyTasks, DirectLongList rowIndexMap) {
+    public void prepareCopySegments(long startSeqTxn, int blockTransactionCount, SegmentCopyInfo copyTasks) {
         try (var sortedBySegmentTxnSlice = sortSliceByWalAndSegment(startSeqTxn, blockTransactionCount)) {
             long copySegmentRowOffset = 0;
             int lastSegmentId = -1;
@@ -273,10 +272,7 @@ public class WalTxnDetails {
                 maxTimestamp = Math.min(maxTimestamp, getMaxTimestamp(seqTxn));
 
                 long committedRowsCount = roHi - roLo;
-                rowIndexMap.add(copySegmentRowOffset + roLo - segmentLo);
-                rowIndexMap.add(seqTxn);
-                rowIndexMap.add(committedRowsCount);
-                rowIndexMap.add(copyTaskCount);
+                copyTasks.addTxn(copySegmentRowOffset + roLo - segmentLo, seqTxn, committedRowsCount, copyTaskCount);
 
                 lastRowHi = roHi;
             }

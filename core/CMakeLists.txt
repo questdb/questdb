@@ -347,10 +347,16 @@ endif ()
 # Define the secondary output directory
 
 set(SECONDARY_OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/questdb/bin-local/)
+set(SECONDARY_OUTPUT2 ${CMAKE_CURRENT_SOURCE_DIR}/target/classes/io/questdb/bin-local/)
 
 add_custom_command(TARGET questdb POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory ${OUTPUT} ${SECONDARY_OUTPUT}
         COMMENT "Copying all build outputs from ${OUTPUT} to ${SECONDARY_OUTPUT}"
+)
+
+add_custom_command(TARGET questdb POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory ${OUTPUT} ${SECONDARY_OUTPUT2}
+        COMMENT "Copying all build outputs from ${OUTPUT} to ${SECONDARY_OUTPUT2}"
 )
 
 #jemalloc

@@ -27,6 +27,7 @@ package io.questdb.test.std;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DedupColumnCommitAddresses;
+import io.questdb.cairo.SegmentCopyInfo;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.cairo.vm.api.MemoryCMARW;
@@ -52,6 +53,7 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.ClassRule;
 import org.junit.Test;
@@ -1327,6 +1329,67 @@ public class VectTest {
     }
 
     @Test
+    public void testSort1Segment1Commit() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(null);
+        TestUtils.assertMemoryLeak(() -> {
+            int segmentCount = 1;
+            int rowsPerCommit = 1 + rnd.nextInt(10000);
+            int commits = 1;
+            long increment = Math.min((long) (Timestamps.DAY_MICROS * rnd.nextDouble()), (1L << 50) / rowsPerCommit / segmentCount);
+
+            testSortManySegments(
+                    rnd.nextLong(123124512354523L),
+                    increment,
+                    rowsPerCommit,
+                    commits,
+                    segmentCount,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testSortManySegments() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(null);
+        TestUtils.assertMemoryLeak(() -> {
+            int segmentCount = 1 + rnd.nextInt(200);
+            int rowsPerCommit = 1 + rnd.nextInt(10000);
+            int commits = Math.min(rnd.nextInt(1000), 1_000_000 / rowsPerCommit / segmentCount);
+            long increment = Math.min((long) (Timestamps.DAY_MICROS * rnd.nextDouble()), (1L << 50) / rowsPerCommit / segmentCount);
+
+            testSortManySegments(
+                    rnd.nextLong(123124512354523L),
+                    increment,
+                    rowsPerCommit,
+                    commits,
+                    segmentCount,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testSortManySegmentsWithLag() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(null);
+        TestUtils.assertMemoryLeak(() -> {
+            int segmentCount = 1 + rnd.nextInt(200);
+            int rowsPerCommit = 1 + rnd.nextInt(10000);
+
+            int commits = 1 + Math.min(rnd.nextInt(1000), 1_000_000 / (rowsPerCommit * segmentCount));
+            long increment = Math.min((long) (Timestamps.DAY_MICROS * rnd.nextDouble()), (1L << 50) / rowsPerCommit / segmentCount);
+
+            testSortManySegments(
+                    rnd.nextLong(123124512354523L),
+                    increment,
+                    rowsPerCommit,
+                    commits,
+                    segmentCount,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testSortOne() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final long indexAddr = Unsafe.malloc(2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -1536,6 +1599,111 @@ public class VectTest {
         }
     }
 
+    private void testSortManySegments(long startTs, long tsIncrement, long rowsPerCommit, long commits, int segmentCount, boolean withLag) {
+        // To simplify assertion, make lag rows same as very other segment
+        long lagRows = withLag ? commits * rowsPerCommit : 0;
+        long maxTs = startTs + tsIncrement * rowsPerCommit * commits;
+        int tsBytes = (int) Math.ceil((Long.SIZE - Long.numberOfLeadingZeros(maxTs - startTs)) / 8.0);
+        int oneForLag = withLag ? 1 : 0;
+        int txnBytes = (int) Math.ceil((Long.SIZE - Long.numberOfLeadingZeros(commits * segmentCount - 1 + oneForLag)) / 8.0);
+
+        Assume.assumeTrue(tsBytes + txnBytes <= 8);
+
+        int segmentBytes = (int) Math.ceil((Long.SIZE - Long.numberOfLeadingZeros(segmentCount - 1 + oneForLag)) / 8.0);
+
+        long rowsPerSegment = rowsPerCommit * commits;
+        long totalRows = rowsPerSegment * segmentCount + lagRows;
+
+        Assume.assumeTrue(totalRows < 2E6);
+
+        try (DirectLongList segmentAddresses = new DirectLongList(4, MemoryTag.NATIVE_DEFAULT)) {
+            long buf1 = Unsafe.malloc(totalRows * 2L * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            long buf2 = Unsafe.malloc(totalRows * 2L * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            for (int s = 0; s < segmentCount; s++) {
+                segmentAddresses.add(Unsafe.malloc(rowsPerSegment * 2L * Long.BYTES, MemoryTag.NATIVE_DEFAULT));
+            }
+            long lagBuf = Unsafe.malloc(lagRows * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+
+            try (SegmentCopyInfo segmentCopyInfo = new SegmentCopyInfo()) {
+
+                for (int s = 0; s < segmentCount; s++) {
+                    long segmentAddr = segmentAddresses.get(s);
+                    long ts = startTs;
+                    for (int c = 0; c < commits; c++) {
+                        for (int r = 0; r < rowsPerCommit; r++) {
+                            Unsafe.getUnsafe().putLong(segmentAddr + (c * rowsPerCommit + r) * 2L * Long.BYTES, ts);
+                            ts += tsIncrement;
+                        }
+                        segmentCopyInfo.addTxn((long) c * rowsPerCommit, c * segmentCount + s, rowsPerCommit, s);
+                    }
+                    segmentCopyInfo.add(1, s, 0, commits * rowsPerCommit, startTs, ts - tsIncrement);
+                }
+
+                for (int lr = 0; lr < lagRows; lr++) {
+                    Unsafe.getUnsafe().putLong(lagBuf + (long) lr * Long.BYTES, startTs + tsIncrement * lr);
+                }
+
+                int bytesPerSegmentId = Vect.radixSortManySegmentsIndexAsc(
+                        buf1,
+                        buf2,
+                        segmentAddresses.getAddress(),
+                        segmentCount,
+                        segmentCopyInfo.getTxnInfoAddress(),
+                        commits * segmentCount,
+                        rowsPerCommit,
+                        lagBuf,
+                        lagRows,
+                        startTs,
+                        maxTs
+                );
+
+                Assert.assertTrue("Internal sort failure: " + bytesPerSegmentId, bytesPerSegmentId >= 0 && bytesPerSegmentId <= 8);
+                Assert.assertEquals(segmentBytes, bytesPerSegmentId);
+
+                // Assert the data
+                long lastTs = startTs;
+                long segmentIdMask = (1L << (bytesPerSegmentId * 8)) - 1;
+                for (long r = 0; r < totalRows; r++) {
+                    long ts = Unsafe.getUnsafe().getLong(buf1 + r * 2L * Long.BYTES);
+                    long idx = Unsafe.getUnsafe().getLong(buf1 + r * 2L * Long.BYTES + Long.BYTES);
+
+                    if (ts < lastTs) {
+                        Assert.fail("Timestamps are not in order, row=" + r + ", actual=" + ts + ", last=" + lastTs);
+                    }
+                    lastTs = ts;
+
+                    int divider = segmentCount + (withLag ? 1 : 0);
+                    long segmentId = idx & segmentIdMask;
+                    long segmentRow = idx >> (bytesPerSegmentId * 8);
+
+                    if (startTs + (r / divider) * tsIncrement != ts) {
+                        Assert.assertEquals(Long.toString(r), startTs + (r / divider) * tsIncrement, ts);
+                    }
+
+                    if (withLag) {
+                        if (r % divider == 0) {
+                            // Lag rows should have segmentId as segmentCount, e.g. last virtual segment
+                            Assert.assertEquals(segmentCount, segmentId);
+                        } else {
+                            Assert.assertEquals(r % divider - 1, segmentId);
+                        }
+                    } else {
+                        Assert.assertEquals(r % divider, segmentId);
+                    }
+                    Assert.assertEquals(segmentRow, r / divider);
+
+                }
+
+            } finally {
+                for (int s = 0; s < segmentCount; s++) {
+                    Unsafe.free(segmentAddresses.get(s), rowsPerSegment * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+                Unsafe.free(lagBuf, lagRows * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(buf1, totalRows * 2L * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(buf2, totalRows * 2L * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+        }
+    }
 
     private String[] varcharColAsStringArray(MemoryCMARW dataMemA, MemoryCMARW auxMemA, int rowCount) {
         String[] strings = new String[rowCount];

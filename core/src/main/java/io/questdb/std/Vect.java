@@ -269,13 +269,25 @@ public final class Vect {
 
     public static native void quickSortLongIndexAscInPlace(long pLongData, long count);
 
+    public static native void radixSortABLongIndexAsc(long pDataA, long countA, long pDataB, long countB, long pDataDest, long pDataCpy,
+                                                      long minTimestamp, long maxTimestamp);
+
     // This is not In Place sort, to be renamed later
     public static native void radixSortLongIndexAscInPlace(long pLongData, long count, long pCpy);
 
-    public static native void radixSortManyLongIndexAsc(long columnCopy, long mappedAddresses, int columnCopySize, long maxSegmentRowCount, long minTimestamp, long maxTimestamp);
-
-    public static native void radixSortABLongIndexAsc(long pDataA, long countA, long pDataB, long countB, long pDataDest, long pDataCpy,
-                                                      long minTimestamp, long maxTimestamp);
+    public static native int radixSortManySegmentsIndexAsc(
+            long tsOutAddr,
+            long tsOutAddrCopy,
+            long segmentAddresses,
+            int segmentCount,
+            long txnInfo,
+            long txnCount,
+            long maxSegmentRowCount,
+            long tsLagRowAddr,
+            long tsLagRowCount,
+            long minTimestamp,
+            long maxTimestamp
+    );
 
     public static native void resetPerformanceCounters();
 
