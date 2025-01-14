@@ -54,7 +54,7 @@ import io.questdb.std.Vect;
 // Returns value evaluated at the row that is the first not null row of the window frame.
 public class FirstNotNullValueDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
-    private static final String NAME = "first_not_null_value";
+    public static final String NAME = "first_not_null_value";
     private static final String SIGNATURE = NAME + "(D)";
 
     @Override
