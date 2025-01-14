@@ -45,16 +45,7 @@ public class AlterOperationBuilder implements Mutable {
         this.op = new AlterOperation(extraInfo, extraStrInfo);
     }
 
-    public void addColumnToList(
-            CharSequence columnName,
-            int columnNamePosition,
-            int type,
-            int symbolCapacity,
-            boolean cache,
-            boolean indexed,
-            int indexValueBlockCapacity,
-            boolean dedupKey
-    ) {
+    public void addColumnToList(CharSequence columnName, int columnNamePosition, int type, int symbolCapacity, boolean cache, boolean indexed, int indexValueBlockCapacity, boolean dedupKey) {
         assert columnName != null && columnName.length() > 0;
         extraStrInfo.add(columnName);
         extraInfo.add(type);
@@ -99,15 +90,7 @@ public class AlterOperationBuilder implements Mutable {
         return this;
     }
 
-    public void ofAddColumn(
-            CharSequence columnName,
-            int columnNamePosition,
-            int type,
-            int symbolCapacity,
-            boolean cache,
-            boolean indexed,
-            int indexValueBlockCapacity
-    ) {
+    public void ofAddColumn(CharSequence columnName, int columnNamePosition, int type, int symbolCapacity, boolean cache, boolean indexed, int indexValueBlockCapacity) {
         assert columnName != null && columnName.length() > 0;
         extraStrInfo.add(columnName);
         extraInfo.add(type);
@@ -118,13 +101,7 @@ public class AlterOperationBuilder implements Mutable {
         extraInfo.add(columnNamePosition);
     }
 
-    public void ofAddIndex(
-            int tableNamePosition,
-            TableToken tableToken,
-            int tableId,
-            CharSequence columnName,
-            int indexValueBlockSize
-    ) {
+    public void ofAddIndex(int tableNamePosition, TableToken tableToken, int tableId, CharSequence columnName, int indexValueBlockSize) {
         this.command = ADD_INDEX;
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;
@@ -151,6 +128,14 @@ public class AlterOperationBuilder implements Mutable {
 
     public AlterOperationBuilder ofColumnChangeType(int tableNamePosition, TableToken tableToken, int tableId) {
         this.command = CHANGE_COLUMN_TYPE;
+        this.tableNamePosition = tableNamePosition;
+        this.tableToken = tableToken;
+        this.tableId = tableId;
+        return this;
+    }
+
+    public AlterOperationBuilder ofConvertPartition(int tableNamePosition, TableToken tableToken, int tableId, boolean toParquet) {
+        this.command = toParquet ? CONVERT_PARTITION_TO_PARQUET : CONVERT_PARTITION_TO_NATIVE;
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;
         this.tableId = tableId;
@@ -220,14 +205,6 @@ public class AlterOperationBuilder implements Mutable {
         return this;
     }
 
-    public AlterOperationBuilder ofConvertPartition(int tableNamePosition, TableToken tableToken, int tableId) {
-        this.command = CONVERT_PARTITION;
-        this.tableNamePosition = tableNamePosition;
-        this.tableToken = tableToken;
-        this.tableId = tableId;
-        return this;
-    }
-
     public void ofRemoveCacheSymbol(int tableNamePosition, TableToken tableToken, int tableId, CharSequence columnName) {
         assert columnName != null && columnName.length() > 0;
         this.command = REMOVE_SYMBOL_CACHE;
@@ -264,6 +241,15 @@ public class AlterOperationBuilder implements Mutable {
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;
         this.extraInfo.add(maxUncommittedRows);
+        this.tableId = tableId;
+        return this;
+    }
+
+    public AlterOperationBuilder ofSetTtlHoursOrMonths(int tableNamePosition, TableToken tableToken, int tableId, int ttlHoursOrMonths) {
+        this.command = SET_TTL_HOURS_OR_MONTHS;
+        this.tableNamePosition = tableNamePosition;
+        this.tableToken = tableToken;
+        this.extraInfo.add(ttlHoursOrMonths);
         this.tableId = tableId;
         return this;
     }

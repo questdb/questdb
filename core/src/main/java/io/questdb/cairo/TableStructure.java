@@ -50,6 +50,16 @@ public interface TableStructure {
 
     int getTimestampIndex();
 
+    /**
+     * Returns the time-to-live (TTL) of the data in this table: if positive,
+     * it's in hours; if negative, it's in months (and the actual value is positive).
+     * Zero means "no TTL".
+     */
+    default int getTtlHoursOrMonths() {
+        // TTL disabled by default
+        return 0;
+    }
+
     boolean isDedupKey(int columnIndex);
 
     boolean isIndexed(int columnIndex);

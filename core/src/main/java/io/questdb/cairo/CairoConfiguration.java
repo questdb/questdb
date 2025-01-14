@@ -28,6 +28,7 @@ import io.questdb.BuildInformation;
 import io.questdb.ConfigPropertyKey;
 import io.questdb.ConfigPropertyValue;
 import io.questdb.FactoryProvider;
+import io.questdb.Metrics;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
@@ -44,6 +45,7 @@ import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.RostiAllocFacadeImpl;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -69,6 +71,10 @@ public interface CairoConfiguration {
     }
 
     boolean enableTestFactories();
+
+    default boolean freeLeakedReaders() {
+        return true;
+    }
 
     /**
      * All effective configuration values are seen by the server instance.
@@ -238,6 +244,14 @@ public interface CairoConfiguration {
 
     boolean getLogSqlQueryProgressExe();
 
+    DateFormat getLogTimestampFormat();
+
+    String getLogTimestampTimezone();
+
+    DateLocale getLogTimestampTimezoneLocale();
+
+    TimeZoneRules getLogTimestampTimezoneRules();
+
     int getMaxCrashFiles();
 
     int getMaxFileNameLength();
@@ -251,6 +265,8 @@ public interface CairoConfiguration {
     int getMaxUncommittedRows();
 
     int getMetadataPoolCapacity();
+
+    Metrics getMetrics();
 
     @NotNull
     default MicrosecondClock getMicrosecondClock() {
@@ -332,8 +348,6 @@ public interface CairoConfiguration {
     int getPartitionEncoderParquetRowGroupSize();
 
     int getPartitionEncoderParquetVersion();
-
-    boolean getPartitionO3OverwriteControlEnabled();
 
     long getPartitionO3SplitMinSize();
 
@@ -473,6 +487,8 @@ public interface CairoConfiguration {
     int getSqlPageFrameMinRows();
 
     int getSqlParallelWorkStealingThreshold();
+
+    int getSqlParquetFrameCacheCapacity();
 
     int getSqlSmallMapKeyCapacity();
 
@@ -624,6 +640,8 @@ public interface CairoConfiguration {
     boolean isParallelIndexingEnabled();
 
     boolean isPartitionEncoderParquetStatisticsEnabled();
+
+    boolean isPartitionO3OverwriteControlEnabled();
 
     default boolean isQueryMetricsEnabled() {
         return true;

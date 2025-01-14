@@ -33,8 +33,11 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
-import java.io.IOException;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Stack;
 import java.util.function.BiFunction;
 import java.util.stream.Collectors;
 
@@ -62,7 +65,7 @@ public class ExpressionParserFuzzTest extends AbstractCairoTest {
     };
 
     @Test
-    public void fuzzTestValidExpressions() throws Exception {
+    public void fuzzTestValidExpressions() {
         Rnd rnd = TestUtils.generateRandom(LOG);
         ArrayList<ExpressionElement> operators = new ArrayList<>();
         operators.addAll(numberOperators());
@@ -108,7 +111,7 @@ public class ExpressionParserFuzzTest extends AbstractCairoTest {
      * 4. Run SqlParser over infix representation with custom ExpressionParserListener which just creates infix notation with all braces in place (similar to infixNoAmbiguities)
      * 5. Compare infixNoAmbiguities with final result from SqlParser
      */
-    private void fuzzTestValidExpressionAgainstOperators(Rnd rnd, CairoEngine engine, List<ExpressionElement> operators, int literals, int attempts) throws IOException {
+    private void fuzzTestValidExpressionAgainstOperators(Rnd rnd, CairoEngine engine, List<ExpressionElement> operators, int literals, int attempts) {
         for (int attempt = 0; attempt < attempts; attempt++) {
             List<ExpressionElement> expressions = randomExpression(rnd, operators, literals);
             String infix = "";
@@ -125,7 +128,7 @@ public class ExpressionParserFuzzTest extends AbstractCairoTest {
                             representations.push(node.token.toString());
                             return;
                         }
-                        ArrayList<String> arguments = new ArrayList<String>();
+                        ArrayList<String> arguments = new ArrayList<>();
                         for (int argIndex = node.paramCount; argIndex >= 1; argIndex--) {
                             arguments.add("(" + representations.get(representations.size() - argIndex) + ")");
                         }

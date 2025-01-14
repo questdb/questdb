@@ -25,6 +25,7 @@
 package io.questdb.test.cairo;
 
 import io.questdb.FactoryProvider;
+import io.questdb.Metrics;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.CairoConfiguration;
@@ -51,6 +52,7 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
 
     public CairoTestConfiguration(CharSequence root, TelemetryConfiguration telemetryConfiguration, Overrides overrides) {
+        super(Metrics.ENABLED);
         this.root = Chars.toString(root);
         this.snapshotRoot = Chars.toString(root) + Files.SEPARATOR + TableUtils.CHECKPOINT_DIRECTORY;
         this.telemetryConfiguration = telemetryConfiguration;
@@ -58,13 +60,18 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     }
 
     @Override
-    public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
-        return AbstractCairoTest.staticOverrides.getCircuitBreakerConfiguration() != null ? AbstractCairoTest.staticOverrides.getCircuitBreakerConfiguration() : super.getCircuitBreakerConfiguration();
+    public boolean freeLeakedReaders() {
+        return overrides.freeLeakedReaders();
     }
 
     @Override
     public @NotNull CharSequence getCheckpointRoot() {
         return snapshotRoot;
+    }
+
+    @Override
+    public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+        return AbstractCairoTest.staticOverrides.getCircuitBreakerConfiguration() != null ? AbstractCairoTest.staticOverrides.getCircuitBreakerConfiguration() : super.getCircuitBreakerConfiguration();
     }
 
     @Override

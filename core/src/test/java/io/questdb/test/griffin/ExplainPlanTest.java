@@ -45,7 +45,6 @@ import io.questdb.griffin.engine.functions.SwappingArgsFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InCharFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InTimestampIntervalFunctionFactory;
-import io.questdb.griffin.engine.functions.bool.InTimestampStrFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InTimestampTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InUuidFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToRegClassFunctionFactory;
@@ -154,7 +153,7 @@ import org.junit.Test;
 import java.util.Arrays;
 
 public class ExplainPlanTest extends AbstractCairoTest {
-    protected final static Log LOG = LogFactory.getLog(ExplainPlanTest.class);
+    private static final Log LOG = LogFactory.getLog(ExplainPlanTest.class);
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -2468,8 +2467,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     args.add(new StrConstant("d"));
                                 } else if (sigArgType == ColumnType.STRING && isArray) {
                                     args.add(new StringToStringArrayFunction(0, "{'test'}"));
-                                } else if (sigArgType == ColumnType.STRING && factory instanceof InTimestampStrFunctionFactory) {
-                                    args.add(new StrConstant("2022-12-12"));
                                 } else if (factory instanceof EqTimestampCursorFunctionFactory) {
                                     // 2nd arg for this function is a cursor, which is unclear how to test here
                                     // additionally, this function has separate tests
@@ -10124,6 +10121,96 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "                Frame forward scan on: b\n"
             );
         });
+    }
+
+    @Test
+    public void testTimestampEqSubQueryFilter1() throws Exception {
+        assertPlan(
+                "create table x (l long, ts timestamp)",
+                "select * from x where ts = (select min(ts) from x)",
+                "Async Filter workers: 1\n" +
+                        "  filter: ts=cursor \n" +
+                        "    GroupBy vectorized: true workers: 1\n" +
+                        "      values: [min(ts)]\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: x\n" +
+                        "    PageFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: x\n"
+        );
+    }
+
+    @Test
+    public void testTimestampEqSubQueryFilter2() throws Exception {
+        assertPlan(
+                "create table x (l long, ts timestamp) timestamp(ts) partition by day",
+                "select * from x where ts = (select min(ts) from x)",
+                "PageFrame\n" +
+                        "    Row forward scan\n" +
+                        "    Interval forward scan on: x\n" +
+                        "      intervals: []\n"
+        );
+    }
+
+    @Test
+    public void testTimestampGtSubQueryFilter1() throws Exception {
+        assertPlan(
+                "create table x (l long, ts timestamp)",
+                "select * from x where ts > (select min(ts) from x)",
+                "Async Filter workers: 1\n" +
+                        "  filter: ts>cursor \n" +
+                        "    GroupBy vectorized: true workers: 1\n" +
+                        "      values: [min(ts)]\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: x\n" +
+                        "    PageFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: x\n"
+        );
+    }
+
+    @Test
+    public void testTimestampGtSubQueryFilter2() throws Exception {
+        assertPlan(
+                "create table x (l long, ts timestamp) timestamp(ts) partition by day",
+                "select * from x where ts > (select min(ts) from x)",
+                "PageFrame\n" +
+                        "    Row forward scan\n" +
+                        "    Interval forward scan on: x\n" +
+                        "      intervals: []\n"
+        );
+    }
+
+    @Test
+    public void testTimestampLtSubQueryFilter1() throws Exception {
+        assertPlan(
+                "create table x (l long, ts timestamp)",
+                "select * from x where ts < (select max(ts) from x)",
+                "Async Filter workers: 1\n" +
+                        "  filter: ts<cursor \n" +
+                        "    GroupBy vectorized: true workers: 1\n" +
+                        "      values: [max(ts)]\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: x\n" +
+                        "    PageFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: x\n"
+        );
+    }
+
+    @Test
+    public void testTimestampLtSubQueryFilter2() throws Exception {
+        assertPlan(
+                "create table x (l long, ts timestamp) timestamp(ts) partition by day",
+                "select * from x where ts < (select max(ts) from x)",
+                "PageFrame\n" +
+                        "    Row forward scan\n" +
+                        "    Interval forward scan on: x\n" +
+                        "      intervals: []\n"
+        );
     }
 
     @Test

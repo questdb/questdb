@@ -19,6 +19,16 @@ jobs:
           jdk: "1.11"
           testset: "all"
           includeTests: "**/cairo/**"
+          excludeTests: "**/cairo/fuzz/**"
+          javadoc_step: ""
+          javadoc_profile: ""
+        mac-cairo-fuzz:
+          imageName: "macos-latest"
+          poolName: "Azure Pipelines"
+          os: macOS
+          jdk: "1.11"
+          testset: "all"
+          includeTests: "**/cairo/fuzz/**"
           javadoc_step: ""
           javadoc_profile: ""
         mac-pgwire:
@@ -39,23 +49,33 @@ jobs:
           excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**"
           javadoc_step: ""
           javadoc_profile: ""
-        windows-griffin-noO3-noFuzz:
+        windows-griffin:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
           jdk: "1.11"
           testset: "all"
           includeTests: "**/griffin/**"
-          excludeTests: "**/O3*Test**,**/Wal**Fuzz**"
+          excludeTests: "**/O3*Test**,**/**Fuzz**"
           javadoc_step: ""
           javadoc_profile: ""
-        windows-griffin-O3-Fuzz:
+        windows-fuzz1:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
           jdk: "1.11"
           testset: "all"
-          includeTests: "**/griffin/O3*Test**,**/Wal**Fuzz**"
+          includeTests: "**/cairo/fuzz/**"
+          javadoc_step: ""
+          javadoc_profile: ""
+        windows-fuzz2:
+          imageName: "windows-latest"
+          poolName: "Azure Pipelines"
+          os: Windows
+          jdk: "1.11"
+          testset: "all"
+          includeTests: "**/O3*Test**,**/**Fuzz**"
+          excludeTests: "**/cairo/fuzz/**"
           javadoc_step: ""
           javadoc_profile: ""
         windows-cairo:
@@ -65,6 +85,7 @@ jobs:
           jdk: "1.11"
           testset: "all"
           includeTests: "**/cairo/**"
+          excludeTests: "**/O3*Test**,**/**Fuzz**"
           javadoc_step: ""
           javadoc_profile: ""
         windows-pgwire:
@@ -83,14 +104,6 @@ jobs:
           jdk: "1.11"
           testset: "all"
           excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**"
-          javadoc_step: ""
-          javadoc_profile: ""
-        linux-jdk8:
-          imageName: "ubuntu-latest"
-          poolName: "Azure Pipelines"
-          os: Linux
-          jdk: "1.8"
-          testset: "none"
           javadoc_step: ""
           javadoc_profile: ""
         linux-jdk11:

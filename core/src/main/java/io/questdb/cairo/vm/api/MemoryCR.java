@@ -36,8 +36,9 @@ import io.questdb.std.Vect;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectString;
 
-//contiguous readable 
+// contiguous readable
 public interface MemoryCR extends MemoryC, MemoryR {
+
     long addressHi();
 
     default boolean checkOffsetMapped(long offset) {
@@ -93,7 +94,7 @@ public interface MemoryCR extends MemoryC, MemoryR {
     }
 
     default long getLong(long offset) {
-        assert addressOf(offset + Long.BYTES) > 0;
+        assert offset > -1 && addressOf(offset + Long.BYTES) > 0;
         return Unsafe.getUnsafe().getLong(addressOf(offset));
     }
 

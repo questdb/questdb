@@ -377,7 +377,7 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
 
     @Override
     protected void registerListenerFd() {
-        this.epoll.listen(serverFd);
+        epoll.listen(serverFd);
     }
 
     @Override

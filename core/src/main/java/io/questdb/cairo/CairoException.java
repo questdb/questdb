@@ -51,6 +51,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
     private static final ThreadLocal<CairoException> tlException = new ThreadLocal<>(CairoException::new);
     protected final StringSink message = new StringSink();
+    protected final StringSink nativeBacktrace = new StringSink();
     protected int errno;
     private boolean authorizationError = false;
     private boolean cacheable;
@@ -138,8 +139,12 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return nonCritical().put("cancelled by user").setInterruption(true).setCancellation(true);
     }
 
-    public static CairoException queryTimedOut(long fd) {
-        return nonCritical().put("timeout, query aborted [fd=").put(fd).put(']').setInterruption(true);
+    public static CairoException queryTimedOut(long fd, long runtime, long timeout) {
+        return nonCritical()
+                .put("timeout, query aborted [fd=").put(fd)
+                .put(", runtime=").put(runtime).put("us")
+                .put(", timeout=").put(timeout).put("us")
+                .put(']').setInterruption(true);
     }
 
     public static CairoException queryTimedOut() {
@@ -323,8 +328,25 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return ex;
     }
 
+    // N.B.: Change the API with care! This method is called from native code via JNI.
+    // See `struct CairoException` in the `qdbr` Rust crate.
+    @SuppressWarnings("unused")
+    private static CairoException paramInstance(
+            int errno, // pass `NON_CRITICAL` (-1) to create a non-critical exception
+            boolean outOfMemory,
+            CharSequence message,
+            @Nullable CharSequence nativeBacktrace
+    ) {
+        CairoException ex = instance(errno)
+                .setOutOfMemory(outOfMemory)
+                .put(message);
+        ex.nativeBacktrace.put(nativeBacktrace);
+        return ex;
+    }
+
     protected void clear(int errno) {
         message.clear();
+        nativeBacktrace.clear();
         this.errno = errno;
         cacheable = false;
         interruption = false;

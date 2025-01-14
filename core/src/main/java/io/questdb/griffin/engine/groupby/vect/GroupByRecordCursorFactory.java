@@ -180,14 +180,15 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             if (symbolTableSkewIndex != null && symbolTableSkewIndex.size() > 0) {
                 final IntList symbolSkew = new IntList(symbolTableSkewIndex.size());
                 symbolSkew.addAll(symbolTableSkewIndex);
-                cursor = new RostiRecordCursor(pRosti, columnSkewIndex, symbolSkew);
+                cursor = new RostiRecordCursor(pRosti, columnTypes.getColumnCount(), columnSkewIndex, symbolSkew);
             } else {
-                cursor = new RostiRecordCursor(pRosti, columnSkewIndex, null);
+                cursor = new RostiRecordCursor(pRosti, columnTypes.getColumnCount(), columnSkewIndex, null);
             }
 
             this.frameMemoryPools = new ObjList<>(workerCount);
             for (int i = 0; i < workerCount; i++) {
-                frameMemoryPools.add(new PageFrameMemoryPool());
+                // We're using page frame memory only and do single scan, hence cache size of 1.
+                frameMemoryPools.add(new PageFrameMemoryPool(1));
             }
         } catch (Throwable th) {
             close();
@@ -279,6 +280,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     private class RostiRecordCursor implements RecordCursor {
+        private final int columnCount;
         private final IntList columnSkewIndex;
         private final RostiRecord record;
         private final IntList symbolTableSkewIndex;
@@ -296,9 +298,10 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         private long size;
         private long slots;
 
-        public RostiRecordCursor(long pRosti, IntList columnSkewIndex, IntList symbolTableSkewIndex) {
-            pRostiBig = pRosti;
-            record = new RostiRecord();
+        public RostiRecordCursor(long pRosti, int columnCount, IntList columnSkewIndex, IntList symbolTableSkewIndex) {
+            this.pRostiBig = pRosti;
+            this.columnCount = columnCount;
+            this.record = new RostiRecord(columnCount);
             this.symbolTableSkewIndex = symbolTableSkewIndex;
             this.columnSkewIndex = columnSkewIndex;
         }
@@ -333,7 +336,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             if (recordB != null) {
                 return recordB;
             }
-            return (recordB = new RostiRecord());
+            return (recordB = new RostiRecord(columnCount));
         }
 
         @Override
@@ -368,14 +371,14 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
         public RostiRecordCursor of(
                 RecordMetadata metadata,
-                PageFrameCursor pageFrameCursor,
+                PageFrameCursor frameCursor,
                 MessageBus bus,
                 SqlExecutionCircuitBreaker circuitBreaker
         ) {
-            this.frameCursor = pageFrameCursor;
+            this.frameCursor = frameCursor;
             this.bus = bus;
             this.circuitBreaker = circuitBreaker;
-            frameAddressCache.of(metadata);
+            frameAddressCache.of(metadata, frameCursor.getColumnIndexes());
             for (int i = 0; i < workerCount; i++) {
                 frameMemoryPools.getQuick(i).of(frameAddressCache);
             }
@@ -613,9 +616,14 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         private class RostiRecord implements Record {
-            private final Long256Impl long256A = new Long256Impl();
-            private final Long256Impl long256B = new Long256Impl();
+            private final ObjList<Long256Impl> longs256A;
+            private final ObjList<Long256Impl> longs256B;
             private long pRow;
+
+            public RostiRecord(int columnCount) {
+                this.longs256A = new ObjList<>(columnCount);
+                this.longs256B = new ObjList<>(columnCount);
+            }
 
             @Override
             public long getDate(int col) {
@@ -675,12 +683,12 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
             @Override
             public Long256 getLong256A(int col) {
-                return getLong256Value(long256A, col);
+                return getLong256Value(long256A(col), col);
             }
 
             @Override
             public Long256 getLong256B(int col) {
-                return getLong256Value(long256B, col);
+                return getLong256Value(long256B(col), col);
             }
 
             public Long256 getLong256Value(Long256 dst, int col) {
@@ -734,6 +742,20 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
             private long getValueAddress(int column) {
                 return pRow + columnSkewIndex.getQuick(column);
+            }
+
+            private Long256Impl long256A(int columnIndex) {
+                if (longs256A.getQuiet(columnIndex) == null) {
+                    longs256A.extendAndSet(columnIndex, new Long256Impl());
+                }
+                return longs256A.getQuick(columnIndex);
+            }
+
+            private Long256Impl long256B(int columnIndex) {
+                if (longs256B.getQuiet(columnIndex) == null) {
+                    longs256B.extendAndSet(columnIndex, new Long256Impl());
+                }
+                return longs256B.getQuick(columnIndex);
             }
         }
     }

@@ -24,7 +24,11 @@
 
 package io.questdb.cairo.wal;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AttachDetachStatus;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.UpdateOperator;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.std.LongList;
 import org.jetbrains.annotations.NotNull;
@@ -113,7 +117,9 @@ public interface MetadataService {
             SecurityContext securityContext
     );
 
-    boolean convertPartition(long partitionTimestamp);
+    boolean convertPartitionNativeToParquet(long partitionTimestamp);
+
+    boolean convertPartitionParquetToNative(long partitionTimestamp);
 
     AttachDetachStatus detachPartition(long partitionTimestamp);
 
@@ -122,6 +128,8 @@ public interface MetadataService {
     void dropIndex(@NotNull CharSequence columnName);
 
     void enableDeduplicationWithUpsertKeys(LongList columnsIndexes);
+
+    void forceRemovePartitions(LongList partitionTimestamps);
 
     int getMetaMaxUncommittedRows();
 
@@ -132,8 +140,6 @@ public interface MetadataService {
     TableToken getTableToken();
 
     UpdateOperator getUpdateOperator();
-
-    void forceRemovePartitions(LongList partitionTimestamps);
 
     void removeColumn(@NotNull CharSequence columnName);
 
@@ -150,6 +156,13 @@ public interface MetadataService {
     void setMetaMaxUncommittedRows(int maxUncommittedRows);
 
     void setMetaO3MaxLag(long o3MaxLagUs);
+
+    /**
+     * Sets the time-to-live (TTL) of the data in this table: if positive,
+     * it's in hours; if negative, it's in months (and the actual value is positive).
+     * Zero means "no TTL".
+     */
+    void setMetaTtlHoursOrMonths(int metaTtlHoursOrMonths);
 
     void squashPartitions();
 

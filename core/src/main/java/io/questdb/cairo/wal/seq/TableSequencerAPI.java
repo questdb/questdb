@@ -249,17 +249,8 @@ public class TableSequencerAPI implements QuietCloseable {
         return seqTxnTracker.initTxns(writerTxn, seqTxn, isSuspended);
     }
 
-    @TestOnly
     public boolean isSuspended(final TableToken tableToken) {
-        try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {
-            boolean isSuspended;
-            try {
-                isSuspended = sequencer.isSuspended();
-            } finally {
-                sequencer.unlockRead();
-            }
-            return isSuspended;
-        }
+        return getSeqTxnTracker(tableToken).isSuspended();
     }
 
     public boolean isTxnTrackerInitialised(final TableToken tableToken) {
@@ -302,10 +293,6 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public boolean notifyCommitReadable(final TableToken tableToken, long writerTxn) {
-        return getSeqTxnTracker(tableToken).notifyCommitReadable(writerTxn);
-    }
-
     public boolean notifyOnCheck(TableToken tableToken, long seqTxn) {
         // Updates seqTxn and returns true if CheckWalTransactionsJob should post notification
         // to run ApplyWal2TableJob for the table
@@ -329,8 +316,8 @@ public class TableSequencerAPI implements QuietCloseable {
             isDropped = seq.isDropped();
             seq.unlockWrite();
         } catch (CairoException e) {
-            LOG.info().$("failed to convert wal table [name=").$(tableToken).$(", dirName=").utf8(tableToken.getDirName()).I$();
-            return false;
+            LOG.info().$("cannot open sequencer files, assumed table converted to non-wal [name=").$(tableToken).$(", dirName=").utf8(tableToken.getDirName()).I$();
+            return true;
         }
 
         final TableSequencerImpl tableSequencer = seqRegistry.get(tableToken.getDirName());
@@ -404,7 +391,7 @@ public class TableSequencerAPI implements QuietCloseable {
     public void resumeTable(TableToken tableToken, long resumeFromTxn) {
         try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             try {
-                if (!sequencer.isSuspended()) {
+                if (!isSuspended(tableToken)) {
                     // Even if the table already unsuspended, send ApplyWal2TableJob notification anyway
                     // as a way to resume table which is not moving even if it's marked as not suspended.
                     sequencer.resumeTable();
@@ -443,14 +430,14 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     public void suspendTable(final TableToken tableToken, ErrorTag errorTag, String errorMessage) {
-        try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
-            try {
-                sequencer.suspendTable();
-                getSeqTxnTracker(tableToken).setSuspended(errorTag, errorMessage);
-            } finally {
-                sequencer.unlockWrite();
-            }
-        }
+        getSeqTxnTracker(tableToken).setSuspended(errorTag, errorMessage);
+    }
+
+    /**
+     * @see SeqTxnTracker#updateWriterTxns(long, long)
+     */
+    public boolean updateWriterTxns(final TableToken tableToken, long writerTxn, long dirtyWriterTxn) {
+        return getSeqTxnTracker(tableToken).updateWriterTxns(writerTxn, dirtyWriterTxn);
     }
 
     private @NotNull TableSequencerImpl getOrOpenSequencer(

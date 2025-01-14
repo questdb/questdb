@@ -87,7 +87,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
 
             // prepare the data
             long timestamp = 0;
-            try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
                 for (int i = 0; i < M; i++) {
                     TableWriter.Row row = writer.newRow(timestamp += increment);
                     row.putStr(0, rnd.nextChars(20));
@@ -99,7 +99,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            try (CairoEngine engine = new CairoEngine(configuration, metrics)) {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
                 String value = symbols[N - 10];
                 int columnIndex;
                 int symbolKey;
@@ -220,7 +220,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
 
             // prepare the data, writing rows in the backward direction
             long timestamp = 0;
-            try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
                 int iIndex = writer.getColumnIndex("i");
                 int jIndex = -1;
                 int sIndex = -1;
@@ -246,7 +246,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            try (CairoEngine engine = new CairoEngine(configuration, metrics)) {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
                 GenericRecordMetadata metadata;
                 try (TableReader reader = engine.getReader("x")) {
                     metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
@@ -258,7 +258,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
 
                 try (FullFwdPartitionFrameCursorFactory frameFactory = new FullFwdPartitionFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, metadata)) {
                     FwdPageFrameRowCursorFactory rowCursorFactory = new FwdPageFrameRowCursorFactory(); // stub RowCursorFactory
-                    PageFrameRecordCursorFactory factory = new PageFrameRecordCursorFactory(
+                    try (PageFrameRecordCursorFactory factory = new PageFrameRecordCursorFactory(
                             configuration,
                             metadata,
                             frameFactory,
@@ -269,44 +269,45 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                             columnIndexes,
                             columnSizes,
                             true
-                    );
+                    )) {
 
-                    Assert.assertTrue(factory.supportsPageFrameCursor());
+                        Assert.assertTrue(factory.supportsPageFrameCursor());
 
-                    long ts = (rowCount + 1) * increment;
-                    int rowIndex = rowCount - 1;
-                    final DirectString dcs = new DirectString();
-                    try (
-                            SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine);
-                            PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_DESC)
-                    ) {
-                        PageFrame frame;
-                        while ((frame = cursor.next()) != null) {
+                        long ts = (rowCount + 1) * increment;
+                        int rowIndex = rowCount - 1;
+                        final DirectString dcs = new DirectString();
+                        try (
+                                SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine);
+                                PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_DESC)
+                        ) {
+                            PageFrame frame;
+                            while ((frame = cursor.next()) != null) {
 
-                            long len = frame.getPartitionHi() - frame.getPartitionLo();
-                            Assert.assertTrue(len > 0);
-                            Assert.assertTrue(len <= maxSize);
+                                long len = frame.getPartitionHi() - frame.getPartitionLo();
+                                Assert.assertTrue(len > 0);
+                                Assert.assertTrue(len <= maxSize);
 
-                            long intColAddr = frame.getPageAddress(0);
-                            long tsColAddr = frame.getPageAddress(1);
-                            long longColAddr = frame.getPageAddress(2);
-                            long iStrColAddr = frame.getAuxPageAddress(3);
-                            long dStrColAddr = frame.getPageAddress(3);
+                                long intColAddr = frame.getPageAddress(0);
+                                long tsColAddr = frame.getPageAddress(1);
+                                long longColAddr = frame.getPageAddress(2);
+                                long iStrColAddr = frame.getAuxPageAddress(3);
+                                long dStrColAddr = frame.getPageAddress(3);
 
-                            for (long i = len - 1; i > -1; i--) {
-                                Assert.assertEquals(rndInts[rowIndex], Unsafe.getUnsafe().getInt(intColAddr + i * 4L));
-                                Assert.assertEquals(ts -= increment, Unsafe.getUnsafe().getLong(tsColAddr + i * 8L));
+                                for (long i = len - 1; i > -1; i--) {
+                                    Assert.assertEquals(rndInts[rowIndex], Unsafe.getUnsafe().getInt(intColAddr + i * 4L));
+                                    Assert.assertEquals(ts -= increment, Unsafe.getUnsafe().getLong(tsColAddr + i * 8L));
 
-                                if (startTopAt > 0 && rowIndex >= startTopAt) {
-                                    Assert.assertEquals(rndLongs[rowIndex], Unsafe.getUnsafe().getLong(longColAddr + i * 8L));
-                                    final long strOffset = Unsafe.getUnsafe().getLong(iStrColAddr + i * 8);
-                                    dcs.of(dStrColAddr + strOffset + 4, dStrColAddr + Unsafe.getUnsafe().getLong(iStrColAddr + i * 8 + 8));
-                                    TestUtils.assertEquals(rndStrs[rowIndex], dcs);
+                                    if (startTopAt > 0 && rowIndex >= startTopAt) {
+                                        Assert.assertEquals(rndLongs[rowIndex], Unsafe.getUnsafe().getLong(longColAddr + i * 8L));
+                                        final long strOffset = Unsafe.getUnsafe().getLong(iStrColAddr + i * 8);
+                                        dcs.of(dStrColAddr + strOffset + 4, dStrColAddr + Unsafe.getUnsafe().getLong(iStrColAddr + i * 8 + 8));
+                                        TestUtils.assertEquals(rndStrs[rowIndex], dcs);
+                                    }
+                                    rowIndex--;
                                 }
-                                rowIndex--;
                             }
+                            Assert.assertEquals(-1, rowIndex);
                         }
-                        Assert.assertEquals(-1, rowIndex);
                     }
                 }
             }
@@ -331,7 +332,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
 
             // prepare the data
             long timestamp = 0;
-            try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
                 int iIndex = writer.getColumnIndex("i");
                 int jIndex = -1;
                 int sIndex = -1;
@@ -354,7 +355,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            try (CairoEngine engine = new CairoEngine(configuration, metrics)) {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
                 GenericRecordMetadata metadata;
                 try (TableReader reader = engine.getReader("x")) {
                     metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
@@ -366,7 +367,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
 
                 try (FullFwdPartitionFrameCursorFactory frameFactory = new FullFwdPartitionFrameCursorFactory(tt, TableUtils.ANY_TABLE_VERSION, metadata)) {
                     FwdPageFrameRowCursorFactory rowCursorFactory = new FwdPageFrameRowCursorFactory(); // stub RowCursorFactory
-                    PageFrameRecordCursorFactory factory = new PageFrameRecordCursorFactory(
+                    try (PageFrameRecordCursorFactory factory = new PageFrameRecordCursorFactory(
                             configuration,
                             metadata,
                             frameFactory,
@@ -377,44 +378,45 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                             columnIndexes,
                             columnSizes,
                             true
-                    );
+                    )) {
 
-                    Assert.assertTrue(factory.supportsPageFrameCursor());
+                        Assert.assertTrue(factory.supportsPageFrameCursor());
 
-                    rnd.reset();
-                    long ts = 0;
-                    int rowIndex = 0;
-                    final DirectString dcs = new DirectString();
-                    try (
-                            SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine);
-                            PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)
-                    ) {
-                        PageFrame frame;
-                        while ((frame = cursor.next()) != null) {
+                        rnd.reset();
+                        long ts = 0;
+                        int rowIndex = 0;
+                        final DirectString dcs = new DirectString();
+                        try (
+                                SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine);
+                                PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)
+                        ) {
+                            PageFrame frame;
+                            while ((frame = cursor.next()) != null) {
 
-                            long len = frame.getPartitionHi() - frame.getPartitionLo();
-                            Assert.assertTrue(len > 0);
-                            Assert.assertTrue(len <= maxSize);
+                                long len = frame.getPartitionHi() - frame.getPartitionLo();
+                                Assert.assertTrue(len > 0);
+                                Assert.assertTrue(len <= maxSize);
 
-                            long intColAddr = frame.getPageAddress(0);
-                            long tsColAddr = frame.getPageAddress(1);
-                            long longColAddr = frame.getPageAddress(2);
-                            long iStrColAddr = frame.getAuxPageAddress(3);
-                            long dStrColAddr = frame.getPageAddress(3);
+                                long intColAddr = frame.getPageAddress(0);
+                                long tsColAddr = frame.getPageAddress(1);
+                                long longColAddr = frame.getPageAddress(2);
+                                long iStrColAddr = frame.getAuxPageAddress(3);
+                                long dStrColAddr = frame.getPageAddress(3);
 
-                            for (long i = 0; i < len; i++, rowIndex++) {
-                                Assert.assertEquals(rnd.nextInt(), Unsafe.getUnsafe().getInt(intColAddr + i * 4L));
-                                Assert.assertEquals(ts += increment, Unsafe.getUnsafe().getLong(tsColAddr + i * 8L));
+                                for (long i = 0; i < len; i++, rowIndex++) {
+                                    Assert.assertEquals(rnd.nextInt(), Unsafe.getUnsafe().getInt(intColAddr + i * 4L));
+                                    Assert.assertEquals(ts += increment, Unsafe.getUnsafe().getLong(tsColAddr + i * 8L));
 
-                                if (startTopAt > 0 && rowIndex >= startTopAt) {
-                                    Assert.assertEquals(rnd.nextLong(), Unsafe.getUnsafe().getLong(longColAddr + i * 8L));
-                                    final long strOffset = Unsafe.getUnsafe().getLong(iStrColAddr + i * 8);
-                                    dcs.of(dStrColAddr + strOffset + 4, dStrColAddr + Unsafe.getUnsafe().getLong(iStrColAddr + i * 8 + 8));
-                                    TestUtils.assertEquals(rnd.nextChars(32), dcs);
+                                    if (startTopAt > 0 && rowIndex >= startTopAt) {
+                                        Assert.assertEquals(rnd.nextLong(), Unsafe.getUnsafe().getLong(longColAddr + i * 8L));
+                                        final long strOffset = Unsafe.getUnsafe().getLong(iStrColAddr + i * 8);
+                                        dcs.of(dStrColAddr + strOffset + 4, dStrColAddr + Unsafe.getUnsafe().getLong(iStrColAddr + i * 8 + 8));
+                                        TestUtils.assertEquals(rnd.nextChars(32), dcs);
+                                    }
                                 }
                             }
+                            Assert.assertEquals(rowCount, rowIndex);
                         }
-                        Assert.assertEquals(rowCount, rowIndex);
                     }
                 }
             }

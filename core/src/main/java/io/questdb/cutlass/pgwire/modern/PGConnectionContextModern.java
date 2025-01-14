@@ -166,11 +166,9 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private final ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters;
     private final ArrayDeque<PGPipelineEntry> pipeline = new ArrayDeque<>();
     private final Consumer<? super CharSequence> preparedStatementDeallocator = this::uncacheNamedStatement;
-    private final int recvBufferSize;
     private final ResponseUtf8Sink responseUtf8Sink = new ResponseUtf8Sink();
     private final Rnd rnd;
     private final SecurityContextFactory securityContextFactory;
-    private final int sendBufferSize;
     private final SqlExecutionContextImpl sqlExecutionContext;
     private final WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool;
     private final SCSequence tempSequence = new SCSequence();
@@ -186,11 +184,13 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private PGPipelineEntry pipelineCurrentEntry;
     private long recvBuffer;
     private long recvBufferReadOffset = 0;
+    private int recvBufferSize;
     private long recvBufferWriteOffset = 0;
     private PGResumeCallback resumeCallback;
     private long sendBuffer;
     private long sendBufferLimit;
     private long sendBufferPtr;
+    private int sendBufferSize;
     private SuspendEvent suspendEvent;
     // insert 'statements' are cached only for the duration of user session
     private SimpleAssociativeCache<TypesAndInsertModern> taiCache;
@@ -211,16 +211,15 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         super(
                 configuration.getFactoryProvider().getPGWireSocketFactory(),
                 configuration.getNetworkFacade(),
-                LOG,
-                engine.getMetrics().pgWire().connectionCountGauge()
+                LOG
         );
 
         try {
             this.engine = engine;
             this.configuration = configuration;
             this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
-            this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
-            this.sendBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
+            this.recvBufferSize = configuration.getRecvBufferSize();
+            this.sendBufferSize = configuration.getSendBufferSize();
             this.forceSendFragmentationChunkSize = configuration.getForceSendFragmentationChunkSize();
             this.forceRecvFragmentationChunkSize = configuration.getForceRecvFragmentationChunkSize();
             this.characterStore = new CharacterStore(
@@ -410,7 +409,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             shutdownSocketGracefully();
             throw bpe; // request disconnection
         } catch (Throwable th) {
-            metrics.pgWire().getErrorCounter().inc();
+            metrics.pgWireMetrics().getErrorCounter().inc();
             throw th;
         }
 
@@ -465,9 +464,13 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         super.of(fd, dispatcher);
         sqlExecutionContext.with(fd);
         if (recvBuffer == 0) {
+            // re-read recv buffer size in case the config was reloaded
+            this.recvBufferSize = configuration.getRecvBufferSize();
             this.recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
         }
         if (sendBuffer == 0) {
+            // re-read send buffer size in case the config was reloaded
+            this.sendBufferSize = configuration.getSendBufferSize();
             this.sendBuffer = Unsafe.malloc(sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
             this.sendBufferPtr = sendBuffer;
             this.responseUtf8Sink.bookmarkPtr = this.sendBufferPtr;
@@ -881,7 +884,9 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             if (pipelineCurrentEntry == null) {
                 pipelineCurrentEntry = entryPool.next();
             }
-        } else {
+            // we are liable to look up the current entry, depending on how protocol is used
+            // if this the case, we should not attempt to save the current entry prematurely
+        } else if (lookedUpPipelineEntry != pipelineCurrentEntry) {
             addPipelineEntry();
             pipelineCurrentEntry = lookedUpPipelineEntry;
         }
@@ -1112,7 +1117,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         }
     }
 
-    // processes one or more queries (batch/script). "Simple Query" in PostgresSQL docs.
+    // processes one or more queries (batch/script). "Simple Query" in PostgreSQL docs.
     private void msgQuery(long lo, long limit) throws BadProtocolException, PeerIsSlowToReadException, QueryPausedException, PeerDisconnectedException {
         if (pipelineCurrentEntry != null && pipelineCurrentEntry.isError()) {
             return;

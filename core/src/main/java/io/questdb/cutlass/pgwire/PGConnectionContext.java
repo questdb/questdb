@@ -282,8 +282,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         super(
                 configuration.getFactoryProvider().getPGWireSocketFactory(),
                 configuration.getNetworkFacade(),
-                LOG,
-                engine.getMetrics().pgWire().connectionCountGauge()
+                LOG
         );
 
         try {
@@ -291,8 +290,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             this.engine = engine;
             this.maxRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
             this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
-            this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
-            this.sendBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
+            this.recvBufferSize = configuration.getRecvBufferSize();
+            this.sendBufferSize = configuration.getSendBufferSize();
             this.forceSendFragmentationChunkSize = configuration.getForceSendFragmentationChunkSize();
             this.forceRecvFragmentationChunkSize = configuration.getForceRecvFragmentationChunkSize();
             this.characterStore = new CharacterStore(configuration.getCharacterStoreCapacity(), configuration.getCharacterStorePoolCapacity());
@@ -315,7 +314,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             final boolean enabledUpdateCache = configuration.isUpdateCacheEnabled();
             final int updateBlockCount = enabledUpdateCache ? configuration.getUpdateCacheBlockCount() : 1;
             final int updateRowCount = enabledUpdateCache ? configuration.getUpdateCacheRowCount() : 1;
-            this.typesAndUpdateCache = new SimpleAssociativeCache<>(updateBlockCount, updateRowCount, metrics.pgWire().cachedUpdatesGauge());
+            this.typesAndUpdateCache = new SimpleAssociativeCache<>(updateBlockCount, updateRowCount, metrics.pgWireMetrics().cachedUpdatesGauge());
             this.typesAndUpdatePool = new WeakSelfReturningObjectPool<>(parent -> new TypesAndUpdate(parent, engine), updateBlockCount * updateRowCount);
 
             final boolean enableInsertCache = configuration.isInsertCacheEnabled();
@@ -519,7 +518,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             // BAU, not error metric
             throw e;
         } catch (Throwable th) {
-            metrics.pgWire().getErrorCounter().inc();
+            metrics.pgWireMetrics().getErrorCounter().inc();
             throw th;
         }
 
@@ -1178,7 +1177,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    //replace column formats in activeSelectColumnTypes with those from latest bind call
+    // replace column formats in activeSelectColumnTypes with those from latest bind call
     private void applyLatestBindColumnFormats() {
         for (int i = 0; i < bindSelectColumnFormats.size(); i++) {
             int newValue = toColumnBinaryType((short) bindSelectColumnFormats.get(i), toColumnType(activeSelectColumnTypes.getQuick(2 * i)));
@@ -1826,7 +1825,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void handleException(int position, CharSequence message, boolean critical, int errno, boolean interruption) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        metrics.pgWire().getErrorCounter().inc();
+        metrics.pgWireMetrics().getErrorCounter().inc();
         clearCursorAndFactory();
         if (interruption) {
             prepareErrorResponse(position, message);
@@ -2214,7 +2213,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
             short columnFormatCodeCount = getShort(lo, msgLimit, "could not read result set column format codes");
             if (columnFormatCodeCount > 0) {
-
                 final RecordMetadata m = typesAndSelect.getFactory().getMetadata();
                 final int columnCount = m.getColumnCount();
                 // apply format codes to the cursor column types
@@ -2508,8 +2506,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         lo = hi + 1;
         hi = getStringLength(lo, msgLimit, "bad query text length");
 
-        // clear currentCursor and factory if they weren't cleared by previous execute with maxRows
-        if (currentCursor != null) {
+        // clear currentCursor and factory if they weren't cleared by previous execute, e.g. due to maxRows
+        if (currentCursor != null || typesAndSelect != null) {
             clearCursorAndFactory();
         }
         // and clear TypesAndUpdate too

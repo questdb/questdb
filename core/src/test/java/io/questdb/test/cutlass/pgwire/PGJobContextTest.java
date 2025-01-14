@@ -46,17 +46,18 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
+import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
+import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
-import io.questdb.network.DefaultIODispatcherConfiguration;
-import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.network.SuspendEvent;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
+import io.questdb.std.Files;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -202,7 +203,6 @@ public class PGJobContextTest extends BasePGTest {
     @BeforeClass
     public static void setUpStatic() throws Exception {
         AbstractCairoTest.setUpStatic();
-        inputRoot = TestUtils.getCsvRoot();
         final SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss'.0'");
         formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
         final Stream<Object[]> dates = LongStream.rangeClosed(0, count - 1)
@@ -239,6 +239,7 @@ public class PGJobContextTest extends BasePGTest {
                 .I$();
         node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, walEnabled);
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
+        inputRoot = TestUtils.getCsvRoot();
     }
 
     @Test
@@ -2619,6 +2620,30 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testByteBindingVariable() throws Exception {
+        skipOnWalRun();
+        skipInLegacyMode();
+
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            final PreparedStatement statement = connection.prepareStatement("create table x (a byte)");
+            statement.execute();
+
+            try (final PreparedStatement insert = connection.prepareStatement("insert into x values (?)")) {
+                // the parameter must be null so client does not know the type and parse message won't have types specified
+                // this makes the compiler to derive the type from the column type as BYTE
+                insert.setObject(1, null);
+                insert.execute();
+            }
+
+            try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
+                sink.clear();
+                assertResultSet("a[SMALLINT]\n" +
+                        "0\n", sink, resultSet);
+            }
+        });
+    }
+
+    @Test
     public void testCairoException() throws Exception {
         skipOnWalRun(); // non-partitioned
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
@@ -2747,6 +2772,8 @@ if __name__ == "__main__":
 
     @Test
     public void testCancelRunningQuery() throws Exception {
+        // legacy code is liable to "resume" cursor after "cursor.close()", which would lead to undefined behaviour
+        Assume.assumeFalse(legacyMode);
         String[] queries = {
                 "create table new_tab as (select count(*) from tab t1 join tab t2 on t1.x = t2.x where sleep(120000))",
                 "select count(*) from tab t1 join tab t2 on t1.x = t2.x where sleep(120000)",
@@ -3292,6 +3319,46 @@ if __name__ == "__main__":
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement statement = connection.prepareStatement("")) {
                 statement.execute();
+            }
+        });
+    }
+
+    @Test
+    public void testErrnoInErrorMessage() throws Exception {
+        Assume.assumeFalse(legacyMode); // only modern server prints errno
+        skipOnWalRun(); // non-partitioned table
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public int errno() {
+                return 4; // Too many open files
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "ts.d")) {
+                    return -1;
+                }
+                return TestFilesFacadeImpl.INSTANCE.openRO(name);
+            }
+        };
+
+        assertWithPgServerExtendedBinaryOnly((connection, binary, mode, port) -> {
+            try (
+                    PreparedStatement stmt = connection.prepareStatement(
+                            "create table x as (" +
+                                    " select x, timestamp_sequence(0, 1000) ts" +
+                                    " from long_sequence(1)" +
+                                    ") timestamp (ts)"
+                    )
+            ) {
+                stmt.execute();
+            }
+
+            try (PreparedStatement stmt = connection.prepareStatement("x")) {
+                stmt.executeQuery();
+                Assert.fail();
+            } catch (PSQLException ex) {
+                assertContains(ex.getMessage(), "[4]");
             }
         });
     }
@@ -4952,6 +5019,7 @@ if __name__ == "__main__":
 
     @Test
     public void testInsert2() throws Exception {
+        Assume.assumeFalse(legacyMode);
         String expectedAll = "a[INTEGER],d[TIMESTAMP],t[TIMESTAMP],d1[TIMESTAMP],t1[TIMESTAMP],t2[TIMESTAMP]\n" +
                 "0,2011-04-11 00:00:00.0,2011-04-11 14:40:54.998821,2011-04-11 14:40:54.998,2011-04-11 00:00:00.0,2011-04-11 14:40:54.998821\n" +
                 "1,2011-04-11 00:00:00.0,2011-04-11 14:40:54.999821,2011-04-11 14:40:54.999,2011-04-11 00:00:00.0,2011-04-11 14:40:54.999821\n" +
@@ -7328,7 +7396,7 @@ nodejs code:
                 ps1.executeQuery();
                 Assert.fail("PSQLException should be thrown");
             } catch (PSQLException e) {
-                assertContains(e.getMessage(), "there is no matching operator`!=` with the argument types: BOOLEAN != STRING");
+                assertContains(e.getMessage(), "there is no matching operator `!=` with the argument types: BOOLEAN != STRING");
             }
 
             try (PreparedStatement s = connection.prepareStatement("select 2 a,2 b from long_sequence(1) where x > 0 and x < 10")) {
@@ -7354,7 +7422,7 @@ nodejs code:
                 ps1.executeQuery();
                 Assert.fail("PSQLException should be thrown");
             } catch (PSQLException e) {
-                assertContains(e.getMessage(), "there is no matching operator`!=` with the argument types: BOOLEAN != STRING");
+                assertContains(e.getMessage(), "there is no matching operator `!=` with the argument types: BOOLEAN != STRING");
             }
 
             try (PreparedStatement s = connection.prepareStatement("select 2 a,2 b from long_sequence(1) where x > 0 and x < 10")) {
@@ -7774,7 +7842,7 @@ nodejs code:
                 }
             };
 
-            final WorkerPool workerPool = new TestWorkerPool(4, metrics);
+            final WorkerPool workerPool = new TestWorkerPool(4, conf.getMetrics());
             try (final IPGWireServer server = createPGWireServer(
                     conf,
                     engine,
@@ -8147,6 +8215,7 @@ nodejs code:
 
     @Test
     public void testPreparedStatementWithSystimestampFunction() throws Exception {
+        Assume.assumeFalse(legacyMode);
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement statement = connection.prepareStatement(
                     "create table xts (ts timestamp) timestamp(ts)")) {
@@ -8393,6 +8462,37 @@ nodejs code:
     }
 
     @Test
+    public void testQueryCountMetrics() throws Exception {
+        Assume.assumeFalse(legacyMode); // only modern PGWire server supports query counters
+        skipOnWalRun(); // non-partitioned table
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            execute("create table x as (select x id from long_sequence(10))");
+            // table
+            configuration.getMetrics().pgWireMetrics().resetQueryCounters();
+            try (
+                    PreparedStatement stmt = connection.prepareStatement("select count() from x;");
+                    ResultSet rs = stmt.executeQuery()
+            ) {
+                rs.next();
+                Assert.assertEquals(10, rs.getLong(1));
+                Assert.assertEquals(1, configuration.getMetrics().pgWireMetrics().startedQueriesCount());
+                Assert.assertEquals(1, configuration.getMetrics().pgWireMetrics().completedQueriesCount());
+            }
+            // virtual
+            configuration.getMetrics().pgWireMetrics().resetQueryCounters();
+            try (
+                    PreparedStatement stmt = connection.prepareStatement("select 1;");
+                    ResultSet rs = stmt.executeQuery()
+            ) {
+                rs.next();
+                Assert.assertEquals(1, rs.getLong(1));
+                Assert.assertEquals(1, configuration.getMetrics().pgWireMetrics().startedQueriesCount());
+                Assert.assertEquals(1, configuration.getMetrics().pgWireMetrics().completedQueriesCount());
+            }
+        });
+    }
+
+    @Test
     public void testQueryCountWithTsSmallerThanMinTsInTable() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (conn, binary, mode, port) -> {
             execute(
@@ -8544,21 +8644,6 @@ nodejs code:
         assertMemoryLeak(() -> {
             PGWireConfiguration configuration = new Port0PGWireConfiguration() {
                 @Override
-                public IODispatcherConfiguration getDispatcherConfiguration() {
-                    return new DefaultIODispatcherConfiguration() {
-                        @Override
-                        public int getBindPort() {
-                            return getPGWirePort();
-                        }
-
-                        @Override
-                        public String getDispatcherLogName() {
-                            return "pg-server";
-                        }
-                    };
-                }
-
-                @Override
                 public int getSendBufferSize() {
                     return 192;
                 }
@@ -8653,6 +8738,19 @@ nodejs code:
             String expectedVersion = configuration.getBuildInformation().getSwVersion();
             Assert.assertEquals(expectedVersion, actualVersion);
         });
+    }
+
+    // TODO(puzpuzpuz): fix schema changes handling in PGWire for extended protocol
+    //                  https://github.com/questdb/questdb/issues/4971
+    @Ignore
+    @Test
+    public void testReadParquetSchemaChangeExtended() throws Exception {
+        testReadParquetSchemaChange(false);
+    }
+
+    @Test
+    public void testReadParquetSchemaChangeSimple() throws Exception {
+        testReadParquetSchemaChange(true);
     }
 
     @Test
@@ -10613,6 +10711,19 @@ create table tab as (
         });
     }
 
+    // TODO(puzpuzpuz): fix schema changes handling in PGWire for extended protocol
+    //                  https://github.com/questdb/questdb/issues/4971
+    @Ignore
+    @Test
+    public void testTableSchemaChangeExtended() throws Exception {
+        testTableSchemaChange(false);
+    }
+
+    @Test
+    public void testTableSchemaChangeSimple() throws Exception {
+        testTableSchemaChange(true);
+    }
+
     /*
     We want to ensure that tableoid is set to zero, otherwise squirrelSql will not display the result set.
      */
@@ -11845,7 +11956,7 @@ create table tab as (
             }
         };
 
-        WorkerPool workerPool = new TestWorkerPool(2, metrics);
+        WorkerPool workerPool = new TestWorkerPool(2, conf.getMetrics());
         DefaultCircuitBreakerRegistry registry = new DefaultCircuitBreakerRegistry(conf, engine.getConfiguration());
         try {
             return createPGWireServer(
@@ -11955,7 +12066,7 @@ create table tab as (
 
         try (
                 DefaultCircuitBreakerRegistry registry = new DefaultCircuitBreakerRegistry(conf, engine.getConfiguration());
-                WorkerPool pool = new WorkerPool(conf, metrics)
+                WorkerPool pool = new WorkerPool(conf)
         ) {
             pool.assign(engine.getEngineMaintenanceJob());
             try (
@@ -12340,16 +12451,6 @@ create table tab as (
         assertMemoryLeak(() -> {
             PGWireConfiguration configuration = new Port0PGWireConfiguration() {
                 @Override
-                public IODispatcherConfiguration getDispatcherConfiguration() {
-                    return new DefaultIODispatcherConfiguration() {
-                        @Override
-                        public NetworkFacade getNetworkFacade() {
-                            return nf;
-                        }
-                    };
-                }
-
-                @Override
                 public NetworkFacade getNetworkFacade() {
                     return nf;
                 }
@@ -12363,7 +12464,6 @@ create table tab as (
                     try (Connection ignored1 = getConnectionWitSslInitRequest(Mode.EXTENDED, server.getPort(), false, -2)) {
                         assertExceptionNoLeakCheck("Connection should not be established when server disconnects during authentication");
                     } catch (PSQLException ignored) {
-
                     }
                     Assert.assertEquals(0, nf.getAfterDisconnectInteractions());
                     TestUtils.assertEventually(() -> Assert.assertTrue(nf.isSocketClosed()));
@@ -12534,6 +12634,104 @@ create table tab as (
                         "BPTU,205,0.430214712409255,1970-01-01 00:00:00.49,0.905,31266,8271557,2015-01-07 05:53:03.838005,14,true,VTJW,2015-10-30 05:33:15.819,00000000 24 0b c5 1a 5a 8d 85 50 39 42 9e 8a 86 17 89 6b,S,0x4e272e9dfde7bb12618178f7feba5021382a8c47a28fefa475d743cf0c2c4bcd\n";
 
                 assertResultSet(expected, sink, rs);
+            }
+        });
+    }
+
+    private void testReadParquetSchemaChange(boolean simple) throws Exception {
+        inputRoot = root; // the parquet files are exported into the root dir
+        skipOnWalRun(); // non-partitioned table
+        assertMemoryLeak(() -> {
+            try (
+                    IPGWireServer server = createPGServer(1);
+                    WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (Connection connection = getConnection(server.getPort(), simple, true)) {
+                    connection.prepareStatement("create table x as (select 1 id_x, timestamp_sequence(0,10000) as ts from long_sequence(1))").execute();
+                    connection.prepareStatement("create table y as (select 2 id_y, 'foobar' str, timestamp_sequence(1,10000) as ts from long_sequence(1))").execute();
+
+                    try (
+                            Path path = new Path();
+                            PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                            TableReader readerX = engine.getReader("x");
+                            TableReader readerY = engine.getReader("y")
+                    ) {
+                        path.of(root).concat("table.parquet").$();
+                        PartitionEncoder.populateFromTableReader(readerX, partitionDescriptor, 0);
+                        PartitionEncoder.encode(partitionDescriptor, path);
+
+                        try (PreparedStatement ps = connection.prepareStatement("select * from read_parquet('table.parquet')")) {
+                            try (ResultSet resultSet = ps.executeQuery()) {
+                                sink.clear();
+                                assertResultSet(
+                                        "id_x[INTEGER],ts[TIMESTAMP]\n" +
+                                                "1,1970-01-01 00:00:00.0\n",
+                                        sink,
+                                        resultSet
+                                );
+                            }
+
+                            // delete the file and populate from y table
+                            engine.getConfiguration().getFilesFacade().remove(path.$());
+                            PartitionEncoder.populateFromTableReader(readerY, partitionDescriptor, 0);
+                            PartitionEncoder.encode(partitionDescriptor, path);
+
+                            // Query the data once again - this time the Parquet schema is different,
+                            // so the query should get recompiled.
+                            try (ResultSet resultSet = ps.executeQuery()) {
+                                sink.clear();
+                                assertResultSet(
+                                        "id_y[INTEGER],str[VARCHAR],ts[TIMESTAMP]\n" +
+                                                "2,foobar,1970-01-01 00:00:00.000001\n",
+                                        sink,
+                                        resultSet
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    private void testTableSchemaChange(boolean simple) throws Exception {
+        skipOnWalRun(); // non-partitioned table
+        assertMemoryLeak(() -> {
+            try (
+                    IPGWireServer server = createPGServer(1);
+                    WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (Connection connection = getConnection(server.getPort(), simple, true)) {
+                    connection.prepareStatement("create table x as (select 2 id, 'foobar' str, timestamp_sequence(1,10000) as ts from long_sequence(1))").execute();
+
+                    try (PreparedStatement ps = connection.prepareStatement("x")) {
+                        try (ResultSet resultSet = ps.executeQuery()) {
+                            sink.clear();
+                            assertResultSet(
+                                    "id[INTEGER],str[VARCHAR],ts[TIMESTAMP]\n" +
+                                            "2,foobar,1970-01-01 00:00:00.000001\n",
+                                    sink,
+                                    resultSet
+                            );
+                        }
+
+                        connection.prepareStatement("alter table x drop column str;").execute();
+
+                        // Query the data once again - this time the schema is different,
+                        // so the query should get recompiled.
+                        try (ResultSet resultSet = ps.executeQuery()) {
+                            sink.clear();
+                            assertResultSet(
+                                    "id[INTEGER],ts[TIMESTAMP]\n" +
+                                            "2,1970-01-01 00:00:00.000001\n",
+                                    sink,
+                                    resultSet
+                            );
+                        }
+                    }
+                }
             }
         });
     }

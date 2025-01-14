@@ -36,6 +36,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
@@ -168,7 +169,7 @@ public class TxReader implements Closeable, Mutable {
 
     public int findAttachedPartitionIndexByLoTimestamp(long ts) {
         // Start from the end, usually it will be last partition searched / appended
-        int index = attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, ts, BinarySearch.SCAN_UP);
+        int index = attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, ts, Vect.BIN_SEARCH_SCAN_UP);
         if (index < 0) {
             return -((-index - 1) / LONGS_PER_TX_ATTACHED_PARTITION) - 1;
         }
@@ -243,7 +244,7 @@ public class TxReader implements Closeable, Mutable {
             return Long.MAX_VALUE;
         }
 
-        int index = attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, timestamp, BinarySearch.SCAN_UP);
+        int index = attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, timestamp, Vect.BIN_SEARCH_SCAN_UP);
         if (index < 0) {
             index = -index - 1;
         } else {
@@ -264,7 +265,9 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public long getPartitionFloor(long timestamp) {
-        return partitionFloorMethod != null ? (timestamp != Long.MIN_VALUE ? partitionFloorMethod.floor(timestamp) : Long.MIN_VALUE) : DEFAULT_PARTITION_TIMESTAMP;
+        return partitionFloorMethod != null
+                ? (timestamp != Long.MIN_VALUE ? partitionFloorMethod.floor(timestamp) : Long.MIN_VALUE)
+                : DEFAULT_PARTITION_TIMESTAMP;
     }
 
     public int getPartitionIndex(long ts) {
@@ -304,7 +307,9 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public long getPartitionParquetFileSize(int partitionIndex) {
-        return getPartitionParquetFileSizeByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION);
+        final long fileSize = getPartitionParquetFileSizeByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION);
+        assert fileSize > 0 || !isPartitionParquet(partitionIndex);
+        return fileSize;
     }
 
     public long getPartitionRowCountByTimestamp(long ts) {
@@ -522,7 +527,7 @@ public class TxReader implements Closeable, Mutable {
         version = unsafeReadVersion();
         Unsafe.getUnsafe().loadFence();
 
-        boolean isA = (version & 1L) == 0L;
+        boolean isA = (version & 1) == 0;
         baseOffset = isA ? roTxMemBase.getInt(TX_BASE_OFFSET_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_B_32);
         symbolsSize = isA ? roTxMemBase.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_B_32);
         partitionSegmentSize = isA ? roTxMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32);
@@ -674,7 +679,7 @@ public class TxReader implements Closeable, Mutable {
     }
 
     static int findPartitionRawIndex(LongList attachedPartitions, long partitionTimestamp) {
-        return attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, partitionTimestamp, BinarySearch.SCAN_UP);
+        return attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, partitionTimestamp, Vect.BIN_SEARCH_SCAN_UP);
     }
 
     static long getPartitionNameTxnByRawIndex(LongList attachedPartitions, int index) {
@@ -705,7 +710,7 @@ public class TxReader implements Closeable, Mutable {
 
     int findAttachedPartitionRawIndexByLoTimestamp(long ts) {
         // Start from the end, usually it will be last partition searched / appended
-        return attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, ts, BinarySearch.SCAN_UP);
+        return attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, ts, Vect.BIN_SEARCH_SCAN_UP);
     }
 
     protected void initPartitionAt(int index, long partitionTimestampLo, long partitionSize, long partitionNameTxn) {

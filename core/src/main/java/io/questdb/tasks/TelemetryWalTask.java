@@ -37,7 +37,7 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
     public static final String TABLE_NAME = "telemetry_wal";
     public static final Telemetry.TelemetryTypeBuilder<TelemetryWalTask> WAL_TELEMETRY = configuration -> {
         String tableName = configuration.getSystemTableNamePrefix() + TABLE_NAME;
-        return new Telemetry.TelemetryType<TelemetryWalTask>() {
+        return new Telemetry.TelemetryType<>() {
             @Override
             public QueryBuilder getCreateSql(QueryBuilder builder) {
                 return builder.$("CREATE TABLE IF NOT EXISTS \"")
@@ -70,6 +70,7 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
     private short event;
     private float latency; // millis
     private long physicalRowCount;
+    private long queueCursor;
     private long rowCount;
     private long seqTxn;
     private int tableId;
@@ -88,8 +89,17 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
             task.rowCount = rowCount;
             task.physicalRowCount = physicalRowCount;
             task.latency = latencyUs / 1000.0f; // millis
-            telemetry.store();
+            telemetry.store(task);
         }
+    }
+
+    public long getQueueCursor() {
+        return queueCursor;
+    }
+
+    @Override
+    public void setQueueCursor(long cursor) {
+        this.queueCursor = cursor;
     }
 
     @Override

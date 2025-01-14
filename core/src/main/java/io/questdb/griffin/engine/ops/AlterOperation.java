@@ -24,7 +24,13 @@
 
 package io.questdb.griffin.engine.ops;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AlterTableContextException;
+import io.questdb.cairo.AttachDetachStatus;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCR;
@@ -60,8 +66,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short SET_DEDUP_ENABLE = RENAME_TABLE + 1; // 15
     public final static short SET_DEDUP_DISABLE = SET_DEDUP_ENABLE + 1; // 16
     public final static short CHANGE_COLUMN_TYPE = SET_DEDUP_DISABLE + 1; // 17
-    public final static short CONVERT_PARTITION = CHANGE_COLUMN_TYPE + 1; // 18
-    public final static short FORCE_DROP_PARTITION = CONVERT_PARTITION + 1; // 19
+    public final static short CONVERT_PARTITION_TO_PARQUET = CHANGE_COLUMN_TYPE + 1; // 18
+    public final static short CONVERT_PARTITION_TO_NATIVE = CONVERT_PARTITION_TO_PARQUET + 1; // 19
+    public final static short FORCE_DROP_PARTITION = CONVERT_PARTITION_TO_NATIVE + 1; // 20
+    public final static short SET_TTL_HOURS_OR_MONTHS = FORCE_DROP_PARTITION + 1; // 21
     private static final long BIT_INDEXED = 0x1L;
     private static final long BIT_DEDUP_KEY = BIT_INDEXED << 1;
     private final static Log LOG = LogFactory.getLog(AlterOperation.class);
@@ -148,8 +156,11 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 case DROP_PARTITION:
                     applyDropPartition(svc);
                     break;
-                case CONVERT_PARTITION:
-                    applyConvertPartition(svc);
+                case CONVERT_PARTITION_TO_PARQUET:
+                    applyConvertPartition(svc, true);
+                    break;
+                case CONVERT_PARTITION_TO_NATIVE:
+                    applyConvertPartition(svc, false);
                     break;
                 case DETACH_PARTITION:
                     applyDetachPartition(svc);
@@ -177,6 +188,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     break;
                 case SET_PARAM_COMMIT_LAG:
                     applyParamO3MaxLag(svc);
+                    break;
+                case SET_TTL_HOURS_OR_MONTHS:
+                    applyTtlHoursOrMonths(svc);
                     break;
                 case RENAME_TABLE:
                     applyRenameTable(svc);
@@ -445,13 +459,22 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
-    private void applyConvertPartition(MetadataService svc) {
+    private void applyConvertPartition(MetadataService svc, boolean toParquet) {
         // long list is a set of two longs per partition - (timestamp, partitionNamePosition)
         for (int i = 0, n = extraInfo.size() / 2; i < n; i++) {
             long partitionTimestamp = extraInfo.getQuick(i * 2);
-            if (!svc.convertPartition(partitionTimestamp)) {
+            final boolean result;
+            if (toParquet) {
+                result = svc.convertPartitionNativeToParquet(partitionTimestamp);
+            } else {
+                result = svc.convertPartitionParquetToNative(partitionTimestamp);
+            }
+            if (!result) {
                 throw CairoException.partitionManipulationRecoverable()
-                        .put("could not convert partition to parquet [table=").put(getTableToken().getTableName())
+                        .put("could not convert partition to")
+                        .put(toParquet ? "parquet" : "native")
+                        .put("[table=")
+                        .put(getTableToken().getTableName())
                         .put(", partitionTimestamp=").ts(partitionTimestamp)
                         .put(", partitionBy=").put(PartitionBy.toString(svc.getPartitionBy()))
                         .put(']')
@@ -556,6 +579,19 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 svc.getMetadata().getColumnIndex(columnName),
                 isCacheOn
         );
+    }
+
+    private void applyTtlHoursOrMonths(MetadataService svc) {
+        int ttlHoursOrMonths = (int) extraInfo.get(0);
+        try {
+            svc.setMetaTtlHoursOrMonths(ttlHoursOrMonths);
+            if (svc instanceof TableWriter) {
+                ((TableWriter) svc).enforceTtl();
+            }
+        } catch (CairoException e) {
+            e.position(tableNamePosition);
+            throw e;
+        }
     }
 
     private void changeColumnType(MetadataService svc) {
