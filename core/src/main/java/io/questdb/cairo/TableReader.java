@@ -780,6 +780,11 @@ public class TableReader implements Closeable, SymbolTableSource {
                         }
                     }
                 }
+            } catch (Throwable th) {
+                closePartitionColumns(fromBase);
+                openPartitionInfo.setQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE, -1);
+                Misc.freeObjListIfCloseable(toColumns);
+                throw th;
             } finally {
                 path.trimTo(rootLen);
             }
