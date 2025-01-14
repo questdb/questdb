@@ -35,11 +35,11 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.ValueHolderList;
 import io.questdb.std.str.Utf8StringSink;
 
-public class QueryTraceJob extends SynchronizedJob {
+public class QueryTracingJob extends SynchronizedJob {
     public static final String TABLE_NAME = "query_trace";
     private static final int BATCH_LIMIT = 1024;
     private static final int INITIAL_CAPACITY = 128;
-    private static final Log LOG = LogFactory.getLog(QueryTraceJob.class.getName());
+    private static final Log LOG = LogFactory.getLog(QueryTracingJob.class.getName());
     private final ValueHolderList<QueryTrace> buffer;
     private final CairoEngine engine;
     private final MemCappedQueryTraceQueue queue;
@@ -47,14 +47,14 @@ public class QueryTraceJob extends SynchronizedJob {
     private final Utf8StringSink utf8sink = new Utf8StringSink();
     private TableToken tableToken;
 
-    public QueryTraceJob(CairoEngine engine) {
+    public QueryTracingJob(CairoEngine engine) {
         this.queue = engine.getMessageBus().getQueryTraceQueue();
         this.buffer = new ValueHolderList<>(MemCappedQueryTraceQueue.ITEM_FACTORY, INITIAL_CAPACITY);
         this.engine = engine;
     }
 
     public static void assignToPool(WorkerPool pool, CairoEngine engine) {
-        QueryTraceJob job = new QueryTraceJob(engine);
+        QueryTracingJob job = new QueryTracingJob(engine);
         for (int i = 0, n = pool.getWorkerCount(); i < n; i++) {
             pool.assign(i, job);
         }
