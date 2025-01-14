@@ -2560,7 +2560,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                             // TODO: test with partition by, order by and various frame modes
                             if (factory.isWindow()) {
-                                sqlExecutionContext.configureWindowContext(null, null, null, false, PageFrameRecordCursorFactory.SCAN_DIRECTION_FORWARD, -1, true, WindowColumn.FRAMING_RANGE, Long.MIN_VALUE, 10, 0, 20, WindowColumn.EXCLUDE_NO_OTHERS, 0, -1);
+                                sqlExecutionContext.configureWindowContext(null, null, null, false, PageFrameRecordCursorFactory.SCAN_DIRECTION_FORWARD, -1, true, WindowColumn.FRAMING_RANGE, Long.MIN_VALUE, 10, 0, 20, WindowColumn.EXCLUDE_NO_OTHERS, 0, -1, false, 0);
                             }
                             Function function = null;
                             try {

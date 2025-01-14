@@ -65,6 +65,10 @@ public interface WindowFunction extends Function {
     default void preparePass2() {
     }
 
+    default boolean isIgnoreNulls() {
+        return false;
+    }
+
     /**
      * Releases native memory and resets internal state to default/initial.
      * It differs from close() in that it doesn't release memory held by metadata, e.g. partition by key functions.

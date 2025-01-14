@@ -342,15 +342,16 @@ public class SqlParser {
     }
 
     private CharSequence createColumnAlias(
-            ExpressionNode node,
+            CharSequence token,
+            int type,
             LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap
     ) {
         return SqlUtil.createColumnAlias(
                 characterStore,
-                unquote(node.token),
-                Chars.indexOfUnquoted(node.token, '.'),
+                unquote(token),
+                Chars.indexOfUnquoted(token, '.'),
                 aliasToColumnMap,
-                node.type != ExpressionNode.LITERAL
+                type != ExpressionNode.LITERAL
         );
     }
 
@@ -2292,27 +2293,29 @@ public class SqlParser {
                 QueryColumn col;
                 final int colPosition = lexer.lastTokenPosition();
 
-                // support [first_value | last_value] (expr) [ignore nulls] over(...) window function
-                boolean isIgnoreNullsWindowFunc = false;
-                if (tok != null && isIgnoreWord(tok)) {
+                // windowIgnoreNulls is 0 --> non-window context or default
+                // windowIgnoreNulls is 1 --> ignore nulls
+                // windowIgnoreNulls is 2 --> respect nulls
+                byte windowNullsDesc = 0;
+                if (tok != null) {
+                    if (isIgnoreWord(tok)) {
+                        windowNullsDesc = 1;
+                    } else if (isRespectWord(tok)) {
+                        windowNullsDesc = 2;
+                    }
+                }
+
+                if (tok != null && windowNullsDesc > 0) {
                     CharSequence next = optTok(lexer);
                     if (next != null && isNullsWord(next)) {
                         expectTok(lexer, "over");
-                        if (Chars.equalsIgnoreCase(expr.token, "first_value")) {
-                            isIgnoreNullsWindowFunc = true;
-                            expr.token = "first_not_null_value";
-                        } else if (Chars.equalsIgnoreCase(expr.token, "last_value")) {
-                            isIgnoreNullsWindowFunc = true;
-                            expr.token = "last_not_null_value";
-                        } else {
-                            throw SqlException.$(colPosition, "only first_value and last_value window functions support IGNORE NULLS");
-                        }
                     } else {
+                        windowNullsDesc = 0;
                         lexer.backTo(colPosition, tok);
                     }
                 }
 
-                if ((tok != null && isOverKeyword(tok)) || isIgnoreNullsWindowFunc) {
+                if ((tok != null && isOverKeyword(tok)) || windowNullsDesc > 0) {
                     // window function
                     expectTok(lexer, '(');
                     overClauseMode = true;//prevent lexer returning ')' ending over clause as null in a sub-query
@@ -2321,6 +2324,8 @@ public class SqlParser {
                         col = winCol;
 
                         tok = tokIncludingLocalBrace(lexer, "'partition' or 'order' or ')'");
+                        winCol.setIgnoreNulls(windowNullsDesc == 1);
+                        winCol.setNullsDescPos(windowNullsDesc > 0 ? colPosition : 0);
 
                         if (isPartitionKeyword(tok)) {
                             expectTok(lexer, "by");
@@ -2652,10 +2657,15 @@ public class SqlParser {
                         throw err(lexer, null, "'from' expected");
                     }
                     CharSequence alias;
+
                     if (qc.getAst().type == ExpressionNode.CONSTANT && Chars.indexOfUnquoted(token, '.') != -1) {
                         alias = createConstColumnAlias(aliasMap);
                     } else {
-                        alias = createColumnAlias(qc.getAst(), aliasMap);
+                        CharSequence tokenAlias = qc.getAst().token;
+                        if (qc.isWindowColumn() && ((WindowColumn) qc).isIgnoreNulls()) {
+                            tokenAlias += "_ignore_nulls";
+                        }
+                        alias = createColumnAlias(tokenAlias, qc.getAst().type, aliasMap);
                     }
                     qc.setAlias(alias);
                     aliasMap.put(alias, qc);

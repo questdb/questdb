@@ -35,9 +35,7 @@ import io.questdb.griffin.engine.functions.window.BaseLongWindowFunction;
 import io.questdb.griffin.engine.functions.window.CountConstWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.CountDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.CountFunctionFactoryHelper;
-import io.questdb.griffin.engine.functions.window.FirstNotNullValueDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.FirstValueDoubleWindowFunctionFactory;
-import io.questdb.griffin.engine.functions.window.LastNotNullValueDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.LastValueDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.MaxDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.MinDoubleWindowFunctionFactory;
@@ -184,7 +182,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                     if (rangeLo == Long.MIN_VALUE && rangeHi == 0) {
                         return new FirstValueDoubleWindowFunctionFactory.FirstValueOverWholeResultSetFunction(TestDefaults.createLongFunction(x -> x.getLong(2)));
                     }
-                    return new FirstNotNullValueDoubleWindowFunctionFactory.FirstNotNullValueOverRowsFrameFunction(
+                    return new FirstValueDoubleWindowFunctionFactory.FirstNotNullValueOverRowsFrameFunction(
                             TestDefaults.createLongFunction(x -> x.getLong(2)),
                             rangeLo,
                             rangeHi,
@@ -940,14 +938,14 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 rnd -> -rnd.nextLong(1024),
                 (rangeLo, rangeHi) -> {
                     if (rangeHi == 0 && rangeLo == Long.MIN_VALUE) {
-                        return new LastNotNullValueDoubleWindowFunctionFactory.LastNotNullValueOverUnboundedPartitionRowsFrameFunction(
+                        return new LastValueDoubleWindowFunctionFactory.LastNotNullValueOverUnboundedPartitionRowsFrameFunction(
                                 TestDefaults.createOrderedMap(new SingleColumnType(columnTypes[1]), LastValueDoubleWindowFunctionFactory.LAST_VALUE_COLUMN_TYPES),
                                 TestDefaults.createVirtualRecord(TestDefaults.createIntFunction(x -> x.getInt(1))),
                                 TestDefaults.createRecordSink((r, w) -> w.putInt(r.getInt(0))),
                                 TestDefaults.createLongFunction(x -> x.getLong(2))
                         );
                     }
-                    return new LastNotNullValueDoubleWindowFunctionFactory.LastNotNullValueOverPartitionRangeFrameFunction(
+                    return new LastValueDoubleWindowFunctionFactory.LastNotNullValueOverPartitionRangeFrameFunction(
                             TestDefaults.createOrderedMap(new SingleColumnType(columnTypes[1]), LastValueDoubleWindowFunctionFactory.LAST_VALUE_PARTITION_RANGE_COLUMN_TYPES),
                             TestDefaults.createVirtualRecord(TestDefaults.createIntFunction(x -> x.getInt(1))),
                             TestDefaults.createRecordSink((r, w) -> w.putInt(r.getInt(0))),
@@ -974,15 +972,15 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 rnd -> -rnd.nextLong(1024),
                 (rangeLo, rangeHi) -> {
                     if (rangeHi == 0 && rangeLo == Long.MIN_VALUE) {
-                        return new LastNotNullValueDoubleWindowFunctionFactory.LastNotNullValueOverUnboundedPartitionRowsFrameFunction(
+                        return new LastValueDoubleWindowFunctionFactory.LastNotNullValueOverUnboundedPartitionRowsFrameFunction(
                                 TestDefaults.createOrderedMap(new SingleColumnType(columnTypes[1]), LastValueDoubleWindowFunctionFactory.LAST_VALUE_COLUMN_TYPES),
                                 TestDefaults.createVirtualRecord(TestDefaults.createIntFunction(x -> x.getInt(1))),
                                 TestDefaults.createRecordSink((r, w) -> w.putInt(r.getInt(0))),
                                 TestDefaults.createLongFunction(x -> x.getLong(2))
                         );
                     }
-                    return new LastNotNullValueDoubleWindowFunctionFactory.LastNotNullValueOverPartitionRowsFrameFunction(
-                            TestDefaults.createOrderedMap(new SingleColumnType(columnTypes[1]), LastNotNullValueDoubleWindowFunctionFactory.LAST_NOT_NULL_VALUE_PARTITION_ROWS_COLUMN_TYPES),
+                    return new LastValueDoubleWindowFunctionFactory.LastNotNullValueOverPartitionRowsFrameFunction(
+                            TestDefaults.createOrderedMap(new SingleColumnType(columnTypes[1]), LastValueDoubleWindowFunctionFactory.LAST_NOT_NULL_VALUE_PARTITION_ROWS_COLUMN_TYPES),
                             TestDefaults.createVirtualRecord(TestDefaults.createIntFunction(x -> x.getInt(1))),
                             TestDefaults.createRecordSink((r, w) -> w.putInt(r.getInt(0))),
                             rangeLo,
@@ -1006,11 +1004,11 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 rnd -> -rnd.nextLong(1024),
                 (rangeLo, rangeHi) -> {
                     if (rangeHi == 0 && rangeLo == Long.MIN_VALUE) {
-                        return new LastNotNullValueDoubleWindowFunctionFactory.LastNotNullOverUnboundedRowsFrameFunction(
+                        return new LastValueDoubleWindowFunctionFactory.LastNotNullOverUnboundedRowsFrameFunction(
                                 TestDefaults.createLongFunction(x -> x.getLong(2))
                         );
                     }
-                    return new LastNotNullValueDoubleWindowFunctionFactory.LastNotNullValueOverRowsFrameFunction(
+                    return new LastValueDoubleWindowFunctionFactory.LastNotNullValueOverRowsFrameFunction(
                             TestDefaults.createLongFunction(x -> x.getLong(2)),
                             rangeLo,
                             rangeHi,
@@ -1032,11 +1030,11 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 rnd -> -rnd.nextLong(1024),
                 (rangeLo, rangeHi) -> {
                     if (rangeHi == 0 && rangeLo == Long.MIN_VALUE) {
-                        return new LastNotNullValueDoubleWindowFunctionFactory.LastNotNullOverUnboundedRowsFrameFunction(
+                        return new LastValueDoubleWindowFunctionFactory.LastNotNullOverUnboundedRowsFrameFunction(
                                 TestDefaults.createLongFunction(x -> x.getLong(2))
                         );
                     }
-                    return new LastNotNullValueDoubleWindowFunctionFactory.LastNotNullValueOverRangeFrameFunction(
+                    return new LastValueDoubleWindowFunctionFactory.LastNotNullValueOverRangeFrameFunction(
                             rangeLo,
                             rangeHi,
                             TestDefaults.createLongFunction(x -> x.getLong(2)),

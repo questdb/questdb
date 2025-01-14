@@ -76,6 +76,9 @@ abstract class BasePartitionedDoubleWindowFunction extends BaseDoubleWindowFunct
     public void toPlan(PlanSink sink) {
         sink.val(getName());
         sink.val('(').val(arg).val(')');
+        if (isIgnoreNulls()) {
+            sink.val(" ignore nulls");
+        }
         sink.val(" over (");
         sink.val("partition by ");
         sink.val(partitionByRecord.getFunctions());

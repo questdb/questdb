@@ -68,6 +68,8 @@ public final class WindowColumn extends QueryColumn {
     private int rowsLoExprTimeUnitPos;
     private int rowsLoKind = PRECEDING;
     private int rowsLoKindPos = 0;
+    private boolean ignoreNulls = false;
+    private int nullsDescPos = 0;
 
     private WindowColumn() {
     }
@@ -100,6 +102,8 @@ public final class WindowColumn extends QueryColumn {
         rowsHi = Long.MAX_VALUE;
         exclusionKind = EXCLUDE_NO_OTHERS;
         exclusionKindPos = 0;
+        ignoreNulls = false;
+        nullsDescPos = 0;
     }
 
     public int getExclusionKind() {
@@ -188,6 +192,14 @@ public final class WindowColumn extends QueryColumn {
         return framingMode != FRAMING_RANGE || rowsLoKind != PRECEDING || rowsHiKind != CURRENT || rowsHiExpr != null || rowsLoExpr != null;
     }
 
+    public boolean isIgnoreNulls() {
+        return ignoreNulls;
+    }
+
+    public int getNullsDescPos() {
+        return nullsDescPos;
+    }
+
     @Override
     public boolean isWindowColumn() {
         return true;
@@ -260,5 +272,13 @@ public final class WindowColumn extends QueryColumn {
     public void setRowsLoKind(int rowsLoKind, int rowsLoKindPos) {
         this.rowsLoKind = rowsLoKind;
         this.rowsLoKindPos = rowsLoKindPos;
+    }
+
+    public void setIgnoreNulls(boolean ignoreNulls) {
+        this.ignoreNulls = ignoreNulls;
+    }
+
+    public void setNullsDescPos(int nullsDescPos) {
+        this.nullsDescPos = nullsDescPos;
     }
 }

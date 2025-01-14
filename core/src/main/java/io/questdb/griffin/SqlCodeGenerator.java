@@ -4635,7 +4635,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             ac.getRowsHiKindPos(),
                             ac.getExclusionKind(),
                             ac.getExclusionKindPos(),
-                            baseMetadata.getTimestampIndex()
+                            baseMetadata.getTimestampIndex(),
+                            ac.isIgnoreNulls(),
+                            ac.getNullsDescPos()
                     );
                     final Function f;
                     try {
@@ -4859,7 +4861,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             ac.getRowsHiKindPos(),
                             ac.getExclusionKind(),
                             ac.getExclusionKindPos(),
-                            chainMetadata.getTimestampIndex()
+                            chainMetadata.getTimestampIndex(),
+                            ac.isIgnoreNulls(),
+                            ac.getNullsDescPos()
                     );
                     final Function f;
                     try {

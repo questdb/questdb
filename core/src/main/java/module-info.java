@@ -29,6 +29,7 @@ open module io.questdb {
     requires static org.jetbrains.annotations;
     requires static java.management;
     requires jdk.management;
+    requires java.desktop;
 
     uses io.questdb.griffin.FunctionFactory;
     exports io.questdb;
@@ -1014,7 +1015,6 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.window.RankFunctionFactory,
             io.questdb.griffin.engine.functions.window.AvgDoubleWindowFunctionFactory,
             io.questdb.griffin.engine.functions.window.FirstValueDoubleWindowFunctionFactory,
-            io.questdb.griffin.engine.functions.window.FirstNotNullValueDoubleWindowFunctionFactory,
             io.questdb.griffin.engine.functions.window.SumDoubleWindowFunctionFactory,
             io.questdb.griffin.engine.functions.window.CountConstWindowFunctionFactory,
             io.questdb.griffin.engine.functions.window.CountDoubleWindowFunctionFactory,
@@ -1023,7 +1023,6 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.window.MaxDoubleWindowFunctionFactory,
             io.questdb.griffin.engine.functions.window.MinDoubleWindowFunctionFactory,
             io.questdb.griffin.engine.functions.window.LastValueDoubleWindowFunctionFactory,
-            io.questdb.griffin.engine.functions.window.LastNotNullValueDoubleWindowFunctionFactory,
             io.questdb.griffin.engine.functions.window.LagDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.window.LeadDoubleFunctionFactory,
 

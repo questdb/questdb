@@ -118,7 +118,9 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             int rowsHiKindPos,
             int exclusionKind,
             int exclusionKindPos,
-            int timestampIndex
+            int timestampIndex,
+            boolean ignoreNulls,
+            int nullsDescPos
     ) {
         windowContext.of(
                 partitionByRecord,
@@ -135,7 +137,9 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
                 rowsHiKindPos,
                 exclusionKind,
                 exclusionKindPos,
-                timestampIndex
+                timestampIndex,
+                ignoreNulls,
+                nullsDescPos
         );
     }
 
