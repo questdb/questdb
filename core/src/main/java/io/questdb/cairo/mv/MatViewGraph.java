@@ -150,7 +150,7 @@ public class MatViewGraph implements QuietCloseable {
 
     public MatViewDefinition getMatView(TableToken matViewToken) {
         final MatViewRefreshState state = refreshStateByTableDirName.get(matViewToken.getDirName());
-        if (state != null && !state.isDropped()) {
+        if (state != null) {
             if (state.isDropped()) {
                 // Housekeeping
                 refreshStateByTableDirName.remove(matViewToken.getDirName(), state);
@@ -196,11 +196,12 @@ public class MatViewGraph implements QuietCloseable {
 
     public void refresh(TableToken viewTableToken) {
         final MatViewRefreshState state = refreshStateByTableDirName.get(viewTableToken.getDirName());
-        // TODO(puzpuzpuz): state can be null???
-        final MatViewRefreshTask task = taskHolder.get();
-        task.baseTable = state.getViewDefinition().getMatViewToken();
-        task.viewToken = viewTableToken;
-        refreshTaskQueue.enqueue(task);
+        if (state != null && !state.isDropped()) {
+            final MatViewRefreshTask task = taskHolder.get();
+            task.baseTable = state.getViewDefinition().getMatViewToken();
+            task.viewToken = viewTableToken;
+            refreshTaskQueue.enqueue(task);
+        }
     }
 
     public boolean tryDequeueRefreshTask(MatViewRefreshTask task) {

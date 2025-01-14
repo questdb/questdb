@@ -1368,7 +1368,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 final FilesFacade ff = configuration.getFilesFacade();
                 if (tableToken.isMatView() && TableUtils.matViewFileExists(configuration, path, tableToken.getDirName(), ff)) {
                     try {
-                        MatViewDefinition matViewDefinition = TableUtils.loadMatViewDefinition(
+                        final MatViewDefinition matViewDefinition = TableUtils.loadMatViewDefinition(
                                 ff,
                                 memory,
                                 path,
