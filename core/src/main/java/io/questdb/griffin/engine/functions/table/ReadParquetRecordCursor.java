@@ -92,6 +92,27 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         }
     }
 
+    public static boolean metadataHasChanged(RecordMetadata metadata, PartitionDecoder decoder) {
+        if (metadata.getColumnCount() != decoder.metadata().columnCount()) {
+            return true;
+        }
+
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (!Chars.equals(metadata.getColumnName(i), decoder.metadata().columnName(i))) {
+                return true;
+            }
+
+            final int metadataType = metadata.getColumnType(i);
+            final int decoderType = decoder.metadata().getColumnType(i);
+            final boolean symbolRemappingDetected = (metadataType == ColumnType.VARCHAR && decoderType == ColumnType.SYMBOL);
+            // No need to compare column types if we deal with symbol remapping.
+            if (!symbolRemappingDetected && metadataType != decoderType) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     @Override
     public void close() {
         Misc.free(decoder);
@@ -167,30 +188,6 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         return dataPtr + dataOffset;
     }
 
-    private boolean metadataHasChanged(RecordMetadata metadata, PartitionDecoder decoder) {
-        if (metadata.getColumnCount() != decoder.metadata().columnCount()) {
-            return true;
-        }
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            final int metadataType = metadata.getColumnType(i);
-            final int decoderType = decoder.metadata().getColumnType(i);
-
-            boolean remappingDetected = symbolToVarcharRemappingDetected(metadataType, decoderType);
-            if (remappingDetected) {
-                continue;
-            }
-            if (metadata.getColumnType(i) != decoder.metadata().getColumnType(i)) {
-                return true;
-            }
-        }
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            if (!Chars.equals(metadata.getColumnName(i), decoder.metadata().columnName(i))) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     private boolean switchToNextRowGroup() {
         dataPtrs.clear();
         auxPtrs.clear();
@@ -206,10 +203,6 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             return true;
         }
         return false;
-    }
-
-    private boolean symbolToVarcharRemappingDetected(int metadataType, int decoderType) {
-        return metadataType == ColumnType.VARCHAR && decoderType == ColumnType.SYMBOL;
     }
 
     private class ParquetRecord implements Record {

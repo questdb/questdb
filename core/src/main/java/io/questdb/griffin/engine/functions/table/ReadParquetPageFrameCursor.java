@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.table;
 
 import io.questdb.cairo.BitmapIndexReader;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.PageFrame;
@@ -39,7 +38,6 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
@@ -47,6 +45,8 @@ import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.str.LPSZ;
 import org.jetbrains.annotations.Nullable;
+
+import static io.questdb.griffin.engine.functions.table.ReadParquetRecordCursor.metadataHasChanged;
 
 /**
  * Page frame cursor for parallel read_parquet() SQL function.
@@ -126,14 +126,14 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
             // We need to recompile the factory as the Parquet metadata has changed.
             throw TableReferenceOutOfDateException.of(path);
         }
-        // TODO(puzpuzpuz): we need to support projection pushdown for read_parquet()
-        //                  as currently we're decoding all columns
+
         columnIndexes.clear();
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             columnIndexes.add(i);
         }
         this.rowCount = decoder.metadata().rowCount();
         this.rowGroupCount = decoder.metadata().rowGroupCount();
+
         toTop();
     }
 
@@ -150,34 +150,6 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
     @Override
     public void toTop() {
         frame.clear();
-    }
-
-    private boolean metadataHasChanged(RecordMetadata metadata, PartitionDecoder decoder) {
-        if (metadata.getColumnCount() != decoder.metadata().columnCount()) {
-            return true;
-        }
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            final int metadataType = metadata.getColumnType(i);
-            final int decoderType = decoder.metadata().getColumnType(i);
-
-            boolean remappingDetected = symbolToVarcharRemappingDetected(metadataType, decoderType);
-            if (remappingDetected) {
-                continue;
-            }
-            if (metadata.getColumnType(i) != decoder.metadata().getColumnType(i)) {
-                return true;
-            }
-        }
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            if (!Chars.equals(metadata.getColumnName(i), decoder.metadata().columnName(i))) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private boolean symbolToVarcharRemappingDetected(int metadataType, int decoderType) {
-        return metadataType == ColumnType.VARCHAR && decoderType == ColumnType.SYMBOL;
     }
 
     private class ReadParquetPageFrame implements PageFrame, Mutable {
