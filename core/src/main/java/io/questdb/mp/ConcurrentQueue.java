@@ -78,7 +78,6 @@ public class ConcurrentQueue<T extends QueueValueHolder<T>> {
         this(factory, INITIAL_SEGMENT_LENGTH);
     }
 
-
     /**
      * Initializes a new instance of the ConcurrentQueue class with the specified initial capacity.
      *
