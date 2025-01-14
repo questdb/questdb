@@ -24,8 +24,8 @@
 
 package io.questdb.griffin.model;
 
-import io.questdb.griffin.engine.functions.window.FirstNotNullValueDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.FirstValueDoubleWindowFunctionFactory;
+import io.questdb.griffin.engine.functions.window.LastValueDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.RankFunctionFactory;
 import io.questdb.griffin.engine.functions.window.RowNumberFunctionFactory;
 import io.questdb.std.Chars;
@@ -224,9 +224,8 @@ public final class WindowColumn extends QueryColumn {
         CharSequence token = getAst().token;
 
         // If this is an 'order' sensitive window function and there is no ORDER BY, it may depend on its child's ORDER BY clause.
-        // todo, need add last_value/last_not_null_value after merged
         if ((Chars.equalsIgnoreCase(token, FirstValueDoubleWindowFunctionFactory.NAME) ||
-                Chars.equalsIgnoreCase(token, FirstNotNullValueDoubleWindowFunctionFactory.NAME)) &&
+                Chars.equalsIgnoreCase(token, LastValueDoubleWindowFunctionFactory.NAME)) &&
                 orderBy.size() == 0 && modelOrder.size() == 0) {
             return true;
         }

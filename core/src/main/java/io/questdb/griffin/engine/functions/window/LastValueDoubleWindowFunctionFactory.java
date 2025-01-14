@@ -60,7 +60,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
     public static final ArrayColumnTypes LAST_VALUE_PARTITION_ROWS_COLUMN_TYPES;
     public static final ArrayColumnTypes LAST_VALUE_PARTITION_RANGE_COLUMN_TYPES;
     public static final ArrayColumnTypes LAST_NOT_NULL_VALUE_PARTITION_ROWS_COLUMN_TYPES;
-    private static final String NAME = "last_value";
+    public static final String NAME = "last_value";
     private static final String SIGNATURE = NAME + "(D)";
 
     @Override
