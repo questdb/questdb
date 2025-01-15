@@ -38,12 +38,20 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
+import java.util.function.Function;
+
 public class MatViewGraph implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(MatViewGraph.class);
+    private final Function<CharSequence, MatViewRefreshList> createRefreshList;
+    // TODO(puzpuzpuz): this map is grow-only, i.e. keys are never removed
     private final ConcurrentHashMap<MatViewRefreshList> dependantViewsByTableName = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<MatViewRefreshState> refreshStateByTableDirName = new ConcurrentHashMap<>();
     private final ConcurrentQueue<MatViewRefreshTask> refreshTaskQueue = new ConcurrentQueue<>(MatViewRefreshTask::new);
     private final ThreadLocal<MatViewRefreshTask> taskHolder = new ThreadLocal<>(MatViewRefreshTask::new);
+
+    public MatViewGraph() {
+        this.createRefreshList = name -> new MatViewRefreshList();
+    }
 
     @TestOnly
     public void clear() {
@@ -78,7 +86,7 @@ public class MatViewGraph implements QuietCloseable {
 
             MatViewRefreshList list = getDependencyList(viewDefinition.getBaseTableName());
             try {
-                ObjList<TableToken> matViews = list.writeLock();
+                ObjList<TableToken> matViews = list.lockForWrite();
                 // TODO(eugene): what the purpose of this loop?
                 //  `matViews` is updated unconditionaly with `matViewToken`
                 //  can `matViews` contain token for the dropped view?
@@ -91,7 +99,7 @@ public class MatViewGraph implements QuietCloseable {
                 }
                 matViews.add(matViewToken);
             } finally {
-                list.unlockWrite();
+                list.unlockAfterWrite();
             }
         }
     }
@@ -117,7 +125,7 @@ public class MatViewGraph implements QuietCloseable {
             final MatViewRefreshList state = dependantViewsByTableName.get(baseTableName);
             if (state != null) {
                 try {
-                    ObjList<TableToken> matViews = state.writeLock();
+                    ObjList<TableToken> matViews = state.lockForWrite();
                     for (int i = 0, n = matViews.size(); i < n; i++) {
                         TableToken view = matViews.get(i);
                         if (view.equals(viewToken)) {
@@ -126,7 +134,7 @@ public class MatViewGraph implements QuietCloseable {
                         }
                     }
                 } finally {
-                    state.unlockWrite();
+                    state.unlockAfterWrite();
                 }
             }
         }
@@ -135,10 +143,10 @@ public class MatViewGraph implements QuietCloseable {
     public void getAffectedViews(TableToken table, ObjList<TableToken> sink) {
         MatViewRefreshList list = getDependencyList(table.getTableName());
         try {
-            ObjList<TableToken> matViews = list.readLock();
+            ObjList<TableToken> matViews = list.lockForRead();
             sink.addAll(matViews);
         } finally {
-            list.unlockRead();
+            list.unlockAfterRead();
         }
     }
 
@@ -217,14 +225,6 @@ public class MatViewGraph implements QuietCloseable {
 
     @NotNull
     private MatViewRefreshList getDependencyList(CharSequence tableName) {
-        MatViewRefreshList state = dependantViewsByTableName.get(tableName);
-        if (state == null) {
-            // TODO(eugene): what if `MatViewRefreshList` will become Closable later?
-            state = new MatViewRefreshList();
-            // TODO(eugene): use computeIfAbsent ?
-            MatViewRefreshList existingState = dependantViewsByTableName.putIfAbsent(tableName, state);
-            return existingState != null ? existingState : state;
-        }
-        return state;
+        return dependantViewsByTableName.computeIfAbsent(tableName, createRefreshList);
     }
 }

@@ -39,12 +39,10 @@ public class MatViewRefreshList {
     public boolean notifyOnBaseTableCommitNoLock(long seqTxn) {
         boolean retry;
         long lastNotified;
-
         do {
             lastNotified = lastCommittedBaseTableTxn.get();
             retry = (Math.abs(lastNotified) < seqTxn) && !lastCommittedBaseTableTxn.compareAndSet(lastNotified, seqTxn);
         } while (retry);
-
         return lastNotified <= 0;
     }
 
@@ -53,21 +51,21 @@ public class MatViewRefreshList {
         return lastCommittedBaseTableTxn.get() != -seqTxn;
     }
 
-    ObjList<TableToken> readLock() {
+    ObjList<TableToken> lockForRead() {
         lock.readLock().lock();
         return matViews;
     }
 
-    void unlockRead() {
+    ObjList<TableToken> lockForWrite() {
+        lock.writeLock().lock();
+        return matViews;
+    }
+
+    void unlockAfterRead() {
         lock.readLock().unlock();
     }
 
-    void unlockWrite() {
+    void unlockAfterWrite() {
         lock.writeLock().unlock();
-    }
-
-    ObjList<TableToken> writeLock() {
-        lock.writeLock().lock();
-        return matViews;
     }
 }

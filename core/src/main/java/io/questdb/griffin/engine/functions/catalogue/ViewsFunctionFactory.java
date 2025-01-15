@@ -48,13 +48,20 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class ViewsFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "views()";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         return new CursorFunction(new ViewsCursorFactory()) {
             @Override
             public boolean isRuntimeConstant() {
