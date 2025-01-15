@@ -30,24 +30,24 @@ public class Bytes {
     }
 
     /**
-     * Aligns the given pointer to 2 bytes.
+     * Aligns the given size to 2 bytes.
      */
-    public static long align2b(long ptr) {
-        return (ptr + 1) & ~0x1;
+    public static long align2b(long size) {
+        return (size + 1) & ~0x1;
     }
 
     /**
-     * Aligns the given pointer to 4 bytes.
+     * Aligns the given size to 4 bytes.
      */
-    public static long align4b(long ptr) {
-        return (ptr + 3) & ~0x3;
+    public static long align4b(long size) {
+        return (size + 3) & ~0x3;
     }
 
     /**
-     * Aligns the given pointer to 8 bytes.
+     * Aligns the given size to 8 bytes.
      */
-    public static long align8b(long ptr) {
-        return (ptr + 7) & ~0x7;
+    public static long align8b(long size) {
+        return (size + 7) & ~0x7;
     }
 
     /**

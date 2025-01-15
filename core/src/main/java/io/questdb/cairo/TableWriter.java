@@ -1468,7 +1468,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         LOG.info().$("converting parquet partition to native [path=").$substr(pathRootSize, path).I$();
         final long parquetSize = txWriter.getPartitionParquetFileSize(partitionIndex);
         final long parquetAddr = mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-        final int columnCount = metadata.getColumnCount();
 
         long parquetRowCount = 0;
         try (RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER)) {
@@ -1487,16 +1486,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 parquetColumnIdsAndTypes.add(columnType);
 
                 if (ColumnType.isVarSize(columnType)) {
-                    long dstAuxFd = openAppend(ff, iFile(other.trimTo(newPartitionDirLen), columnName, columnNameTxn), LOG);
-                    long dstDataFd = openAppend(ff, dFile(other.trimTo(newPartitionDirLen), columnName, columnNameTxn), LOG);
-                    columnFdAndDataSize.add(dstAuxFd);
-                    columnFdAndDataSize.add(dstDataFd);
-                    columnFdAndDataSize.add(0);
+                    final long auxIndex = columnFdAndDataSize.size();
+                    columnFdAndDataSize.add(-1); // aux
+                    columnFdAndDataSize.add(-1); // data
+                    columnFdAndDataSize.add(0);  // data bytes written
+                    final long dstAuxFd = openAppend(ff, iFile(other.trimTo(newPartitionDirLen), columnName, columnNameTxn), LOG);
+                    columnFdAndDataSize.set(auxIndex, dstAuxFd);
+                    final long dstDataFd = openAppend(ff, dFile(other.trimTo(newPartitionDirLen), columnName, columnNameTxn), LOG);
+                    columnFdAndDataSize.set(auxIndex + 1, dstDataFd);
                 } else {
-                    long dstFixFd = openAppend(ff, dFile(other.trimTo(newPartitionDirLen), columnName, columnNameTxn), LOG);
-                    columnFdAndDataSize.add(-1);
-                    columnFdAndDataSize.add(dstFixFd);
-                    columnFdAndDataSize.add(0);
+                    final long auxIndex = columnFdAndDataSize.size();
+                    columnFdAndDataSize.add(-1); // aux
+                    columnFdAndDataSize.add(-1); // data
+                    columnFdAndDataSize.add(0);  // data bytes written
+                    final long dstFixFd = openAppend(ff, dFile(other.trimTo(newPartitionDirLen), columnName, columnNameTxn), LOG);
+                    columnFdAndDataSize.set(auxIndex + 1, dstFixFd);
                 }
             }
 
@@ -1556,7 +1560,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             path.trimTo(pathSize);
             other.trimTo(pathSize);
-            for (long i = 0; i < columnCount; i++) {
+            for (long i = 0, n = columnFdAndDataSize.size() / 3; i < n; i++) {
                 final long dstAuxFd = columnFdAndDataSize.get(3L * i);
                 ff.close(dstAuxFd);
                 final long dstDataFd = columnFdAndDataSize.get(3L * i + 1);

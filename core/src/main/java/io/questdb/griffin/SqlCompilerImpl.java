@@ -2641,6 +2641,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         long beginNanos = configuration.getMicrosecondClock().getTicks();
         QueryProgress.logStart(sqlId, createTableOp.getSqlText(), executionContext, false);
         try {
+            executionContext.setUseSimpleCircuitBreaker(true);
+
             // Fast path for CREATE TABLE IF NOT EXISTS in scenario when the table already exists
             final int status = executionContext.getTableStatus(path, createTableOp.getTableName());
             if (status == TableUtils.TABLE_EXISTS) {
@@ -2673,7 +2675,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (createTableOp.getRecordCursorFactory() != null) {
                     this.insertCount = -1;
                     int position = createTableOp.getTableNamePosition();
-                    executionContext.setUseSimpleCircuitBreaker(true);
                     RecordCursorFactory factory = createTableOp.getRecordCursorFactory();
                     RecordCursor newCursor;
                     for (int retryCount = 0; ; retryCount++) {
@@ -2732,8 +2733,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             engine.unlockTableName(tableToken);
                             throw e;
                         }
-                    } finally {
-                        executionContext.setUseSimpleCircuitBreaker(false);
                     }
                     createTableOp.updateOperationFutureTableToken(tableToken);
                     createTableOp.updateOperationFutureAffectedRowsCount(insertCount);
@@ -2796,6 +2795,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             QueryProgress.logError(e, sqlId, createTableOp.getSqlText(), executionContext, beginNanos);
             throw e;
         } finally {
+            executionContext.setUseSimpleCircuitBreaker(false);
             queryRegistry.unregister(sqlId, executionContext);
         }
     }
@@ -3230,10 +3230,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         TableToken tableToken = tableExistsOrFail(tableNameExpr.position, tableNameExpr.token, executionContext);
         long insertCount;
 
-        executionContext.setUseSimpleCircuitBreaker(true);
-        try (
-                TableWriterAPI writer = engine.getTableWriterAPI(tableToken, "insertAsSelect")
-        ) {
+        try (TableWriterAPI writer = engine.getTableWriterAPI(tableToken, "insertAsSelect")) {
+            executionContext.setUseSimpleCircuitBreaker(true);
+
             QueryModel queryModel = model.getQueryModel();
             try (
                     RecordCursorFactory factory = generateSelectOneShot(queryModel, executionContext, false);
