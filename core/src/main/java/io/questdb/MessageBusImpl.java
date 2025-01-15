@@ -88,7 +88,7 @@ public class MessageBusImpl implements MessageBus {
     private final MCSequence[] pageFrameReduceSubSeq;
     private final MPSequence queryCacheEventPubSeq;
     private final MCSequence queryCacheEventSubSeq;
-    private final MemCappedQueryTraceQueue queryMetricsQueue;
+    private final MemCappedQueryTraceQueue queryTraceQueue;
     private final MPSequence tableWriterEventPubSeq;
     private final RingQueue<TableWriterTask> tableWriterEventQueue;
     private final FanOut tableWriterEventSubSeq;
@@ -213,7 +213,7 @@ public class MessageBusImpl implements MessageBus {
             this.queryCacheEventSubSeq = new MCSequence(configuration.getQueryCacheEventQueueCapacity());
             queryCacheEventPubSeq.then(queryCacheEventSubSeq).then(queryCacheEventPubSeq);
 
-            this.queryMetricsQueue = new MemCappedQueryTraceQueue();
+            this.queryTraceQueue = new MemCappedQueryTraceQueue();
         } catch (Throwable th) {
             close();
             throw th;
@@ -441,7 +441,7 @@ public class MessageBusImpl implements MessageBus {
 
     @Override
     public MemCappedQueryTraceQueue getQueryTraceQueue() {
-        return queryMetricsQueue;
+        return queryTraceQueue;
     }
 
     @Override
