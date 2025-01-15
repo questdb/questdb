@@ -30,11 +30,13 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.model.IntrinsicModel;
+import org.jetbrains.annotations.NotNull;
 
 public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
     private TableReader baseTableReader;
@@ -53,6 +55,11 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
                 },
                 new BindVariableServiceImpl(engine.getConfiguration())
         );
+    }
+
+    @Override
+    public @NotNull SqlExecutionCircuitBreaker getCircuitBreaker() {
+        return getSimpleCircuitBreaker();
     }
 
     @Override

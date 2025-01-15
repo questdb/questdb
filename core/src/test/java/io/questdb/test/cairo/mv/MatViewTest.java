@@ -25,10 +25,14 @@
 package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MatViewRefreshJob;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -36,6 +40,8 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Ignore;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.griffin.model.IntervalUtils.parseFloorPartialTimestamp;
 
@@ -338,6 +344,71 @@ public class MatViewTest extends AbstractCairoTest {
         testIncrementalRefresh0("select sym, last(price) price, ts from base_price " +
                 "WHERE ts > 0 or ts < '2040-01-01' " +
                 "sample by 1h");
+    }
+
+    @Test
+    public void testSimpleCancelRefresh() throws Exception {
+        assertMemoryLeak(() -> {
+            SOCountDownLatch started = new SOCountDownLatch(1);
+            SOCountDownLatch stopped = new SOCountDownLatch(1);
+            AtomicBoolean refreshed = new AtomicBoolean(true);
+
+            execute("create table base_price (" +
+                    "sym varchar, price double, ts timestamp" +
+                    ") timestamp(ts) partition by DAY WAL"
+            );
+
+            String viewSql = "select sym, last(price) as price, ts from base_price where sleep(120000) sample by 1h";
+            createMatView(viewSql);
+            MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
+            refreshJob.run(0);
+
+            execute("insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                    ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                    ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                    ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            );
+            drainWalQueue();
+
+            new Thread(() -> {
+                started.countDown();
+                try {
+                    MatViewRefreshJob job = new MatViewRefreshJob(0, engine);
+                    refreshed.set(job.run(0));
+                } finally {
+                    stopped.countDown();
+                }
+            }, "mat_view_refresh_thread").start();
+
+            started.await();
+
+            long queryId = -1;
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                String activityQuery = "select query_id, query from query_activity() where query ='" + viewSql + "'";
+                try (final RecordCursorFactory factory = CairoEngine.select(compiler, activityQuery, sqlExecutionContext)) {
+                    while (stopped.getCount() != 0) {
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            if (cursor.hasNext()) {
+                                queryId = cursor.getRecord().getLong(0);
+                                break;
+                            }
+                        }
+                    }
+                } catch (SqlException e) {
+                    Assert.fail(e.getMessage());
+                }
+            }
+
+            Assert.assertTrue(queryId > 0);
+            execute("cancel query " + queryId);
+            stopped.await();
+            Assert.assertFalse(refreshed.get());
+            assertSql(
+                    "name\tlast_error\tlast_error_code\n" +
+                            "price_1h\tcancelled by user\t-1\n",
+                    "select name, last_error, last_error_code from views"
+            );
+        });
     }
 
     @Test
