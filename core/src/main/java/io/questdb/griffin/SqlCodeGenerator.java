@@ -5128,16 +5128,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     ) throws SqlException {
         final ObjList<ExpressionNode> latestBy = model.getLatestBy();
 
-        final BufferWindowCharSequence tab = (BufferWindowCharSequence) model.getTableName();
         final boolean supportsRandomAccess;
-        if (Chars.startsWith(tab, NO_ROWID_MARKER)) {
+        CharSequence tableName = model.getTableName();
+        if (Chars.startsWith(tableName, NO_ROWID_MARKER)) {
+            final BufferWindowCharSequence tab = (BufferWindowCharSequence) tableName;
             tab.shiftLo(NO_ROWID_MARKER.length());
             supportsRandomAccess = false;
         } else {
             supportsRandomAccess = true;
         }
 
-        final TableToken tableToken = executionContext.getTableToken(tab);
+        final TableToken tableToken = executionContext.getTableToken(tableName);
         if (model.isUpdate() && !executionContext.isWalApplication() && executionContext.getCairoEngine().isWalTable(tableToken)) {
             // two phase update execution, this is client-side branch. It has to execute against the sequencer metadata
             // to allow the client to succeed even if WAL apply does not run.
