@@ -266,6 +266,28 @@ public class HttpServer implements Closeable {
         server.bind(new StaticContentProcessorFactory(httpServerConfiguration));
     }
 
+    public static Utf8Sequence normalizeUrl(DirectUtf8String url) {
+        long p = url.ptr();
+        long shift = 0;
+        boolean lastSlash = false;
+        for (int i = 0, n = url.size(); i < n; i++) {
+            byte b = url.byteAt(i);
+            if (b == '/') {
+                if (lastSlash) {
+                    shift++;
+                    continue;
+                } else {
+                    lastSlash = true;
+                }
+            } else {
+                lastSlash = false;
+            }
+            Unsafe.getUnsafe().putByte(p + i - shift, b);
+        }
+        url.squeezeHi(shift);
+        return url;
+    }
+
     public void bind(HttpRequestProcessorFactory factory) {
         bind(factory, false);
     }
@@ -280,14 +302,11 @@ public class HttpServer implements Closeable {
                 if (HttpFullFatServerConfiguration.DEFAULT_PROCESSOR_URL.equals(url)) {
                     selector.defaultRequestProcessor = factory.newInstance();
                 } else {
-                    final HttpRequestProcessor processor = factory.newInstance();
-                    Utf8String key = new Utf8String(url);
+                    final Utf8String key = new Utf8String(url);
                     int keyIndex = selector.processorMap.keyIndex(key);
-                    if (keyIndex < 0) {
-                        // duplicate path, release processor to not leak memory
-                        Misc.freeIfCloseable(processor);
-                    } else {
-                        selector.processorMap.put(new Utf8String(url), processor);
+                    if (keyIndex > -1) {
+                        final HttpRequestProcessor processor = factory.newInstance();
+                        selector.processorMap.putAt(keyIndex, key, processor);
                         if (useAsDefault) {
                             selector.defaultRequestProcessor = processor;
                         }
@@ -378,26 +397,5 @@ public class HttpServer implements Closeable {
         public HttpRequestProcessor select(DirectUtf8String url) {
             return processorMap.get(normalizeUrl(url));
         }
-    }
-
-    private static Utf8Sequence normalizeUrl(DirectUtf8String url) {
-        long p = url.ptr();
-        long shift = 0;
-        boolean lastSlash = false;
-        for (int i = 0, n = url.size(); i < n; i++) {
-            byte b = url.byteAt(i);
-            if (b == '/') {
-                if (lastSlash) {
-                    shift++;
-                } else {
-                    lastSlash = true;
-                }
-            } else {
-                lastSlash = false;
-                Unsafe.getUnsafe().putByte(p + i - shift, b);
-            }
-        }
-        url.squeezeHi(shift);
-        return url;
     }
 }

@@ -935,15 +935,15 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpContextWebConsole = stripTrailingSlash(getString(properties, env, PropertyKey.HTTP_CONTEXT_WEB_CONSOLE, "/"));
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_ILP, this.httpContextPathILP, "/write", "/api/v2/write");
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_ILP_PING, this.httpContextPathILPPing, "/ping");
-            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_IMPORT, this.httpContextPathImport, "/imp");
-            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_EXPORT, this.httpContextPathExport, "/exp");
-            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_SETTINGS, this.httpContextPathSettings, "/settings");
-            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_TABLE_STATUS, this.httpContextPathTableStatus, "/chk");
-            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_EXECUTE, this.httpContextPathExec, "/exec");
-            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_WARNINGS, this.httpContextPathWarnings, "/warnings");
+            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_IMPORT, this.httpContextPathImport, httpContextWebConsole + "/imp");
+            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_EXPORT, this.httpContextPathExport, httpContextWebConsole + "/exp");
+            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_SETTINGS, this.httpContextPathSettings, httpContextWebConsole + "/settings");
+            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_TABLE_STATUS, this.httpContextPathTableStatus, httpContextWebConsole + "/chk");
+            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_EXECUTE, this.httpContextPathExec, httpContextWebConsole + "/exec");
+            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_WARNINGS, this.httpContextPathWarnings, httpContextWebConsole + "/warnings");
 
-            // if the Web Console does not run on the root context, we need to add all the dependent services
-            // to the new context. For compatibility reasons we leave the old context paths as they are.
+            // If any of the REST services the Web Console depends on are overridden, we need to make sure
+            // the context paths the Web Console requires are also present, so customization does not break the Web Console.
 
             // The following paths need to be added for the Web Console to work properly. This
             // deals with the cases where context path was overridden by the user. Adding duplicate

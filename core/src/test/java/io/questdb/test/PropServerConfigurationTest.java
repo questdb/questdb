@@ -37,6 +37,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.line.LineHourTimestampAdapter;
 import io.questdb.cutlass.line.LineMicroTimestampAdapter;
@@ -55,12 +56,15 @@ import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.NanosecondClockImpl;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.Utf8SequenceObjHashMap;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
@@ -68,10 +72,10 @@ import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -86,6 +90,7 @@ import java.io.InputStream;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
+import java.util.function.Function;
 
 public class PropServerConfigurationTest {
     @ClassRule
@@ -110,7 +115,7 @@ public class PropServerConfigurationTest {
     @Test
     public void testAllDefaults() throws Exception {
         Properties properties = new Properties();
-        PropServerConfiguration configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
         FilesFacade ff = configuration.getCairoConfiguration().getFilesFacade();
 
         Assert.assertFalse(configuration.getCairoConfiguration().getLogLevelVerbose());
@@ -481,15 +486,15 @@ public class PropServerConfigurationTest {
     public void testCommitIntervalDefault() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("line.tcp.commit.interval.default", "0");
-        PropServerConfiguration configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(PropServerConfiguration.COMMIT_INTERVAL_DEFAULT, configuration.getLineTcpReceiverConfiguration().getCommitIntervalDefault());
 
         properties.setProperty("line.tcp.commit.interval.default", "-1");
-        configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(PropServerConfiguration.COMMIT_INTERVAL_DEFAULT, configuration.getLineTcpReceiverConfiguration().getCommitIntervalDefault());
 
         properties.setProperty("line.tcp.commit.interval.default", "1000");
-        configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(1000, configuration.getLineTcpReceiverConfiguration().getCommitIntervalDefault());
     }
 
@@ -498,47 +503,47 @@ public class PropServerConfigurationTest {
         Properties properties = new Properties();
 
         // default
-        PropServerConfiguration configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(ColumnType.DOUBLE, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForFloat());
 
         // empty
         properties.setProperty("line.float.default.column.type", "");
-        configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(ColumnType.DOUBLE, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForFloat());
 
         // double
         properties.setProperty("line.float.default.column.type", "DOUBLE");
-        configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(ColumnType.DOUBLE, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForFloat());
 
         // float
         properties.setProperty("line.float.default.column.type", "FLOAT");
-        configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(ColumnType.FLOAT, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForFloat());
 
         // lowercase
         properties.setProperty("line.float.default.column.type", "double");
-        configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(ColumnType.DOUBLE, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForFloat());
 
         // camel case
         properties.setProperty("line.float.default.column.type", "Float");
-        configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(ColumnType.FLOAT, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForFloat());
 
         // not allowed
         properties.setProperty("line.float.default.column.type", "STRING");
-        configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(ColumnType.DOUBLE, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForFloat());
 
         // not allowed
         properties.setProperty("line.float.default.column.type", "SHORT");
-        configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(ColumnType.DOUBLE, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForFloat());
 
         // nonexistent type
         properties.setProperty("line.float.default.column.type", "FLAT");
-        configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(ColumnType.DOUBLE, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForFloat());
     }
 
@@ -547,57 +552,57 @@ public class PropServerConfigurationTest {
         Properties properties = new Properties();
 
         // default
-        PropServerConfiguration configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(ColumnType.LONG, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());
 
         // empty
         properties.setProperty("line.integer.default.column.type", "");
-        configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(ColumnType.LONG, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());
 
         // long
         properties.setProperty("line.integer.default.column.type", "LONG");
-        configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(ColumnType.LONG, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());
 
         // int
         properties.setProperty("line.integer.default.column.type", "INT");
-        configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(ColumnType.INT, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());
 
         // short
         properties.setProperty("line.integer.default.column.type", "SHORT");
-        configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(ColumnType.SHORT, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());
 
         // byte
         properties.setProperty("line.integer.default.column.type", "BYTE");
-        configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(ColumnType.BYTE, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());
 
         // lowercase
         properties.setProperty("line.integer.default.column.type", "int");
-        configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(ColumnType.INT, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());
 
         // camel case
         properties.setProperty("line.integer.default.column.type", "Short");
-        configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(ColumnType.SHORT, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());
 
         // not allowed
         properties.setProperty("line.integer.default.column.type", "SYMBOL");
-        configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(ColumnType.LONG, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());
 
         // not allowed
         properties.setProperty("line.integer.default.column.type", "FLOAT");
-        configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(ColumnType.LONG, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());
 
         // nonexistent type
         properties.setProperty("line.integer.default.column.type", "BITE");
-        configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(ColumnType.LONG, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());
     }
 
@@ -608,7 +613,7 @@ public class PropServerConfigurationTest {
         properties.setProperty("http.min.bind.to", "0.0.0.0:0");
 
         // Using deprecated settings will not throw an exception, despite validation enabled.
-        newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        newPropServerConfiguration(properties);
     }
 
     @Test
@@ -627,14 +632,14 @@ public class PropServerConfigurationTest {
     public void testDoubleCastScaleGreaterThanMax() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("cairo.sql.double.cast.scale", Integer.toString(Numbers.MAX_DOUBLE_SCALE + 1));
-        newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        newPropServerConfiguration(properties);
     }
 
     @Test(expected = ServerConfigurationException.class)
     public void testDoubleScaleGreaterThanMax() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("http.json.query.double.scale", Integer.toString(Numbers.MAX_DOUBLE_SCALE + 1));
-        newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        newPropServerConfiguration(properties);
     }
 
     @Test
@@ -642,7 +647,7 @@ public class PropServerConfigurationTest {
         Properties properties = new Properties();
         properties.setProperty("log.timestamp.timezone", "");
         try {
-            newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+            newPropServerConfiguration(properties);
             Assert.fail();
         } catch (ServerConfigurationException e) {
             TestUtils.assertEquals("Invalid log timezone: ''", e.getMessage());
@@ -711,14 +716,14 @@ public class PropServerConfigurationTest {
     public void testFloatCastScaleGreaterThanMax() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("cairo.sql.float.cast.scale", Integer.toString(Numbers.MAX_FLOAT_SCALE + 1));
-        newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        newPropServerConfiguration(properties);
     }
 
     @Test(expected = ServerConfigurationException.class)
     public void testFloatScaleGreaterThanMax() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("http.json.query.float.scale", Integer.toString(Numbers.MAX_FLOAT_SCALE + 1));
-        newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        newPropServerConfiguration(properties);
     }
 
     @Test
@@ -726,7 +731,7 @@ public class PropServerConfigurationTest {
         try (InputStream is = PropServerConfigurationTest.class.getResourceAsStream("/server-http-disabled.conf")) {
             Properties properties = new Properties();
             properties.load(is);
-            PropServerConfiguration configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+            PropServerConfiguration configuration = newPropServerConfiguration(properties);
             Assert.assertFalse(configuration.getHttpServerConfiguration().isEnabled());
         }
     }
@@ -737,13 +742,13 @@ public class PropServerConfigurationTest {
 
         properties.setProperty(PropertyKey.LINE_TCP_MAX_MEASUREMENT_SIZE.getPropertyPath(), "1024");
         properties.setProperty(PropertyKey.LINE_TCP_MSG_BUFFER_SIZE.getPropertyPath(), "8192");
-        PropServerConfiguration configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(1024, configuration.getLineTcpReceiverConfiguration().getMaxMeasurementSize());
         Assert.assertEquals(8192, configuration.getLineTcpReceiverConfiguration().getRecvBufferSize());
 
         properties.setProperty(PropertyKey.LINE_TCP_MAX_MEASUREMENT_SIZE.getPropertyPath(), "1024");
         properties.setProperty(PropertyKey.LINE_TCP_MSG_BUFFER_SIZE.getPropertyPath(), "1024");
-        configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(1024, configuration.getLineTcpReceiverConfiguration().getMaxMeasurementSize());
         Assert.assertEquals(1024, configuration.getLineTcpReceiverConfiguration().getRecvBufferSize());
 
@@ -751,7 +756,7 @@ public class PropServerConfigurationTest {
         // then msg buffer size is adjusted to have enough space at least for a single measurement
         properties.setProperty(PropertyKey.LINE_TCP_MAX_MEASUREMENT_SIZE.getPropertyPath(), "1024");
         properties.setProperty(PropertyKey.LINE_TCP_MSG_BUFFER_SIZE.getPropertyPath(), "256");
-        configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(1024, configuration.getLineTcpReceiverConfiguration().getMaxMeasurementSize());
         Assert.assertEquals(1024, configuration.getLineTcpReceiverConfiguration().getRecvBufferSize());
     }
@@ -760,7 +765,7 @@ public class PropServerConfigurationTest {
     public void testImportWorkRootCantBeTheSameAsOtherInstanceDirectories() throws Exception {
         Properties properties = new Properties();
 
-        PropServerConfiguration configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
         Assert.assertTrue(Chars.endsWith(configuration.getCairoConfiguration().getSqlCopyInputWorkRoot(), "tmp"));
 
         //direct cases
@@ -782,7 +787,7 @@ public class PropServerConfigurationTest {
 
         Properties properties = new Properties();
 
-        PropServerConfiguration configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
         Assert.assertTrue(Chars.endsWith(configuration.getCairoConfiguration().getSqlCopyInputWorkRoot(), "tmp"));
 
         assertInputWorkRootCantBeSetTo(properties, configuration.getCairoConfiguration().getRoot().toUpperCase());
@@ -793,21 +798,21 @@ public class PropServerConfigurationTest {
     public void testInvalidBindToAddress() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("http.bind.to", "10.5.6:8990");
-        newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        newPropServerConfiguration(properties);
     }
 
     @Test(expected = ServerConfigurationException.class)
     public void testInvalidBindToMissingColon() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("http.bind.to", "10.5.6.1");
-        newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        newPropServerConfiguration(properties);
     }
 
     @Test(expected = ServerConfigurationException.class)
     public void testInvalidBindToPort() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("http.bind.to", "10.5.6.1:");
-        newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        newPropServerConfiguration(properties);
     }
 
     @Test(expected = ServerConfigurationException.class)
@@ -818,7 +823,7 @@ public class PropServerConfigurationTest {
             properties.setProperty("this.will.throw", "Test");
             properties.setProperty("this.will.also", "throw");
 
-            newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+            newPropServerConfiguration(properties);
         }
     }
 
@@ -826,35 +831,35 @@ public class PropServerConfigurationTest {
     public void testInvalidDouble() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("http.text.max.required.delimiter.stddev", "abc");
-        newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        newPropServerConfiguration(properties);
     }
 
     @Test(expected = ServerConfigurationException.class)
     public void testInvalidIPv4Address() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("line.udp.join", "12a.990.00");
-        newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        newPropServerConfiguration(properties);
     }
 
     @Test(expected = ServerConfigurationException.class)
     public void testInvalidInt() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("http.connection.string.pool.capacity", "1234a");
-        newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        newPropServerConfiguration(properties);
     }
 
     @Test(expected = ServerConfigurationException.class)
     public void testInvalidIntSize() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("http.request.header.buffer.size", "22g");
-        newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        newPropServerConfiguration(properties);
     }
 
     @Test(expected = ServerConfigurationException.class)
     public void testInvalidLong() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("cairo.idle.check.interval", "1234a");
-        newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        newPropServerConfiguration(properties);
     }
 
     @Test
@@ -862,7 +867,7 @@ public class PropServerConfigurationTest {
         Properties properties = new Properties();
         properties.setProperty("log.timestamp.locale", "jp");
         try {
-            newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+            newPropServerConfiguration(properties);
             Assert.fail();
         } catch (ServerConfigurationException e) {
             TestUtils.assertEquals("Invalid log locale: 'jp'", e.getMessage());
@@ -874,7 +879,7 @@ public class PropServerConfigurationTest {
         Properties properties = new Properties();
         properties.setProperty("log.timestamp.timezone", "HKK");
         try {
-            newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+            newPropServerConfiguration(properties);
             Assert.fail();
         } catch (ServerConfigurationException e) {
             TestUtils.assertEquals("Invalid log timezone: 'HKK'", e.getMessage());
@@ -924,38 +929,38 @@ public class PropServerConfigurationTest {
         Properties properties = new Properties();
         properties.setProperty("http.enabled", "false");
         properties.setProperty("line.udp.timestamp", "");
-        PropServerConfiguration configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
         Assert.assertSame(LineNanoTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
 
         properties.setProperty("line.udp.timestamp", "n");
-        configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        configuration = newPropServerConfiguration(properties);
         Assert.assertSame(LineNanoTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
 
         properties.setProperty("line.udp.timestamp", "u");
-        configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        configuration = newPropServerConfiguration(properties);
         Assert.assertSame(LineMicroTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
 
         properties.setProperty("line.udp.timestamp", "ms");
-        configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        configuration = newPropServerConfiguration(properties);
         Assert.assertSame(LineMilliTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
 
         properties.setProperty("line.udp.timestamp", "s");
-        configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        configuration = newPropServerConfiguration(properties);
         Assert.assertSame(LineSecondTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
 
         properties.setProperty("line.udp.timestamp", "m");
-        configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        configuration = newPropServerConfiguration(properties);
         Assert.assertSame(LineMinuteTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
 
         properties.setProperty("line.udp.timestamp", "h");
-        configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        configuration = newPropServerConfiguration(properties);
         Assert.assertSame(LineHourTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
     }
 
     @Test
     public void testMinimum4SharedWorkers() throws Exception {
         final Properties properties = new Properties();
-        final PropServerConfiguration configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        final PropServerConfiguration configuration = newPropServerConfiguration(properties);
         Assert.assertEquals("shared", configuration.getWorkerPoolConfiguration().getPoolName());
         Assert.assertTrue("must be minimum of 4 shared workers", configuration.getWorkerPoolConfiguration().getWorkerCount() >= 4);
     }
@@ -976,7 +981,7 @@ public class PropServerConfigurationTest {
             loadVolumePath(aliasB, volumeBPath);
             properties.setProperty(PropertyKey.CAIRO_VOLUMES.getPropertyPath(), sink.toString());
             try {
-                newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+                newPropServerConfiguration(properties);
             } catch (ServerConfigurationException e) {
                 TestUtils.assertContains(e.getMessage(), "inaccessible volume [path=banana]");
             }
@@ -1000,7 +1005,7 @@ public class PropServerConfigurationTest {
             loadVolumePath(aliasB, volumeBPath);
             properties.setProperty(PropertyKey.CAIRO_VOLUMES.getPropertyPath(), sink.toString());
             try {
-                newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+                newPropServerConfiguration(properties);
             } catch (ServerConfigurationException e) {
                 TestUtils.assertContains(e.getMessage(), "inaccessible volume [path=coconut]");
             }
@@ -1015,7 +1020,7 @@ public class PropServerConfigurationTest {
         Properties properties = new Properties();
         properties.setProperty(PropertyKey.CAIRO_VOLUMES.getPropertyPath(), p);
         try {
-            newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+            newPropServerConfiguration(properties);
         } catch (ServerConfigurationException e) {
             TestUtils.assertContains(e.getMessage(), "invalid syntax, missing alias at offset 0");
         }
@@ -1036,33 +1041,33 @@ public class PropServerConfigurationTest {
     @Test
     public void testPartitionBy() throws Exception {
         Properties properties = new Properties();
-        PropServerConfiguration configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(PartitionBy.DAY, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
         Assert.assertEquals(PartitionBy.DAY, configuration.getLineUdpReceiverConfiguration().getDefaultPartitionBy());
 
         properties.setProperty("line.tcp.default.partition.by", "YEAR");
-        configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(PartitionBy.YEAR, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
         Assert.assertEquals(PartitionBy.DAY, configuration.getLineUdpReceiverConfiguration().getDefaultPartitionBy());
 
         properties.setProperty("line.default.partition.by", "WEEK");
-        configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(PartitionBy.WEEK, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
         Assert.assertEquals(PartitionBy.WEEK, configuration.getLineUdpReceiverConfiguration().getDefaultPartitionBy());
 
         properties.setProperty("line.default.partition.by", "MONTH");
-        configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(PartitionBy.MONTH, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
         Assert.assertEquals(PartitionBy.MONTH, configuration.getLineUdpReceiverConfiguration().getDefaultPartitionBy());
 
         properties.setProperty("line.default.partition.by", "DAY");
-        configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(PartitionBy.DAY, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
         Assert.assertEquals(PartitionBy.DAY, configuration.getLineUdpReceiverConfiguration().getDefaultPartitionBy());
 
         properties.setProperty("line.default.partition.by", "YEAR");
         properties.setProperty("line.tcp.default.partition.by", "MONTH");
-        configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(PartitionBy.YEAR, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
         Assert.assertEquals(PartitionBy.YEAR, configuration.getLineUdpReceiverConfiguration().getDefaultPartitionBy());
     }
@@ -1073,7 +1078,7 @@ public class PropServerConfigurationTest {
             Properties properties = new Properties();
             properties.load(is);
 
-            PropServerConfiguration configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+            PropServerConfiguration configuration = newPropServerConfiguration(properties);
             testSetAllFromFile(configuration.getCairoConfiguration());
             testSetAllFromFile(new CairoConfigurationWrapper(configuration.getCairoConfiguration()));
 
@@ -1259,7 +1264,7 @@ public class PropServerConfigurationTest {
             Properties properties = new Properties();
             properties.load(is);
 
-            PropServerConfiguration configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+            PropServerConfiguration configuration = newPropServerConfiguration(properties);
 
             Assert.assertEquals(9020, configuration.getHttpServerConfiguration().getBindPort());
             Assert.assertEquals(63, configuration.getHttpServerConfiguration().getLimit());
@@ -1308,7 +1313,7 @@ public class PropServerConfigurationTest {
             Properties properties = new Properties();
             properties.load(is);
 
-            PropServerConfiguration configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+            PropServerConfiguration configuration = newPropServerConfiguration(properties);
             Assert.assertNull(configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getKeepAliveHeader());
         }
     }
@@ -1317,23 +1322,23 @@ public class PropServerConfigurationTest {
     public void testSqlJitMode() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("cairo.sql.jit.mode", "");
-        PropServerConfiguration configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(SqlJitMode.JIT_MODE_ENABLED, configuration.getCairoConfiguration().getSqlJitMode());
 
         properties.setProperty("cairo.sql.jit.mode", "on");
-        configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(SqlJitMode.JIT_MODE_ENABLED, configuration.getCairoConfiguration().getSqlJitMode());
 
         properties.setProperty("cairo.sql.jit.mode", "scalar");
-        configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(SqlJitMode.JIT_MODE_FORCE_SCALAR, configuration.getCairoConfiguration().getSqlJitMode());
 
         properties.setProperty("cairo.sql.jit.mode", "off");
-        configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(SqlJitMode.JIT_MODE_DISABLED, configuration.getCairoConfiguration().getSqlJitMode());
 
         properties.setProperty("cairo.sql.jit.mode", "foobar");
-        configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(SqlJitMode.JIT_MODE_ENABLED, configuration.getCairoConfiguration().getSqlJitMode());
     }
 
@@ -1360,7 +1365,7 @@ public class PropServerConfigurationTest {
                 sink.put(',');
                 loadVolumePath(aliasC, volumeCPath);
                 properties.setProperty(PropertyKey.CAIRO_VOLUMES.getPropertyPath(), sink.toString());
-                CairoConfiguration cairoConfig = newPropServerConfiguration(root, properties, null, new BuildInformationHolder()).getCairoConfiguration();
+                CairoConfiguration cairoConfig = newPropServerConfiguration(properties).getCairoConfiguration();
 
                 Assert.assertNotNull(cairoConfig.getVolumeDefinitions().resolveAlias(aliasA));
                 Assert.assertNotNull(cairoConfig.getVolumeDefinitions().resolveAlias(aliasB));
@@ -1379,7 +1384,7 @@ public class PropServerConfigurationTest {
         String p = "   ";
         Properties properties = new Properties();
         properties.setProperty(PropertyKey.CAIRO_VOLUMES.getPropertyPath(), p);
-        CairoConfiguration cairoConfig = newPropServerConfiguration(root, properties, null, new BuildInformationHolder()).getCairoConfiguration();
+        CairoConfiguration cairoConfig = newPropServerConfiguration(properties).getCairoConfiguration();
         Assert.assertNull(cairoConfig.getVolumeDefinitions().resolveAlias("banana"));
     }
 
@@ -1396,14 +1401,118 @@ public class PropServerConfigurationTest {
         Properties properties = new Properties();
         properties.setProperty("this.will.not.throw", "Test");
         properties.setProperty("this.will.also.not", "throw");
-        newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        newPropServerConfiguration(properties);
+    }
+
+    @Test
+    public void testWebConsolePathChangeUpdatesDefaultDependencies() throws JsonException, ServerConfigurationException {
+        Properties properties = new Properties();
+        properties.setProperty("http.context.web.console", "/new-path");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        // duplicates are ok
+        Assert.assertEquals(
+                "[/new-path/warnings,/new-path/warnings]",
+                configuration.getHttpServerConfiguration().getContextPathWarnings().toString()
+        );
+        Assert.assertEquals(
+                "[/new-path/exec,/new-path/exec]",
+                configuration.getHttpServerConfiguration().getContextPathExec().toString()
+        );
+        Assert.assertEquals(
+                "[/new-path/exp,/new-path/exp]",
+                configuration.getHttpServerConfiguration().getContextPathExport().toString()
+        );
+        Assert.assertEquals(
+                "[/new-path/imp,/new-path/imp]",
+                configuration.getHttpServerConfiguration().getContextPathImport().toString()
+        );
+
+        Assert.assertEquals(
+                "[/new-path/chk,/new-path/chk]",
+                configuration.getHttpServerConfiguration().getContextPathTableStatus().toString()
+        );
+
+        Assert.assertEquals(
+                "[/new-path/settings,/new-path/settings]",
+                configuration.getHttpServerConfiguration().getContextPathSettings().toString()
+        );
+
+        // check the ILP did not move
+
+        Assert.assertEquals(
+                "[/write,/api/v2/write]",
+                configuration.getHttpServerConfiguration().getContextPathILP().toString()
+        );
+
+        Assert.assertEquals(
+                "[/ping]",
+                configuration.getHttpServerConfiguration().getContextPathILPPing().toString()
+        );
+    }
+
+    @Test
+    public void testWebConsolePathChangeUpdatesDefaultDependenciesFuzz() throws JsonException, ServerConfigurationException {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+
+        final ObjList<FuzzItem> pathsThatCanBePinned = new ObjList<>();
+        pathsThatCanBePinned.add(new FuzzItem("http.context.import", "/imp", HttpFullFatServerConfiguration::getContextPathImport));
+        pathsThatCanBePinned.add(new FuzzItem("http.context.export", "/exp", HttpFullFatServerConfiguration::getContextPathExport));
+        pathsThatCanBePinned.add(new FuzzItem("http.context.settings", "/settings", HttpFullFatServerConfiguration::getContextPathSettings));
+        pathsThatCanBePinned.add(new FuzzItem("http.context.table.status", "/chk", HttpFullFatServerConfiguration::getContextPathTableStatus));
+        pathsThatCanBePinned.add(new FuzzItem("http.context.warnings", "/warnings", HttpFullFatServerConfiguration::getContextPathWarnings));
+        pathsThatCanBePinned.add(new FuzzItem("http.context.execute", "/exec", HttpFullFatServerConfiguration::getContextPathExec));
+
+        String webConsolePath = rnd.nextString(64);
+        Properties properties = new Properties();
+        properties.setProperty("http.context.web.console", webConsolePath);
+        int pinCount = rnd.nextInt(pathsThatCanBePinned.size() - 1) + 1; // at least one
+        IntHashSet pinnedIndexes = new IntHashSet();
+        for (int i = 0; i < pinCount; i++) {
+            int index = rnd.nextPositiveInt() % pathsThatCanBePinned.size();
+            FuzzItem item = pathsThatCanBePinned.getQuick(index);
+            properties.setProperty(item.key, item.value);
+            pinnedIndexes.add(index);
+        }
+
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+
+        for (int i = 0; i < pathsThatCanBePinned.size(); i++) {
+            FuzzItem item = pathsThatCanBePinned.getQuick(i);
+            String e1 = webConsolePath + item.value;
+            String e2;
+            if (pinnedIndexes.contains(i)) {
+                e2 = item.value;
+            } else {
+                e2 = e1;
+            }
+            Assert.assertEquals(
+                    "[" + e2 + "," + e1 + "]",
+                    item.getter.apply(configuration.getHttpServerConfiguration()).toString()
+            );
+        }
+
+        // check the ILP did not move
+        Assert.assertEquals(
+                "[/write,/api/v2/write]",
+                configuration.getHttpServerConfiguration().getContextPathILP().toString()
+        );
+
+        Assert.assertEquals(
+                "[/ping]",
+                configuration.getHttpServerConfiguration().getContextPathILPPing().toString()
+        );
+
+        Utf8SequenceObjHashMap<Utf8Sequence> redirectMap = configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getRedirectMap();
+        Assert.assertEquals(2, redirectMap.size());
+        Assert.assertEquals("Location: " + webConsolePath + "/index.html\r\n", redirectMap.get(new Utf8String(webConsolePath)).toString());
+        Assert.assertEquals("Location: " + webConsolePath + "/index.html\r\n", redirectMap.get(new Utf8String(webConsolePath + "/")).toString());
     }
 
     private void assertInputWorkRootCantBeSetTo(Properties properties, String value) throws JsonException {
         try {
             properties.setProperty(PropertyKey.CAIRO_SQL_COPY_ROOT.getPropertyPath(), value);
             properties.setProperty(PropertyKey.CAIRO_SQL_COPY_WORK_ROOT.getPropertyPath(), value);
-            newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+            newPropServerConfiguration(properties);
             Assert.fail("Should fail for " + value);
         } catch (ServerConfigurationException e) {
             TestUtils.assertContains(e.getMessage(), "cairo.sql.copy.work.root can't point to root, data, conf or snapshot dirs");
@@ -1423,7 +1532,7 @@ public class PropServerConfigurationTest {
         properties.setProperty("log.timestamp.locale", locale);
         properties.setProperty("log.timestamp.format", format);
         long epoch = TimestampFormatUtils.parseTimestamp(timestamp);
-        PropServerConfiguration configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
         DateFormat timestampFormat = configuration.getCairoConfiguration().getLogTimestampFormat();
         DateLocale timestampLocale = configuration.getCairoConfiguration().getLogTimestampTimezoneLocale();
         TimeZoneRules timestampTimezoneRules = configuration.getCairoConfiguration().getLogTimestampTimezoneRules();
@@ -1646,9 +1755,25 @@ public class PropServerConfigurationTest {
     protected PropServerConfiguration newPropServerConfiguration(
             String root,
             Properties properties,
-            @Nullable Map<String, String> env,
+            Map<String, String> env,
             BuildInformation buildInformation
     ) throws ServerConfigurationException, JsonException {
         return new PropServerConfiguration(root, properties, env, PropServerConfigurationTest.LOG, buildInformation);
+    }
+
+    protected PropServerConfiguration newPropServerConfiguration(Properties properties) throws ServerConfigurationException, JsonException {
+        return new PropServerConfiguration(root, properties, null, PropServerConfigurationTest.LOG, new BuildInformationHolder());
+    }
+
+    private static class FuzzItem {
+        private final Function<HttpFullFatServerConfiguration, ObjList<String>> getter;
+        private final String key;
+        private final String value;
+
+        FuzzItem(String key, String value, Function<HttpFullFatServerConfiguration, ObjList<String>> getter) {
+            this.key = key;
+            this.value = value;
+            this.getter = getter;
+        }
     }
 }

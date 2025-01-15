@@ -524,7 +524,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     HTTP_CONTEXT_SETTINGS("http.context.settings"),
     HTTP_CONTEXT_WARNINGS("http.context.warnings"),
     HTTP_CONTEXT_TABLE_STATUS("http.context.table.status"),
-    HTTP_CONTEXT_EXECUTE("http.context.execute"),;
+    HTTP_CONTEXT_EXECUTE("http.context.execute");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;
