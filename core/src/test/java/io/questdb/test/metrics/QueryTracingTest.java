@@ -38,13 +38,14 @@ public class QueryTracingTest extends AbstractCairoTest {
         try (WorkerPool workerPool = new WorkerPool(() -> 1)) {
             QueryTracingJob.assignToPool(workerPool, engine);
             workerPool.start(LOG);
-            String exampleQuery = "SELECT table_name FROM (tables())";
+            String exampleQuery = "SELECT table_name FROM tables()";
             assertSql("table_name\n", exampleQuery);
+            String fullName = engine.getConfiguration().getSystemTableNamePrefix() + QueryTracingJob.TABLE_NAME;
             for (int i = 0; ; i++) {
                 Thread.sleep(100);
                 try {
-                    assertSql(String.format("query\n%s\n", exampleQuery),
-                            String.format("SELECT query from %s LIMIT 1", QueryTracingJob.TABLE_NAME));
+                    assertSql(String.format("query_text\n%s\n", exampleQuery),
+                            String.format("SELECT query_text from '%s' LIMIT 1", fullName));
                     break;
                 } catch (SqlException | AssertionFailedError e) {
                     if (i == 100) {

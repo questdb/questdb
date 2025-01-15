@@ -41,7 +41,6 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.metrics.QueryTracingJob;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjHashSet;
@@ -162,11 +161,9 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
 
             private boolean isSystemTable(TableToken tableToken) {
                 String tableName = tableToken.getTableName();
-                return (hideTelemetryTables &&
-                        (Chars.equals(tableName, TelemetryTask.TABLE_NAME) ||
-                                Chars.equals(tableName, TELEMETRY_CONFIG_TABLE_NAME)))
-                        || Chars.startsWith(tableName, sysTablePrefix)
-                        || Chars.equals(tableName, QueryTracingJob.TABLE_NAME);
+                return Chars.startsWith(tableName, sysTablePrefix) ||
+                        (hideTelemetryTables && (Chars.equals(tableName, TelemetryTask.TABLE_NAME) ||
+                                Chars.equals(tableName, TELEMETRY_CONFIG_TABLE_NAME)));
             }
 
             private class TableListRecord implements Record {

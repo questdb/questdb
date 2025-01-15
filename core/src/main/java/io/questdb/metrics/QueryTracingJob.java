@@ -61,10 +61,11 @@ public class QueryTracingJob extends SynchronizedJob {
     }
 
     private void init() throws SqlException {
-        engine.execute("CREATE TABLE IF NOT EXISTS " + TABLE_NAME +
-                " (ts TIMESTAMP, query VARCHAR, execution_micros LONG)" +
+        String fullName = engine.getConfiguration().getSystemTableNamePrefix() + TABLE_NAME;
+        engine.execute("CREATE TABLE IF NOT EXISTS '" + fullName +
+                "' (ts TIMESTAMP, query_text VARCHAR, execution_micros LONG)" +
                 " TIMESTAMP(ts) PARTITION BY HOUR TTL 1 DAY BYPASS WAL");
-        tableToken = engine.verifyTableName(TABLE_NAME);
+        tableToken = engine.verifyTableName(fullName);
     }
 
     @Override
