@@ -659,6 +659,8 @@ public interface CairoConfiguration {
 
     boolean isSqlParallelGroupByEnabled();
 
+    boolean isSqlParallelReadParquetEnabled();
+
     boolean isTableTypeConversionEnabled();
 
     boolean isWalApplyEnabled();
