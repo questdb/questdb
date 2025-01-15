@@ -24,40 +24,27 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.std.IntList;
-import io.questdb.std.QuietCloseable;
-import org.jetbrains.annotations.Nullable;
+import io.questdb.cairo.TableReader;
 
-public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
-
-    void calculateSize(RecordCursor.Counter counter);
-
-    /**
-     * Returns local (query) to table reader index mapping.
-     * Used to map local column indexes to indexes from the Parquet file.
-     * Such mapping requires knowing the corresponding table reader indexes.
-     */
-    IntList getColumnIndexes();
+/**
+ * Defines a page frame cursor backed with an in-house database table.
+ */
+public interface TablePageFrameCursor extends PageFrameCursor, SymbolTableSource {
 
     @Override
     StaticSymbolTable getSymbolTable(int columnIndex);
 
-    @Nullable
-    PageFrame next();
+    // same TableReader is available on each page frame
+    TableReader getTableReader();
 
     /**
-     * @return number of rows in all page frames
+     * Returns the REAL row id of given row on current page.
+     * This is used for e.g. updating rows.
+     *
+     * @param rowIndex - page index of row
+     * @return real row id
      */
-    long size();
+    long getUpdateRowId(long rowIndex);
 
-    /**
-     * @return true if cursor supports fast size calculation,
-     * i.e. {@link #calculateSize(RecordCursor.Counter)} is properly implemented.
-     */
-    boolean supportsSizeCalculation();
-
-    /**
-     * Returns the cursor to the beginning of the page frame.
-     */
-    void toTop();
+    TablePageFrameCursor of(PartitionFrameCursor partitionFrameCursor);
 }
