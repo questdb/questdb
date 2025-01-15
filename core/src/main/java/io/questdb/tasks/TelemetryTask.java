@@ -78,6 +78,7 @@ public class TelemetryTask implements AbstractTelemetryTask {
     };
     private short event;
     private short origin;
+    private long queueCursor;
 
     private TelemetryTask() {
     }
@@ -87,8 +88,17 @@ public class TelemetryTask implements AbstractTelemetryTask {
         if (task != null) {
             task.origin = origin;
             task.event = event;
-            telemetry.store();
+            telemetry.store(task);
         }
+    }
+
+    public long getQueueCursor() {
+        return queueCursor;
+    }
+
+    @Override
+    public void setQueueCursor(long cursor) {
+        this.queueCursor = cursor;
     }
 
     @Override

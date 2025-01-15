@@ -25,6 +25,12 @@ SELECT * FROM parquet_scan('data/parquet-testing/arrow/alltypes_plain.parquet')
 0	true	0	0	0	0	0.000000	0.000000	01/01/09	0	2009-01-01 00:00:00
 1	false	1	1	1	10	1.100000	10.100000	01/01/09	1	2009-01-01 00:01:00
 
+# alltypes_plain_filtered.parquet
+query ITIIIIRRTTT
+SELECT * FROM parquet_scan('data/parquet-testing/arrow/alltypes_plain.parquet') WHERE id = 7
+----
+7	false	1	1	1	10	1.100000	10.100000	04/01/09	1	2009-04-01 00:01:00
+
 ## we don't need to explicitly use parquet_scan
 #query ITIIIIRRTTT
 #SELECT * FROM parquet_scan('data/parquet-testing/arrow/alltypes_plain.parquet')

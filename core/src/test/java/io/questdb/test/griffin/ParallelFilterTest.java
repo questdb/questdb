@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
@@ -36,13 +37,19 @@ import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.griffin.engine.table.parquet.ParquetVersion;
+import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
+import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.jit.JitUtil;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.Files;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -159,6 +166,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, PAGE_FRAME_COUNT);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1);
         super.setUp();
+        inputRoot = root;
     }
 
     @Test
@@ -485,6 +493,55 @@ public class ParallelFilterTest extends AbstractCairoTest {
                 4,
                 1,
                 SqlJitMode.JIT_MODE_DISABLED
+        );
+    }
+
+    @Test
+    public void testReadParquet() throws Exception {
+        Assume.assumeTrue(convertToParquet);
+        WorkerPool pool = new WorkerPool(() -> 4);
+        TestUtils.execute(
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
+                    engine.execute(
+                            "CREATE TABLE price (" +
+                                    "  ts TIMESTAMP," +
+                                    "  type SYMBOL," +
+                                    "  value DOUBLE" +
+                                    ") timestamp (ts) PARTITION BY DAY;",
+                            sqlExecutionContext
+                    );
+                    engine.execute("insert into price select x::timestamp, 't' || (x%5), rnd_double() from long_sequence(50000)", sqlExecutionContext);
+
+                    try (
+                            Path path = new Path();
+                            PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                            TableReader reader = engine.getReader("price")
+                    ) {
+                        path.of(root).concat("price.parquet");
+                        PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                        PartitionEncoder.encodeWithOptions(
+                                partitionDescriptor,
+                                path,
+                                ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                                true,
+                                PAGE_FRAME_MAX_ROWS,
+                                0,
+                                ParquetVersion.PARQUET_VERSION_V1
+                        );
+                        Assert.assertTrue(Files.exists(path.$()));
+
+                        TestUtils.assertSql(
+                                engine,
+                                sqlExecutionContext,
+                                "select count() from read_parquet('price.parquet') where value > 0.5",
+                                sink,
+                                "count\n25139\n"
+                        );
+                    }
+                },
+                configuration,
+                LOG
         );
     }
 
