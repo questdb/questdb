@@ -82,7 +82,7 @@ tests:
     description: Test inserting and selecting data.
     prepare:
       - action: execute
-        query: "CREATE TABLE ${table_name} (id INT, temperature DOUBLE, timestamp timestamp);"
+        query: "CREATE TABLE ${table_name} (id INT, temperature DOUBLE, b boolean, timestamp timestamp);"
     steps:
       - loop:
           range:
@@ -91,12 +91,14 @@ tests:
           as: id
           steps:
             - action: execute
-              query: "INSERT INTO ${table_name} (id, temperature, timestamp) VALUES ($[1], $[2], $[3]);"
+              query: "INSERT INTO ${table_name} (id, temperature, b, timestamp) VALUES ($[1], $[2], $[3], $[4]);"
               parameters:
                 - value: "${id}"
                   type: "INT4"
                 - value: "${id}.5"
                   type: "FLOAT8"
+                - value: "true"
+                  type: "BOOLEAN"
                 - value: "2023-10-01T10:00:00.000000Z"
                   type: "TIMESTAMP"
               expect:
@@ -109,12 +111,14 @@ tests:
             - [ 1, 10 ]
       - action: execute
         description: Insert a row with a unique timestamp so we can query it later
-        query: "INSERT INTO ${table_name} (id, temperature, timestamp) VALUES ($[1], $[2], $[3]);"
+        query: "INSERT INTO ${table_name} (id, temperature, b, timestamp) VALUES ($[1], $[2], $[3], $[4]);"
         parameters:
           - value: "11"
             type: "INT4"
           - value: "11.5"
             type: "FLOAT8"
+          - value: "false"
+            type: "BOOLEAN"
           - value: "2024-10-01T10:00:00.000000Z"
             type: "TIMESTAMP"
         expect:
@@ -129,7 +133,7 @@ tests:
         # let's use the exact match here since it only returns one row
         expect:
           result:
-            - [ 11, 11.5, "2024-10-01T10:00:00.000000Z" ]
+            - [ 11, 11.5, False, "2024-10-01T10:00:00.000000Z" ]
       - action: query
         query: "SELECT id, temperature, timestamp FROM ${table_name};"
         expect:

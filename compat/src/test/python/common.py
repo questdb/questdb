@@ -57,7 +57,11 @@ def convert_and_append_parameters(value, type, resolved_parameters):
     elif type == 'float4' or type == 'float8':
         resolved_parameters.append(float(value))
     elif type == 'boolean':
-        resolved_parameters.append(bool(value))
+        if isinstance(value, str):
+            value = value.lower().strip()
+            resolved_parameters.append(value in ('true', '1', 'yes', 'on'))
+        else:
+            resolved_parameters.append(bool(value))
     elif type == 'varchar':
         resolved_parameters.append(str(value))
     elif type == 'timestamp':

@@ -283,6 +283,7 @@ fn extract_parameters(
                     "float4" => Box::new(substituted.parse::<f32>()?),
                     "float8" => Box::new(substituted.parse::<f64>()?),
                     "varchar" => Box::new(substituted),
+                    "boolean" => Box::new(substituted.parse::<bool>()?),
                     _ => return Err("Unsupported parameter type".into()),
                 }
             }
