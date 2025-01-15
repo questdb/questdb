@@ -34,8 +34,20 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.Chars;
+import io.questdb.std.GenericLexer;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Acceptor;
+import io.questdb.std.Long256FromCharSequenceDecoder;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.*;
+import io.questdb.std.Uuid;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatCompiler;
@@ -440,7 +452,7 @@ public class SqlUtil {
         if (Long256Impl.isNull(long256)) {
             return false;
         }
-        Numbers.appendLong256(long256.getLong0(), long256.getLong1(), long256.getLong2(), long256.getLong3(), sink);
+        Numbers.appendLong256(long256, sink);
         return true;
     }
 

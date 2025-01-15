@@ -1911,7 +1911,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             utf8Sink.setNullValue();
         } else {
             final long a = utf8Sink.skipInt();
-            Numbers.appendLong256(long256Value.getLong0(), long256Value.getLong1(), long256Value.getLong2(), long256Value.getLong3(), utf8Sink);
+            Numbers.appendLong256(long256Value, utf8Sink);
             utf8Sink.putLenEx(a);
         }
     }
