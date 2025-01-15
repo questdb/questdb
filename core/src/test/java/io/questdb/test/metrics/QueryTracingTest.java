@@ -46,9 +46,11 @@ public class QueryTracingTest extends AbstractCairoTest {
                 try {
                     assertSql(
                             String.format("%s\n%s\n", QueryTracingJob.COLUMN_QUERY_TEXT, exampleQuery),
-                            String.format("SELECT %s from %s() LIMIT 1",
+                            String.format("SELECT %s from %s() WHERE %s='%s'",
                                     QueryTracingJob.COLUMN_QUERY_TEXT,
-                                    QueryTracingJob.TABLE_NAME));
+                                    QueryTracingJob.TABLE_NAME,
+                                    QueryTracingJob.COLUMN_QUERY_TEXT,
+                                    exampleQuery));
                     break;
                 } catch (SqlException | AssertionFailedError e) {
                     if (i == 100) {
@@ -72,9 +74,11 @@ public class QueryTracingTest extends AbstractCairoTest {
                 try {
                     assertSql(
                             String.format("%s\n%s\n", QueryTracingJob.COLUMN_QUERY_TEXT, exampleQuery),
-                            String.format("SELECT %s from %s LIMIT 1",
+                            String.format("SELECT %s from %s WHERE %s='%s'",
                                     QueryTracingJob.COLUMN_QUERY_TEXT,
-                                    fullName));
+                                    fullName,
+                                    QueryTracingJob.COLUMN_QUERY_TEXT,
+                                    exampleQuery));
                     break;
                 } catch (SqlException | AssertionFailedError e) {
                     if (i == 100) {
