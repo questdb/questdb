@@ -46,6 +46,9 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.QueryPausedException;
+import io.questdb.std.Chars;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
@@ -54,13 +57,14 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.Test;
 
 import java.util.concurrent.BrokenBarrierException;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.PropertyKey.*;
 import static io.questdb.test.tools.TestUtils.*;
-import static java.net.HttpURLConnection.HTTP_BAD_REQUEST;
-import static java.net.HttpURLConnection.HTTP_OK;
+import static java.net.HttpURLConnection.*;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 
@@ -69,6 +73,81 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
     private static final String EXEC_URI = "/exec";
     private static final String ILP_PATH = "/write";
     private static final String ILP_TEST_PATH = "/write-test";
+
+    @Test
+    public void testConnectionLimit() throws Exception {
+        final int numOfThreads = 12;
+        final long jsonQueryConnLimit = 8;
+        final long ilpConnLimit = numOfThreads - jsonQueryConnLimit;
+
+        unchecked(() -> createDummyConfiguration(
+                METRICS_ENABLED + "=true",
+                HTTP_WORKER_COUNT + "=" + numOfThreads,
+                HTTP_NET_CONNECTION_LIMIT + "=" + (int) (numOfThreads * 1.5),
+                HTTP_JSON_QUERY_CONNECTION_LIMIT + "=" + jsonQueryConnLimit,
+                HTTP_ILP_CONNECTION_LIMIT + "=" + ilpConnLimit
+        ));
+
+        assertMemoryLeak(() -> {
+            final Rnd rnd = new Rnd();
+
+            try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
+                serverMain.start();
+
+                final CyclicBarrier start = new CyclicBarrier(numOfThreads);
+                final SOCountDownLatch end = new SOCountDownLatch(numOfThreads);
+                final AtomicInteger errorCount = new AtomicInteger();
+                final ObjList<String> errorMessages = new ObjList<>();
+                final ConcurrentMap<Integer, ConnectionType> connectionTypes = new ConcurrentHashMap<>();
+
+                for (int i = 0; i < numOfThreads; i++) {
+                    final int threadIndex = i;
+                    new Thread(() -> {
+                        await(start);
+                        try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration());
+                             HttpClient.ResponseHeaders responseHeaders = httpClient.getResponseHeaders()) {
+                            for (int j = 0; j < 5000; j++) {
+                                final ConnectionType prevConnectionType = connectionTypes.get(threadIndex);
+                                final ConnectionType connectionType = (j % 250 == 0) && rnd.nextBoolean() ? ConnectionType.QUERY : ConnectionType.ILP;
+                                if (connectionType != prevConnectionType) {
+                                    connectionTypes.put(threadIndex, connectionType);
+                                    if (prevConnectionType != null) {
+                                        responseHeaders.close();
+                                    }
+                                }
+
+                                if (connectionType == ConnectionType.QUERY) {
+                                    sendExecRequest(httpClient, "select " + j);
+                                    assertResponse(responseHeaders, HTTP_OK,
+                                            "{\"query\":\"select " + j + "\",\"columns\":[{\"name\":\"" + j + "\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[" + j + "]],\"count\":1}"
+                                    );
+                                } else {
+                                    sendIlpRequest(httpClient, "tab col1=" + threadIndex + " " + (threadIndex * 1000000 + j));
+                                    assertResponse(responseHeaders, HTTP_NO_CONTENT, "");
+                                }
+                            }
+                        } catch (Throwable e) {
+                            if (!Chars.contains(e.getMessage(), "exceeded connection limit [name=json_queries_connections")
+                                    && !Chars.contains(e.getMessage(), "exceeded connection limit [name=line_http_connections")
+                                    && !Chars.contains(e.getMessage(), "peer disconnect")) {
+                                errorCount.incrementAndGet();
+                                errorMessages.add(e.getMessage());
+                                LOG.error().$("Error executing query [thread=").$(threadIndex).$(", error=").$(e.getMessage()).$(']').$();
+                            }
+                        }
+                        end.countDown();
+                    }).start();
+                }
+
+                end.await();
+
+                for (int i = 0; i < errorMessages.size(); i++) {
+                    LOG.error().$("Error ").$(errorMessages.get(i)).$();
+                }
+                assertEquals(0, errorCount.get());
+            }
+        });
+    }
 
     @Test
     public void testIlpConnectionLimit() throws Exception {
@@ -167,7 +246,7 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
 
                 // http query, should be able to connect
                 try (final HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
-                    assertExecRequest(httpClient, EXEC_URI, "select 1", HTTP_OK,
+                    assertExecRequest(httpClient, "select 1", HTTP_OK,
                             "{\"query\":\"select 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}"
                     );
                 } catch (Throwable e) {
@@ -244,7 +323,7 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                     final int threadIndex = i;
                     new Thread(() -> {
                         try (final HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
-                            assertExecRequest(httpClient, EXEC_TEST_URI, "select 1", HTTP_OK,
+                            assertExecRequest(httpClient, "select 1", HTTP_OK,
                                     "{\"query\":\"select 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}"
                             );
                         } catch (Throwable e) {
@@ -260,7 +339,7 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
 
                 // http query, should fail with soft limit breach
                 try (final HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
-                    assertExecRequest(httpClient, EXEC_URI, "select 2", HTTP_BAD_REQUEST,
+                    assertExecRequest(httpClient, "select 2", HTTP_BAD_REQUEST,
                             "exceeded connection limit [name=json_queries_connections, numOfConnections=5, connectionLimit=4]\r\n"
                     );
                 } catch (Throwable e) {
@@ -298,28 +377,54 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
 
     private void assertExecRequest(
             HttpClient httpClient,
-            String uri,
             String sql,
             int expectedHttpStatusCode,
             String expectedHttpResponse
     ) {
-        final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
-        request.GET().url(uri).query("query", sql);
-        try (HttpClient.ResponseHeaders responseHeaders = request.send()) {
-            responseHeaders.await();
+        final HttpClient.ResponseHeaders responseHeaders = sendExecRequest(httpClient, sql);
+        assertResponse(responseHeaders, expectedHttpStatusCode, expectedHttpResponse);
+        responseHeaders.close();
+    }
 
-            TestUtils.assertEquals(String.valueOf(expectedHttpStatusCode), responseHeaders.getStatusCode());
+    private void assertResponse(
+            HttpClient.ResponseHeaders responseHeaders,
+            int expectedHttpStatusCode,
+            String expectedHttpResponse
+    ) {
+        responseHeaders.clear();
+        responseHeaders.await();
 
-            final Utf8StringSink sink = new Utf8StringSink();
+        final Utf8StringSink sink = new Utf8StringSink();
 
-            Fragment fragment;
-            final Response response = responseHeaders.getResponse();
-            while ((fragment = response.recv()) != null) {
-                Utf8s.strCpy(fragment.lo(), fragment.hi(), sink);
-            }
-
-            TestUtils.assertEquals(expectedHttpResponse, sink.toString());
-            sink.clear();
+        Fragment fragment;
+        final Response response = responseHeaders.getResponse();
+        while ((fragment = response.recv()) != null) {
+            Utf8s.strCpy(fragment.lo(), fragment.hi(), sink);
         }
+
+        TestUtils.assertEquals(expectedHttpResponse, sink.toString());
+        sink.clear();
+
+        TestUtils.assertEquals(String.valueOf(expectedHttpStatusCode), responseHeaders.getStatusCode());
+    }
+
+    private HttpClient.ResponseHeaders sendExecRequest(
+            HttpClient httpClient,
+            String sql
+    ) {
+        final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
+        return request.GET().url(EXEC_URI).query("query", sql).send();
+    }
+
+    private HttpClient.ResponseHeaders sendIlpRequest(
+            HttpClient httpClient,
+            String line
+    ) {
+        final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
+        return request.POST().url(ILP_PATH).withContent().put(line).send();
+    }
+
+    private enum ConnectionType {
+        QUERY, ILP
     }
 }
