@@ -27,6 +27,7 @@ package io.questdb.cutlass.pgwire;
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 
 public class PGOids {
 
@@ -50,7 +51,9 @@ public class PGOids {
     public static final int PG_BOOL = 16;
     public static final int PG_BYTEA = 17;
     public static final int PG_CATALOG_OID = 11;
-    public static final int PG_CHAR = 18;
+    public static final int PG_CHAR = 1042;
+    // Postgres type modifier returns n+4 for CHAR(n) and since all our CHAR columns are equivalent to CHAR(1) we do the same
+    public static final int PG_CHAR_TYPE_MODIFIER = Numbers.bswap(5);
     public static final int PG_CLASS_OID = 1259;
     public static final int PG_DATE = 1082;
     public static final int PG_FLOAT4 = 700;
@@ -206,7 +209,7 @@ public class PGOids {
         PG_TYPE_TO_NAME[3] = "float4";
         PG_TYPE_TO_NAME[4] = "int4";
         PG_TYPE_TO_NAME[5] = "int2";
-        PG_TYPE_TO_NAME[6] = "char";
+        PG_TYPE_TO_NAME[6] = "bpchar";
         PG_TYPE_TO_NAME[7] = "int8";
         PG_TYPE_TO_NAME[8] = "bool";
         PG_TYPE_TO_NAME[9] = "binary";

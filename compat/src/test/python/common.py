@@ -37,7 +37,7 @@ def substitute_variables(text, variables):
     return template.safe_substitute(variables)
 
 
-def resolve_parameters(typed_parameters, variables, chars_as_bytes=False):
+def resolve_parameters(typed_parameters, variables):
     resolved_parameters = []
     for typed_param in typed_parameters:
         type_ = typed_param.get('type').lower()
@@ -45,13 +45,13 @@ def resolve_parameters(typed_parameters, variables, chars_as_bytes=False):
 
         if isinstance(value, str):
             resolved_str_value = substitute_variables(value, variables)
-            convert_and_append_parameters(resolved_str_value, type_, resolved_parameters, chars_as_bytes)
+            convert_and_append_parameters(resolved_str_value, type_, resolved_parameters)
         else:
-            convert_and_append_parameters(value, type_, resolved_parameters, chars_as_bytes)
+            convert_and_append_parameters(value, type_, resolved_parameters)
     return resolved_parameters
 
 
-def convert_and_append_parameters(value, type, resolved_parameters, char_as_bytes):
+def convert_and_append_parameters(value, type, resolved_parameters):
     if type == 'int4' or type == 'int8':
         resolved_parameters.append(int(value))
     elif type == 'float4' or type == 'float8':
@@ -72,10 +72,7 @@ def convert_and_append_parameters(value, type, resolved_parameters, char_as_byte
         resolved_parameters.append(parsed_value)
     elif type == 'char':
         str_val = str(value)
-        if char_as_bytes:
-            resolved_parameters.append(str_val.encode())
-        else:
-            resolved_parameters.append(str_val)
+        resolved_parameters.append(str_val)
     else:
         resolved_parameters.append(value)
 

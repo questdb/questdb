@@ -86,7 +86,7 @@ async def execute_step(step, variables, connection):
     with_vars_substituted = substitute_variables(query_template, variables)
     query = adjust_placeholder_syntax(with_vars_substituted)
 
-    resolved_parameters = resolve_parameters(types_parameters, variables, True)
+    resolved_parameters = resolve_parameters(types_parameters, variables)
     result = await execute_query(connection, query, resolved_parameters)
 
     # Assert result

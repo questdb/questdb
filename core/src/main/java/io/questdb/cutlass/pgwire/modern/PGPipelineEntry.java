@@ -2317,14 +2317,22 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 utf8Sink.putNetworkShort((short) (i + 1)); //column number, starting from 1
                 utf8Sink.putNetworkInt(PGOids.getTypeOid(columnType)); // type
                 // type size
-                if (ColumnType.tagOf(columnType) < ColumnType.STRING) {
+                short typeTag = ColumnType.tagOf(columnType);
+                if (typeTag < ColumnType.STRING && typeTag != ColumnType.CHAR) {
+                    // PostgreSQL returns -1 for variable length types and CHAR is a variable length type in PostgreSQL proper.
+                    // Let's return -1 for CHAR as well to mimic PostgreSQL.
                     utf8Sink.putNetworkShort((short) ColumnType.sizeOf(columnType));
                 } else {
                     utf8Sink.putNetworkShort((short) -1);
                 }
 
                 // type modifier
-                utf8Sink.putIntDirect(INT_NULL_X);
+                if (columnType != ColumnType.CHAR) {
+                    utf8Sink.putIntDirect(INT_NULL_X);
+                } else {
+                    utf8Sink.putIntDirect(PG_CHAR_TYPE_MODIFIER);
+                }
+                
                 // this is special behaviour for binary fields to prevent binary data being hex encoded on the wire
                 // format code
                 utf8Sink.putNetworkShort(getPgResultSetColumnFormatCode(i)); // format code

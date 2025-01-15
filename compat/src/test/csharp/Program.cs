@@ -244,7 +244,7 @@ public class TestRunner
         "varchar" => NpgsqlDbType.Varchar,
         "timestamp" => NpgsqlDbType.Timestamp,
         "date" => NpgsqlDbType.Date,
-        "char" => NpgsqlDbType.InternalChar, // note: NpgsqlDbType.Char is char(n) not char, we have to use InternalChar for regular char
+        "char" => NpgsqlDbType.Char,
         _ => throw new ArgumentException($"Unsupported type: {type}")
     };
 

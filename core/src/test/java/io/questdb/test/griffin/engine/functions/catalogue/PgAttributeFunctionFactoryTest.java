@@ -219,7 +219,7 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
                             "public\ty\tb\t21\tfalse\t0\t2\t0\t2\t\t\t\t0\tb\n" +
                             "public\ty\tc\t21\tfalse\t0\t2\t0\t3\t\t\t\t0\tb\n" +
                             "public\ty\td\t20\tfalse\t0\t8\t0\t4\t\t\t\t0\tb\n" +
-                            "public\ty\te\t18\tfalse\t0\t2\t0\t5\t\t\t\t0\tb\n" +
+                            "public\ty\te\t1042\tfalse\t0\t2\t0\t5\t\t\t\t0\tb\n" +
                             "public\ty\tf\t1043\tfalse\t0\t-1\t0\t6\t\t\t\t0\tb\n" +
                             "public\ty\tg\t16\tfalse\t0\t1\t0\t7\t\t\t\t0\tb\n" +
                             "public\ty\th\t1043\tfalse\t0\t-1\t0\t8\t\t\t\t0\tb\n" +
@@ -282,7 +282,7 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
                             "public\ty\tb\t21\tfalse\t0\t2\t0\t2\t\t\t\t0\tb\n" +
                             "public\ty\tc\t21\tfalse\t0\t2\t0\t3\t\t\t\t0\tb\n" +
                             "public\ty\td\t20\tfalse\t0\t8\t0\t4\t\t\t\t0\tb\n" +
-                            "public\ty\te\t18\tfalse\t0\t2\t0\t5\t\t\t\t0\tb\n" +
+                            "public\ty\te\t1042\tfalse\t0\t2\t0\t5\t\t\t\t0\tb\n" +
                             "public\ty\tf\t1043\tfalse\t0\t-1\t0\t6\t\t\t\t0\tb\n" +
                             "public\ty\tg\t16\tfalse\t0\t1\t0\t7\t\t\t\t0\tb\n" +
                             "public\ty\th\t1043\tfalse\t0\t-1\t0\t8\t\t\t\t0\tb\n" +

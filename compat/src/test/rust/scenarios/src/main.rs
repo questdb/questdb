@@ -284,7 +284,7 @@ fn extract_parameters(
                     "float8" => Box::new(substituted.parse::<f64>()?),
                     "varchar" => Box::new(substituted),
                     "boolean" => Box::new(substituted.parse::<bool>()?),
-                    "char" => Box::new(substituted.chars().next().ok_or("Empty char")? as i8),
+                    "char" => Box::new(substituted),
 
                     // date is formatted as '2024-10-02' we need to create a timestamp (NaiveDateTime) out of it
                     // why? QuestDB sends date columns over PGWire as Timestamps so when Rust PGWire client
@@ -362,11 +362,6 @@ fn get_value_as_yaml(row: &Row, idx: usize) -> Value {
         }
         tokio_postgres::types::Type::VARCHAR => {
             Value::String(row.get(idx))
-        }
-        tokio_postgres::types::Type::CHAR => {
-            let val: i8 = row.get(idx);
-            // decode i8 to char
-            Value::String(std::str::from_utf8(&[val as u8]).unwrap().to_string())
         }
         _ => Value::String(row.get(idx)),
     }
