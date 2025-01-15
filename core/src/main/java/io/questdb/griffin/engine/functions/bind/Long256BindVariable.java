@@ -44,11 +44,7 @@ class Long256BindVariable extends Long256Function implements ScalarFunction, Mut
 
     @Override
     public void getLong256(Record rec, CharSink<?> sink) {
-        final long a = value.getLong0();
-        final long b = value.getLong1();
-        final long c = value.getLong2();
-        final long d = value.getLong3();
-        Numbers.appendLong256(a, b, c, d, sink);
+        Numbers.appendLong256(value, sink);
     }
 
     @Override

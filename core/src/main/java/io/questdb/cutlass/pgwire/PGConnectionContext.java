@@ -921,7 +921,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             responseUtf8Sink.setNullValue();
         } else {
             final long a = responseUtf8Sink.skip();
-            Numbers.appendLong256(long256Value.getLong0(), long256Value.getLong1(), long256Value.getLong2(), long256Value.getLong3(), responseUtf8Sink);
+            Numbers.appendLong256(long256Value, responseUtf8Sink);
             responseUtf8Sink.putLenEx(a);
         }
     }
