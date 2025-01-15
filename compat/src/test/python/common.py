@@ -67,6 +67,9 @@ def convert_and_append_parameters(value, type, resolved_parameters):
     elif type == 'timestamp':
         parsed_value = datetime.datetime.strptime(value, '%Y-%m-%dT%H:%M:%S.%fZ')
         resolved_parameters.append(parsed_value)
+    elif type == 'date':
+        parsed_value = datetime.date.fromisoformat(value)
+        resolved_parameters.append(parsed_value)
     else:
         resolved_parameters.append(value)
 

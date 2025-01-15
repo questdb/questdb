@@ -85,6 +85,7 @@ import io.questdb.std.Vect;
 import io.questdb.std.WeakSelfReturningObjectPool;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -2405,13 +2406,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             BindVariableService bindVariableService,
             CharacterStore characterStore
     ) throws SqlException, BadProtocolException {
-        CharacterStoreEntry e = characterStore.newEntry();
-        if (Utf8s.utf8ToUtf16(valueAddr, valueAddr + valueSize, e)) {
-            bindVariableService.define(variableIndex, ColumnType.DATE, 0);
-            bindVariableService.setStr(variableIndex, characterStore.toImmutable());
-        } else {
-            throw kaput().put("invalid str UTF8 bytes [variableIndex=").put(variableIndex).put(']');
-        }
+        ensureValueLength(variableIndex, Integer.BYTES, valueSize);
+
+        // represents the number of days since 2000-01-01
+        int days = getIntUnsafe(valueAddr);
+        long millis = Dates.addDays(Numbers.JULIAN_EPOCH_OFFSET_MILLIS, days);
+        bindVariableService.setDate(variableIndex, millis);
     }
 
     private void setBindVariableAsDouble(

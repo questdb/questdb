@@ -243,6 +243,7 @@ public class TestRunner
         "boolean" => NpgsqlDbType.Boolean,
         "varchar" => NpgsqlDbType.Varchar,
         "timestamp" => NpgsqlDbType.Timestamp,
+        "date" => NpgsqlDbType.Date,
         _ => throw new ArgumentException($"Unsupported type: {type}")
     };
 
@@ -256,6 +257,7 @@ public class TestRunner
             "float4" or "float8" => Convert.ToDouble(value.ToString(), CultureInfo.InvariantCulture),
             "boolean" => Convert.ToBoolean(value),
             "varchar" => value.ToString(),
+            "date" => DateTime.Parse(value.ToString(), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
             "timestamp" => DateTime.Parse(value.ToString(), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
             _ => value
         };

@@ -284,6 +284,16 @@ fn extract_parameters(
                     "float8" => Box::new(substituted.parse::<f64>()?),
                     "varchar" => Box::new(substituted),
                     "boolean" => Box::new(substituted.parse::<bool>()?),
+
+                    // date is formatted as '2024-10-02' we need to create a timestamp (NaiveDateTime) out of it
+                    // why? QuestDB sends date columns over PGWire as Timestamps so when Rust PGWire client
+                    // asks (PGWire DESCRIBE) server for a date column, server returns pretends it's a timestamp
+                    // and the client refuses to set a date value to a timestamp column
+                    "date" => Box::new(
+                        substituted.parse::<chrono::NaiveDate>()?
+                            .and_time(chrono::NaiveTime::MIN)
+                    ),
+
                     _ => return Err("Unsupported parameter type".into()),
                 }
             }
