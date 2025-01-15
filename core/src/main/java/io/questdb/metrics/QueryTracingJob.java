@@ -36,6 +36,9 @@ import io.questdb.std.ValueHolderList;
 import io.questdb.std.str.Utf8StringSink;
 
 public class QueryTracingJob extends SynchronizedJob {
+    public static final String COLUMN_EXECUTION_MICROS = "execution_micros";
+    public static final String COLUMN_QUERY_TEXT = "query_text";
+    public static final String COLUMN_TS = "ts";
     public static final String TABLE_NAME = "query_trace";
     private static final int BATCH_LIMIT = 1024;
     private static final int INITIAL_CAPACITY = 128;
@@ -63,8 +66,8 @@ public class QueryTracingJob extends SynchronizedJob {
     private void init() throws SqlException {
         String fullName = engine.getConfiguration().getSystemTableNamePrefix() + TABLE_NAME;
         engine.execute("CREATE TABLE IF NOT EXISTS '" + fullName +
-                "' (ts TIMESTAMP, query_text VARCHAR, execution_micros LONG)" +
-                " TIMESTAMP(ts) PARTITION BY HOUR TTL 1 DAY BYPASS WAL");
+                "' (" + COLUMN_TS + " TIMESTAMP, " + COLUMN_QUERY_TEXT + " VARCHAR, " + COLUMN_EXECUTION_MICROS + " LONG)" +
+                " TIMESTAMP(" + COLUMN_TS + ") PARTITION BY HOUR TTL 1 DAY BYPASS WAL");
         tableToken = engine.verifyTableName(fullName);
     }
 
