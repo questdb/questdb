@@ -37,7 +37,7 @@ def substitute_variables(text, variables):
     return template.safe_substitute(variables)
 
 
-def resolve_parameters(typed_parameters, variables):
+def resolve_parameters(typed_parameters, variables, chars_as_bytes=False):
     resolved_parameters = []
     for typed_param in typed_parameters:
         type_ = typed_param.get('type').lower()
@@ -45,13 +45,13 @@ def resolve_parameters(typed_parameters, variables):
 
         if isinstance(value, str):
             resolved_str_value = substitute_variables(value, variables)
-            convert_and_append_parameters(resolved_str_value, type_, resolved_parameters)
+            convert_and_append_parameters(resolved_str_value, type_, resolved_parameters, chars_as_bytes)
         else:
-            convert_and_append_parameters(value, type_, resolved_parameters)
+            convert_and_append_parameters(value, type_, resolved_parameters, chars_as_bytes)
     return resolved_parameters
 
 
-def convert_and_append_parameters(value, type, resolved_parameters):
+def convert_and_append_parameters(value, type, resolved_parameters, char_as_bytes):
     if type == 'int4' or type == 'int8':
         resolved_parameters.append(int(value))
     elif type == 'float4' or type == 'float8':
@@ -70,6 +70,12 @@ def convert_and_append_parameters(value, type, resolved_parameters):
     elif type == 'date':
         parsed_value = datetime.date.fromisoformat(value)
         resolved_parameters.append(parsed_value)
+    elif type == 'char':
+        str_val = str(value)
+        if char_as_bytes:
+            resolved_parameters.append(str_val.encode())
+        else:
+            resolved_parameters.append(str_val)
     else:
         resolved_parameters.append(value)
 
@@ -84,11 +90,21 @@ def convert_query_result(result):
     else:
         result_converted = [list(record) for record in result]
 
-    # Convert timestamps to strings for comparison, format: '2021-09-01T12:34:56.123456Z'
     for row in result_converted:
         for i, value in enumerate(row):
+            # convert timestamps to strings for comparison, format: '2021-09-01T12:34:56.123456Z'
             if isinstance(value, datetime.datetime):
                 row[i] = value.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+            # convert bytes to char. why? asyncpg client uses binary codec for char type
+            # This means char columns are returned as bytes, but we want to compare them as chars
+            elif isinstance(value, bytes):
+                row[i] = value.decode()
+
+
+    for row in result_converted:
+        for i, value in enumerate(row):
+            if isinstance(value, bytes):
+                row[i] = value.decode()
 
     return result_converted
 

@@ -244,6 +244,7 @@ public class TestRunner
         "varchar" => NpgsqlDbType.Varchar,
         "timestamp" => NpgsqlDbType.Timestamp,
         "date" => NpgsqlDbType.Date,
+        "char" => NpgsqlDbType.InternalChar, // note: NpgsqlDbType.Char is char(n) not char, we have to use InternalChar for regular char
         _ => throw new ArgumentException($"Unsupported type: {type}")
     };
 
@@ -258,6 +259,7 @@ public class TestRunner
             "boolean" => Convert.ToBoolean(value),
             "varchar" => value.ToString(),
             "date" => DateTime.Parse(value.ToString(), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
+            "char" => Convert.ToChar(value),
             "timestamp" => DateTime.Parse(value.ToString(), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
             _ => value
         };

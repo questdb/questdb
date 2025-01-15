@@ -39,3 +39,4 @@ compat/src/test/python/__pycache__/
 venv/
 compat/src/test/csharp/bin/
 compat/src/test/csharp/obj/
+/compat/src/test/csharp/Folder.DotSettings.user
