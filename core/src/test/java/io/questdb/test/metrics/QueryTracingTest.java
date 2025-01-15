@@ -33,8 +33,34 @@ import junit.framework.AssertionFailedError;
 import org.junit.Test;
 
 public class QueryTracingTest extends AbstractCairoTest {
+
     @Test
-    public void testTracing() throws Exception {
+    public void testQueryTraceFunction() throws Exception {
+        try (WorkerPool workerPool = new WorkerPool(() -> 1)) {
+            QueryTracingJob.assignToPool(workerPool, engine);
+            workerPool.start(LOG);
+            String exampleQuery = "SELECT table_name FROM tables()";
+            assertSql("table_name\n", exampleQuery);
+            for (int i = 0; ; i++) {
+                Thread.sleep(100);
+                try {
+                    assertSql(
+                            String.format("%s\n%s\n", QueryTracingJob.COLUMN_QUERY_TEXT, exampleQuery),
+                            String.format("SELECT %s from %s() LIMIT 1",
+                                    QueryTracingJob.COLUMN_QUERY_TEXT,
+                                    QueryTracingJob.TABLE_NAME));
+                    break;
+                } catch (SqlException | AssertionFailedError e) {
+                    if (i == 100) {
+                        throw e;
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testQueryTracingTable() throws Exception {
         try (WorkerPool workerPool = new WorkerPool(() -> 1)) {
             QueryTracingJob.assignToPool(workerPool, engine);
             workerPool.start(LOG);
@@ -44,8 +70,11 @@ public class QueryTracingTest extends AbstractCairoTest {
             for (int i = 0; ; i++) {
                 Thread.sleep(100);
                 try {
-                    assertSql(String.format("query_text\n%s\n", exampleQuery),
-                            String.format("SELECT query_text from '%s' LIMIT 1", fullName));
+                    assertSql(
+                            String.format("%s\n%s\n", QueryTracingJob.COLUMN_QUERY_TEXT, exampleQuery),
+                            String.format("SELECT %s from %s LIMIT 1",
+                                    QueryTracingJob.COLUMN_QUERY_TEXT,
+                                    fullName));
                     break;
                 } catch (SqlException | AssertionFailedError e) {
                     if (i == 100) {
