@@ -3055,12 +3055,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "   min(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   rank() over (partition by i order by j asc), " +
                             "   lag(j) over (partition by i order by j asc), " +
-                            "   lead(j) over (partition by i order by j asc) " +
+                            "   lead(j) over (partition by i order by j asc), " +
+                            "   lag(j) ignore nulls over (partition by i order by j asc), " +
+                            "   lead(j) ignore nulls over (partition by i order by j asc) " +
                             "from tab " +
                             "order by ts asc",
                     "SelectedRecord\n" +
                             "    CachedWindow\n" +
-                            "      orderedFunctions: [[j desc] => [lead(j, 1, NULL) over (partition by [i])],[ts desc] => [avg(j) over (partition by [i] rows between unbounded preceding and current row),sum(j) over (partition by [i] rows between unbounded preceding and current row),first_value(j) over (partition by [i] rows between unbounded preceding and current row),first_value(j) ignore nulls over (partition by [i] rows between unbounded preceding and current row),last_value(j) over (partition by [i] rows between unbounded preceding and current row),last_value(j) ignore nulls over (partition by [i] rows between unbounded preceding and current row),count(*) over (partition by [i] rows between unbounded preceding and current row),count(j) over (partition by [i] rows between unbounded preceding and current row),count(s) over (partition by [i] rows between unbounded preceding and current row),count(d) over (partition by [i] rows between unbounded preceding and current row),count(c) over (partition by [i] rows between unbounded preceding and current row),max(j) over (partition by [i] rows between unbounded preceding and current row),min(j) over (partition by [i] rows between unbounded preceding and current row)],[j] => [rank() over (partition by [i]),lag(j, 1, NULL) over (partition by [i])]]\n" +
+                            "      orderedFunctions: [[j desc] => [lead(j, 1, NULL) over (partition by [i]),lead(j, 1, NULL) ignore nulls over (partition by [i])],[ts desc] => [avg(j) over (partition by [i] rows between unbounded preceding and current row),sum(j) over (partition by [i] rows between unbounded preceding and current row),first_value(j) over (partition by [i] rows between unbounded preceding and current row),first_value(j) ignore nulls over (partition by [i] rows between unbounded preceding and current row),last_value(j) over (partition by [i] rows between unbounded preceding and current row),last_value(j) ignore nulls over (partition by [i] rows between unbounded preceding and current row),count(*) over (partition by [i] rows between unbounded preceding and current row),count(j) over (partition by [i] rows between unbounded preceding and current row),count(s) over (partition by [i] rows between unbounded preceding and current row),count(d) over (partition by [i] rows between unbounded preceding and current row),count(c) over (partition by [i] rows between unbounded preceding and current row),max(j) over (partition by [i] rows between unbounded preceding and current row),min(j) over (partition by [i] rows between unbounded preceding and current row)],[j] => [rank() over (partition by [i]),lag(j, 1, NULL) over (partition by [i]),lag(j, 1, NULL) ignore nulls over (partition by [i])]]\n" +
                             "      unorderedFunctions: [row_number() over (partition by [i])]\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
@@ -3068,14 +3070,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "row_number\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\trank\tlag\tlead\n" +
-                            "1\t2.0\t6.0\t3.0\t3.0\t1.0\t1.0\t3\t3\t3\t3\t3\t3.0\t1.0\t1\tnull\t2.0\n" +
-                            "2\t2.5\t5.0\t3.0\t3.0\t2.0\t2.0\t2\t2\t2\t2\t2\t3.0\t2.0\t2\t1.0\t3.0\n" +
-                            "3\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t1\t1\t1\t1\t1\t3.0\t3.0\t3\t2.0\tnull\n" +
-                            "1\t1.75\t7.0\t2.0\t2.0\t4.0\t4.0\t4\t4\t4\t4\t4\t4.0\t0.0\t4\t2.0\tnull\n" +
-                            "2\t1.0\t3.0\t2.0\t2.0\t0.0\t0.0\t3\t3\t3\t3\t3\t2.0\t0.0\t1\tnull\t1.0\n" +
-                            "3\t1.5\t3.0\t2.0\t2.0\t1.0\t1.0\t2\t2\t2\t2\t2\t2.0\t1.0\t2\t0.0\t2.0\n" +
-                            "4\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\t3\t1.0\t4.0\n",
+                    "row_number\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\trank\tlag\tlead\tlag_ignore_nulls\tlead_ignore_nulls\n" +
+                            "1\t2.0\t6.0\t3.0\t3.0\t1.0\t1.0\t3\t3\t3\t3\t3\t3.0\t1.0\t1\tnull\t2.0\tnull\t2.0\n" +
+                            "2\t2.5\t5.0\t3.0\t3.0\t2.0\t2.0\t2\t2\t2\t2\t2\t3.0\t2.0\t2\t1.0\t3.0\t1.0\t3.0\n" +
+                            "3\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t1\t1\t1\t1\t1\t3.0\t3.0\t3\t2.0\tnull\t2.0\tnull\n" +
+                            "1\t1.75\t7.0\t2.0\t2.0\t4.0\t4.0\t4\t4\t4\t4\t4\t4.0\t0.0\t4\t2.0\tnull\t2.0\tnull\n" +
+                            "2\t1.0\t3.0\t2.0\t2.0\t0.0\t0.0\t3\t3\t3\t3\t3\t2.0\t0.0\t1\tnull\t1.0\tnull\t1.0\n" +
+                            "3\t1.5\t3.0\t2.0\t2.0\t1.0\t1.0\t2\t2\t2\t2\t2\t2.0\t1.0\t2\t0.0\t2.0\t0.0\t2.0\n" +
+                            "4\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\t3\t1.0\t4.0\t1.0\t4.0\n",
                     "select row_number() over (partition by i order by ts asc), " +
                             "   avg(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   sum(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
@@ -3092,7 +3094,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "   min(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   rank() over (partition by i order by j asc), " +
                             "   lag(j) over (partition by i order by j asc), " +
-                            "   lead(j) over (partition by i order by j asc) " +
+                            "   lead(j) over (partition by i order by j asc), " +
+                            "   lag(j) ignore nulls over (partition by i order by j asc), " +
+                            "   lead(j) ignore nulls over (partition by i order by j asc) " +
                             "from tab " +
                             "order by ts asc",
                     null,
@@ -3101,14 +3105,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "row_number\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\trank\tlag\tlead\n" +
-                            "4\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\t3\t1.0\t4.0\n" +
-                            "3\t1.5\t3.0\t2.0\t2.0\t1.0\t1.0\t2\t2\t2\t2\t2\t2.0\t1.0\t2\t0.0\t2.0\n" +
-                            "2\t1.0\t3.0\t2.0\t2.0\t0.0\t0.0\t3\t3\t3\t3\t3\t2.0\t0.0\t1\tnull\t1.0\n" +
-                            "1\t1.75\t7.0\t2.0\t2.0\t4.0\t4.0\t4\t4\t4\t4\t4\t4.0\t0.0\t4\t2.0\tnull\n" +
-                            "3\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t1\t1\t1\t1\t1\t3.0\t3.0\t3\t2.0\tnull\n" +
-                            "2\t2.5\t5.0\t3.0\t3.0\t2.0\t2.0\t2\t2\t2\t2\t2\t3.0\t2.0\t2\t1.0\t3.0\n" +
-                            "1\t2.0\t6.0\t3.0\t3.0\t1.0\t1.0\t3\t3\t3\t3\t3\t3.0\t1.0\t1\tnull\t2.0\n",
+                    "row_number\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\trank\tlag\tlead\tlag_ignore_nulls\tlead_ignore_nulls\n" +
+                            "4\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\t3\t1.0\t4.0\t1.0\t4.0\n" +
+                            "3\t1.5\t3.0\t2.0\t2.0\t1.0\t1.0\t2\t2\t2\t2\t2\t2.0\t1.0\t2\t0.0\t2.0\t0.0\t2.0\n" +
+                            "2\t1.0\t3.0\t2.0\t2.0\t0.0\t0.0\t3\t3\t3\t3\t3\t2.0\t0.0\t1\tnull\t1.0\tnull\t1.0\n" +
+                            "1\t1.75\t7.0\t2.0\t2.0\t4.0\t4.0\t4\t4\t4\t4\t4\t4.0\t0.0\t4\t2.0\tnull\t2.0\tnull\n" +
+                            "3\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t1\t1\t1\t1\t1\t3.0\t3.0\t3\t2.0\tnull\t2.0\tnull\n" +
+                            "2\t2.5\t5.0\t3.0\t3.0\t2.0\t2.0\t2\t2\t2\t2\t2\t3.0\t2.0\t2\t1.0\t3.0\t1.0\t3.0\n" +
+                            "1\t2.0\t6.0\t3.0\t3.0\t1.0\t1.0\t3\t3\t3\t3\t3\t3.0\t1.0\t1\tnull\t2.0\tnull\t2.0\n",
                     "select row_number() over (partition by i order by ts asc), " +
                             "   avg(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   sum(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
@@ -3125,7 +3129,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "   min(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   rank() over (partition by i order by j asc), " +
                             "   lag(j) over (partition by i order by j asc), " +
-                            "   lead(j) over (partition by i order by j asc) " +
+                            "   lead(j) over (partition by i order by j asc), " +
+                            "   lag(j) ignore nulls over (partition by i order by j asc), " +
+                            "   lead(j) ignore nulls over (partition by i order by j asc) " +
                             "from tab " +
                             "order by ts desc",
                     null,
@@ -3865,6 +3871,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         0,
                         "Maximum number of pages (10) breached in VirtualMemory"
                 );
+                assertExceptionNoLeakCheck(
+                        "select lag(j, 1000001) ignore nulls over(partition by i) from tab",
+                        0,
+                        "Maximum number of pages (10) breached in VirtualMemory"
+                );
+                assertExceptionNoLeakCheck(
+                        "select lead(j, 1000001) ignore nulls over(partition by i) from tab",
+                        0,
+                        "Maximum number of pages (10) breached in VirtualMemory"
+                );
             });
         } finally {
             // disable
@@ -3896,14 +3912,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "row_number() over (), " +
                             "rank() over (), " +
                             "lag(j) over (), " +
-                            "lead(j) over () " +
+                            "lead(j) over (), " +
+                            "lag(j) ignore nulls over (), " +
+                            "lead(j) ignore nulls over () " +
                             "from tab",
                     "CachedWindow\n" +
-                            "  unorderedFunctions: [first_value(j) over (),first_value(j) ignore nulls over (),last_value(j) over (),last_value(j) ignore nulls over (),avg(j) over (),sum(j) over (),count(j) over (),count(*) over (),count(c) over (),count(sym) over (),max(j) over (),min(j) over (),row_number(),rank(),lag(j, 1, NULL) over (),lead(j, 1, NULL) over ()]\n" +
+                            "  unorderedFunctions: [first_value(j) over (),first_value(j) ignore nulls over (),last_value(j) over (),last_value(j) ignore nulls over (),avg(j) over (),sum(j) over (),count(j) over (),count(*) over (),count(c) over (),count(sym) over (),max(j) over (),min(j) over (),row_number(),rank(),lag(j, 1, NULL) over (),lead(j, 1, NULL) over (),lag(j, 1, NULL) ignore nulls over (),lead(j, 1, NULL) ignore nulls over ()]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n",
-                    "ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\trow_number\trank\tlag\tlead\n",
+                    "ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\trow_number\trank\tlag\tlead\tlag_ignore_nulls\tlead_ignore_nulls\n",
                     "ts",
                     true,
                     false
@@ -4210,38 +4228,38 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryAndPlan(
-                    "select ts, i, j, lead(j) over(), lag(j) over () from tab where sym = 'X'",
+                    "select ts, i, j, lead(j) over(), lag(j) over (), lead(j) ignore nulls over(), lag(j) ignore nulls over (), lead(j) respect nulls over(), lag(j) respect nulls over () from tab where sym = 'X'",
                     "CachedWindow\n" +
-                            "  unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over ()]\n" +
+                            "  unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over (),lead(j, 1, NULL) over (),lag(j, 1, NULL) over ()]\n" +
                             "    DeferredSingleSymbolFilterPageFrame\n" +
                             "        Index forward scan on: sym deferred: true\n" +
                             "          filter: sym='X'\n" +
                             "        Frame forward scan on: tab\n",
-                    "ts\ti\tj\tlead\tlag\n",
+                    "ts\ti\tj\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\n",
                     "ts",
                     true,
                     false
             );
 
             assertQueryAndPlan(
-                    "select ts, i, j, lead(j) over(), lag(j) over () from tab where sym = 'X' order by ts desc",
+                    "select ts, i, j, lead(j) over(), lag(j) over (), lead(j) ignore nulls over(), lag(j) ignore nulls over (), lead(j) respect nulls over(), lag(j) respect nulls over () from tab where sym = 'X' order by ts desc",
                     "CachedWindow\n" +
-                            "  unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over ()]\n" +
+                            "  unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over (),lead(j, 1, NULL) over (),lag(j, 1, NULL) over ()]\n" +
                             "    DeferredSingleSymbolFilterPageFrame\n" +
                             "        Index backward scan on: sym deferred: true\n" +
                             "          filter: sym='X'\n" +
                             "        Frame backward scan on: tab\n",
-                    "ts\ti\tj\tlead\tlag\n",
+                    "ts\ti\tj\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\n",
                     "ts",
                     true,
                     false
             );
 
             assertQueryAndPlan(
-                    "select ts, i, j, lead(j) over(), lag(j) over () from tab where sym IN ('X', 'Y') order by sym",
+                    "select ts, i, j, lead(j) over(), lag(j) over (), lead(j) ignore nulls over(), lag(j) ignore nulls over (), lead(j) respect nulls over(), lag(j) respect nulls over () from tab where sym IN ('X', 'Y') order by sym",
                     "SelectedRecord\n" +
                             "    CachedWindow\n" +
-                            "      unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over ()]\n" +
+                            "      unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over (),lead(j, 1, NULL) over (),lag(j, 1, NULL) over ()]\n" +
                             "        FilterOnValues symbolOrder: asc\n" +
                             "            Cursor-order scan\n" +
                             "                Index forward scan on: sym deferred: true\n" +
@@ -4249,7 +4267,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "                Index forward scan on: sym deferred: true\n" +
                             "                  filter: sym='Y'\n" +
                             "            Frame forward scan on: tab\n",
-                    "ts\ti\tj\tlead\tlag\n",
+                    "ts\ti\tj\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\n",
                     null,
                     true,
                     false
@@ -4408,20 +4426,24 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> {
             execute("create table tab (ts timestamp, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)");
-            execute("insert into tab select x::timestamp, x/4, x%5, x%5, 'k' || (x%5) ::symbol, 'k' || x from long_sequence(7)");
+            execute("insert into tab select x::timestamp, x/4, case when x % 3 = 0 THEN NULL ELSE x%5 END, x%5, 'k' || (x%5) ::symbol, 'k' || x from long_sequence(7)");
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\td\tlead\tlag\tlead1\tlag1\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t2.0\tnull\t2.0\tnull\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t3.0\t1.0\t3.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\t3.0\tnull\t2.0\tnull\t2.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t0.0\tnull\t0.0\tnull\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t1.0\t4.0\t1.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.0\t2.0\t0.0\t2.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tnull\t1.0\tnull\t1.0\n",
+                    "ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t2.0\tnull\t2.0\tnull\t2.0\tnull\t2.0\tnull\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\tnull\t1.0\tnull\t1.0\tnull\t1.0\t3.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\tnull\t2.0\tnull\t2.0\tnull\t2.0\tnull\t2.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t0.0\tnull\t0.0\tnull\t0.0\tnull\t0.0\tnull\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tnull\t4.0\t2.0\t4.0\tnull\t4.0\t1.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\t2.0\t0.0\t2.0\t0.0\t2.0\t0.0\t2.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tnull\tnull\tnull\t0.0\tnull\tnull\tnull\t1.0\n",
                     "select ts, i, j, d, " +
                             "lead(j) over (partition by i), " +
                             "lag(j) over (partition by i), " +
+                            "lead(j) ignore nulls over (partition by i), " +
+                            "lag(j) ignore nulls over (partition by i), " +
+                            "lead(j) respect nulls over (partition by i), " +
+                            "lag(j) respect nulls over (partition by i), " +
                             "lead(d) over (partition by i), " +
                             "lag(d) over (partition by i) " +
                             "from tab ",
@@ -4431,17 +4453,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\td\tlead\tlag\tlead1\tlag1\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\t2.0\t2.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\t3.0\t3.0\t3.0\t3.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0.0\t0.0\t0.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.0\t1.0\t1.0\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2.0\t2.0\t2.0\n",
+                    "ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead_ignore_nulls1\tlag_ignore_nulls1\tlead1\tlag1\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\tnull\tnull\tnull\tnull\tnull\tnull\t3.0\t3.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\tnull\tnull\tnull\tnull\tnull\tnull\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\n",
                     "select ts, i, j, d, " +
                             "lead(j, 0) over (partition by i), " +
                             "lag(j, 0) over (partition by i), " +
+                            "lead(j, 0) ignore nulls over (partition by i), " +
+                            "lag(j, 0) ignore nulls over (partition by i), " +
+                            "lead(j, 0) ignore nulls over (partition by i), " +
+                            "lag(j, 0) ignore nulls over (partition by i), " +
                             "lead(d, 0) over (partition by i), " +
                             "lag(d, 0) over (partition by i) " +
                             "from tab ",
@@ -4451,17 +4477,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\td\tlead\tlag\tlead1\tlag1\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\tnull\tnull\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\tnull\tnull\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\t3.0\tnull\tnull\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t2.0\tnull\t2.0\tnull\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tnull\tnull\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.0\tnull\tnull\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tnull\t4.0\tnull\t4.0\n",
+                    "ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t2.0\tnull\tnull\tnull\t2.0\tnull\t2.0\tnull\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tnull\t4.0\tnull\tnull\tnull\t4.0\tnull\t4.0\n",
                     "select ts, i, j, d, " +
                             "lead(j, 3) over (partition by i), " +
                             "lag(j, 3) over (partition by i), " +
+                            "lead(j, 3) ignore nulls over (partition by i), " +
+                            "lag(j, 3) ignore nulls over (partition by i), " +
+                            "lead(j, 3) respect nulls over (partition by i), " +
+                            "lag(j, 3) respect nulls over (partition by i), " +
                             "lead(d, 3) over (partition by i), " +
                             "lag(d, 3) over (partition by i) " +
                             "from tab ",
@@ -4471,17 +4501,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\td\tlead\tlag\tlead1\tlag1\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t3.0\t2.0\t3.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t3.0\t3.0\t3.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\t3.0\t4.0\t1.0\t4.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t1.0\t5.0\t1.0\t5.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t2.0\t1.0\t2.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.0\t2.0\t4.0\t2.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t3.0\t0.0\t3.0\t0.0\n",
+                    "ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\tnull\t2.0\t2.0\t2.0\tnull\t2.0\t3.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\tnull\t1.0\tnull\t1.0\tnull\t1.0\t4.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\tnull\t5.0\t2.0\t5.0\tnull\t5.0\t1.0\t5.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t2.0\t1.0\t1.0\t1.0\t2.0\t1.0\t2.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\tnull\t4.0\tnull\t4.0\tnull\t4.0\t2.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t3.0\t0.0\t3.0\t4.0\t3.0\t0.0\t3.0\t0.0\n",
                     "select ts, i, j, d, " +
                             "lead(j, 2, (j + 1)::double) over (partition by i), " +
                             "lag(j, 2, (j + 1)::double) over (partition by i), " +
+                            "lead(j, 2, (j + 1)::double) ignore nulls over (partition by i), " +
+                            "lag(j, 2, (j + 1)::double) ignore nulls over (partition by i), " +
+                            "lead(j, 2, (j + 1)::double) respect nulls over (partition by i), " +
+                            "lag(j, 2, (j + 1)::double) respect nulls over (partition by i), " +
                             "lead(d, 2, d + 1) over (partition by i), " +
                             "lag(d, 2, d + 1) over (partition by i) " +
                             "from tab ",
@@ -4491,17 +4525,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\td\tlead\tlag\tlead1\tlag1\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t2.0\t3.0\t3.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t3.0\t3.0\t3.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\t3.0\t1.0\t4.0\t4.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t5.0\t1.0\t1.0\t5.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t1.0\t2.0\t2.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.0\t4.0\t2.0\t2.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t0.0\t3.0\t3.0\t0.0\n",
+                    "ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t2.0\tnull\t2.0\t2.0\t2.0\tnull\t3.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\t1.0\tnull\t1.0\tnull\t1.0\tnull\t4.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t5.0\tnull\t5.0\t2.0\t5.0\tnull\t1.0\t5.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t1.0\t2.0\t1.0\t1.0\t1.0\t2.0\t2.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\t4.0\tnull\t4.0\tnull\t4.0\tnull\t2.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t0.0\t3.0\t4.0\t3.0\t0.0\t3.0\t3.0\t0.0\n",
                     "select ts, i, j, d, " +
                             "lead(j, 2, (j + 1)::double) over (partition by i order by ts desc), " +
                             "lag(j, 2, (j + 1)::double) over (partition by i order by ts desc), " +
+                            "lead(j, 2, (j + 1)::double) ignore nulls over (partition by i order by ts desc), " +
+                            "lag(j, 2, (j + 1)::double) ignore nulls over (partition by i order by ts desc), " +
+                            "lead(j, 2, (j + 1)::double) respect nulls over (partition by i order by ts desc), " +
+                            "lag(j, 2, (j + 1)::double) respect nulls over (partition by i order by ts desc), " +
                             "lead(d, 2, d + 1) over (partition by i), " +
                             "lag(d, 2, d + 1) over (partition by i) " +
                             "from tab order by ts asc",
@@ -4516,20 +4554,24 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testLagLeadOver() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab (ts timestamp, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)");
-            execute("insert into tab select x::timestamp, x/4, x%5, x%5, 'k' || (x%5) ::symbol, 'k' || x from long_sequence(7)");
+            execute("insert into tab select x::timestamp, x/4, case when x % 3 = 0 THEN NULL ELSE x%5 END, x%5, 'k' || (x%5) ::symbol, 'k' || x from long_sequence(7)");
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\td\tlead\tlag\tlead1\tlag1\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t2.0\tnull\t2.0\tnull\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t3.0\t1.0\t3.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\t3.0\t4.0\t2.0\t4.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t0.0\t3.0\t0.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t1.0\t4.0\t1.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.0\t2.0\t0.0\t2.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tnull\t1.0\tnull\t1.0\n",
+                    "ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t2.0\tnull\t2.0\tnull\t2.0\tnull\t2.0\tnull\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\tnull\t1.0\t4.0\t1.0\tnull\t1.0\t3.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\t4.0\t2.0\t4.0\t2.0\t4.0\t2.0\t4.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t0.0\tnull\t0.0\t2.0\t0.0\tnull\t0.0\t3.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tnull\t4.0\t2.0\t4.0\tnull\t4.0\t1.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\t2.0\t0.0\t2.0\t0.0\t2.0\t0.0\t2.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tnull\tnull\tnull\t0.0\tnull\tnull\tnull\t1.0\n",
                     "select ts, i, j, d, " +
                             "lead(j) over (), " +
                             "lag(j) over (), " +
+                            "lead(j) ignore nulls over (), " +
+                            "lag(j) ignore nulls over (), " +
+                            "lead(j) respect nulls over (), " +
+                            "lag(j) respect nulls over (), " +
                             "lead(d) over (), " +
                             "lag(d) over () " +
                             "from tab ",
@@ -4539,17 +4581,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\td\tlead\tlag\tlead1\tlag1\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\t2.0\t2.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\t3.0\t3.0\t3.0\t3.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0.0\t0.0\t0.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.0\t1.0\t1.0\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2.0\t2.0\t2.0\n",
+                    "ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\tnull\tnull\tnull\tnull\tnull\tnull\t3.0\t3.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\tnull\tnull\tnull\tnull\tnull\tnull\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\n",
                     "select ts, i, j, d, " +
                             "lead(j, 0) over (), " +
                             "lag(j, 0) over (), " +
+                            "lead(j, 0) ignore nulls over (), " +
+                            "lag(j, 0) ignore nulls over (), " +
+                            "lead(j, 0) respect nulls over (), " +
+                            "lag(j, 0) respect nulls over (), " +
                             "lead(d, 0) over (), " +
                             "lag(d, 0) over () " +
                             "from tab ",
@@ -4559,17 +4605,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\td\tlead\tlag\tlead1\tlag1\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t4.0\tnull\t4.0\tnull\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t0.0\tnull\t0.0\tnull\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\t3.0\t1.0\tnull\t1.0\tnull\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t2.0\t1.0\t2.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tnull\t2.0\tnull\t2.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.0\tnull\t3.0\tnull\t3.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tnull\t4.0\tnull\t4.0\n",
+                    "ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t4.0\tnull\t0.0\tnull\t4.0\tnull\t4.0\tnull\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t0.0\tnull\t2.0\tnull\t0.0\tnull\t0.0\tnull\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\tnull\tnull\t2.0\tnull\tnull\tnull\t1.0\tnull\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t2.0\t1.0\tnull\tnull\t2.0\t1.0\t2.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tnull\t2.0\tnull\t1.0\tnull\t2.0\tnull\t2.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\tnull\tnull\tnull\t2.0\tnull\tnull\tnull\t3.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tnull\t4.0\tnull\t2.0\tnull\t4.0\tnull\t4.0\n",
                     "select ts, i, j, d, " +
                             "lead(j, 3) over (), " +
                             "lag(j, 3) over (), " +
+                            "lead(j, 3) ignore nulls over (), " +
+                            "lag(j, 3) ignore nulls over (), " +
+                            "lead(j, 3) respect nulls over (), " +
+                            "lag(j, 3) respect nulls over (), " +
                             "lead(d, 3) over (), " +
                             "lag(d, 3) over () " +
                             "from tab ",
@@ -4579,17 +4629,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\td\tlead\tlag\tlead1\tlag1\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t3.0\t2.0\t3.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t4.0\t3.0\t4.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\t3.0\t0.0\t1.0\t0.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t1.0\t2.0\t1.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t2.0\t3.0\t2.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.0\t2.0\t4.0\t2.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t3.0\t0.0\t3.0\t0.0\n",
+                    "ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\tnull\t2.0\t4.0\t2.0\tnull\t2.0\t3.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t4.0\t3.0\t0.0\t3.0\t4.0\t3.0\t4.0\t3.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\t0.0\t1.0\t0.0\t1.0\t0.0\t1.0\t0.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\tnull\t2.0\t2.0\t1.0\tnull\t2.0\t1.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t2.0\tnull\t1.0\t2.0\t2.0\tnull\t2.0\t3.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\tnull\t4.0\tnull\t4.0\tnull\t4.0\t2.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t3.0\t0.0\t3.0\t4.0\t3.0\t0.0\t3.0\t0.0\n",
                     "select ts, i, j, d, " +
                             "lead(j, 2, (j + 1)::double) over (), " +
                             "lag(j, 2, (j + 1)::double) over (), " +
+                            "lead(j, 2, (j + 1)::double) ignore nulls over (), " +
+                            "lag(j, 2, (j + 1)::double) ignore nulls over (), " +
+                            "lead(j, 2, (j + 1)::double) respect nulls over (), " +
+                            "lag(j, 2, (j + 1)::double) respect nulls over (), " +
                             "lead(d, 2, d + 1) over (), " +
                             "lag(d, 2, d + 1) over () " +
                             "from tab ",
@@ -4599,17 +4653,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\td\tlead\tlag\tlead1\tlag1\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t2.0\t3.0\t3.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t3.0\t4.0\t4.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\t3.0\t1.0\t0.0\t0.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t2.0\t1.0\t1.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t3.0\t2.0\t2.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.0\t4.0\t2.0\t2.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t0.0\t3.0\t3.0\t0.0\n",
+                    "ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t2.0\tnull\t2.0\t4.0\t2.0\tnull\t3.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t3.0\t4.0\t3.0\t0.0\t3.0\t4.0\t4.0\t3.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\t1.0\t0.0\t1.0\t0.0\t1.0\t0.0\t0.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t2.0\tnull\t1.0\t2.0\t2.0\tnull\t1.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tnull\t2.0\t2.0\t1.0\tnull\t2.0\t2.0\t3.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\t4.0\tnull\t4.0\tnull\t4.0\tnull\t2.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t0.0\t3.0\t4.0\t3.0\t0.0\t3.0\t3.0\t0.0\n",
                     "select ts, i, j, d, " +
                             "lead(j, 2, (j + 1)::double) over (order by ts desc), " +
                             "lag(j, 2, (j + 1)::double) over (order by ts desc), " +
+                            "lead(j, 2, (j + 1)::double) ignore nulls over (order by ts desc), " +
+                            "lag(j, 2, (j + 1)::double) ignore nulls over (order by ts desc), " +
+                            "lead(j, 2, (j + 1)::double) respect nulls over (order by ts desc), " +
+                            "lag(j, 2, (j + 1)::double) respect nulls over (order by ts desc), " +
                             "lead(d, 2, d + 1) over (), " +
                             "lag(d, 2, d + 1) over () " +
                             "from tab order by ts asc",
@@ -4958,6 +5016,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 "last_value(#COLUMN)", "last_value(#COLUMN) ignore nulls", "last_value(#COLUMN) respect nulls");
 
         WINDOW_ONLY_FUNCTIONS = Arrays.asList("rank()", "row_number()", "first_value(1.0)", "last_value(1.0)", "lag(1.0)", "lead(1.0)",
+                "lag(1.0) ignore nulls", "lead(1.0) ignore nulls", "lag(1.0) respect nulls", "lead(1.0) respect nulls",
                 "first_value(1.0) ignore nulls", "last_value(1.0) ignore nulls", "first_value(1.0) respect nulls", "last_value(1.0) respect nulls");
 
         normalizeSuffix(FRAME_FUNCTIONS);

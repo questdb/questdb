@@ -48,6 +48,7 @@ import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 
@@ -105,7 +106,7 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         if (offset == 0) {
-            return new LeadLagValueCurrentRow(args.get(0));
+            return new LeadLagValueCurrentRow(args.get(0), NAME, windowContext.isIgnoreNulls());
         }
 
         if (windowContext.getPartitionByRecord() != null) {
@@ -124,6 +125,7 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
                     windowContext.getPartitionBySink(),
                     mem,
                     args.get(0),
+                    windowContext.isIgnoreNulls(),
                     defaultValue,
                     offset
             );
@@ -134,7 +136,7 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
                 configuration.getSqlWindowStoreMaxPages(),
                 MemoryTag.NATIVE_CIRCULAR_BUFFER
         );
-        return new LagFunction(args.get(0), defaultValue, offset, mem);
+        return new LagFunction(args.get(0), defaultValue, offset, mem, windowContext.isIgnoreNulls());
     }
 
     static class LagOverPartitionFunction extends BasePartitionedDoubleWindowFunction {
@@ -142,18 +144,26 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
         private final long offset;
         private double lagValue;
         private final MemoryARW memory;
+        private final boolean ignoreNulls;
 
         public LagOverPartitionFunction(Map map,
                                         VirtualRecord partitionByRecord,
                                         RecordSink partitionBySink,
                                         MemoryARW memory,
                                         Function arg,
+                                        boolean ignoreNulls,
                                         Function defaultValue,
                                         long offset) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.defaultValue = defaultValue;
             this.offset = offset;
             this.memory = memory;
+            this.ignoreNulls = ignoreNulls;
+        }
+
+        @Override
+        public boolean isIgnoreNulls() {
+            return ignoreNulls;
         }
 
         @Override
@@ -182,10 +192,14 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
                 lagValue = memory.getDouble(startOffset + firstIdx * Double.BYTES);
             }
 
-            memory.putDouble(startOffset + firstIdx * Double.BYTES, d);
+            if (!ignoreNulls || Numbers.isFinite(d)) {
+                memory.putDouble(startOffset + firstIdx * Double.BYTES, d);
+                firstIdx++;
+                count++;
+            }
             mapValue.putLong(0, startOffset);
-            mapValue.putLong(1, (firstIdx + 1) % offset);
-            mapValue.putLong(2, count + 1);
+            mapValue.putLong(1, firstIdx % offset);
+            mapValue.putLong(2, count);
         }
 
         @Override
@@ -237,6 +251,9 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
                 sink.val("NULL");
             }
             sink.val(')');
+            if (ignoreNulls) {
+                sink.val(" ignore nulls");
+            }
             sink.val(" over (");
             sink.val("partition by ");
             sink.val(partitionByRecord.getFunctions());
@@ -251,18 +268,25 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
         private final Function defaultValue;
         private int loIdx = 0;
         private long count = 0;
+        private final boolean ignoreNulls;
 
-        public LagFunction(Function arg, Function defaultValueFunc, long offset, MemoryARW memory) {
+        public LagFunction(Function arg, Function defaultValueFunc, long offset, MemoryARW memory, boolean ignoreNulls) {
             super(arg);
             this.offset = offset;
             this.buffer = memory;
             this.defaultValue = defaultValueFunc;
+            this.ignoreNulls = ignoreNulls;
         }
 
         @Override
         public void close() {
             super.close();
             buffer.close();
+        }
+
+        @Override
+        public boolean isIgnoreNulls() {
+            return ignoreNulls;
         }
 
         @Override
@@ -273,9 +297,11 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
                 lagValue = buffer.getDouble((long) loIdx * Double.BYTES);
             }
             double d = arg.getDouble(record);
-            buffer.putDouble((long) loIdx * Double.BYTES, d);
-            loIdx = (int) ((loIdx + 1) % offset);
-            count++;
+            if (!ignoreNulls || Numbers.isFinite(d)) {
+                buffer.putDouble((long) loIdx * Double.BYTES, d);
+                loIdx = (int) ((loIdx + 1) % offset);
+                count++;
+            }
         }
 
         @Override
@@ -330,15 +356,22 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
                 sink.val("NULL");
             }
             sink.val(')');
+            if (ignoreNulls) {
+                sink.val(" ignore nulls");
+            }
             sink.val(" over ()");
         }
     }
 
     static class LeadLagValueCurrentRow extends BaseDoubleWindowFunction {
         private double value;
+        private final String name;
+        private final boolean ignoreNulls;
 
-        public LeadLagValueCurrentRow(Function arg) {
+        public LeadLagValueCurrentRow(Function arg, String name, boolean ignoreNulls) {
             super(arg);
+            this.name = name;
+            this.ignoreNulls = ignoreNulls;
         }
 
         @Override
@@ -353,7 +386,7 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
 
         @Override
         public String getName() {
-            return NAME;
+            return name;
         }
 
         @Override
@@ -371,6 +404,9 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(", ").val(0).val(", NULL)");
+            if (ignoreNulls) {
+                sink.val(" ignore nulls");
+            }
             sink.val(" over ()");
         }
     }

@@ -48,6 +48,7 @@ import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 
@@ -80,12 +81,12 @@ public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
 
         long offset = 1;
         if (args.size() >= 2) {
-            final Function OffsetFunc = args.getQuick(1);
-            if (!OffsetFunc.isConstant() && !OffsetFunc.isRuntimeConstant()) {
+            final Function offsetFunc = args.getQuick(1);
+            if (!offsetFunc.isConstant() && !offsetFunc.isRuntimeConstant()) {
                 throw SqlException.$(argPositions.getQuick(1), "offset must be a constant");
             }
 
-            offset = OffsetFunc.getLong(null);
+            offset = offsetFunc.getLong(null);
             if (offset < 0) {
                 throw SqlException.$(argPositions.getQuick(1), "offset must be a positive integer");
             }
@@ -103,12 +104,7 @@ public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         if (offset == 0) {
-            return new LagDoubleFunctionFactory.LeadLagValueCurrentRow(args.get(0)) {
-                @Override
-                public String getName() {
-                    return NAME;
-                }
-            };
+            return new LagDoubleFunctionFactory.LeadLagValueCurrentRow(args.get(0), NAME, windowContext.isIgnoreNulls());
         }
 
         if (windowContext.getPartitionByRecord() != null) {
@@ -127,6 +123,7 @@ public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
                     windowContext.getPartitionBySink(),
                     mem,
                     args.get(0),
+                    windowContext.isIgnoreNulls(),
                     defaultValue,
                     offset
             );
@@ -137,25 +134,28 @@ public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
                 configuration.getSqlWindowStoreMaxPages(),
                 MemoryTag.NATIVE_CIRCULAR_BUFFER
         );
-        return new LeadFunction(args.get(0), defaultValue, offset, mem);
+        return new LeadFunction(args.get(0), defaultValue, offset, mem, windowContext.isIgnoreNulls());
     }
 
     static class LeadOverPartitionFunction extends BasePartitionedDoubleWindowFunction {
         private final Function defaultValue;
         private final long offset;
         private final MemoryARW memory;
+        private final boolean ignoreNulls;
 
         public LeadOverPartitionFunction(Map map,
                                          VirtualRecord partitionByRecord,
                                          RecordSink partitionBySink,
                                          MemoryARW memory,
                                          Function arg,
+                                         boolean ignoreNulls,
                                          Function defaultValue,
                                          long offset) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.defaultValue = defaultValue;
             this.offset = offset;
             this.memory = memory;
+            this.ignoreNulls = ignoreNulls;
         }
 
         @Override
@@ -196,10 +196,15 @@ public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
                 leadValue = memory.getDouble(startOffset + firstIdx * Double.BYTES);
             }
 
-            memory.putDouble(startOffset + firstIdx * Double.BYTES, d);
+            if (!ignoreNulls || Numbers.isFinite(d)) {
+                memory.putDouble(startOffset + firstIdx * Double.BYTES, d);
+                firstIdx++;
+                count++;
+            }
+
             mapValue.putLong(0, startOffset);
-            mapValue.putLong(1, (firstIdx + 1) % offset);
-            mapValue.putLong(2, count + 1);
+            mapValue.putLong(1, firstIdx % offset);
+            mapValue.putLong(2, count);
             Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), leadValue);
         }
 
@@ -231,6 +236,9 @@ public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
                 sink.val("NULL");
             }
             sink.val(')');
+            if (ignoreNulls) {
+                sink.val(" ignore nulls");
+            }
             sink.val(" over (");
             sink.val("partition by ");
             sink.val(partitionByRecord.getFunctions());
@@ -244,12 +252,14 @@ public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
         private final Function defaultValue;
         private int loIdx = 0;
         private long count = 0;
+        private final boolean ignoreNulls;
 
-        public LeadFunction(Function arg, Function defaultValueFunc, long offset, MemoryARW memory) {
+        public LeadFunction(Function arg, Function defaultValueFunc, long offset, MemoryARW memory, boolean ignoreNulls) {
             super(arg);
             this.offset = offset;
             this.buffer = memory;
             this.defaultValue = defaultValueFunc;
+            this.ignoreNulls = ignoreNulls;
         }
 
         @Override
@@ -276,10 +286,14 @@ public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
             } else {
                 leadValue = buffer.getDouble((long) loIdx * Double.BYTES);
             }
+
             double d = arg.getDouble(record);
-            buffer.putDouble((long) loIdx * Double.BYTES, d);
-            loIdx = (int) ((loIdx + 1) % offset);
-            count++;
+            if (!ignoreNulls || Numbers.isFinite(d)) {
+                buffer.putDouble((long) loIdx * Double.BYTES, d);
+                loIdx = (int) ((loIdx + 1) % offset);
+                count++;
+            }
+
             Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), leadValue);
         }
 
@@ -314,6 +328,9 @@ public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
                 sink.val("NULL");
             }
             sink.val(')');
+            if (ignoreNulls) {
+                sink.val(" ignore nulls");
+            }
             sink.val(" over ()");
         }
     }
