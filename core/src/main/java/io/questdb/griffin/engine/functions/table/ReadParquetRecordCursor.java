@@ -324,38 +324,20 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
 
         @Override
         public void getLong256(int col, CharSink<?> sink) {
-            long dataPtr = dataPtrs.get(col);
-            long offset = (long) currentRowInRowGroup * Long256.BYTES;
-            final long a = Unsafe.getUnsafe().getLong(dataPtr + offset);
-            final long b = Unsafe.getUnsafe().getLong(dataPtr + offset + Long.BYTES);
-            final long c = Unsafe.getUnsafe().getLong(dataPtr + offset + Long.BYTES * 2);
-            final long d = Unsafe.getUnsafe().getLong(dataPtr + offset + Long.BYTES * 3);
-            Numbers.appendLong256(a, b, c, d, sink);
+            Numbers.appendLong256FromUnsafe(getLong256Addr(col), sink);
         }
 
         @Override
         public Long256 getLong256A(int col) {
-            long dataPtr = dataPtrs.get(col);
-            long offset = (long) currentRowInRowGroup * Long256.BYTES;
-            final long a = Unsafe.getUnsafe().getLong(dataPtr + offset);
-            final long b = Unsafe.getUnsafe().getLong(dataPtr + offset + Long.BYTES);
-            final long c = Unsafe.getUnsafe().getLong(dataPtr + offset + Long.BYTES * 2);
-            final long d = Unsafe.getUnsafe().getLong(dataPtr + offset + Long.BYTES * 3);
-            Long256Impl long256 = long256A(col);
-            long256.setAll(a, b, c, d);
+            final Long256Impl long256 = long256A(col);
+            long256.fromAddress(getLong256Addr(col));
             return long256;
         }
 
         @Override
         public Long256 getLong256B(int col) {
-            long dataPtr = dataPtrs.get(col);
-            long offset = (long) currentRowInRowGroup * Long256.BYTES;
-            final long a = Unsafe.getUnsafe().getLong(dataPtr + offset);
-            final long b = Unsafe.getUnsafe().getLong(dataPtr + offset + Long.BYTES);
-            final long c = Unsafe.getUnsafe().getLong(dataPtr + offset + Long.BYTES * 2);
-            final long d = Unsafe.getUnsafe().getLong(dataPtr + offset + Long.BYTES * 3);
-            Long256Impl long256 = long256B(col);
-            long256.setAll(a, b, c, d);
+            final Long256Impl long256 = long256B(col);
+            long256.fromAddress(getLong256Addr(col));
             return long256;
         }
 
@@ -421,6 +403,10 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
                 csViewsB.extendAndSet(columnIndex, new DirectString());
             }
             return csViewsB.getQuick(columnIndex);
+        }
+
+        private long getLong256Addr(int col) {
+            return dataPtrs.get(col) + (long) currentRowInRowGroup * Long256.BYTES;
         }
 
         private DirectString getStr(long addr, DirectString view) {
