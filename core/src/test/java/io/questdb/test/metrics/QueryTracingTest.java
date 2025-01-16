@@ -53,8 +53,9 @@ public class QueryTracingTest extends AbstractCairoTest {
             workerPool.start(LOG);
             String exampleQuery = "SELECT table_name FROM tables()";
             assertSql("table_name\n", exampleQuery);
-            for (int i = 0; ; i++) {
-                Thread.sleep(100);
+            int sleepMillis = 100;
+            while (true) {
+                Thread.sleep(sleepMillis);
                 try {
                     assertSql(
                             String.format("%s\n%s\n", QueryTracingJob.COLUMN_QUERY_TEXT, exampleQuery),
@@ -66,9 +67,10 @@ public class QueryTracingTest extends AbstractCairoTest {
                             ));
                     break;
                 } catch (SqlException | AssertionError e) {
-                    if (i == 100) {
+                    if (sleepMillis >= 6400) {
                         throw e;
                     }
+                    sleepMillis *= 2;
                 }
             }
         }
@@ -83,8 +85,9 @@ public class QueryTracingTest extends AbstractCairoTest {
             workerPool.start(LOG);
             String exampleQuery = "SELECT table_name FROM tables()";
             assertSql("table_name\n", exampleQuery);
-            for (int i = 0; ; i++) {
-                Thread.sleep(100);
+            int sleepMillis = 100;
+            while (true) {
+                Thread.sleep(sleepMillis);
                 try {
                     assertSql(
                             String.format("%s\n%s\n", QueryTracingJob.COLUMN_QUERY_TEXT, exampleQuery),
@@ -96,9 +99,10 @@ public class QueryTracingTest extends AbstractCairoTest {
                             ));
                     break;
                 } catch (SqlException | AssertionError e) {
-                    if (i == 100) {
+                    if (sleepMillis >= 6400) {
                         throw e;
                     }
+                    sleepMillis *= 2;
                 }
             }
         }
