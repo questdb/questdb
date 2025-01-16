@@ -25,14 +25,24 @@
 package io.questdb.test.metrics;
 
 
+import io.questdb.PropertyKey;
 import io.questdb.griffin.SqlException;
 import io.questdb.metrics.QueryTracingJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
-import junit.framework.AssertionFailedError;
+import org.junit.Before;
 import org.junit.Test;
 
 public class QueryTracingTest extends AbstractCairoTest {
+
+    private String queryTraceTableName;
+
+    @Before
+    public void setup() throws SqlException {
+        node1.getConfigurationOverrides().setProperty(PropertyKey.QUERY_TRACING_ENABLED, true);
+        queryTraceTableName = engine.getConfiguration().getSystemTableNamePrefix() + QueryTracingJob.TABLE_NAME;
+        engine.execute("DROP TABLE IF EXISTS '" + queryTraceTableName + "'");
+    }
 
     @Test
     public void testQueryTraceFunction() throws Exception {
@@ -48,13 +58,14 @@ public class QueryTracingTest extends AbstractCairoTest {
                 try {
                     assertSql(
                             String.format("%s\n%s\n", QueryTracingJob.COLUMN_QUERY_TEXT, exampleQuery),
-                            String.format("SELECT %s from %s() WHERE %s='%s'",
+                            String.format("SELECT %s from %s() WHERE %s='%s' LIMIT 1",
                                     QueryTracingJob.COLUMN_QUERY_TEXT,
                                     QueryTracingJob.TABLE_NAME,
                                     QueryTracingJob.COLUMN_QUERY_TEXT,
-                                    exampleQuery));
+                                    exampleQuery
+                            ));
                     break;
-                } catch (SqlException | AssertionFailedError e) {
+                } catch (SqlException | AssertionError e) {
                     if (i == 100) {
                         throw e;
                     }
@@ -72,19 +83,19 @@ public class QueryTracingTest extends AbstractCairoTest {
             workerPool.start(LOG);
             String exampleQuery = "SELECT table_name FROM tables()";
             assertSql("table_name\n", exampleQuery);
-            String fullName = engine.getConfiguration().getSystemTableNamePrefix() + QueryTracingJob.TABLE_NAME;
             for (int i = 0; ; i++) {
                 Thread.sleep(100);
                 try {
                     assertSql(
                             String.format("%s\n%s\n", QueryTracingJob.COLUMN_QUERY_TEXT, exampleQuery),
-                            String.format("SELECT %s from %s WHERE %s='%s'",
+                            String.format("SELECT %s from %s WHERE %s='%s' LIMIT 1",
                                     QueryTracingJob.COLUMN_QUERY_TEXT,
-                                    fullName,
+                                    queryTraceTableName,
                                     QueryTracingJob.COLUMN_QUERY_TEXT,
-                                    exampleQuery));
+                                    exampleQuery
+                            ));
                     break;
-                } catch (SqlException | AssertionFailedError e) {
+                } catch (SqlException | AssertionError e) {
                     if (i == 100) {
                         throw e;
                     }
