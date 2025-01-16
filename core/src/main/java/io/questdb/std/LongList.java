@@ -482,14 +482,33 @@ public class LongList implements Mutable, LongVec, Sinkable {
      * Comparison between groups is done by comparing the first element of each group, then
      * if the first elements are equal the second elements are compared and so on.
      *
+     * @param groupSize            size of the group
+     * @param compareByGroupIndex1 index of the element 1 in the group to compare by
+     * @param compareByGroupIndex2 index of the element 2 in the group to compare by
+     * @param lo                   low index to sort the array from
+     * @param hi                   high index to sort the array to
+     */
+    public void sortGroupsBy2Elements(int groupSize, int compareByGroupIndex1, int compareByGroupIndex2, int lo, int hi) {
+        if (groupSize > 0 && pos % groupSize == 0 && lo >= 0 && hi <= pos / groupSize) {
+            LongGroupSort.quickSort(groupSize, compareByGroupIndex1, compareByGroupIndex2, data, lo, hi);
+            return;
+        }
+        throw new IllegalStateException("sorting not supported for group size: " + groupSize + ", length: " + pos);
+    }
+
+    /**
+     * Sorts groups of N elements. The size of the group is specified by {@code groupSize}.
+     * Comparison between groups is done by comparing the first element of each group, then
+     * if the first elements are equal the second elements are compared and so on.
+     *
      * @param groupSize           size of the group
      * @param compareByGroupIndex index of the element in the group to compare by
      * @param lo                  low index to sort the array from
      * @param hi                  high index to sort the array to
      */
     public void sortGroupsByElement(int groupSize, int compareByGroupIndex, int lo, int hi) {
-        if (groupSize > 0 && pos % groupSize == 0) {
-            LongGroupSort.quickSort(groupSize, compareByGroupIndex, data, 0, pos / groupSize);
+        if (groupSize > 0 && pos % groupSize == 0 && lo >= 0 && hi <= pos / groupSize) {
+            LongGroupSort.quickSort(groupSize, compareByGroupIndex, data, lo, hi);
             return;
         }
         throw new IllegalStateException("sorting not supported for group size: " + groupSize + ", length: " + pos);

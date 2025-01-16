@@ -57,6 +57,27 @@ public class LongGroupSort {
     }
 
     // Partition function for QuickSort
+    private static int partitionCompareBy2ElementsImpl(long[] array, int compareElementByIndex1, int compareElementByIndex2, int low, int high, int n) {
+        int pivotIndex = high - 1;
+        int i = low - 1;
+
+        int pivotElementIndex1 = pivotIndex * n + compareElementByIndex1;
+        int pivotElementIndex2 = pivotIndex * n + compareElementByIndex2;
+
+        for (int j = low; j < high; j++) {
+            if (array[j * n + compareElementByIndex1] < array[pivotElementIndex1]) {
+                swapGroups(array, ++i, j, n);
+            } else if (array[j * n + compareElementByIndex1] == array[pivotElementIndex1]
+                    && array[j * n + compareElementByIndex2] < array[pivotElementIndex2]) {
+                swapGroups(array, ++i, j, n);
+            }
+        }
+
+        swapGroups(array, ++i, pivotIndex, n);
+        return i;
+    }
+
+    // Partition function for QuickSort
     private static int partitionCompareByElementImpl(long[] array, int compareElementByIndex, int low, int high, int n) {
         int pivotIndex = high - 1;
         int i = low - 1;
@@ -82,12 +103,21 @@ public class LongGroupSort {
     }
 
 
+    private static void quickSortCompareBy2ElementsImpl(long[] array, int compareElementByIndex1, int compareElementByIndex2, int low, int high, int n) {
+        if (low + 1 < high) {
+            int pi = partitionCompareBy2ElementsImpl(array, compareElementByIndex1, compareElementByIndex2, low, high, n);
+
+            quickSortCompareBy2ElementsImpl(array, compareElementByIndex1, compareElementByIndex2, low, pi, n);  // Before pi
+            quickSortCompareBy2ElementsImpl(array, compareElementByIndex1, compareElementByIndex2, pi + 1, high, n); // After pi
+        }
+    }
+
     private static void quickSortCompareByElementImpl(long[] array, int compareElementByIndex, int low, int high, int n) {
         if (low + 1 < high) {
             int pi = partitionCompareByElementImpl(array, compareElementByIndex, low, high, n);
 
-            quickSortCompareAllImpl(array, low, pi, n);  // Before pi
-            quickSortCompareAllImpl(array, pi + 1, high, n); // After pi
+            quickSortCompareByElementImpl(array, compareElementByIndex, low, pi, n);  // Before pi
+            quickSortCompareByElementImpl(array, compareElementByIndex, pi + 1, high, n); // After pi
         }
     }
 
@@ -127,6 +157,21 @@ public class LongGroupSort {
     static void quickSort(int n, int compareByElementIndex, long[] array, int groupLo, int groupHi) {
         assert groupHi >= groupLo;
         quickSortCompareByElementImpl(array, compareByElementIndex, groupLo, groupHi, n);
+    }
+
+    /**
+     * Sort an long array which is actually intrusively storing a group (tuple) of N longs.
+     *
+     * @param n                      number of longs in a group
+     * @param compareByElementIndex1 index of the element 1 in the group to compare by
+     * @param compareByElementIndex2 index of the element 2 in the group to compare by
+     * @param array                  array to sort
+     * @param groupLo                start index of the group
+     * @param groupHi                end index of the group
+     */
+    static void quickSort(int n, int compareByElementIndex1, int compareByElementIndex2, long[] array, int groupLo, int groupHi) {
+        assert groupHi >= groupLo;
+        quickSortCompareBy2ElementsImpl(array, compareByElementIndex1, compareByElementIndex2, groupLo, groupHi, n);
     }
 }
 

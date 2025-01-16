@@ -31,8 +31,10 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.wal.*;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.*;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
@@ -56,6 +58,44 @@ import static io.questdb.cairo.wal.WalUtils.*;
 import static org.junit.Assert.*;
 
 public class WalWriterTest extends AbstractCairoTest {
+
+    @Test
+    public void applyMaySmallCommitsHappyDays() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table sm (id int, ts timestamp) timestamp(ts) partition by DAY WAL");
+            TableToken tableToken = engine.verifyTableName("sm");
+            long startTs = IntervalUtils.parseFloorPartialTimestamp("2022-02-24");
+            long tsIncrement = Timestamps.SECOND_MICROS;
+
+            long ts = startTs;
+            int totalRows = 10;
+
+            try (WalWriter walWriter1 = engine.getWalWriter(tableToken)) {
+                try (WalWriter walWriter2 = engine.getWalWriter(tableToken)) {
+
+                    for (int i = 0; i < totalRows; i += 2) {
+                        TableWriter.Row row = walWriter1.newRow(ts);
+                        row.putInt(0, i);
+                        row.append();
+                        walWriter1.commit();
+
+                        TableWriter.Row row2 = walWriter2.newRow(ts);
+                        row2.putInt(0, i + 1);
+                        row2.append();
+                        walWriter2.commit();
+
+                        ts += tsIncrement;
+                    }
+                }
+            }
+
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertSql("count\tmin\tmax\n" +
+                    "10\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:00:04.000000Z\n", "select count(*), min(ts), max(ts) from sm");
+            assertSqlCursors("sm", "select * from sm order by id");
+        });
+    }
 
     @Test
     public void testAddColumnRollsUncommittedRowsToNewSegment() throws Exception {

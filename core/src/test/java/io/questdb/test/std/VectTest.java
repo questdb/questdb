@@ -1634,9 +1634,9 @@ public class VectTest {
                             Unsafe.getUnsafe().putLong(segmentAddr + (c * rowsPerCommit + r) * 2L * Long.BYTES, ts);
                             ts += tsIncrement;
                         }
-                        segmentCopyInfo.addTxn((long) c * rowsPerCommit, c * segmentCount + s, rowsPerCommit, s);
+                        segmentCopyInfo.addTxn((long) c * rowsPerCommit, c * segmentCount + s, rowsPerCommit, s, startTs, ts - tsIncrement);
                     }
-                    segmentCopyInfo.add(1, s, 0, commits * rowsPerCommit, startTs, ts - tsIncrement);
+                    segmentCopyInfo.addSegment(1, s, 0, commits * rowsPerCommit);
                 }
 
                 for (int lr = 0; lr < lagRows; lr++) {

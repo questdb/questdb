@@ -87,8 +87,8 @@ public class WalTxnDetails {
         }
 
         // TODO: support blocked transactions
-//        return blockSize;
-        return 1;
+        return blockSize;
+//        return 1;
     }
 
     public long getCommitToTimestamp(long seqTxn) {
@@ -118,6 +118,14 @@ public class WalTxnDetails {
         return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE) + WAL_TXN_MIN_TIMESTAMP_OFFSET);
     }
 
+    public long getSegTxn(long seqTxn) {
+        return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + SEQ_TXN_OFFSET));
+    }
+
+    public int getSegmentId(long seqTxn) {
+        return Numbers.decodeLowInt(transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ID_WAL_SEG_ID_OFFSET)));
+    }
+
     public long getSegmentRowHi(long seqTxn) {
         return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE) + WAL_TXN_ROW_HI_OFFSET);
     }
@@ -133,10 +141,6 @@ public class WalTxnDetails {
     public boolean getTxnInOrder(long seqTxn) {
         int isOutOfOrder = Numbers.decodeLowInt(transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ROW_IN_ORDER_DATA_TYPE)));
         return (isOutOfOrder & FLAG_IS_OOO) == 0;
-    }
-
-    public int getSegmentId(long seqTxn) {
-        return Numbers.decodeLowInt(transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ID_WAL_SEG_ID_OFFSET)));
     }
 
     public int getWalId(long seqTxn) {
@@ -160,6 +164,55 @@ public class WalTxnDetails {
     public boolean isLastSegmentUsage(long seqTxn) {
         int isOutOfOrder = Numbers.decodeLowInt(transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ROW_IN_ORDER_DATA_TYPE)));
         return (isOutOfOrder & FLAG_IS_LAST_SEGMENT_USAGE) != 0;
+    }
+
+    public void prepareCopySegments(long startSeqTxn, int blockTransactionCount, SegmentCopyInfo copyTasks) {
+        try (var sortedBySegmentTxnSlice = sortSliceByWalAndSegment(startSeqTxn, blockTransactionCount)) {
+            int lastSegmentId = -1;
+            int lastWalId = -1;
+            long segmentLo = -1;
+
+            int copyTaskCount = 0;
+            long totalRowsToCopy = 0;
+
+
+            long roHi = 0;
+
+            for (int i = 0; i < blockTransactionCount; i++) {
+                int seqTxn = (int) (sortedBySegmentTxnSlice.getSeqTxn(i) - startSeqTxn);
+                int segmentId = sortedBySegmentTxnSlice.getSegmentId(i);
+                int walId = sortedBySegmentTxnSlice.getWalId(i);
+                long roLo = sortedBySegmentTxnSlice.getRoLo(i);
+
+                if (i > 0) {
+                    if (lastWalId != walId || lastSegmentId != segmentId) {
+                        // Prev min, max timestamps, roHi
+                        copyTasks.addSegment(walId, segmentId, segmentLo, roHi);
+                        copyTaskCount++;
+                        segmentLo = roLo;
+
+                        lastWalId = walId;
+                        lastSegmentId = segmentId;
+                    }
+                } else {
+                    segmentLo = roLo;
+                    lastWalId = walId;
+                    lastSegmentId = segmentId;
+                }
+
+                long minTimestamp = sortedBySegmentTxnSlice.getMinTimestamp(i);
+                long maxTimestamp = sortedBySegmentTxnSlice.getMaxTimestamp(i);
+                roHi = sortedBySegmentTxnSlice.getRoHi(i);
+                long committedRowsCount = roHi - roLo;
+                copyTasks.addTxn(roLo, seqTxn, committedRowsCount, copyTaskCount, minTimestamp, maxTimestamp);
+            }
+
+            int lastIndex = blockTransactionCount - 1;
+            int segmentId = sortedBySegmentTxnSlice.getSegmentId(lastIndex);
+            int walId = sortedBySegmentTxnSlice.getWalId(lastIndex);
+
+            copyTasks.addSegment(walId, segmentId, segmentLo, roHi);
+        }
     }
 
     public void readObservableTxnMeta(
@@ -218,74 +271,6 @@ public class WalTxnDetails {
 
     }
 
-    public void prepareCopySegments(long startSeqTxn, int blockTransactionCount, SegmentCopyInfo copyTasks) {
-        try (var sortedBySegmentTxnSlice = sortSliceByWalAndSegment(startSeqTxn, blockTransactionCount)) {
-            long copySegmentRowOffset = 0;
-            int lastSegmentId = -1;
-            int lastWalId = -1;
-            long segmentLo = -1;
-            long lastRowHi = 0;
-
-            int copyTaskCount = 0;
-            long totalRowsToCopy = 0;
-
-            long minTimestamp = Long.MAX_VALUE;
-            long maxTimestamp = Long.MIN_VALUE;
-
-            for (int i = 0; i < blockTransactionCount; i++) {
-                int seqTxn = (int) (sortedBySegmentTxnSlice.getSeqTxn(i) - startSeqTxn);
-                int segmentId = sortedBySegmentTxnSlice.getSegmentId(i);
-                int walId = sortedBySegmentTxnSlice.getWalId(i);
-                long roHi = sortedBySegmentTxnSlice.getRoHi(i);
-                long roLo = sortedBySegmentTxnSlice.getRoLo(i);
-
-                if (i > 1) {
-                    if (lastWalId != walId || lastSegmentId != segmentId) {
-                        // Switched to next segment
-                        long prevRoHi = sortedBySegmentTxnSlice.getRoHi(i - 1);
-                        copyTasks.add(walId, segmentId, segmentLo, prevRoHi, minTimestamp, maxTimestamp);
-                        copyTaskCount++;
-                        segmentLo = roLo;
-
-                        lastWalId = walId;
-                        lastSegmentId = segmentId;
-                        copySegmentRowOffset += segmentLo + prevRoHi;
-
-                        minTimestamp = Long.MAX_VALUE;
-                        maxTimestamp = Long.MIN_VALUE;
-                    } else {
-                        // Same segment, check it's last hi matches current lo
-                        if (lastRowHi != roLo) {
-                            throw CairoException.critical(0).put("uncommitted row gap found in WAL segment [")
-                                    .put("walId=").put(walId)
-                                    .put(", segmentId=").put(segmentId)
-                                    .put(", seqTxn=").put(seqTxn)
-                                    .put(", previousRowHi=").put(lastRowHi)
-                                    .put(", currentRowLo=").put(roLo);
-                        }
-                    }
-                } else {
-                    segmentLo = roLo;
-                }
-
-                minTimestamp = Math.min(minTimestamp, getMinTimestamp(seqTxn));
-                maxTimestamp = Math.min(maxTimestamp, getMaxTimestamp(seqTxn));
-
-                long committedRowsCount = roHi - roLo;
-                copyTasks.addTxn(copySegmentRowOffset + roLo - segmentLo, seqTxn, committedRowsCount, copyTaskCount);
-
-                lastRowHi = roHi;
-            }
-
-            int lastIndex = blockTransactionCount - 1;
-            int segmentId = sortedBySegmentTxnSlice.getSegmentId(lastIndex);
-            int walId = sortedBySegmentTxnSlice.getWalId(lastIndex);
-            long roHi = sortedBySegmentTxnSlice.getRoHi(lastIndex);
-
-            copyTasks.add(walId, segmentId, segmentLo, roHi, minTimestamp, maxTimestamp);
-        }
-    }
-
     private static WalEventCursor openWalEFile(Path tempPath, WalEventReader eventReader, int segmentTxn, long seqTxn) {
         WalEventCursor walEventCursor;
         try {
@@ -299,13 +284,6 @@ public class WalTxnDetails {
 
     private long getCommitMaxTimestamp(long seqTxn) {
         return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_MAX_TIMESTAMP_OFFSET));
-    }
-
-    public WalTxnDetailsSlice sortSliceByWalAndSegment(long startSeqTxn, int blockTransactionCount) {
-        assert blockTransactionCount > 1;
-        int lo = (int) (startSeqTxn - this.startSeqTxn);
-
-        return txnSlice.of(lo, lo + blockTransactionCount);
     }
 
     private void loadTransactionDetails(Path tempPath, TransactionLogCursor transactionLogCursor, long loadFromSeqTxn, int rootLen, long maxCommittedTimestamp) {
@@ -343,7 +321,8 @@ public class WalTxnDetails {
             txnDetails.sortGroups(TXN_DETAIL_RECORD_SIZE);
             int incrementalLoadStartIndex = transactionMeta.size();
 
-            for (int i = 0, size = txnDetails.size() / TXN_DETAIL_RECORD_SIZE; i < size; i++) {
+            int txnCount = txnDetails.size() / TXN_DETAIL_RECORD_SIZE;
+            for (int i = 0; i < txnCount; i++) {
                 int walId = txnDetails.get(TXN_DETAIL_RECORD_SIZE * i);
                 int segmentId = txnDetails.get(TXN_DETAIL_RECORD_SIZE * i + 1);
                 int segmentTxn = txnDetails.get(TXN_DETAIL_RECORD_SIZE * i + 2);
@@ -384,7 +363,7 @@ public class WalTxnDetails {
                         int flags = commitInfo.isOutOfOrder() ? FLAG_IS_OOO : 0x0;
                         // The records are sorted by WAL ID, segment ID.
                         // If the next record is not from the same segment it means it's the last txn from the segment.
-                        if (i + 1 < size) {
+                        if (i + 1 < txnCount) {
                             int nextWalId = txnDetails.get(TXN_DETAIL_RECORD_SIZE * (i + 1));
                             int nextSegmentId = txnDetails.get(TXN_DETAIL_RECORD_SIZE * (i + 1) + 1);
                             if (nextSegmentId != segmentId || nextWalId != walId) {
@@ -412,10 +391,17 @@ public class WalTxnDetails {
                 transactionMeta.add(-1); // symbols diff offset
             }
 
-            transactionMeta.sortGroupsByElement(TXN_METADATA_LONGS_SIZE, 0, incrementalLoadStartIndex, transactionMeta.size());
+            transactionMeta.sortGroupsByElement(TXN_METADATA_LONGS_SIZE, 0, incrementalLoadStartIndex, txnCount);
         } finally {
             tempPath.trimTo(rootLen);
         }
+    }
+
+    private WalTxnDetailsSlice sortSliceByWalAndSegment(long startSeqTxn, int blockTransactionCount) {
+        assert blockTransactionCount > 1;
+        int lo = (int) (startSeqTxn);
+
+        return txnSlice.of(lo, blockTransactionCount);
     }
 
     private int saveSymbols(int symbolIndexStartOffset, SymbolMapDiffCursor commitInfo, long seqTxn) {
@@ -603,8 +589,8 @@ public class WalTxnDetails {
     }
 
     public class WalTxnDetailsSlice implements QuietCloseable {
-        private int hi;
-        private int lo;
+        private long hi;
+        private long lo;
 
         @Override
         public void close() {
@@ -612,9 +598,17 @@ public class WalTxnDetails {
             transactionMeta.sortGroupsByElement(
                     TXN_METADATA_LONGS_SIZE,
                     SEQ_TXN_OFFSET,
-                    lo,
-                    hi
+                    (int) (lo - startSeqTxn),
+                    (int) (hi - startSeqTxn)
             );
+        }
+
+        public long getMaxTimestamp(int txn) {
+            return WalTxnDetails.this.getMaxTimestamp(lo + txn);
+        }
+
+        public long getMinTimestamp(int txn) {
+            return WalTxnDetails.this.getMinTimestamp(lo + txn);
         }
 
         public long getRoHi(int txn) {
@@ -630,21 +624,22 @@ public class WalTxnDetails {
         }
 
         public long getSeqTxn(int txn) {
-            return transactionMeta.get((int) ((txn + lo - startSeqTxn) * TXN_METADATA_LONGS_SIZE + SEQ_TXN_OFFSET));
+            return WalTxnDetails.this.getSegTxn(lo + txn);
         }
 
         public int getWalId(int txn) {
             return WalTxnDetails.this.getWalId(lo + txn);
         }
 
-        public WalTxnDetailsSlice of(int lo, int hi) {
+        public WalTxnDetailsSlice of(long lo, long count) {
             this.lo = lo;
-            this.hi = hi;
-            transactionMeta.sortGroupsByElement(
+            this.hi = lo + count;
+            transactionMeta.sortGroupsBy2Elements(
                     TXN_METADATA_LONGS_SIZE,
                     WAL_TXN_ID_WAL_SEG_ID_OFFSET,
-                    lo,
-                    hi
+                    SEQ_TXN_OFFSET,
+                    (int) (lo - startSeqTxn),
+                    (int) (hi - startSeqTxn)
             );
             return this;
         }

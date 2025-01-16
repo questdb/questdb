@@ -807,6 +807,50 @@ Java_io_questdb_std_Vect_radixSortManySegmentsIndexAsc(
     return segments_range_bytes;
 }
 
+JNIEXPORT jint JNICALL
+Java_io_questdb_std_Vect_mergeShuffleColumnFromManyAddresses(
+        JNIEnv *env,
+        jclass cl,
+        jint columnSizeBytes,
+        jint indexSegmentEncodingBytes,
+        jlong srcAddresses,
+        jlong dstAddress,
+        jlong mergeIndex,
+        jlong rowCount
+) {
+    auto merge_index_address = reinterpret_cast<const index_l *>(mergeIndex);
+    auto row_count = __JLONG_REINTERPRET_CAST__(uint64_t, rowCount);
+    auto column_size_bytes = (int32_t)columnSizeBytes;
+    auto index_segment_encoding_bytes = (int32_t)indexSegmentEncodingBytes;
+    auto src_addresses = reinterpret_cast<const void**>(srcAddresses);
+    auto dst_address = reinterpret_cast<void*>(dstAddress);
+
+    switch (column_size_bytes) {
+        case 1:
+            merge_shuffle_column_from_many_addresses<uint8_t>(index_segment_encoding_bytes, src_addresses, dst_address, merge_index_address, row_count);
+            break;
+        case 2:
+            merge_shuffle_column_from_many_addresses<uint16_t>(index_segment_encoding_bytes, src_addresses, dst_address, merge_index_address, row_count);
+            break;
+        case 4:
+            merge_shuffle_column_from_many_addresses<uint32_t>(index_segment_encoding_bytes, src_addresses, dst_address, merge_index_address, row_count);
+            break;
+        case 8:
+            merge_shuffle_column_from_many_addresses<uint64_t>(index_segment_encoding_bytes, src_addresses, dst_address, merge_index_address, row_count);
+            break;
+        case 16:
+            merge_shuffle_column_from_many_addresses<__int128>(index_segment_encoding_bytes, src_addresses, dst_address, merge_index_address, row_count);
+            break;
+        case 32:
+            merge_shuffle_column_from_many_addresses<long_256bit>(index_segment_encoding_bytes, src_addresses, dst_address, merge_index_address, row_count);
+            break;
+        default:
+            return -1;
+    }
+
+    return 0;
+}
+
 
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_sortULongAscInPlace(JNIEnv *env, jclass cl, jlong pLong, jlong len) {

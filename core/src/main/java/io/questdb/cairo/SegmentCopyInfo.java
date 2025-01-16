@@ -31,36 +31,36 @@ import io.questdb.std.QuietCloseable;
 
 public class SegmentCopyInfo implements QuietCloseable {
     private int distinctWalSegmentCount;
-    private long maxSegmentRowCount;
-    private long maxTimestamp;
-    private long minTimestamp;
+    private long maxTimestamp = Long.MIN_VALUE;
+    private long maxTxnRowCount;
+    private long minTimestamp = Long.MAX_VALUE;
     private DirectLongList segments = new DirectLongList(4, MemoryTag.NATIVE_TABLE_WRITER);
     private DirectLongList txns = new DirectLongList(4, MemoryTag.NATIVE_TABLE_WRITER);
     private long totalRows;
 
-    public void add(int walId, int segmentId, long segmentLo, long segmentHi, long minTimestamp, long maxTimestamp) {
+    public void addSegment(int walId, int segmentId, long segmentLo, long segmentHi) {
         segments.add(walId);
         segments.add(segmentId);
         segments.add(segmentLo);
         segments.add(segmentHi);
-        totalRows += segmentHi - segmentLo;
-        maxSegmentRowCount = Math.max(maxSegmentRowCount, segmentHi - segmentLo);
-        this.minTimestamp = Math.min(this.minTimestamp, minTimestamp);
-        this.maxTimestamp = Math.max(this.maxTimestamp, maxTimestamp);
     }
 
-    public void addTxn(long segmentRowOffset, int seqTxn, long committedRowsCount, int copyTaskCount) {
+    public void addTxn(long segmentRowOffset, int seqTxn, long committedRowsCount, int copyTaskCount, long minTimestamp, long maxTimestamp) {
         txns.add(segmentRowOffset);
         txns.add(seqTxn);
         txns.add(committedRowsCount);
         txns.add(copyTaskCount);
+        maxTxnRowCount = Math.max(maxTxnRowCount, committedRowsCount);
+        totalRows += committedRowsCount;
+        this.minTimestamp = Math.min(this.minTimestamp, minTimestamp);
+        this.maxTimestamp = Math.max(this.maxTimestamp, maxTimestamp);
     }
 
     public void clear() {
         segments.clear();
         txns.clear();
         totalRows = 0;
-        maxSegmentRowCount = 0;
+        maxTxnRowCount = 0;
         minTimestamp = Long.MAX_VALUE;
         maxTimestamp = Long.MIN_VALUE;
     }
@@ -79,8 +79,8 @@ public class SegmentCopyInfo implements QuietCloseable {
         return segments.get(i * 4L + 2);
     }
 
-    public long getMaxSegmentRowCount() {
-        return maxSegmentRowCount;
+    public long getMaxTxRowCount() {
+        return maxTxnRowCount;
     }
 
     public long getMaxTimestamp() {
@@ -97,6 +97,14 @@ public class SegmentCopyInfo implements QuietCloseable {
 
     public long getSegmentInfoAddress() {
         return segments.getAddress();
+    }
+
+    public long getTotalRows() {
+        return totalRows;
+    }
+
+    public long getTxnCount() {
+        return txns.size() / 4;
     }
 
     public long getTxnInfoAddress() {
