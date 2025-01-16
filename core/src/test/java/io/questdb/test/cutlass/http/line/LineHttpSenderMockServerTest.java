@@ -530,9 +530,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public ObjList<String> getUrls() {
-                        return new ObjList<>() {{
-                            add("/write");
-                        }};
+                        return new ObjList<>("/write");
                     }
 
                     @Override

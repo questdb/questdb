@@ -192,9 +192,7 @@ public class HttpQueryTestBuilder {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public ObjList<String> getUrls() {
-                        return new ObjList<>() {{
-                            add("/upload");
-                        }};
+                        return new ObjList<>("/upload");
                     }
 
                     @Override
@@ -212,9 +210,7 @@ public class HttpQueryTestBuilder {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public ObjList<String> getUrls() {
-                        return new ObjList<>() {{
-                            add("/query");
-                        }};
+                        return new ObjList<>("/query");
                     }
 
                     @Override
@@ -279,9 +275,7 @@ public class HttpQueryTestBuilder {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public ObjList<String> getUrls() {
-                        return new ObjList<>() {{
-                            add("/status");
-                        }};
+                        return new ObjList<>("/status");
                     }
 
                     @Override

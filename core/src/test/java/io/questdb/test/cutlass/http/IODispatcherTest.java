@@ -2552,9 +2552,7 @@ public class IODispatcherTest extends AbstractTest {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public ObjList<String> getUrls() {
-                        return new ObjList<>() {{
-                            add("/upload");
-                        }};
+                        return new ObjList<>("/upload");
                     }
 
                     @Override
@@ -9739,9 +9737,7 @@ public class IODispatcherTest extends AbstractTest {
 
         @Override
         public ObjList<String> getUrls() {
-            return new ObjList<>() {{
-                add("/query");
-            }};
+            return new ObjList<>("/query");
         }
 
         @Override

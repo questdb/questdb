@@ -36,58 +36,39 @@ public interface HttpFullFatServerConfiguration extends HttpServerConfiguration 
     ConcurrentCacheConfiguration getConcurrentCacheConfiguration();
 
     default ObjList<String> getContextPathDefault() {
-        return new ObjList<>() {{
-            add(DEFAULT_PROCESSOR_URL);
-        }};
+        return new ObjList<>(DEFAULT_PROCESSOR_URL);
     }
 
     default ObjList<String> getContextPathExec() {
-        return new ObjList<>() {{
-            add("/exec");
-        }};
+        return new ObjList<>("/exec");
     }
 
     default ObjList<String> getContextPathExport() {
-        return new ObjList<>() {{
-            add("/exp");
-        }};
+        return new ObjList<>("/exp");
     }
 
     default ObjList<String> getContextPathILP() {
-        return new ObjList<>() {{
-            add("/write");
-            add("/api/v2/write");
-        }};
+        return new ObjList<>("/write", "/api/v2/write");
     }
 
     default ObjList<String> getContextPathILPPing() {
-        return new ObjList<>() {{
-            add("/ping");
-        }};
+        return new ObjList<>("/ping");
     }
 
     default ObjList<String> getContextPathImport() {
-        return new ObjList<>() {{
-            add("/imp");
-        }};
+        return new ObjList<>("/imp");
     }
 
     default ObjList<String> getContextPathSettings() {
-        return new ObjList<>() {{
-            add("/settings");
-        }};
+        return new ObjList<>("/settings");
     }
 
     default ObjList<String> getContextPathTableStatus() {
-        return new ObjList<>() {{
-            add("/chk");
-        }};
+        return new ObjList<>("/chk");
     }
 
     default ObjList<String> getContextPathWarnings() {
-        return new ObjList<>() {{
-            add("/warnings");
-        }};
+        return new ObjList<>("/warnings");
     }
 
     default String getContextPathWebConsole() {
