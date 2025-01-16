@@ -27,15 +27,20 @@ package io.questdb.metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SynchronizedJob;
-import io.questdb.mp.WorkerPool;
 import io.questdb.std.ValueHolderList;
 import io.questdb.std.str.Utf8StringSink;
 
-public class QueryTracingJob extends SynchronizedJob {
+import java.io.Closeable;
+import java.io.IOException;
+
+public class QueryTracingJob extends SynchronizedJob implements Closeable {
     public static final String COLUMN_EXECUTION_MICROS = "execution_micros";
     public static final String COLUMN_QUERY_TEXT = "query_text";
     public static final String COLUMN_TS = "ts";
@@ -46,29 +51,49 @@ public class QueryTracingJob extends SynchronizedJob {
     private final ValueHolderList<QueryTrace> buffer;
     private final CairoEngine engine;
     private final MemCappedQueryTraceQueue queue;
+    private final SqlExecutionContextImpl sqlExecutionContext;
     private final QueryTrace trace = new QueryTrace();
     private final Utf8StringSink utf8sink = new Utf8StringSink();
-    private TableToken tableToken;
+    private TableWriter tableWriter;
+
 
     public QueryTracingJob(CairoEngine engine) {
         this.queue = engine.getMessageBus().getQueryTraceQueue();
         this.buffer = new ValueHolderList<>(MemCappedQueryTraceQueue.ITEM_FACTORY, INITIAL_CAPACITY);
         this.engine = engine;
+        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(
+                engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                null,
+                null
+        );
     }
 
-    public static void assignToPool(WorkerPool pool, CairoEngine engine) {
-        QueryTracingJob job = new QueryTracingJob(engine);
-        for (int i = 0, n = pool.getWorkerCount(); i < n; i++) {
-            pool.assign(i, job);
+    @Override
+    public void close() throws IOException {
+        if (tableWriter != null) {
+            tableWriter.close();
         }
     }
 
     private void init() throws SqlException {
         String fullName = engine.getConfiguration().getSystemTableNamePrefix() + TABLE_NAME;
-        engine.execute("CREATE TABLE IF NOT EXISTS '" + fullName +
-                "' (" + COLUMN_TS + " TIMESTAMP, " + COLUMN_QUERY_TEXT + " VARCHAR, " + COLUMN_EXECUTION_MICROS + " LONG)" +
-                " TIMESTAMP(" + COLUMN_TS + ") PARTITION BY HOUR TTL 1 DAY BYPASS WAL");
-        tableToken = engine.verifyTableName(fullName);
+        TableToken tableToken;
+        try {
+            tableToken = engine.verifyTableName(fullName);
+        } catch (Exception recoverable) {
+            try (SqlCompiler sqlCompiler = engine.getSqlCompiler()) {
+                CompiledQuery query = sqlCompiler.query()
+                        .$("CREATE TABLE IF NOT EXISTS '").$(fullName).$("' (")
+                        .$(COLUMN_TS).$(" TIMESTAMP, ")
+                        .$(COLUMN_QUERY_TEXT).$(" VARCHAR, ")
+                        .$(COLUMN_EXECUTION_MICROS).$(" LONG")
+                        .$(") TIMESTAMP(").$(COLUMN_TS).$(") PARTITION BY HOUR TTL 1 DAY BYPASS WAL")
+                        .compile(sqlExecutionContext);
+                query.getOperation().execute(sqlExecutionContext, null);
+                tableToken = engine.verifyTableName(fullName);
+            }
+        }
+        tableWriter = engine.getWriter(tableToken, "query_tracing");
     }
 
     @Override
@@ -80,19 +105,10 @@ public class QueryTracingJob extends SynchronizedJob {
         if (buffer.size() <= 0) {
             return false;
         }
-        TableWriter tableWriter0;
         try {
-            tableWriter0 = engine.getWriter(tableToken, "query_tracing");
-        } catch (Exception recoverable) {
-            try {
+            if (tableWriter == null) {
                 init();
-                tableWriter0 = engine.getWriter(tableToken, "query_tracing");
-            } catch (Exception e) {
-                LOG.error().$("Failed to save query trace").$(e).$();
-                return false;
             }
-        }
-        try (TableWriter tableWriter = tableWriter0) {
             for (int n = buffer.size(), i = 0; i < n; i++) {
                 buffer.moveQuick(i, trace);
                 final TableWriter.Row row = tableWriter.newRow(trace.timestamp);
@@ -104,6 +120,8 @@ public class QueryTracingJob extends SynchronizedJob {
             }
             tableWriter.commit();
             trace.clear();
+        } catch (Exception e) {
+            LOG.error().$("Failed to save query trace").$(e).$();
         }
         return false;
     }

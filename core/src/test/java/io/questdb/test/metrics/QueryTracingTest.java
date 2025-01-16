@@ -36,8 +36,10 @@ public class QueryTracingTest extends AbstractCairoTest {
 
     @Test
     public void testQueryTraceFunction() throws Exception {
-        try (WorkerPool workerPool = new WorkerPool(() -> 1)) {
-            QueryTracingJob.assignToPool(workerPool, engine);
+        try (WorkerPool workerPool = new WorkerPool(() -> 1);
+             QueryTracingJob job = new QueryTracingJob(engine)
+        ) {
+            workerPool.assign(job);
             workerPool.start(LOG);
             String exampleQuery = "SELECT table_name FROM tables()";
             assertSql("table_name\n", exampleQuery);
@@ -63,8 +65,10 @@ public class QueryTracingTest extends AbstractCairoTest {
 
     @Test
     public void testQueryTracingTable() throws Exception {
-        try (WorkerPool workerPool = new WorkerPool(() -> 1)) {
-            QueryTracingJob.assignToPool(workerPool, engine);
+        try (WorkerPool workerPool = new WorkerPool(() -> 1);
+             QueryTracingJob job = new QueryTracingJob(engine)
+        ) {
+            workerPool.assign(job);
             workerPool.start(LOG);
             String exampleQuery = "SELECT table_name FROM tables()";
             assertSql("table_name\n", exampleQuery);
