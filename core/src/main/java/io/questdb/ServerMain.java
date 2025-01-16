@@ -316,7 +316,9 @@ public class ServerMain implements Closeable {
 
                     WorkerPoolUtils.setupQueryJobs(sharedPool, engine);
 
-                    sharedPool.assign(new QueryTracingJob(engine));
+                    QueryTracingJob queryTracingJob = new QueryTracingJob(engine);
+                    sharedPool.assign(queryTracingJob);
+                    freeOnExit.register(queryTracingJob);
 
                     if (!isReadOnly) {
                         WorkerPoolUtils.setupWriterJobs(sharedPool, engine);
