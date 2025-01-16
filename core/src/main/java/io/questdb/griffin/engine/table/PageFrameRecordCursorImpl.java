@@ -25,14 +25,22 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemory;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.RowCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
-class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
+public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     private final boolean entityCursor;
     private final Function filter;
     private final RowCursorFactory rowCursorFactory;

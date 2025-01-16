@@ -467,6 +467,16 @@ public final class Numbers {
         }
     }
 
+    public static void appendLong256(Long256 long256, CharSink<?> sink) {
+        appendLong256(
+                long256.getLong0(),
+                long256.getLong1(),
+                long256.getLong2(),
+                long256.getLong3(),
+                sink
+        );
+    }
+
     public static void appendLong256(long a, long b, long c, long d, CharSink<?> sink) {
         if (a == Numbers.LONG_NULL && b == Numbers.LONG_NULL && c == Numbers.LONG_NULL && d == Numbers.LONG_NULL) {
             return;

@@ -1226,6 +1226,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlParallelReadParquetEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isTableTypeConversionEnabled() {
         return true;
     }

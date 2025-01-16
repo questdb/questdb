@@ -57,7 +57,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
 
     protected static final ArrayColumnTypes FIRST_VALUE_COLUMN_TYPES;
 
-    private static final String NAME = "first_value";
+    public static final String NAME = "first_value";
     private static final String SIGNATURE = NAME + "(D)";
 
     @Override
