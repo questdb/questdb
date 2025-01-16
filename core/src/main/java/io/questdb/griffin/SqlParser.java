@@ -3061,6 +3061,18 @@ public class SqlParser {
         );
     }
 
+    /*
+       Rewrites the following:
+
+       select json_extract(json,path)::varchar -> select json_extract(json,path)
+       select json_extract(json,path)::double -> select json_extract(json,path,double)
+       select json_extract(json,path)::uuid -> select json_extract(json,path)::uuid
+
+       Notes:
+        - varchar cast it rewritten in a special way, i.e., removed
+        - subset of types is handled more efficiently in the 3-arg function
+        - the remaining type casts are not rewritten, i.e., left as is
+     */
     private void rewriteJsonExtractCast(ExpressionNode node) {
         if (node.type == ExpressionNode.FUNCTION && SqlKeywords.isCastKeyword(node.token)) {
             if (node.lhs != null && SqlKeywords.isJsonExtract(node.lhs.token) && node.lhs.paramCount == 2) {
@@ -3116,19 +3128,6 @@ public class SqlParser {
         }
     }
 
-    /*
-       Rewrites the following:
-
-       select json_extract(json,path)::varchar -> select json_extract(json,path)
-       select json_extract(json,path)::double -> select json_extract(json,path,double)
-       select json_extract(json,path)::uuid -> select json_extract(json,path)::uuid
-
-       Notes:
-        - varchar cast it rewritten in a special way, i.e., removed
-        - subset of types is handled more efficiently in the 3-arg function
-        - the remaining type casts are not rewritten, i.e., left as is
-     */
-
     private ExpressionNode rewriteKnownStatements(
             ExpressionNode parent,
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
@@ -3163,6 +3162,9 @@ public class SqlParser {
         }
     }
 
+    /*
+     * Rewrites the query_trace() pseudo-function to the table name sys.query_trace
+     */
     private void rewriteQueryTraceFunction(ExpressionNode node) {
         if (node.type == ExpressionNode.FUNCTION && Chars.equalsIgnoreCase(node.token, QueryTracingJob.TABLE_NAME)) {
             node.type = ExpressionNode.LITERAL;
