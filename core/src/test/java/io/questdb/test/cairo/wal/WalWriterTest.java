@@ -62,38 +62,44 @@ public class WalWriterTest extends AbstractCairoTest {
     @Test
     public void applyMaySmallCommitsHappyDays() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table sm (id int, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("create table sm (id int, ts timestamp, y long) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("sm");
             long startTs = IntervalUtils.parseFloorPartialTimestamp("2022-02-24");
-            long tsIncrement = Timestamps.SECOND_MICROS;
+            long tsIncrement = Timestamps.MINUTE_MICROS;
 
             long ts = startTs;
-            int totalRows = 10;
+            int totalRows = 5000;
+            int iterations = 20;
 
-            try (WalWriter walWriter1 = engine.getWalWriter(tableToken)) {
-                try (WalWriter walWriter2 = engine.getWalWriter(tableToken)) {
+            for (int c = 0; c < iterations; c++) {
+                try (WalWriter walWriter1 = engine.getWalWriter(tableToken)) {
+                    try (WalWriter walWriter2 = engine.getWalWriter(tableToken)) {
 
-                    for (int i = 0; i < totalRows; i += 2) {
-                        TableWriter.Row row = walWriter1.newRow(ts);
-                        row.putInt(0, i);
-                        row.append();
-                        walWriter1.commit();
+                        int n = totalRows * (c + 1);
+                        for (int i = c * totalRows; i < n; i += 2) {
+                            TableWriter.Row row = walWriter1.newRow(ts);
+                            row.putInt(0, i);
+                            row.putInt(2, i + 1);
+                            row.append();
+                            walWriter1.commit();
 
-                        TableWriter.Row row2 = walWriter2.newRow(ts);
-                        row2.putInt(0, i + 1);
-                        row2.append();
-                        walWriter2.commit();
+                            TableWriter.Row row2 = walWriter2.newRow(ts);
+                            row2.putInt(0, i + 1);
+                            row2.putInt(2, i + 2);
+                            row2.append();
+                            walWriter2.commit();
 
-                        ts += tsIncrement;
+                            ts += tsIncrement;
+                        }
                     }
+
+                    drainWalQueue();
+                    Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+                    assertSql("count\tmin\tmax\n" +
+                            (c + 1) * totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Timestamps.toUSecString(ts - tsIncrement) + "\n", "select count(*), min(ts), max(ts) from sm");
+                    assertSqlCursors("sm", "select * from sm order by id");
                 }
             }
-
-            drainWalQueue();
-            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
-            assertSql("count\tmin\tmax\n" +
-                    "10\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:00:04.000000Z\n", "select count(*), min(ts), max(ts) from sm");
-            assertSqlCursors("sm", "select * from sm order by id");
         });
     }
 

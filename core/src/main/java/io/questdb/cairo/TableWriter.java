@@ -7185,6 +7185,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long walLagCount = 0;
             try {
                 processWalCommitFinishApply(walLagCount, o3TimestampMem.getAddress(), 0, rowCount, regulator, true, partitionTimestampHi);
+                lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
             } finally {
                 finishO3Append(0);
                 closeWalColumns(true, 0);

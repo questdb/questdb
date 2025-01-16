@@ -390,7 +390,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                     iTransaction += txnCommitted;
                                     physicalRowsAdded += writer.getPhysicallyWrittenRowsSinceLastCommit();
                                     if (txnCommitted > 1) {
-                                        transactionLogCursor.setPosition(writer.getAppliedSeqTxn() + 1);
+                                        transactionLogCursor.setPosition(writer.getAppliedSeqTxn());
                                     }
                                 }
 

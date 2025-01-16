@@ -88,7 +88,6 @@ public class WalTxnDetails {
 
         // TODO: support blocked transactions
         return blockSize;
-//        return 1;
     }
 
     public long getCommitToTimestamp(long seqTxn) {
@@ -187,7 +186,7 @@ public class WalTxnDetails {
                 if (i > 0) {
                     if (lastWalId != walId || lastSegmentId != segmentId) {
                         // Prev min, max timestamps, roHi
-                        copyTasks.addSegment(walId, segmentId, segmentLo, roHi);
+                        copyTasks.addSegment(lastWalId, lastSegmentId, segmentLo, roHi);
                         copyTaskCount++;
                         segmentLo = roLo;
 
@@ -391,7 +390,12 @@ public class WalTxnDetails {
                 transactionMeta.add(-1); // symbols diff offset
             }
 
-            transactionMeta.sortGroupsByElement(TXN_METADATA_LONGS_SIZE, 0, incrementalLoadStartIndex, txnCount);
+            transactionMeta.sortGroupsByElement(
+                    TXN_METADATA_LONGS_SIZE,
+                    0,
+                    incrementalLoadStartIndex / TXN_METADATA_LONGS_SIZE,
+                    incrementalLoadStartIndex / TXN_METADATA_LONGS_SIZE + txnCount
+            );
         } finally {
             tempPath.trimTo(rootLen);
         }
@@ -399,9 +403,7 @@ public class WalTxnDetails {
 
     private WalTxnDetailsSlice sortSliceByWalAndSegment(long startSeqTxn, int blockTransactionCount) {
         assert blockTransactionCount > 1;
-        int lo = (int) (startSeqTxn);
-
-        return txnSlice.of(lo, blockTransactionCount);
+        return txnSlice.of(startSeqTxn, blockTransactionCount);
     }
 
     private int saveSymbols(int symbolIndexStartOffset, SymbolMapDiffCursor commitInfo, long seqTxn) {
