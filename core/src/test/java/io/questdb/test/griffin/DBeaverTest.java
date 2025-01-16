@@ -39,7 +39,7 @@ public class DBeaverTest extends AbstractCairoTest {
                         "pg_catalog\t700\t11\tfloat4\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
                         "pg_catalog\t23\t11\tint4\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
                         "pg_catalog\t21\t11\tint2\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
-                        "pg_catalog\t18\t11\tchar\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
+                        "pg_catalog\t1042\t11\tbpchar\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
                         "pg_catalog\t20\t11\tint8\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
                         "pg_catalog\t16\t11\tbool\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
                         "pg_catalog\t17\t11\tbinary\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
@@ -163,13 +163,13 @@ public class DBeaverTest extends AbstractCairoTest {
                 "oid1\toid\ttypname\ttypbasetype\ttyparray\ttypnamespace\ttypnotnull\ttyptypmod\ttyptype\ttypcategory\ttyprelid\ttypelem\ttypreceive\ttypdelim\ttypinput\ttypowner\ttyplen\ttypbyval\ttypispreferred\ttypisdefined\ttypalign\ttypstorage\ttypndims\ttypcollation\ttypdefault\trelkind\tbase_type_name\tdescription\n" +
                         "16\t16\tbool\t0\t0\t11\tfalse\t0\tb\tB\tnull\t0\t0\t0\t0\t0\t1\tfalse\tfalse\ttrue\tc\tp\t0\t0\tfalse\t\t\t\n" +
                         "17\t17\tbinary\t0\t0\t11\tfalse\t0\tb\tU\tnull\t0\t0\t0\t0\t0\t-1\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
-                        "18\t18\tchar\t0\t0\t11\tfalse\t0\tb\tZ\tnull\t0\t0\t0\t0\t0\t2\tfalse\tfalse\ttrue\tc\tp\t0\t0\t0\t\t\t\n" +
                         "20\t20\tint8\t0\t0\t11\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
                         "21\t21\tint2\t0\t0\t11\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t2\tfalse\tfalse\ttrue\tc\tp\t0\t0\t0\t\t\t\n" +
                         "23\t23\tint4\t0\t0\t11\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t4\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
                         "26\t26\toid\t0\t0\t11\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t4\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
                         "700\t700\tfloat4\t0\t0\t11\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t4\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
                         "701\t701\tfloat8\t0\t0\t11\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
+                        "1042\t1042\tbpchar\t0\t0\t11\tfalse\t0\tb\tZ\tnull\t0\t0\t0\t0\t0\t2\tfalse\tfalse\ttrue\tc\tp\t0\t0\t0\t\t\t\n" +
                         "1043\t1043\tvarchar\t0\t0\t11\tfalse\t0\tb\tS\tnull\t0\t0\t0\t0\t0\t-1\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
                         "1082\t1082\tdate\t0\t0\t11\tfalse\t0\tb\tD\tnull\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
                         "1114\t1114\ttimestamp\t0\t0\t11\tfalse\t0\tb\tD\tnull\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
