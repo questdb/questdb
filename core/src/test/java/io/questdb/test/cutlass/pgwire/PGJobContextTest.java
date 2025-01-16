@@ -11760,7 +11760,6 @@ create table tab as (
                     WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
-//                Os.sleep(100_000);
                 NetUtils.playScript(clientNf, script, "127.0.0.1", server.getPort());
             }
         });
