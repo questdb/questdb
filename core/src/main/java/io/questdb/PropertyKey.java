@@ -494,6 +494,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_DEFAULT_SEQ_PART_TXN_COUNT("cairo.default.sequencer.part.txn.count"),
     POSTHOG_API_KEY("posthog.api.key"),
     POSTHOG_ENABLED("posthog.enabled"),
+    QUERY_TRACING_ENABLED("query.tracing.enabled"),
     LOG_LEVEL_VERBOSE("log.level.verbose"),
     LOG_TIMESTAMP_TIMEZONE("log.timestamp.timezone"),
     LOG_TIMESTAMP_LOCALE("log.timestamp.locale"),

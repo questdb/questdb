@@ -643,9 +643,7 @@ public interface CairoConfiguration {
 
     boolean isPartitionO3OverwriteControlEnabled();
 
-    default boolean isQueryTracingEnabled() {
-        return true;
-    }
+    boolean isQueryTracingEnabled();
 
     boolean isReadOnlyInstance();
 
