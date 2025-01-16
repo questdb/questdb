@@ -58,8 +58,6 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.concurrent.TimeUnit;
-
 // Factory that adds query to registry on getCursor() and removes on cursor close().
 public class QueryProgress extends AbstractRecordCursorFactory implements ResourcePoolSupervisor<ReaderPool.R> {
     private static final Log LOG = LogFactory.getLog(QueryProgress.class);
@@ -138,7 +136,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             queryTrace.isJit = isJit;
             queryTrace.timestamp = config.getMicrosecondClock().getTicks();
             queryTrace.queryText = sqlText;
-            queryTrace.executionNanos = TimeUnit.NANOSECONDS.toMicros(durationNanos);
+            queryTrace.executionNanos = durationNanos;
             engine.getMessageBus().getQueryTraceQueue().offer(queryTrace);
         }
     }

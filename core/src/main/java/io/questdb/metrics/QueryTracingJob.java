@@ -35,6 +35,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.ValueHolderList;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Utf8StringSink;
 
 import java.io.Closeable;
@@ -115,7 +116,7 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
                 utf8sink.clear();
                 utf8sink.put(trace.queryText);
                 row.putVarchar(1, utf8sink);
-                row.putLong(2, trace.executionNanos);
+                row.putLong(2, trace.executionNanos / Timestamps.MICRO_NANOS);
                 row.append();
             }
             tableWriter.commit();
