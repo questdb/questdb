@@ -1520,7 +1520,6 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
 
         @Override
         public void computeNext(Record record) {
-            // map stores:
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);

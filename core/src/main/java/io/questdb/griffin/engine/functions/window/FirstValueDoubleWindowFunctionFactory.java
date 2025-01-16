@@ -685,7 +685,9 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
                         if (Math.abs(timestamp - ts) > maxDiff) {
-                            frameSize--;
+                            if (frameSize > 0) {
+                                frameSize--;
+                            }
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
                         } else {
@@ -1036,7 +1038,9 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
                     if (Math.abs(timestamp - ts) > maxDiff) {
-                        frameSize--;
+                        if (frameSize > 0) {
+                            frameSize--;
+                        }
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
                     } else {

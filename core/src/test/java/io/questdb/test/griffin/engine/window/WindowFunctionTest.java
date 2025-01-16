@@ -233,30 +233,90 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("create table tab (ts timestamp, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)");
             execute("insert into tab select x::timestamp, x/4, case when x % 3 = 0 THEN NULL ELSE x END, 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(40000)");
             //trigger removal of rows below lo boundary AND resize of buffer
-            execute("insert into tab select (100000+x)::timestamp, x/4, case when x % 3 = 0 THEN NULL ELSE x END, 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(90000)");
+            execute("insert into tab select (100000+x)::timestamp, x/4, case when x % 30 = 0 THEN NULL ELSE x END, 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(90000)");
 
             assertQueryNoLeakCheck(
                     "ts\ti\tj\tavg\tsum\tfirst_value\tlast_value\tfirst_value_ignore_nulls\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.189996Z\t22499\t89996\t49996.5\t2.666513331E9\tnull\t89996.0\t9997.0\t89996.0\t80001\t53334\t80001\t80001\t80001\t89996.0\t9997.0\n" +
-                            "1970-01-01T00:00:00.189997Z\t22499\tnull\t49996.5\t2.666513331E9\t9997.0\tnull\t9997.0\t89996.0\t80001\t53334\t80001\t80001\t80001\t89996.0\t9997.0\n" +
-                            "1970-01-01T00:00:00.189998Z\t22499\t89998\t49998.0\t2.666593332E9\t9998.0\t89998.0\t9998.0\t89998.0\t80001\t53334\t80001\t80001\t80001\t89998.0\t9998.0\n" +
-                            "1970-01-01T00:00:00.189999Z\t22499\t89999\t49999.5\t2.666673333E9\tnull\t89999.0\t10000.0\t89999.0\t80001\t53334\t80001\t80001\t80001\t89999.0\t10000.0\n" +
-                            "1970-01-01T00:00:00.190000Z\t22500\tnull\t49999.5\t2.666673333E9\t10000.0\tnull\t10000.0\t89999.0\t80001\t53334\t80001\t80001\t80001\t89999.0\t10000.0\n",
+                            "1970-01-01T00:00:00.189996Z\t22499\t89996\t89995.5\t179991.0\t89995.0\t89996.0\t89995.0\t89996.0\t2\t2\t2\t2\t2\t89996.0\t89995.0\n" +
+                            "1970-01-01T00:00:00.189997Z\t22499\t89997\t89996.5\t179993.0\t89996.0\t89997.0\t89996.0\t89997.0\t2\t2\t2\t2\t2\t89997.0\t89996.0\n" +
+                            "1970-01-01T00:00:00.189998Z\t22499\t89998\t89997.5\t179995.0\t89997.0\t89998.0\t89997.0\t89998.0\t2\t2\t2\t2\t2\t89998.0\t89997.0\n" +
+                            "1970-01-01T00:00:00.189999Z\t22499\t89999\t89998.5\t179997.0\t89998.0\t89999.0\t89998.0\t89999.0\t2\t2\t2\t2\t2\t89999.0\t89998.0\n" +
+                            "1970-01-01T00:00:00.190000Z\t22500\tnull\t89999.0\t89999.0\t89999.0\tnull\t89999.0\t89999.0\t2\t1\t2\t2\t2\t89999.0\t89999.0\n",
                     "select * from (" +
                             "select ts, i, j, " +
-                            "avg(j) over (order by ts range between 80000 preceding and current row), " +
-                            "sum(j) over (order by ts range between 80000 preceding and current row), " +
-                            "first_value(j) over (order by ts range between 80000 preceding and current row), " +
-                            "last_value(j) over (order by ts range between 80000 preceding and current row), " +
-                            "first_value(j) ignore nulls over (order by ts range between 80000 preceding and current row), " +
-                            "last_value(j) ignore nulls over (order by ts range between 80000 preceding and current row), " +
-                            "count(*) over (order by ts range between 80000 preceding and current row), " +
-                            "count(j) over (order by ts range between 80000 preceding and current row), " +
-                            "count(s) over (order by ts range between 80000 preceding and current row), " +
-                            "count(d) over (order by ts range between 80000 preceding and current row), " +
-                            "count(c) over (order by ts range between 80000 preceding and current row), " +
-                            "max(j) over (order by ts range between 80000 preceding and current row), " +
-                            "min(j) over (order by ts range between 80000 preceding and current row) " +
+                            "avg(j) over (order by ts range between 1 microsecond preceding and current row), " +
+                            "sum(j) over (order by ts range between 1 microsecond preceding and current row), " +
+                            "first_value(j) over (order by ts range between 1 microsecond preceding and current row), " +
+                            "last_value(j) over (order by ts range between 1 microsecond preceding and current row), " +
+                            "first_value(j) ignore nulls over (order by ts range between 1 microsecond preceding and current row), " +
+                            "last_value(j) ignore nulls over (order by ts range between 1 microsecond preceding and current row), " +
+                            "count(*) over (order by ts range between 1 microsecond preceding and current row), " +
+                            "count(j) over (order by ts range between 1 microsecond preceding and current row), " +
+                            "count(s) over (order by ts range between 1 microsecond preceding and current row), " +
+                            "count(d) over (order by ts range between 1 microsecond preceding and current row), " +
+                            "count(c) over (order by ts range between 1 microsecond preceding and current row), " +
+                            "max(j) over (order by ts range between 1 microsecond preceding and current row), " +
+                            "min(j) over (order by ts range between 1 microsecond preceding and current row) " +
+                            "from tab), " +
+                            " limit -5",
+                    "ts",
+                    false,
+                    false,
+                    false
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tlast_value\tfirst_value_ignore_nulls\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.189996Z\t22499\t89996\t89495.68769389865\t8.654233E7\t88996.0\t89995.0\t88996.0\t89995.0\t1000\t967\t1000\t1000\t1000\t89995.0\t88996.0\n" +
+                            "1970-01-01T00:00:00.189997Z\t22499\t89997\t89496.72182006204\t8.654333E7\t88997.0\t89996.0\t88997.0\t89996.0\t1000\t967\t1000\t1000\t1000\t89996.0\t88997.0\n" +
+                            "1970-01-01T00:00:00.189998Z\t22499\t89998\t89497.75594622544\t8.654433E7\t88998.0\t89997.0\t88998.0\t89997.0\t1000\t967\t1000\t1000\t1000\t89997.0\t88998.0\n" +
+                            "1970-01-01T00:00:00.189999Z\t22499\t89999\t89498.79007238883\t8.654533E7\t88999.0\t89998.0\t88999.0\t89998.0\t1000\t967\t1000\t1000\t1000\t89998.0\t88999.0\n" +
+                            "1970-01-01T00:00:00.190000Z\t22500\tnull\t89499.82419855222\t8.654633E7\t89000.0\t89999.0\t89000.0\t89999.0\t1000\t967\t1000\t1000\t1000\t89999.0\t89000.0\n",
+                    "select * from (" +
+                            "select ts, i, j, " +
+                            "avg(j) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
+                            "sum(j) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
+                            "first_value(j) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
+                            "last_value(j) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
+                            "first_value(j) ignore nulls over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
+                            "last_value(j) ignore nulls over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
+                            "count(*) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
+                            "count(j) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
+                            "count(s) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
+                            "count(d) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
+                            "count(c) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
+                            "max(j) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
+                            "min(j) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding) " +
+                            "from tab), " +
+                            " limit -5",
+                    "ts",
+                    false,
+                    false,
+                    false
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tlast_value\tfirst_value_ignore_nulls\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.189996Z\t22499\t89996\t20000.250009374882\t5.33346667E8\t1.0\t40000.0\t1.0\t40000.0\t40000\t26667\t40000\t40000\t40000\t40000.0\t1.0\n" +
+                            "1970-01-01T00:00:00.189997Z\t22499\t89997\t20000.250009374882\t5.33346667E8\t1.0\t40000.0\t1.0\t40000.0\t40000\t26667\t40000\t40000\t40000\t40000.0\t1.0\n" +
+                            "1970-01-01T00:00:00.189998Z\t22499\t89998\t20000.250009374882\t5.33346667E8\t1.0\t40000.0\t1.0\t40000.0\t40000\t26667\t40000\t40000\t40000\t40000.0\t1.0\n" +
+                            "1970-01-01T00:00:00.189999Z\t22499\t89999\t20000.250009374882\t5.33346667E8\t1.0\t40000.0\t1.0\t40000.0\t40000\t26667\t40000\t40000\t40000\t40000.0\t1.0\n" +
+                            "1970-01-01T00:00:00.190000Z\t22500\tnull\t20000.250009374882\t5.33346667E8\t1.0\t40000.0\t1.0\t40000.0\t40000\t26667\t40000\t40000\t40000\t40000.0\t1.0\n",
+                    "select * from (" +
+                            "select ts, i, j, " +
+                            "avg(j) over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
+                            "sum(j) over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
+                            "first_value(j) over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
+                            "last_value(j) over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
+                            "first_value(j) ignore nulls over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
+                            "last_value(j) ignore nulls over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
+                            "count(*) over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
+                            "count(j) over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
+                            "count(s) over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
+                            "count(d) over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
+                            "count(c) over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
+                            "max(j) over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
+                            "min(j) over (order by ts range between 1 day preceding and 100 millisecond preceding) " +
                             "from tab), " +
                             " limit -5",
                     "ts",
@@ -271,26 +331,28 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     "ts\ti\tj\tavg\tsum\tfirst_value\tlast_value\tfirst_value_ignore_nulls\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.189996Z\t22499\t89996\t49996.5\t2.666513331E9\tnull\t89996.0\t9997.0\t89996.0\t80001\t53334\t80001\t80001\t80001\t89996.0\t9997.0\n" +
-                            "1970-01-01T00:00:00.189997Z\t22499\tnull\t49996.5\t2.666513331E9\t9997.0\tnull\t9997.0\t89996.0\t80001\t53334\t80001\t80001\t80001\t89996.0\t9997.0\n" +
-                            "1970-01-01T00:00:00.189998Z\t22499\t89998\t49998.0\t2.666593332E9\t9998.0\t89998.0\t9998.0\t89998.0\t80001\t53334\t80001\t80001\t80001\t89998.0\t9998.0\n" +
-                            "1970-01-01T00:00:00.189999Z\t22499\t89999\t49999.5\t2.666673333E9\tnull\t89999.0\t10000.0\t89999.0\t80001\t53334\t80001\t80001\t80001\t89999.0\t10000.0\n" +
-                            "1970-01-01T00:00:00.190000Z\t22500\tnull\t49999.5\t2.666673333E9\t10000.0\tnull\t10000.0\t89999.0\t80001\t53334\t80001\t80001\t80001\t89999.0\t10000.0\n",
-                    "select * from (select ts, i, j, " +
-                            "avg(j) over (order by ts range between 80000 preceding and current row), " +
-                            "sum(j) over (order by ts range between 80000 preceding and current row), " +
-                            "first_value(j) over (order by ts range between 80000 preceding and current row), " +
-                            "last_value(j) over (order by ts range between 80000 preceding and current row), " +
-                            "first_value(j) ignore nulls over (order by ts range between 80000 preceding and current row), " +
-                            "last_value(j) ignore nulls over (order by ts range between 80000 preceding and current row), " +
-                            "count(*) over (order by ts range between 80000 preceding and current row), " +
-                            "count(j) over (order by ts range between 80000 preceding and current row), " +
-                            "count(s) over (order by ts range between 80000 preceding and current row), " +
-                            "count(d) over (order by ts range between 80000 preceding and current row), " +
-                            "count(c) over (order by ts range between 80000 preceding and current row), " +
-                            "max(j) over (order by ts range between 80000 preceding and current row), " +
-                            "min(j) over (order by ts range between 80000 preceding and current row) " +
-                            "from tab) limit -5",
+                            "1970-01-01T00:00:00.189996Z\t22499\t89996\t89496.0\t5.9783328E7\t88996.0\t89996.0\t88996.0\t89996.0\t1001\t668\t1001\t1001\t1001\t89996.0\t88996.0\n" +
+                            "1970-01-01T00:00:00.189997Z\t22499\tnull\t89496.74962518741\t5.9694332E7\t88997.0\tnull\t88997.0\t89996.0\t1001\t667\t1001\t1001\t1001\t89996.0\t88997.0\n" +
+                            "1970-01-01T00:00:00.189998Z\t22499\t89998\t89498.25037481259\t5.9695333E7\tnull\t89998.0\t88999.0\t89998.0\t1001\t667\t1001\t1001\t1001\t89998.0\t88999.0\n" +
+                            "1970-01-01T00:00:00.189999Z\t22499\t89999\t89499.0\t5.9785332E7\t88999.0\t89999.0\t88999.0\t89999.0\t1001\t668\t1001\t1001\t1001\t89999.0\t88999.0\n" +
+                            "1970-01-01T00:00:00.190000Z\t22500\tnull\t89499.74962518741\t5.9696333E7\t89000.0\tnull\t89000.0\t89999.0\t1001\t667\t1001\t1001\t1001\t89999.0\t89000.0\n",
+                    "select * from (" +
+                            "select ts, i, j, " +
+                            "avg(j) over (order by ts range between 1 millisecond preceding and current row), " +
+                            "sum(j) over (order by ts range between 1 millisecond preceding and current row), " +
+                            "first_value(j) over (order by ts range between 1 millisecond preceding and current row), " +
+                            "last_value(j) over (order by ts range between 1 millisecond preceding and current row), " +
+                            "first_value(j) ignore nulls over (order by ts range between 1 millisecond preceding and current row), " +
+                            "last_value(j) ignore nulls over (order by ts range between 1 millisecond preceding and current row), " +
+                            "count(*) over (order by ts range between 1 millisecond preceding and current row), " +
+                            "count(j) over (order by ts range between 1 millisecond preceding and current row), " +
+                            "count(s) over (order by ts range between 1 millisecond preceding and current row), " +
+                            "count(d) over (order by ts range between 1 millisecond preceding and current row), " +
+                            "count(c) over (order by ts range between 1 millisecond preceding and current row), " +
+                            "max(j) over (order by ts range between 1 millisecond preceding and current row), " +
+                            "min(j) over (order by ts range between 1 millisecond preceding and current row) " +
+                            "from tab), " +
+                            " limit -5",
                     "ts",
                     false,
                     false,
@@ -2270,13 +2332,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\tnull\t0.0\t1\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t2\t1\t1\t1\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\tnull\t1.5\t3.0\t1.0\t1.0\t2.0\t2.0\t3\t2\t2\t2\t2.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t2.0\t6.0\t1.0\t1.0\tnull\t2.0\t4\t3\t3\t3\t3.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t2.5\t10.0\t1.0\t1.0\t4.0\t4.0\t5\t4\t4\t4\t4.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\tnull\t2.0\t10.0\t1.0\t1.0\t0.0\t0.0\t6\t5\t5\t5\t4.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t1.8333333333333333\t11.0\t1.0\t1.0\tnull\t0.0\t7\t6\t6\t6\t4.0\t0.0\n",
+                            "1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\tnull\t0.0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t1.5\t3.0\t1.0\t1.0\t2.0\t2.0\t2\t2\t2\t2\t2.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t2.0\t6.0\t1.0\t1.0\tnull\t2.0\t3\t3\t3\t3\t3.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t2.5\t10.0\t1.0\t1.0\t4.0\t4.0\t4\t4\t4\t4\t4.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t2.0\t10.0\t1.0\t1.0\t0.0\t0.0\t5\t5\t5\t5\t4.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t1.8333333333333333\t11.0\t1.0\t1.0\tnull\t0.0\t6\t6\t6\t6\t4.0\t0.0\n",
                     "select ts, i, j, " +
                             "avg(d) over (order by ts rows between unbounded preceding and 1 preceding), " +
                             "sum(d) over (order by ts rows between unbounded preceding and 1 preceding), " +
@@ -2298,10 +2360,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\tnull\t0.0\t1\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\tnull\tnull\t0.0\t2\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\tnull\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t3\t1\t1\t1\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t1.5\t3.0\t1.0\t1.0\t2.0\t2.0\t3\t2\t2\t2\t2.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\tnull\t0.0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\tnull\tnull\t0.0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t1.5\t3.0\t1.0\t1.0\t2.0\t2.0\t2\t2\t2\t2\t2.0\t1.0\n" +
                             "1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t6.0\t1.0\t1.0\tnull\t2.0\t3\t3\t3\t3\t3.0\t1.0\n" +
                             "1970-01-01T00:00:00.000006Z\t1\tnull\t3.0\t9.0\t2.0\t2.0\t4.0\t4.0\t3\t3\t3\t3\t4.0\t2.0\n" +
                             "1970-01-01T00:00:00.000007Z\t1\t2\t2.3333333333333335\t7.0\tnull\t4.0\t0.0\t0.0\t3\t3\t3\t3\t4.0\t0.0\n",
@@ -2329,10 +2391,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000001Z\t0\t1\t2.3333333333333335\t7.0\t0.0\t0.0\tnull\t4.0\t3\t3\t3\t3\t4.0\t0.0\n" +
                             "1970-01-01T00:00:00.000002Z\t0\t2\t1.6666666666666667\t5.0\tnull\t0.0\t4.0\t4.0\t3\t3\t3\t3\t4.0\t0.0\n" +
                             "1970-01-01T00:00:00.000003Z\t0\tnull\t1.0\t3.0\t2.0\t2.0\t0.0\t0.0\t3\t3\t3\t3\t2.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t1.5\t3.0\t2.0\t2.0\tnull\t2.0\t3\t2\t2\t2\t2.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t3\t1\t1\t1\t2.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\t4.0\t2\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\tnull\tnull\tnull\tnull\tnull\t4.0\t1\t0\t0\t0\tnull\tnull\n",
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t1.5\t3.0\t2.0\t2.0\tnull\t2.0\t2\t2\t2\t2\t2.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t2.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\t4.0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\tnull\tnull\tnull\tnull\tnull\t4.0\t0\t0\t0\t0\tnull\tnull\n",
                     "select ts, i, j, " +
                             "avg(d) over (order by ts desc rows between 4 preceding and 2 preceding), " +
                             "sum(d) over (order by ts desc rows between 4 preceding and 2 preceding), " +
@@ -2920,6 +2982,113 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     null,
                     true,
                     false
+            );
+
+            execute("create table tab1 (ts timestamp, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)");
+            execute("insert into tab1 select x::timestamp, x/13, case when x < 6 THEN NULL ELSE 1.0 END, x%5, 'k' || (x%5) ::symbol, 'k' || x from long_sequence(12)");
+
+            assertQueryNoLeakCheck(
+                    "avg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\ti\tj\n" +
+                            "null\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\t0\t1\n" +
+                            "null\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\t0\t1\n" +
+                            "null\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\t0\t1\n" +
+                            "1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\t0\t1\n" +
+                            "1.0\t2.0\t1.0\t1.0\t1.0\t1.0\t2\t2\t2\t2\t2\t1.0\t1.0\t0\t1\n" +
+                            "1.0\t3.0\t1.0\t1.0\t1.0\t1.0\t3\t3\t3\t3\t3\t1.0\t1.0\t0\t1\n" +
+                            "1.0\t4.0\t1.0\t1.0\t1.0\t1.0\t4\t4\t4\t4\t4\t1.0\t1.0\t0\t1\n" +
+                            "1.0\t4.0\t1.0\t1.0\t1.0\t1.0\t4\t4\t4\t4\t4\t1.0\t1.0\t0\tnull\n" +
+                            "1.0\t4.0\t1.0\t1.0\t1.0\t1.0\t4\t4\t4\t4\t4\t1.0\t1.0\t0\tnull\n" +
+                            "1.0\t4.0\t1.0\t1.0\t1.0\t1.0\t4\t4\t4\t4\t4\t1.0\t1.0\t0\tnull\n" +
+                            "1.0\t3.0\t1.0\t1.0\tnull\t1.0\t4\t3\t4\t4\t4\t1.0\t1.0\t0\tnull\n" +
+                            "1.0\t2.0\t1.0\t1.0\tnull\t1.0\t4\t2\t4\t4\t4\t1.0\t1.0\t0\tnull\n",
+                    "select avg(j) over (partition by i order by ts desc rows between 6 preceding and 3 preceding), " +
+                            "sum(j) over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
+                            "first_value(j) over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
+                            "first_value(j) ignore nulls over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
+                            "last_value(j) over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
+                            "last_value(j) ignore nulls over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
+                            "count(*) over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
+                            "count(j) over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
+                            "count(s) over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
+                            "count(d) over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
+                            "count(c) over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
+                            "max(j) over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
+                            "min(j) over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
+                            "i, j " +
+                            "from tab1 " +
+                            "order by ts desc",
+                    null,
+                    false,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    "avg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\tj\n" +
+                            "null\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\t1\n" +
+                            "null\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\t1\n" +
+                            "null\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\t1\n" +
+                            "1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\t1\n" +
+                            "1.0\t2.0\t1.0\t1.0\t1.0\t1.0\t2\t2\t2\t2\t2\t1.0\t1.0\t1\n" +
+                            "1.0\t3.0\t1.0\t1.0\t1.0\t1.0\t3\t3\t3\t3\t3\t1.0\t1.0\t1\n" +
+                            "1.0\t4.0\t1.0\t1.0\t1.0\t1.0\t4\t4\t4\t4\t4\t1.0\t1.0\t1\n" +
+                            "1.0\t4.0\t1.0\t1.0\t1.0\t1.0\t4\t4\t4\t4\t4\t1.0\t1.0\tnull\n" +
+                            "1.0\t4.0\t1.0\t1.0\t1.0\t1.0\t4\t4\t4\t4\t4\t1.0\t1.0\tnull\n" +
+                            "1.0\t4.0\t1.0\t1.0\t1.0\t1.0\t4\t4\t4\t4\t4\t1.0\t1.0\tnull\n" +
+                            "1.0\t3.0\t1.0\t1.0\tnull\t1.0\t4\t3\t4\t4\t4\t1.0\t1.0\tnull\n" +
+                            "1.0\t2.0\t1.0\t1.0\tnull\t1.0\t4\t2\t4\t4\t4\t1.0\t1.0\tnull\n",
+                    "select avg(j) over (order by ts desc rows between 6 preceding and 3 preceding), " +
+                            "sum(j) over (order by ts  desc rows between 6 preceding and 3 preceding), " +
+                            "first_value(j) over (order by ts  desc rows between 6 preceding and 3 preceding), " +
+                            "first_value(j) ignore nulls over (order by ts  desc rows between 6 preceding and 3 preceding), " +
+                            "last_value(j) over (order by ts  desc rows between 6 preceding and 3 preceding), " +
+                            "last_value(j) ignore nulls over (order by ts  desc rows between 6 preceding and 3 preceding), " +
+                            "count(*) over (order by ts  desc rows between 6 preceding and 3 preceding), " +
+                            "count(j) over (order by ts  desc rows between 6 preceding and 3 preceding), " +
+                            "count(s) over (order by ts  desc rows between 6 preceding and 3 preceding), " +
+                            "count(d) over (order by ts  desc rows between 6 preceding and 3 preceding), " +
+                            "count(c) over (order by ts  desc rows between 6 preceding and 3 preceding), " +
+                            "max(j) over (order by ts  desc rows between 6 preceding and 3 preceding), " +
+                            "min(j) over (order by ts  desc rows between 6 preceding and 3 preceding), " +
+                            "j " +
+                            "from tab1 " +
+                            "order by ts desc",
+                    null,
+                    false,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    "avg\tsum\tfirst_value\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\tj\n" +
+                            "1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\t1\n" +
+                            "1.0\t2.0\t1.0\t1.0\t1.0\t2\t2\t2\t2\t2\t1.0\t1.0\t1\n" +
+                            "1.0\t3.0\t1.0\t1.0\t1.0\t3\t3\t3\t3\t3\t1.0\t1.0\t1\n" +
+                            "1.0\t4.0\t1.0\t1.0\t1.0\t4\t4\t4\t4\t4\t1.0\t1.0\t1\n" +
+                            "1.0\t5.0\t1.0\t1.0\t1.0\t5\t5\t5\t5\t5\t1.0\t1.0\t1\n" +
+                            "1.0\t6.0\t1.0\t1.0\t1.0\t6\t6\t6\t6\t6\t1.0\t1.0\t1\n" +
+                            "1.0\t7.0\t1.0\t1.0\t1.0\t7\t7\t7\t7\t7\t1.0\t1.0\t1\n" +
+                            "1.0\t7.0\t1.0\tnull\t1.0\t8\t7\t8\t8\t8\t1.0\t1.0\tnull\n" +
+                            "1.0\t7.0\t1.0\tnull\t1.0\t9\t7\t9\t9\t9\t1.0\t1.0\tnull\n" +
+                            "1.0\t7.0\t1.0\tnull\t1.0\t10\t7\t10\t10\t10\t1.0\t1.0\tnull\n" +
+                            "1.0\t7.0\t1.0\tnull\t1.0\t11\t7\t11\t11\t11\t1.0\t1.0\tnull\n" +
+                            "1.0\t7.0\t1.0\tnull\t1.0\t12\t7\t12\t12\t12\t1.0\t1.0\tnull\n",
+                    "select avg(j) over (order by ts desc rows between unbounded preceding and current row), " +
+                            "sum(j) over (order by ts  desc rows between unbounded preceding and current row), " +
+                            "first_value(j) over (order by ts  desc rows between unbounded preceding and current row), " +
+                            "last_value(j) over (order by ts  desc rows between unbounded preceding and current row), " +
+                            "last_value(j) ignore nulls over (order by ts  desc rows between unbounded preceding and current row), " +
+                            "count(*) over (order by ts  desc rows between unbounded preceding and current row), " +
+                            "count(j) over (order by ts  desc rows between unbounded preceding and current row), " +
+                            "count(s) over (order by ts  desc rows between unbounded preceding and current row), " +
+                            "count(d) over (order by ts  desc rows between unbounded preceding and current row), " +
+                            "count(c) over (order by ts  desc rows between unbounded preceding and current row), " +
+                            "max(j) over (order by ts  desc rows between unbounded preceding and current row), " +
+                            "min(j) over (order by ts  desc rows between unbounded preceding and current row), " +
+                            "j " +
+                            "from tab1 " +
+                            "order by ts desc",
+                    null,
+                    false,
+                    true
             );
         });
     }
@@ -4547,6 +4716,30 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     true,
                     false
             );
+
+            assertQueryNoLeakCheck(
+                    "ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\tnull\tnull\tnull\tnull\tnull\tnull\t3.0\t3.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\tnull\tnull\tnull\tnull\tnull\tnull\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\n",
+                    "select ts, i, j, d, " +
+                            "lead(j, 0) over (partition by i order by ts desc), " +
+                            "lag(j, 0) over (partition by i order by ts desc), " +
+                            "lead(j, 0) ignore nulls over (partition by i order by ts desc), " +
+                            "lag(j, 0) ignore nulls over (partition by i order by ts desc), " +
+                            "lead(j, 0) respect nulls over (partition by i order by ts desc), " +
+                            "lag(j, 0) respect nulls over (partition by i order by ts desc), " +
+                            "lead(d, 0) over (partition by i order by ts desc), " +
+                            "lag(d, 0) over (partition by i order by ts desc) " +
+                            "from tab order by ts asc",
+                    "ts",
+                    true,
+                    false
+            );
         });
     }
 
@@ -4675,6 +4868,30 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     true,
                     false
             );
+
+            assertQueryNoLeakCheck(
+                    "ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\tnull\tnull\tnull\tnull\tnull\tnull\t3.0\t3.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\tnull\tnull\tnull\tnull\tnull\tnull\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\n",
+                    "select ts, i, j, d, " +
+                            "lead(j, 0) over (order by ts desc), " +
+                            "lag(j, 0) over (order by ts desc), " +
+                            "lead(j, 0) ignore nulls over (order by ts desc), " +
+                            "lag(j, 0) ignore nulls over (order by ts desc), " +
+                            "lead(j, 0) respect nulls over (order by ts desc), " +
+                            "lag(j, 0) respect nulls over (order by ts desc), " +
+                            "lead(d, 0) over (), " +
+                            "lag(d, 0) over () " +
+                            "from tab order by ts asc",
+                    "ts",
+                    true,
+                    false
+            );
         });
     }
 
@@ -4710,6 +4927,30 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 14,
                 "offset must be a constant"
         );
+
+        assertExceptionNoLeakCheck(
+                "select lag(d, 1, sum(d)) over () from tab",
+                17,
+                "default value can not be a window function"
+        );
+
+        assertExceptionNoLeakCheck(
+                "select lag(d, 1) ignore over () from tab",
+                17,
+                "'nulls' or 'from' expected"
+        );
+
+        assertExceptionNoLeakCheck(
+                "select lag(d, 1) respect over () from tab",
+                17,
+                "'nulls' or 'from' expected"
+        );
+
+        assertExceptionNoLeakCheck(
+                "select lag(d, 1) ignore null over () from tab",
+                17,
+                "'nulls' or 'from' expected"
+        );
     }
 
     @Test
@@ -4743,6 +4984,36 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 "select lead(d, i, d + 1) over () from tab",
                 15,
                 "offset must be a constant"
+        );
+
+        assertExceptionNoLeakCheck(
+                "select lead(d, 1, sum(d)) over () from tab",
+                18,
+                "default value can not be a window function"
+        );
+
+        assertExceptionNoLeakCheck(
+                "select lead(d, 1, sum(d)) over () from tab",
+                18,
+                "default value can not be a window function"
+        );
+
+        assertExceptionNoLeakCheck(
+                "select lead(d, 1) ignore over () from tab",
+                18,
+                "'nulls' or 'from' expected"
+        );
+
+        assertExceptionNoLeakCheck(
+                "select lead(d, 1) respect over () from tab",
+                18,
+                "'nulls' or 'from' expected"
+        );
+
+        assertExceptionNoLeakCheck(
+                "select lead(d, 1) ignore null over () from tab",
+                18,
+                "'nulls' or 'from' expected"
         );
     }
 

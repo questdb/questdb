@@ -2645,6 +2645,9 @@ public class SqlParser {
                 }
 
                 if (!Chars.equals(tok, ',')) {
+                    if (isIgnoreWord(tok) || isRespectWord(tok)) {
+                        throw err(lexer, tok, "',', 'nulls' or 'from' expected");
+                    }
                     throw err(lexer, tok, "',', 'from' or 'over' expected");
                 }
             }
