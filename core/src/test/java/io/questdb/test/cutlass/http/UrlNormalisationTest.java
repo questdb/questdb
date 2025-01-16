@@ -37,11 +37,15 @@ public class UrlNormalisationTest {
 
     @Test
     public void testSimple() {
+        assertNormalisation("", "");
+        assertNormalisation("/", "/");
+        assertNormalisation("/", "////");
         assertNormalisation("/a/b/c", "///a/b/c");
+        assertNormalisation("/a/", "///a///");
         assertNormalisation("/hello/world/c/", "///hello////////world/c///////");
         assertNormalisation("/correct/path/", "/correct/path/");
+        assertNormalisation("/also/correct/path", "/also/correct/path");
         assertNormalisation("relative/path/", "relative/path/////////////");
-        assertNormalisation("", "");
         assertNormalisation("relative/broken/middle/path", "relative/broken////////////////middle/path");
     }
 
