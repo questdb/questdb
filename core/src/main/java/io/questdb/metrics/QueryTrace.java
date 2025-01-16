@@ -26,15 +26,12 @@ package io.questdb.metrics;
 
 import io.questdb.mp.ValueHolder;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjectFactory;
 
 import java.io.Closeable;
 
 public class QueryTrace implements ValueHolder<QueryTrace> {
-    public static final int OBJECT_SIZE =
-            Long.BYTES                 // executionNanos
-                    + 24               // queryText ref + assumed CharSequence object size without its data
-                    + Long.BYTES       // timestamp
-                    + Byte.BYTES;      // isJit
+    public static final ObjectFactory<QueryTrace> ITEM_FACTORY = QueryTrace::new;
 
     public long executionNanos;
     public boolean isJit;

@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.ConcurrentQueue;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.ValueHolderList;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -51,7 +52,7 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(QueryTracingJob.class.getName());
     private final ValueHolderList<QueryTrace> buffer;
     private final CairoEngine engine;
-    private final MemCappedQueryTraceQueue queue;
+    private final ConcurrentQueue<QueryTrace> queue;
     private final SqlExecutionContextImpl sqlExecutionContext;
     private final QueryTrace trace = new QueryTrace();
     private final Utf8StringSink utf8sink = new Utf8StringSink();
@@ -60,7 +61,7 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
 
     public QueryTracingJob(CairoEngine engine) {
         this.queue = engine.getMessageBus().getQueryTraceQueue();
-        this.buffer = new ValueHolderList<>(MemCappedQueryTraceQueue.ITEM_FACTORY, INITIAL_CAPACITY);
+        this.buffer = new ValueHolderList<>(QueryTrace.ITEM_FACTORY, INITIAL_CAPACITY);
         this.engine = engine;
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(
                 engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),
