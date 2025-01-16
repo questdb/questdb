@@ -194,23 +194,34 @@ public final class TestUtils {
     }
 
     public static void assertCursor(
-            CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header, MutableUtf16Sink sink
+            CharSequence expected,
+            RecordCursor cursor,
+            RecordMetadata metadata,
+            boolean header,
+            MutableUtf16Sink sink
     ) {
         CursorPrinter.println(cursor, metadata, sink, header, false);
         assertEquals(expected, sink);
     }
 
     public static void assertCursor(
-            CharSequence expected, RecordCursor cursor, RecordMetadata metadata,
-            boolean header, boolean printTypes, MutableUtf16Sink sink
+            CharSequence expected,
+            RecordCursor cursor,
+            RecordMetadata metadata,
+            boolean header,
+            boolean printTypes,
+            MutableUtf16Sink sink
     ) {
         CursorPrinter.println(cursor, metadata, sink, header, printTypes);
         assertEquals(expected, sink);
     }
 
     public static void assertEquals(
-            RecordCursor cursorExpected, RecordMetadata metadataExpected,
-            RecordCursor cursorActual, RecordMetadata metadataActual, boolean genericStringMatch
+            RecordCursor cursorExpected,
+            RecordMetadata metadataExpected,
+            RecordCursor cursorActual,
+            RecordMetadata metadataActual,
+            boolean genericStringMatch
     ) {
         StringSink sink = getTlSink();
         assertEquals(metadataExpected, metadataActual, genericStringMatch);
@@ -718,8 +729,11 @@ public final class TestUtils {
     }
 
     public static void assertSqlCursors(
-            CairoEngine engine, SqlExecutionContext sqlExecutionContext, CharSequence expected,
-            CharSequence actual, Log log
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence expected,
+            CharSequence actual,
+            Log log
     ) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             assertSqlCursors(compiler, sqlExecutionContext, expected, actual, log);
@@ -727,8 +741,12 @@ public final class TestUtils {
     }
 
     public static void assertSqlCursors(
-            CairoEngine engine, SqlExecutionContext sqlExecutionContext,
-            CharSequence expected, CharSequence actual, Log log, boolean genericStringMatch
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence expected,
+            CharSequence actual,
+            Log log,
+            boolean genericStringMatch
     ) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             assertSqlCursors(compiler, sqlExecutionContext, expected, actual, log, genericStringMatch);
@@ -736,15 +754,22 @@ public final class TestUtils {
     }
 
     public static void assertSqlCursors(
-            SqlCompiler compiler, SqlExecutionContext sqlExecutionContext,
-            CharSequence expected, CharSequence actual, Log log
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence expected,
+            CharSequence actual,
+            Log log
     ) throws SqlException {
         assertSqlCursors(compiler, sqlExecutionContext, expected, actual, log, false);
     }
 
     public static void assertSqlCursors(
-            SqlCompiler compiler, SqlExecutionContext sqlExecutionContext,
-            CharSequence expected, CharSequence actual, Log log, boolean genericStringMatch
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence expected,
+            CharSequence actual,
+            Log log,
+            boolean genericStringMatch
     ) throws SqlException {
         try (
                 RecordCursorFactory factory = compiler.compile(expected, sqlExecutionContext).getRecordCursorFactory();
@@ -782,27 +807,33 @@ public final class TestUtils {
     }
 
     public static void assertSqlCursors(
-            QuestDBTestNode node, ObjList<QuestDBTestNode> nodes, String expected, String actual,
-            Log log, boolean genericStringMatch
+            QuestDBTestNode node,
+            ObjList<QuestDBTestNode> nodes,
+            String expected,
+            String actual,
+            Log log,
+            boolean genericStringMatch
     ) throws SqlException {
-        try (SqlCompiler compiler = node.getEngine().getSqlCompiler();
-             RecordCursorFactory factory = compiler.compile(expected, node.getSqlExecutionContext())
-                     .getRecordCursorFactory()
+        try (
+                SqlCompiler compiler = node.getEngine().getSqlCompiler();
+                RecordCursorFactory factory = compiler.compile(expected, node.getSqlExecutionContext()).getRecordCursorFactory()
         ) {
             for (int i = 0, n = nodes.size(); i < n; i++) {
                 final QuestDBTestNode dbNode = nodes.get(i);
-                try (SqlCompiler compiler2 = dbNode.getEngine().getSqlCompiler();
-                     RecordCursorFactory factory2 = compiler2.compile(actual, dbNode.getSqlExecutionContext())
-                             .getRecordCursorFactory()
+                try (
+                        SqlCompiler compiler2 = dbNode.getEngine().getSqlCompiler();
+                        RecordCursorFactory factory2 = compiler2.compile(actual, dbNode.getSqlExecutionContext()).getRecordCursorFactory()
                 ) {
-                    try (RecordCursor cursor1 = factory.getCursor(node.getSqlExecutionContext());
-                         RecordCursor cursor2 = factory2.getCursor(dbNode.getSqlExecutionContext())
+                    try (
+                            RecordCursor cursor1 = factory.getCursor(node.getSqlExecutionContext());
+                            RecordCursor cursor2 = factory2.getCursor(dbNode.getSqlExecutionContext())
                     ) {
                         assertEquals(cursor1, factory.getMetadata(), cursor2, factory2.getMetadata(), genericStringMatch);
                     } catch (AssertionError e) {
                         log.error().$(e).$();
-                        try (RecordCursor expectedCursor = factory.getCursor(node.getSqlExecutionContext());
-                             RecordCursor actualCursor = factory2.getCursor(dbNode.getSqlExecutionContext())
+                        try (
+                                RecordCursor expectedCursor = factory.getCursor(node.getSqlExecutionContext());
+                                RecordCursor actualCursor = factory2.getCursor(dbNode.getSqlExecutionContext())
                         ) {
                             log.xDebugW().$();
 
