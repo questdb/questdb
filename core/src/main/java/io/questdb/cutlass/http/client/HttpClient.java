@@ -65,6 +65,7 @@ public abstract class HttpClient implements QuietCloseable {
     private final HttpClientCookieHandler cookieHandler;
     private final ObjectPool<DirectUtf8String> csPool = new ObjectPool<>(DirectUtf8String.FACTORY, 64);
     private final int defaultTimeout;
+    private final boolean fixBrokenConnection;
     private final int maxBufferSize;
     private final Request request = new Request();
     private final ResponseHeaders responseHeaders;
@@ -85,6 +86,7 @@ public abstract class HttpClient implements QuietCloseable {
         this.bufferSize = configuration.getInitialRequestBufferSize();
         this.maxBufferSize = configuration.getMaximumRequestBufferSize();
         this.responseParserBufSize = configuration.getResponseBufferSize();
+        this.fixBrokenConnection = configuration.fixBrokenConnection();
         this.bufLo = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
         this.responseParserBufLo = Unsafe.malloc(responseParserBufSize, MemoryTag.NATIVE_DEFAULT);
         this.responseHeaders = new ResponseHeaders(responseParserBufLo, responseParserBufSize, defaultTimeout, 4096, csPool);
@@ -429,7 +431,7 @@ public abstract class HttpClient implements QuietCloseable {
             assert state == STATE_URL_DONE || state == STATE_QUERY || state == STATE_HEADER || state == STATE_CONTENT;
             if (socket == null || socket.isClosed()) {
                 connect(host, port);
-            } else if (nf.testConnection(socket.getFd(), responseParserBufLo, 1)) {
+            } else if (fixBrokenConnection && nf.testConnection(socket.getFd(), responseParserBufLo, 1)) {
                 socket.close();
                 connect(host, port);
             }

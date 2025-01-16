@@ -31,7 +31,7 @@ import io.questdb.metrics.LongGauge;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-interface LineHttpProcessor extends HttpRequestProcessor {
+public interface LineHttpProcessor extends HttpRequestProcessor {
     AtomicInteger lineHttpConnectionsCounter = new AtomicInteger();
 
     @Override

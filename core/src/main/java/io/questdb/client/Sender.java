@@ -771,8 +771,7 @@ public interface Sender extends Closeable {
         /**
          * Path component of the HTTP URL.
          * <br>
-         * This is only used when communicating over HTTP transport, and it's illegal to
-         * call this method when communicating over TCP transport.
+         * This is only used when communicating over HTTP transport.
          *
          * @param path HTTP path
          * @return this instance for method chaining
