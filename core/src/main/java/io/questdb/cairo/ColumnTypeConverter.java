@@ -35,8 +35,14 @@ import io.questdb.griffin.SymbolMapWriterLite;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.*;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Uuid;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
@@ -854,8 +860,11 @@ public class ColumnTypeConverter {
 
     private static boolean stringFromChar(long srcAddr, CharSink<?> sink) {
         char value = Unsafe.getUnsafe().getChar(srcAddr);
-        sink.put(value);
-        return true;
+        if (value != 0) {
+            sink.put(value);
+            return true;
+        }
+        return false;
     }
 
     private static boolean stringFromDate(long srcAddr, CharSink<?> sink) {

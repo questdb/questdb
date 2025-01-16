@@ -746,17 +746,20 @@ public final class TestUtils {
             SqlCompiler compiler, SqlExecutionContext sqlExecutionContext,
             CharSequence expected, CharSequence actual, Log log, boolean genericStringMatch
     ) throws SqlException {
-        try (RecordCursorFactory factory = compiler.compile(expected, sqlExecutionContext).getRecordCursorFactory();
-             RecordCursorFactory factory2 = compiler.compile(actual, sqlExecutionContext).getRecordCursorFactory()
+        try (
+                RecordCursorFactory factory = compiler.compile(expected, sqlExecutionContext).getRecordCursorFactory();
+                RecordCursorFactory factory2 = compiler.compile(actual, sqlExecutionContext).getRecordCursorFactory()
         ) {
-            try (RecordCursor cursor1 = factory.getCursor(sqlExecutionContext);
-                 RecordCursor cursor2 = factory2.getCursor(sqlExecutionContext)
+            try (
+                    RecordCursor cursor1 = factory.getCursor(sqlExecutionContext);
+                    RecordCursor cursor2 = factory2.getCursor(sqlExecutionContext)
             ) {
                 assertEquals(cursor1, factory.getMetadata(), cursor2, factory2.getMetadata(), genericStringMatch);
             } catch (AssertionError e) {
                 log.error().$(e).$();
-                try (RecordCursor expectedCursor = factory.getCursor(sqlExecutionContext);
-                     RecordCursor actualCursor = factory2.getCursor(sqlExecutionContext)
+                try (
+                        RecordCursor expectedCursor = factory.getCursor(sqlExecutionContext);
+                        RecordCursor actualCursor = factory2.getCursor(sqlExecutionContext)
                 ) {
                     log.xDebugW().$();
 
