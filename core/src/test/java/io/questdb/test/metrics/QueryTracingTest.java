@@ -62,7 +62,7 @@ public class QueryTracingTest extends AbstractCairoTest {
                 try {
                     assertSql(
                             String.format("%s\n%s\n", QueryTracingJob.COLUMN_QUERY_TEXT, exampleQuery),
-                            String.format("SELECT %s from %s(x, y) WHERE %s='%s' LIMIT 1",
+                            String.format("SELECT %s from %s() WHERE %s='%s' LIMIT 1",
                                     QueryTracingJob.COLUMN_QUERY_TEXT,
                                     QueryTracingJob.TABLE_NAME,
                                     QueryTracingJob.COLUMN_QUERY_TEXT,
