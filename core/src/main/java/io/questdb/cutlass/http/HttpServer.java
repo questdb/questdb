@@ -282,7 +282,9 @@ public class HttpServer implements Closeable {
             } else {
                 lastSlash = false;
             }
-            Unsafe.getUnsafe().putByte(p + i - shift, b);
+            if (shift > 0) {
+                Unsafe.getUnsafe().putByte(p + i - shift, b);
+            }
         }
         url.squeezeHi(shift);
         return url;
