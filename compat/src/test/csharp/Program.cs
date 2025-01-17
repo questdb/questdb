@@ -353,7 +353,6 @@ public class Test
     public List<Step>? Prepare { get; set; }
     public List<Step> Steps { get; set; } = new();
     public List<Step>? Teardown { get; set; }
-
     public string Description { get; set; } = "";
 }
 
@@ -364,7 +363,6 @@ public class Step
     public List<Parameter>? Parameters { get; set; }
     public ExpectDefinition? Expect { get; set; }
     public LoopDefinition? Loop { get; set; }
-
     public string Description { get; set; } = "";
 }
 
@@ -377,7 +375,6 @@ public class Parameter
 public class ExpectDefinition
 {
     public object? Result { get; set; }
-
     [YamlMember(Alias = "result_contains", ApplyNamingConventions = false)]
     public List<object>? ResultContains { get; set; }
 }
