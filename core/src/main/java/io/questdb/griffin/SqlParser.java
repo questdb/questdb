@@ -3165,11 +3165,22 @@ public class SqlParser {
     /*
      * Rewrites the query_trace() pseudo-function to the table name sys.query_trace
      */
-    private void rewriteQueryTraceFunction(ExpressionNode node) {
-        if (node.type == ExpressionNode.FUNCTION && Chars.equalsIgnoreCase(node.token, QueryTracingJob.TABLE_NAME)) {
+    private void rewriteQueryTraceFunction(ExpressionNode node) throws SqlException {
+        if (node.type != ExpressionNode.FUNCTION || !Chars.equalsIgnoreCase(node.token, QueryTracingJob.TABLE_NAME)) {
+            return;
+        }
+        int paramCount = node.paramCount;
+        if (paramCount == 0) {
             node.type = ExpressionNode.LITERAL;
             node.token = configuration.getSystemTableNamePrefix() + QueryTracingJob.TABLE_NAME;
+            return;
         }
+        ExpressionNode firstParam = paramCount == 1 ? node.rhs
+                : paramCount == 2 ? node.lhs
+                : node.args.getLast();
+        throw SqlException.position(firstParam.position)
+                .put(QueryTracingJob.TABLE_NAME)
+                .put("() does not take any parameters");
     }
 
     private CharSequence setModelAliasAndGetOptTok(GenericLexer lexer, QueryModel joinModel) throws SqlException {

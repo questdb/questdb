@@ -33,6 +33,9 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Before;
 import org.junit.Test;
 
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.fail;
+
 public class QueryTracingTest extends AbstractCairoTest {
 
     private String queryTraceTableName;
@@ -59,7 +62,7 @@ public class QueryTracingTest extends AbstractCairoTest {
                 try {
                     assertSql(
                             String.format("%s\n%s\n", QueryTracingJob.COLUMN_QUERY_TEXT, exampleQuery),
-                            String.format("SELECT %s from %s() WHERE %s='%s' LIMIT 1",
+                            String.format("SELECT %s from %s(x, y) WHERE %s='%s' LIMIT 1",
                                     QueryTracingJob.COLUMN_QUERY_TEXT,
                                     QueryTracingJob.TABLE_NAME,
                                     QueryTracingJob.COLUMN_QUERY_TEXT,
@@ -73,6 +76,30 @@ public class QueryTracingTest extends AbstractCairoTest {
                     sleepMillis *= 2;
                 }
             }
+        }
+    }
+
+    @Test
+    public void testQueryTraceFunctionInvalidCall() {
+        String failureMessage = "query_trace() accepted a parameter";
+        String expectedErrorMessage = "[12] query_trace() does not take any parameters";
+        try {
+            engine.select("query_trace(a)", sqlExecutionContext);
+            fail(failureMessage);
+        } catch (SqlException e) {
+            assertEquals(expectedErrorMessage, e.getMessage());
+        }
+        try {
+            engine.select("query_trace(a, b)", sqlExecutionContext);
+            fail(failureMessage);
+        } catch (SqlException e) {
+            assertEquals(expectedErrorMessage, e.getMessage());
+        }
+        try {
+            engine.select("query_trace(a, b, c)", sqlExecutionContext);
+            fail(failureMessage);
+        } catch (SqlException e) {
+            assertEquals(expectedErrorMessage, e.getMessage());
         }
     }
 
