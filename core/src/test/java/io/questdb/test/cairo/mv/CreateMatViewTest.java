@@ -79,7 +79,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by DAY WAL"
             );
 
-            final int iterations = 20;
+            final int iterations = 25;
             final CyclicBarrier barrier = new CyclicBarrier(2);
             final AtomicInteger errorCounter = new AtomicInteger();
             final AtomicInteger createCounter = new AtomicInteger();

@@ -43,9 +43,9 @@ public class MatViewRefreshState implements QuietCloseable {
     private final AtomicBoolean latch = new AtomicBoolean(false);
     private final MatViewDefinition viewDefinition;
     private RecordCursorFactory cursorFactory;
+    private volatile boolean dropped;
     private int errorCode;
     private StringSink errorSink;
-    private volatile boolean isDropped;
     private volatile long lastRefreshTimestamp = Numbers.LONG_NULL;
     private long recordRowCopierMetadataVersion;
     private RecordToRowCopier recordToRowCopier;
@@ -106,11 +106,11 @@ public class MatViewRefreshState implements QuietCloseable {
     }
 
     public boolean isDropped() {
-        return isDropped;
+        return dropped;
     }
 
     public void markAsDropped() {
-        isDropped = true;
+        dropped = true;
     }
 
     public void refreshFail(Throwable th, long refreshTimestamp) {
@@ -165,7 +165,7 @@ public class MatViewRefreshState implements QuietCloseable {
     }
 
     public void unlock() {
-        if (latch.get() && isDropped) {
+        if (latch.get() && dropped) {
             // Dropped while it was in use.
             close();
         }

@@ -284,18 +284,19 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
             if (appliedToViewTxn < 0 || appliedToViewTxn < lastBaseQueryableTxn) {
                 final MatViewRefreshState state = viewGraph.getViewRefreshState(viewToken);
-                assert state != null;
-                if (!state.tryLock()) {
-                    LOG.info().$("skipping mat view refresh, locked by another refresh run [viewToken=").$(viewToken).$();
-                    continue;
-                }
+                if (state != null && !state.isDropped()) {
+                    if (!state.tryLock()) {
+                        LOG.debug().$("skipping mat view refresh, locked by another refresh run [viewToken=").$(viewToken).I$();
+                        continue;
+                    }
 
-                try {
-                    refreshed = refreshView(viewGraph, state, baseToken, viewSeqTracker, viewToken, appliedToViewTxn, lastBaseQueryableTxn);
-                } catch (Throwable th) {
-                    state.refreshFail(th, microsecondClock.getTicks());
-                } finally {
-                    state.unlock();
+                    try {
+                        refreshed = refreshView(viewGraph, state, baseToken, viewSeqTracker, viewToken, appliedToViewTxn, lastBaseQueryableTxn);
+                    } catch (Throwable th) {
+                        state.refreshFail(th, microsecondClock.getTicks());
+                    } finally {
+                        state.unlock();
+                    }
                 }
             }
         }
