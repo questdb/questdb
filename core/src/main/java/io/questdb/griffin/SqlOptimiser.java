@@ -1430,7 +1430,8 @@ public class SqlOptimiser implements Mutable {
             groupByModel.addBottomUpColumn(translatedColumn);
 
             // case 1: inner model is redundant and will be eliminated, should add translatedColumn directly
-            // case 2: inner model will be sandwiched between the windowModel and the translateModel, while translatedColumn.token already exists as a column in the innerModel, adding translatedColumn is safe.
+            // case 2: inner model will be sandwiched between the windowModel and the translateModel, while translatedColumn.token already exists as a column in the innerModel,
+            // adding translatedColumn to windowModel is safe.
             windowModel.addBottomUpColumn(translatedColumn);
             outerModel.addBottomUpColumn(translatedColumn);
             if (distinctModel != null) {
