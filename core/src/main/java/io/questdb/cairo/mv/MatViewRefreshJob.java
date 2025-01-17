@@ -263,27 +263,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return rowCount > 0;
     }
 
-    // TODO(puzpuzpuz): unused code?
-    private boolean refreshAll() {
-        LOG.info().$("refreshing ALL materialized views").$();
-        baseTables.clear();
-        MatViewGraph viewGraph = engine.getMatViewGraph();
-        viewGraph.getAllBaseTables(baseTables);
-        boolean refreshed = false;
-        for (int i = 0, size = baseTables.size(); i < size; i++) {
-            CharSequence baseName = baseTables.get(i);
-
-            TableToken baseToken = engine.getTableTokenIfExists(baseName);
-            if (baseToken != null) {
-                refreshed |= refreshDependentViews(baseToken, viewGraph);
-            } else {
-                // TODO: include more details of the views not to be refreshed
-                LOG.error().$("found materialized views dependent on deleted table that will not be refreshed [parent=").$(baseName).I$();
-            }
-        }
-        return refreshed;
-    }
-
     private boolean refreshDependentViews(TableToken baseToken, MatViewGraph viewGraph) {
         if (!baseToken.isWal()) {
             LOG.error().$("found materialized views dependent on non-WAL table that will not be refreshed [parent=").utf8(baseToken.getTableName()).I$();
@@ -293,7 +272,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         childViewSink.clear();
         boolean refreshed = false;
 
-        viewGraph.getAffectedViews(baseToken, childViewSink);
+        viewGraph.getDependentMatViews(baseToken, childViewSink);
         final SeqTxnTracker baseSeqTracker = engine.getTableSequencerAPI().getTxnTracker(baseToken);
         final long minRefreshToTxn = baseSeqTracker.getWriterTxn();
 
