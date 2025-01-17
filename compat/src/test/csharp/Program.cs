@@ -4,7 +4,7 @@ using NpgsqlTypes;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
-namespace QuestDBTesting;
+namespace csharp;
 
 public class Program
 {
@@ -77,7 +77,7 @@ public class TestRunner
             await ExecuteSteps(test.Prepare ?? new List<Step>(), variables, connection);
 
             // Test steps
-            await ExecuteSteps(test.Steps ?? new List<Step>(), variables, connection);
+            await ExecuteSteps(test.Steps, variables, connection);
 
             Console.WriteLine($"Test '{test.Name}' passed.");
         }
@@ -169,7 +169,7 @@ public class TestRunner
         if (string.IsNullOrEmpty(template)) return template;
 
         return variables.Aggregate(template, (current, variable) =>
-            current.Replace($"${{{variable.Key}}}", variable.Value?.ToString() ?? ""));
+            current.Replace($"${{{variable.Key}}}", variable.Value.ToString() ?? ""));
     }
 
     private string AdjustPlaceholderSyntax(string query)
@@ -249,18 +249,16 @@ public class TestRunner
     };
 
     private object ConvertParameterValue(object value, string type)
-    {
-        if (value == null) return DBNull.Value;
-
+    {   
         return type.ToLower() switch
         {
             "int4" or "int8" => Convert.ToInt64(value, CultureInfo.InvariantCulture),
             "float4" or "float8" => Convert.ToDouble(value.ToString(), CultureInfo.InvariantCulture),
             "boolean" => Convert.ToBoolean(value),
-            "varchar" => value.ToString(),
-            "date" => DateTime.Parse(value.ToString(), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
+            "varchar" => value.ToString()!,
+            "date" => DateTime.Parse(value.ToString()!, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
             "char" => Convert.ToChar(value),
-            "timestamp" => DateTime.Parse(value.ToString(), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
+            "timestamp" => DateTime.Parse(value.ToString()!, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
             _ => value
         };
     }
@@ -282,7 +280,7 @@ public class TestRunner
             else
             {
                 // Single value comparison
-                if (!actual.ToString().Equals(expect.Result.ToString()))
+                if (!actual.ToString()!.Equals(expect.Result.ToString()))
                 {
                     throw new AssertionException($"Expected result '{expect.Result}', got '{actual}'");
                 }
@@ -317,12 +315,12 @@ public class TestRunner
                 {
                     DateTime dt => (object)dt.ToString("yyyy-MM-ddTHH:mm:ss.ffffffZ"),
                     // Convert all numeric types to string and cast back to object
-                    long l => (object)l.ToString(CultureInfo.InvariantCulture),
-                    double d => (object)d.ToString(CultureInfo.InvariantCulture),
-                    int i => (object)i.ToString(CultureInfo.InvariantCulture),
-                    short s => (object)s.ToString(CultureInfo.InvariantCulture),
-                    decimal dec => (object)dec.ToString(CultureInfo.InvariantCulture),
-                    _ => (object)(value?.ToString() ?? "")
+                    long l => l.ToString(CultureInfo.InvariantCulture),
+                    double d => d.ToString(CultureInfo.InvariantCulture),
+                    int i => i.ToString(CultureInfo.InvariantCulture),
+                    short s => s.ToString(CultureInfo.InvariantCulture),
+                    decimal dec => dec.ToString(CultureInfo.InvariantCulture),
+                    _ => value?.ToString() ?? ""
                 })
                 .ToList())
             .ToList();
