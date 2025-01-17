@@ -1178,7 +1178,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         setBindVariableAsChar(i, lo, valueSize, bindVariableService, characterStore);
                         break;
                     case X_PG_DATE:
-                        setBindVariableAsDate(i, lo, valueSize, bindVariableService, characterStore);
+                        setBindVariableAsDate(i, lo, valueSize, bindVariableService);
                         break;
                     case X_PG_BOOL:
                         setBindVariableAsBoolean(i, lo, valueSize, bindVariableService);
@@ -2411,8 +2411,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             int variableIndex,
             long valueAddr,
             int valueSize,
-            BindVariableService bindVariableService,
-            CharacterStore characterStore
+            BindVariableService bindVariableService
     ) throws SqlException, BadProtocolException {
         ensureValueLength(variableIndex, Integer.BYTES, valueSize);
 
