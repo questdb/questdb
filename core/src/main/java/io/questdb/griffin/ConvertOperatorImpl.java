@@ -136,6 +136,7 @@ public class ConvertOperatorImpl implements Closeable {
     }
 
     private void closeFds(long srcFixFd, long srcVarFd, long dstFixFd, long dstVarFd) {
+        LOG.debug().$("closing fds[srcFixFd=").$(srcFixFd).$(", srcVarFd=").$(srcVarFd).$(", dstFixFd=").$(dstFixFd).$(", dstVarFd=").$(dstVarFd).I$();
         ff.close(srcFixFd);
         ff.close(srcVarFd);
         ff.close(dstFixFd);
