@@ -62,7 +62,7 @@ public class WalWriterTest extends AbstractCairoTest {
     @Test
     public void applyMaySmallCommitsHappyDays() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table sm (id int, ts timestamp, y long, s string) timestamp(ts) partition by DAY WAL");
+            execute("create table sm (id int, ts timestamp, y long, s string, v varchar) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("sm");
             long startTs = IntervalUtils.parseFloorPartialTimestamp("2022-02-24");
             long tsIncrement = Timestamps.MINUTE_MICROS;
@@ -71,6 +71,8 @@ public class WalWriterTest extends AbstractCairoTest {
             int totalRows = 5000;
             int iterations = 20;
 
+            Utf8StringSink sink = new Utf8StringSink();
+            StringSink stringSink = new StringSink();
             for (int c = 0; c < iterations; c++) {
                 try (WalWriter walWriter1 = engine.getWalWriter(tableToken)) {
                     try (WalWriter walWriter2 = engine.getWalWriter(tableToken)) {
@@ -80,14 +82,24 @@ public class WalWriterTest extends AbstractCairoTest {
                             TableWriter.Row row = walWriter1.newRow(ts);
                             row.putInt(0, i);
                             row.putLong(2, i + 1);
-                            row.putStr(3, Integer.toString(i));
+                            stringSink.clear();
+                            stringSink.put(i);
+                            row.putStr(3, stringSink);
+                            sink.clear();
+                            sink.put(i);
+                            row.putVarchar(4, sink);
                             row.append();
                             walWriter1.commit();
 
                             TableWriter.Row row2 = walWriter2.newRow(ts);
                             row2.putInt(0, i + 1);
                             row2.putLong(2, i + 2);
-                            row2.putStr(3, Integer.toString(i + 1));
+                            stringSink.clear();
+                            stringSink.put(i + 1);
+                            row2.putStr(3, stringSink);
+                            sink.clear();
+                            sink.put(i + 1);
+                            row2.putVarchar(4, sink);
                             row2.append();
                             walWriter2.commit();
 
@@ -100,7 +112,8 @@ public class WalWriterTest extends AbstractCairoTest {
                     assertSql("count\tmin\tmax\n" +
                             (c + 1) * totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Timestamps.toUSecString(ts - tsIncrement) + "\n", "select count(*), min(ts), max(ts) from sm");
                     assertSqlCursors("sm", "select * from sm order by id");
-                    assertSql("id\tts\ty\ts\n", "select * from sm WHERE id <> cast(s as int)");
+                    assertSql("id\tts\ty\ts\tv\n", "select * from sm WHERE id <> cast(s as int)");
+                    assertSql("id\tts\ty\ts\tv\n", "select * from sm WHERE id <> cast(v as int)");
                 }
             }
         });

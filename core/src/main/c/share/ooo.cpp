@@ -883,6 +883,41 @@ Java_io_questdb_std_Vect_mergeShuffleStringColumnFromManyAddresses(
 }
 
 
+JNIEXPORT jint JNICALL
+Java_io_questdb_std_Vect_mergeShuffleVarcharColumnFromManyAddresses(
+        JNIEnv *env,
+        jclass cl,
+        jint indexSegmentEncodingBytes,
+        jlong srcPrimaryAddresses,
+        jlong srcSecondaryAddresses,
+        jlong dstPrimaryAddress,
+        jlong dstSecondaryAddress,
+        jlong mergeIndex,
+        jlong rowCount,
+        jlong dstVarOffset
+) {
+    auto merge_index_address = reinterpret_cast<const index_l *>(mergeIndex);
+    auto row_count = __JLONG_REINTERPRET_CAST__(int64_t, rowCount);
+    auto src_primary = reinterpret_cast<const char**>(srcPrimaryAddresses);
+    auto src_secondary = reinterpret_cast<const int64_t **>(srcSecondaryAddresses);
+    auto dst_primary = reinterpret_cast<char*>(dstPrimaryAddress);
+    auto dst_secondary = reinterpret_cast<int64_t *>(dstSecondaryAddress);
+    auto dst_var_offset = __JLONG_REINTERPRET_CAST__(const int64_t, dstVarOffset);
+
+    switch (indexSegmentEncodingBytes) {
+        case 0:
+            merge_shuffle_varchar_column_from_many_addresses<0u>(src_primary, src_secondary, dst_primary, dst_secondary, merge_index_address, row_count, dst_var_offset);
+            break;
+        case 1:
+            merge_shuffle_varchar_column_from_many_addresses<8u>(src_primary, src_secondary, dst_primary, dst_secondary, merge_index_address, row_count, dst_var_offset);
+            break;
+        default:
+            return -1;
+    }
+
+    return 0;
+}
+
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_sortULongAscInPlace(JNIEnv *env, jclass cl, jlong pLong, jlong len) {
     sort<uint64_t>(reinterpret_cast<uint64_t *>(pLong), len);

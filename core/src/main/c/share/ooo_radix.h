@@ -397,7 +397,6 @@ void merge_shuffle_string_column_from_many_addresses_segment_bits(const char **s
                                                      int64_t dst_var_offset) {
     constexpr uint64_t segment_mask = (1ULL << segment_bits) - 1;
 
-
     for (int64_t l = 0; l < row_count; l++) {
         MM_PREFETCH_T0(merge_index + l + 64);
         dst_secondary[l] = dst_var_offset;
@@ -423,7 +422,7 @@ void merge_shuffle_string_column_from_many_addresses_segment_bits(const char **s
 }
 
 template<typename T, uint16_t mult>
-int32_t merge_shuffle_string_column_from_many_addresses(const int32_t index_segment_encoding_bytes,
+inline int32_t merge_shuffle_string_column_from_many_addresses(const int32_t index_segment_encoding_bytes,
                                                      const char **src_primary,
                                                      const int64_t **src_secondary,
                                                         char *dst_primary,
@@ -444,10 +443,55 @@ int32_t merge_shuffle_string_column_from_many_addresses(const int32_t index_segm
         case 3:
             merge_shuffle_string_column_from_many_addresses_segment_bits<T, mult, 24u>(src_primary, src_secondary, dst_primary, dst_secondary, merge_index_address, row_count, dst_var_offset);
             break;
+        case 4:
+            merge_shuffle_string_column_from_many_addresses_segment_bits<T, mult, 32u>(src_primary, src_secondary, dst_primary, dst_secondary, merge_index_address, row_count, dst_var_offset);
+            break;
+        case 5:
+            merge_shuffle_string_column_from_many_addresses_segment_bits<T, mult, 40u>(src_primary, src_secondary, dst_primary, dst_secondary, merge_index_address, row_count, dst_var_offset);
+            break;
+        case 6:
+            merge_shuffle_string_column_from_many_addresses_segment_bits<T, mult, 48u>(src_primary, src_secondary, dst_primary, dst_secondary, merge_index_address, row_count, dst_var_offset);
+            break;
+        case 7:
+            merge_shuffle_string_column_from_many_addresses_segment_bits<T, mult, 56u>(src_primary, src_secondary, dst_primary, dst_secondary, merge_index_address, row_count, dst_var_offset);
+            break;
         default:
             return -1;
     }
     return 0;
+}
+
+template<uint16_t segment_bits>
+void merge_shuffle_varchar_column_from_many_addresses(const char **src_primary,
+                                                                  const int64_t **src_secondary,
+                                                                  char *dst_primary,
+                                                                  int64_t *dst_secondary,
+                                                                  const index_l *merge_index,
+                                                                  int64_t row_count,
+                                                                  int64_t dst_var_offset) {
+    constexpr uint64_t segment_mask = (1ULL << segment_bits) - 1;
+
+    for (int64_t l = 0; l < row_count; l++) {
+        auto index = merge_index[l].i;
+        auto row_index = index >> segment_bits;
+        auto src_index = index & segment_mask;
+
+        const int64_t firstWord = src_secondary[src_index][row_index * 2];
+        const int64_t secondWord = src_secondary[src_index][row_index * 2 + 1];
+
+        auto originalData = secondWord & 0x000000000000ffffLL;
+        auto rellocatedSecondWord = originalData | (dst_var_offset << 16);
+        if ((firstWord & 1) == 0 && (firstWord & 4) == 0) {
+            // not inlined and not null
+            auto originalOffset = secondWord >> 16;
+            auto len = (firstWord >> 4) & 0xffffff;
+            auto data = src_primary[src_index] + originalOffset;
+            __MEMCPY(dst_primary + dst_var_offset, data, len);
+            dst_var_offset += len;
+        }
+        dst_secondary[l * 2] = firstWord;
+        dst_secondary[l * 2 + 1] = rellocatedSecondWord;
+    }
 }
 
 #endif //QUESTDB_OOO_RADIX_H

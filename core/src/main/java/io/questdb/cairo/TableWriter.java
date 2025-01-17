@@ -7414,7 +7414,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         0
                 );
 
-
                 int asdfi = 0;
             }
         } finally {
