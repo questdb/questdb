@@ -75,7 +75,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             assert orderedGroupCount == orderedFunctions.size();
             this.orderedFunctions = orderedFunctions;
             this.comparators = comparators;
-            RecordChain recordChain = new RecordChain(
+            RecordArray recordChain = new RecordArray(
                     chainTypes,
                     recordSink,
                     configuration.getSqlWindowStorePageSize(),
@@ -273,14 +273,14 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
     class CachedWindowRecordCursor implements RecordCursor {
         private final IntList columnIndexes; // Used for symbol table lookups.
         private final ObjList<LongTreeChain> orderedSources;
-        private final RecordChain recordChain;
+        private final RecordArray recordChain;
         private RecordCursor baseCursor;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isOpen;
         private boolean isRecordChainBuilt;
         private long recordChainOffset;
 
-        public CachedWindowRecordCursor(IntList columnIndexes, RecordChain recordChain, ObjList<LongTreeChain> orderedSources) {
+        public CachedWindowRecordCursor(IntList columnIndexes, RecordArray recordChain, ObjList<LongTreeChain> orderedSources) {
             this.columnIndexes = columnIndexes;
             this.recordChain = recordChain;
             this.recordChain.setSymbolTableResolver(this);
@@ -364,7 +364,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             final Record chainRightRecord = recordChain.getRecordB();
             if (orderedGroupCount > 0) {
                 while (baseCursor.hasNext()) {
-                    recordChainOffset = recordChain.put(record, recordChainOffset);
+                    recordChainOffset = recordChain.put(record);
                     recordChain.recordAt(chainRecord, recordChainOffset);
                     for (int i = 0; i < orderedGroupCount; i++) {
                         circuitBreaker.statefulThrowExceptionIfTripped();
@@ -374,7 +374,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             } else {
                 while (baseCursor.hasNext()) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
-                    recordChainOffset = recordChain.put(record, recordChainOffset);
+                    recordChainOffset = recordChain.put(record);
                 }
             }
 
@@ -402,10 +402,18 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             if (unorderedFunctions != null) {
                 for (int j = 0, n = unorderedFunctions.size(); j < n; j++) {
                     final WindowFunction f = unorderedFunctions.getQuick(j);
-                    recordChain.toTop();
-                    while (recordChain.hasNext()) {
-                        circuitBreaker.statefulThrowExceptionIfTripped();
-                        f.pass1(chainRecord, chainRecord.getRowId(), recordChain);
+                    if (f.getPass1ScanDirection() == WindowFunction.Pass1ScanDirection.FORWARD) {
+                        recordChain.toTop();
+                        while (recordChain.hasNext()) {
+                            circuitBreaker.statefulThrowExceptionIfTripped();
+                            f.pass1(chainRecord, chainRecord.getRowId(), recordChain);
+                        }
+                    } else {
+                        recordChain.toBottom();
+                        while (recordChain.hasPrev()) {
+                            circuitBreaker.statefulThrowExceptionIfTripped();
+                            f.pass1(chainRecord, chainRecord.getRowId(), recordChain);
+                        }
                     }
                 }
             }
