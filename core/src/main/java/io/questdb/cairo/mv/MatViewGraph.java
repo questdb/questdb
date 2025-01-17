@@ -98,10 +98,11 @@ public class MatViewGraph implements QuietCloseable {
         final MatViewRefreshState refreshState = refreshStateByTableDirName.remove(viewToken.getDirName());
         if (refreshState != null) {
             if (refreshState.tryLock()) {
-                // TODO(eugene): `refreshState` already removed from `refreshStateByTableDirName`
-                refreshStateByTableDirName.remove(viewToken.getDirName());
-                Misc.free(refreshState);
-                refreshState.unlock();
+                try {
+                    Misc.free(refreshState);
+                } finally {
+                    refreshState.unlock();
+                }
             } else {
                 refreshState.markAsDropped();
             }
@@ -159,8 +160,8 @@ public class MatViewGraph implements QuietCloseable {
     }
 
     public void notifyBaseRefreshed(MatViewRefreshTask task, long seqTxn) {
-        TableToken tableToken = task.baseTable;
-        MatViewRefreshList state = dependentViewsByTableName.get(tableToken.getTableName());
+        final TableToken tableToken = task.baseTable;
+        final MatViewRefreshList state = dependentViewsByTableName.get(tableToken.getTableName());
         if (state != null) {
             if (state.notifyOnBaseTableRefreshedNoLock(seqTxn)) {
                 // While refreshing more txn were committed. Refresh will need to re-run.
@@ -170,7 +171,7 @@ public class MatViewGraph implements QuietCloseable {
     }
 
     public void notifyTxnApplied(MatViewRefreshTask task, long seqTxn) {
-        MatViewRefreshList state = dependentViewsByTableName.get(task.baseTable.getTableName());
+        final MatViewRefreshList state = dependentViewsByTableName.get(task.baseTable.getTableName());
         if (state != null) {
             if (state.notifyOnBaseTableCommitNoLock(seqTxn)) {
                 refreshTaskQueue.enqueue(task);

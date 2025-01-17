@@ -28,11 +28,13 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.mv.MatViewDefinition;
+import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
@@ -43,12 +45,15 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.TimeZone;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.*;
 
@@ -63,6 +68,74 @@ public class CreateMatViewTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
         engine.getMatViewGraph().clear();
+    }
+
+    @Test
+    public void testCreateDropConcurrent() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "  sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            final int iterations = 20;
+            final CyclicBarrier barrier = new CyclicBarrier(2);
+            final AtomicInteger errorCounter = new AtomicInteger();
+            final AtomicInteger createCounter = new AtomicInteger();
+
+            final Thread creator = new Thread(() -> {
+                final MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
+                try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                    barrier.await();
+                    for (int i = 0; i < iterations; i++) {
+                        execute(
+                                "create materialized view if not exists price_1h as (" +
+                                        "  select sym, last(price) as price, ts from base_price sample by 1h" +
+                                        ") partition by DAY",
+                                executionContext
+                        );
+                        execute("insert into base_price values('gbpusd', 1.320, now())", executionContext);
+                        drainWalQueue();
+                        refreshJob.run(0);
+                        createCounter.incrementAndGet();
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace(System.out);
+                    errorCounter.incrementAndGet();
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            });
+            creator.start();
+
+            final Thread dropper = new Thread(() -> {
+                try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                    barrier.await();
+                    int knownCount;
+                    int droppedAt = 0;
+                    while ((knownCount = createCounter.get()) < iterations) {
+                        if (knownCount > droppedAt) {
+                            execute("drop materialized view if exists price_1h", executionContext);
+                            droppedAt = createCounter.get();
+                        } else {
+                            Os.sleep(1);
+                        }
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace(System.out);
+                    errorCounter.incrementAndGet();
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            });
+            dropper.start();
+
+            creator.join();
+            dropper.join();
+
+            Assert.assertEquals(0, errorCounter.get());
+        });
     }
 
     @Test
