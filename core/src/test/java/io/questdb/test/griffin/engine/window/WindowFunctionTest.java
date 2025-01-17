@@ -4740,6 +4740,66 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     true,
                     false
             );
+
+            assertQueryNoLeakCheck(
+                    "ts\ti\tj\td\tlag\tlag_ignore_nulls\tlag1\tlag2\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\tnull\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t1.0\t1.0\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\t2.0\t2.0\t2.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\tnull\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t4.0\t4.0\t4.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\t0.0\t0.0\t0.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tnull\t0.0\tnull\t1.0\n",
+                    "select ts, i, j, d, " +
+                            "lag(j) over (partition by i), " +
+                            "lag(j) ignore nulls over (partition by i), " +
+                            "lag(j) respect nulls over (partition by i), " +
+                            "lag(d) over (partition by i) " +
+                            "from tab ",
+                    "ts",
+                    false,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\ti\tj\td\tlag\tlag_ignore_nulls\tlag1\tlag2\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\tnull\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\tnull\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\tnull\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\tnull\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tnull\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\tnull\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t4.0\tnull\t4.0\t4.0\n",
+                    "select ts, i, j, d, " +
+                            "lag(j, 3) over (partition by i), " +
+                            "lag(j, 3) ignore nulls over (partition by i), " +
+                            "lag(j, 3) respect nulls over (partition by i), " +
+                            "lag(d, 3) over (partition by i) " +
+                            "from tab ",
+                    "ts",
+                    false,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\ti\tj\td\tlag\tlag_ignore_nulls\tlag1\tlag2\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t2.0\t2.0\t2.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t3.0\t3.0\t3.0\t3.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\t1.0\t1.0\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t5.0\t5.0\t5.0\t5.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t1.0\t1.0\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\t4.0\t4.0\t4.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t0.0\t4.0\t0.0\t0.0\n",
+                    "select ts, i, j, d, " +
+                            "lag(j, 2, (j + 1)::double) over (partition by i), " +
+                            "lag(j, 2, (j + 1)::double) ignore nulls over (partition by i), " +
+                            "lag(j, 2, (j + 1)::double) respect nulls over (partition by i), " +
+                            "lag(d, 2, d + 1) over (partition by i) " +
+                            "from tab ",
+                    "ts",
+                    false,
+                    true
+            );
         });
     }
 
@@ -4891,6 +4951,66 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "ts",
                     true,
                     false
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\ti\tj\td\tlag\tlag_ignore_nulls\tlag1\tlag2\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\tnull\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t1.0\t1.0\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\t2.0\t2.0\t2.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\tnull\t2.0\tnull\t3.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t4.0\t4.0\t4.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\t0.0\t0.0\t0.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tnull\t0.0\tnull\t1.0\n",
+                    "select ts, i, j, d, " +
+                            "lag(j) over (), " +
+                            "lag(j) ignore nulls over (), " +
+                            "lag(j) respect nulls over (), " +
+                            "lag(d) over () " +
+                            "from tab ",
+                    "ts",
+                    false,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\ti\tj\td\tlag\tlag_ignore_nulls\tlag1\tlag2\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\tnull\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\tnull\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\tnull\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t1.0\tnull\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t2.0\t1.0\t2.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\tnull\t2.0\tnull\t3.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t4.0\t2.0\t4.0\t4.0\n",
+                    "select ts, i, j, d, " +
+                            "lag(j, 3) over (), " +
+                            "lag(j, 3) ignore nulls over (), " +
+                            "lag(j, 3) respect nulls over (), " +
+                            "lag(d, 3) over () " +
+                            "from tab ",
+                    "ts",
+                    false,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\ti\tj\td\tlag\tlag_ignore_nulls\tlag1\tlag2\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t2.0\t2.0\t2.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t3.0\t3.0\t3.0\t3.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\t1.0\t1.0\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t2.0\t1.0\t2.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tnull\t2.0\tnull\t3.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\t4.0\t4.0\t4.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t0.0\t4.0\t0.0\t0.0\n",
+                    "select ts, i, j, d, " +
+                            "lag(j, 2, (j + 1)::double) over (), " +
+                            "lag(j, 2, (j + 1)::double) ignore nulls over (), " +
+                            "lag(j, 2, (j + 1)::double) respect nulls over (), " +
+                            "lag(d, 2, d + 1) over () " +
+                            "from tab ",
+                    "ts",
+                    false,
+                    true
             );
         });
     }
