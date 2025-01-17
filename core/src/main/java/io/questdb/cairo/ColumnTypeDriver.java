@@ -116,6 +116,30 @@ public interface ColumnTypeDriver {
 
     long getMinAuxVectorSize();
 
+    /**
+     * Used to shuffle column data after calling Vect.radixSortManySegmentsIndexAsc()
+     *
+     * @param mergeIndexEncodingSegmentBytes number of bytes in merge index to encode segment index in the incoming address list
+     * @param primaryAddressList             list of memory pointers to primary addresses
+     * @param secondaryAddressList           list of memory pointers to secondary addresses
+     * @param outPrimaryAddress              pointer to allocated out address for data
+     * @param outSecondaryAddress            pointer to allocated out address for aux data
+     * @param mergeIndex                     merge index. Format is 2 longs per row. First long is timestamp and second long is row index + segment index.
+     *                                       Segment index bytes is passed in mergeIndexEncodingSegmentBytes
+     * @param rowCount                       row count to merge
+     * @param destDataOffset                 offset in the destination data memory to shift all the records in aux column by
+     */
+    void mergeShuffleColumnFromManyAddresses(
+            int mergeIndexEncodingSegmentBytes,
+            long primaryAddressList,
+            long secondaryAddressList,
+            long outPrimaryAddress,
+            long outSecondaryAddress,
+            long mergeIndex,
+            long rowCount,
+            long destDataOffset
+    );
+
     void o3ColumnMerge(
             long timestampMergeIndexAddr,
             long timestampMergeIndexCount,

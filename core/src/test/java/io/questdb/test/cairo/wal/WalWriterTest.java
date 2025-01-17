@@ -62,7 +62,7 @@ public class WalWriterTest extends AbstractCairoTest {
     @Test
     public void applyMaySmallCommitsHappyDays() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table sm (id int, ts timestamp, y long) timestamp(ts) partition by DAY WAL");
+            execute("create table sm (id int, ts timestamp, y long, s string) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("sm");
             long startTs = IntervalUtils.parseFloorPartialTimestamp("2022-02-24");
             long tsIncrement = Timestamps.MINUTE_MICROS;
@@ -79,13 +79,15 @@ public class WalWriterTest extends AbstractCairoTest {
                         for (int i = c * totalRows; i < n; i += 2) {
                             TableWriter.Row row = walWriter1.newRow(ts);
                             row.putInt(0, i);
-                            row.putInt(2, i + 1);
+                            row.putLong(2, i + 1);
+                            row.putStr(3, Integer.toString(i));
                             row.append();
                             walWriter1.commit();
 
                             TableWriter.Row row2 = walWriter2.newRow(ts);
                             row2.putInt(0, i + 1);
-                            row2.putInt(2, i + 2);
+                            row2.putLong(2, i + 2);
+                            row2.putStr(3, Integer.toString(i + 1));
                             row2.append();
                             walWriter2.commit();
 
@@ -98,6 +100,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     assertSql("count\tmin\tmax\n" +
                             (c + 1) * totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Timestamps.toUSecString(ts - tsIncrement) + "\n", "select count(*), min(ts), max(ts) from sm");
                     assertSqlCursors("sm", "select * from sm order by id");
+                    assertSql("id\tts\ty\ts\n", "select * from sm WHERE id <> cast(s as int)");
                 }
             }
         });

@@ -827,22 +827,53 @@ Java_io_questdb_std_Vect_mergeShuffleColumnFromManyAddresses(
 
     switch (column_size_bytes) {
         case 1:
-            merge_shuffle_column_from_many_addresses<uint8_t>(index_segment_encoding_bytes, src_addresses, dst_address, merge_index_address, row_count);
-            break;
+            return merge_shuffle_column_from_many_addresses<uint8_t>(index_segment_encoding_bytes, src_addresses, dst_address, merge_index_address, row_count);
         case 2:
-            merge_shuffle_column_from_many_addresses<uint16_t>(index_segment_encoding_bytes, src_addresses, dst_address, merge_index_address, row_count);
-            break;
+            return merge_shuffle_column_from_many_addresses<uint16_t>(index_segment_encoding_bytes, src_addresses, dst_address, merge_index_address, row_count);
         case 4:
-            merge_shuffle_column_from_many_addresses<uint32_t>(index_segment_encoding_bytes, src_addresses, dst_address, merge_index_address, row_count);
+            return merge_shuffle_column_from_many_addresses<uint32_t>(index_segment_encoding_bytes, src_addresses, dst_address, merge_index_address, row_count);
+        case 8:
+            return merge_shuffle_column_from_many_addresses<uint64_t>(index_segment_encoding_bytes, src_addresses, dst_address, merge_index_address, row_count);
+        case 16:
+            return merge_shuffle_column_from_many_addresses<__int128>(index_segment_encoding_bytes, src_addresses, dst_address, merge_index_address, row_count);
+        case 32:
+            return merge_shuffle_column_from_many_addresses<long_256bit>(index_segment_encoding_bytes, src_addresses, dst_address, merge_index_address, row_count);
+        default:
+            return -1;
+    }
+
+    return 0;
+}
+
+JNIEXPORT jint JNICALL
+Java_io_questdb_std_Vect_mergeShuffleStringColumnFromManyAddresses(
+        JNIEnv *env,
+        jclass cl,
+        jint indexSegmentEncodingBytes,
+        jint dataLengthBytes,
+        jlong srcPrimaryAddresses,
+        jlong srcSecondaryAddresses,
+        jlong dstPrimaryAddress,
+        jlong dstSecondaryAddress,
+        jlong mergeIndex,
+        jlong rowCount,
+        jlong dstVarOffset
+) {
+    auto merge_index_address = reinterpret_cast<const index_l *>(mergeIndex);
+    auto row_count = __JLONG_REINTERPRET_CAST__(int64_t, rowCount);
+    auto index_segment_encoding_bytes = (int32_t)indexSegmentEncodingBytes;
+    auto src_primary = reinterpret_cast<const char**>(srcPrimaryAddresses);
+    auto src_secondary = reinterpret_cast<const int64_t **>(srcSecondaryAddresses);
+    auto dst_primary = reinterpret_cast<char*>(dstPrimaryAddress);
+    auto dst_secondary = reinterpret_cast<int64_t *>(dstSecondaryAddress);
+    auto dst_var_offset = __JLONG_REINTERPRET_CAST__(const int64_t, dstVarOffset);
+
+    switch (dataLengthBytes) {
+        case 4:
+            merge_shuffle_string_column_from_many_addresses<int32_t, 2u>(index_segment_encoding_bytes, src_primary, src_secondary, dst_primary, dst_secondary, merge_index_address, row_count, dst_var_offset);
             break;
         case 8:
-            merge_shuffle_column_from_many_addresses<uint64_t>(index_segment_encoding_bytes, src_addresses, dst_address, merge_index_address, row_count);
-            break;
-        case 16:
-            merge_shuffle_column_from_many_addresses<__int128>(index_segment_encoding_bytes, src_addresses, dst_address, merge_index_address, row_count);
-            break;
-        case 32:
-            merge_shuffle_column_from_many_addresses<long_256bit>(index_segment_encoding_bytes, src_addresses, dst_address, merge_index_address, row_count);
+            merge_shuffle_string_column_from_many_addresses<int64_t, 1u>(index_segment_encoding_bytes, src_primary, src_secondary, dst_primary, dst_secondary, merge_index_address, row_count, dst_var_offset);
             break;
         default:
             return -1;

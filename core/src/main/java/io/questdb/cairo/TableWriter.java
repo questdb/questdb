@@ -7336,6 +7336,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         consumeColumnTasks(queue, queuedCount);
     }
 
+    // Shuffle column data from multiple segments and lag according to merge index
     private void processWalCommitBlockSortWalSegmentTimestampsDispatchColumnSortTasksCthMergeWalColumnManySegments(
             int columnIndex,
             int columnType,
@@ -7344,20 +7345,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long mappedAddrBuffPrimary,
             long totalRows,
             long totalSegmentAddresses,
-            long segmentBytes
+            long mergeIndexEncodingSegmentBytes
     ) {
         boolean varSize = ColumnType.isVarSize(columnType);
         final int shl = ColumnType.pow2SizeOf(columnType);
         int walColumnCountPerSegment = metadata.getColumnCount() * 2;
-        long mappedAddrBuffSecondary = varSize ? mappedAddrBuffPrimary + totalSegmentAddresses : 0;
+        long mappedAddrBuffSecondary = varSize ? mappedAddrBuffPrimary + totalSegmentAddresses * Long.BYTES : 0;
 
         for (int i = 0, n = segmentCopyInfo.size(); i < n; i++) {
-            var segmentColumnPrimary = walMappedColumns.get(walColumnCountPerSegment * i + columnIndex);
+            var segmentColumnPrimary = walMappedColumns.get(walColumnCountPerSegment * i + 2 * columnIndex);
             Unsafe.getUnsafe().putLong(mappedAddrBuffPrimary + (long) i * Long.BYTES, segmentColumnPrimary.addressOf(0));
-            if (varSize) {
-                var segmentColumnSecondary = walMappedColumns.get(walColumnCountPerSegment * i + columnIndex + 1);
-                Unsafe.getUnsafe().putLong(mappedAddrBuffSecondary + (long) i * Long.BYTES, segmentColumnSecondary.addressOf(0));
-            }
         }
 
         long lagSize = 0, lagMemOffset = 0;
@@ -7372,7 +7369,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 long lagAddr = mapAppendColumnBuffer(lagMem, lagMemOffset, lagSize, false);
                 Unsafe.getUnsafe().putLong(mappedAddrBuffPrimary + totalSegmentAddresses - 1, Math.abs(lagAddr));
             } else {
-                throw new IllegalStateException("TODO var size");
+                throw new IllegalStateException("TODO var col lag");
             }
         }
 
@@ -7383,7 +7380,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 Vect.mergeShuffleColumnFromManyAddresses(
                         (1 << shl),
-                        (int) segmentBytes,
+                        (int) mergeIndexEncodingSegmentBytes,
                         mappedAddrBuffPrimary,
                         destinationColumn.getAddress(),
                         mergeIndex,
@@ -7391,8 +7388,34 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 );
 
             } else {
-                // do not merge timestamp columns
-                throw new IllegalStateException("TODO var size");
+                ColumnTypeDriver driver = ColumnType.getDriver(columnType);
+                var destinationColumnSecondary = o3MemColumns1.get(getSecondaryColumnIndex(columnIndex));
+                destinationColumnSecondary.jumpTo(driver.getAuxVectorOffset(totalRows));
+
+                long totalVarSize = 0;
+                for (int i = 0, n = segmentCopyInfo.size(); i < n; i++) {
+                    var segmentColumnAux = walMappedColumns.get(walColumnCountPerSegment * i + 2 * columnIndex + 1);
+                    long segmentColumnAuxAddr = segmentColumnAux.addressOf(0);
+                    Unsafe.getUnsafe().putLong(mappedAddrBuffSecondary + (long) i * Long.BYTES, segmentColumnAuxAddr);
+                    totalVarSize += driver.getDataVectorSize(segmentColumnAuxAddr, segmentCopyInfo.getRowLo(i), segmentCopyInfo.getRowHi(i) - 1);
+                }
+
+                var destinationColumnPrimary = o3MemColumns1.get(getPrimaryColumnIndex(columnIndex));
+                destinationColumnPrimary.jumpTo(totalVarSize);
+
+                driver.mergeShuffleColumnFromManyAddresses(
+                        (int) mergeIndexEncodingSegmentBytes,
+                        mappedAddrBuffPrimary,
+                        mappedAddrBuffSecondary,
+                        destinationColumnPrimary.getAddress(),
+                        destinationColumnSecondary.getAddress(),
+                        mergeIndex,
+                        totalRows,
+                        0
+                );
+
+
+                int asdfi = 0;
             }
         } finally {
             if (walLagRowCount > 0) {
@@ -7400,8 +7423,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (!varSize) {
                     long lagAddr = Unsafe.getUnsafe().getLong(mappedAddrBuffPrimary + totalSegmentAddresses - 1);
                     mapAppendColumnBufferRelease(lagAddr, lagMemOffset, lagSize);
-                } else {
-                    throw new IllegalStateException("TODO var size");
                 }
             }
         }

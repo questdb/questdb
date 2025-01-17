@@ -219,14 +219,18 @@ public final class Vect {
 
     public static native void mergeShuffle8Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 
-    public static native long mergeShuffleColumnFromManyAddresses(
+    public static native int mergeShuffleColumnFromManyAddresses(
             int columnSizeBytes,
-            int indexSegmentEncodingBytes,
+            int mergeIndexEncodingSegmentBytes,
             long srcAddresses,
             long dstAddress,
             long mergeIndex,
             long rowCount
     );
+
+    public static native int mergeShuffleStringColumnFromManyAddresses(int mergeIndexEncodingSegmentBytes, int dataLengthBytes, long primaryAddressList, long secondaryAddressList, long outPrimaryAddress, long outSecondaryAddress, long mergeIndex, long rowCount, long destVarOffset);
+
+    public static native int mergeShuffleVarcharColumnFromManyAddresses(int mergeIndexEncodingSegmentBytes, long primaryAddressList, long secondaryAddressList, long outPrimaryAddress, long outSecondaryAddress, long mergeIndex, long rowCount, long destVarOffset);
 
     public static native long mergeTwoLongIndexesAsc(long pTs, long tsIndexLo, long tsCount, long pIndex2, long index2Count, long pIndexDest);
 

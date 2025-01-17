@@ -173,6 +173,33 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public void mergeShuffleColumnFromManyAddresses(
+            int mergeIndexEncodingSegmentBytes,
+            long primaryAddressList,
+            long secondaryAddressList,
+            long outPrimaryAddress,
+            long outSecondaryAddress,
+            long mergeIndex,
+            long rowCount,
+            long destVarOffset
+    ) {
+        int res = Vect.mergeShuffleStringColumnFromManyAddresses(
+                mergeIndexEncodingSegmentBytes,
+                (int) getDataVectorMinEntrySize(),
+                primaryAddressList,
+                secondaryAddressList,
+                outPrimaryAddress,
+                outSecondaryAddress,
+                mergeIndex,
+                rowCount,
+                destVarOffset
+        );
+        if (res != 0) {
+            throw new IllegalArgumentException("Cannot merge shuffle string column, unsupported column type");
+        }
+    }
+
+    @Override
     public void o3ColumnMerge(
             long timestampMergeIndexAddr,
             long timestampMergeIndexCount,

@@ -489,6 +489,23 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public void mergeShuffleColumnFromManyAddresses(int mergeIndexEncodingSegmentBytes, long primaryAddressList, long secondaryAddressList, long outPrimaryAddress, long outSecondaryAddress, long mergeIndex, long rowCount, long destDataOffset) {
+        int res = Vect.mergeShuffleVarcharColumnFromManyAddresses(
+                mergeIndexEncodingSegmentBytes,
+                primaryAddressList,
+                secondaryAddressList,
+                outPrimaryAddress,
+                outSecondaryAddress,
+                mergeIndex,
+                rowCount,
+                destDataOffset
+        );
+        if (res != 0) {
+            throw new IllegalStateException("unsupported column type");
+        }
+    }
+
+    @Override
     public void o3ColumnMerge(
             long timestampMergeIndexAddr,
             long timestampMergeIndexCount,
