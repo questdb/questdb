@@ -137,7 +137,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             queryTrace.timestamp = config.getMicrosecondClock().getTicks();
             queryTrace.queryText = sqlText;
             queryTrace.executionNanos = durationNanos;
-            engine.getMessageBus().getQueryTraceQueue().offer(queryTrace);
+            engine.getMessageBus().getQueryTraceQueue().enqueue(queryTrace);
         }
     }
 
