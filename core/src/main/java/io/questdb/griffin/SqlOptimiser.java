@@ -4721,6 +4721,11 @@ public class SqlOptimiser implements Mutable {
         if (next != null) {
             rewriteOrderByPositionForUnionModels(next);
         }
+
+        ObjList<QueryModel> joinModels = model.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            rewriteOrderByPositionForUnionModels(joinModels.getQuick(i));
+        }
     }
 
     /**
