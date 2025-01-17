@@ -4726,7 +4726,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (!qc.isWindowColumn()) {
                     final int columnIndex = baseMetadata.getColumnIndexQuiet(qc.getAst().token);
                     final TableColumnMetadata m = baseMetadata.getColumnMetadata(columnIndex);
-                    chainMetadata.add(i, m);
+                    chainMetadata.addIfNotExists(i, m);
                     if (Chars.equalsIgnoreCase(qc.getAst().token, qc.getAlias())) {
                         factoryMetadata.add(i, m);
                     } else { // keep alias

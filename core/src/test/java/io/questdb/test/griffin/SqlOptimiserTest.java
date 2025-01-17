@@ -4542,6 +4542,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                 "1970-01-01T00:00:06.000010Z\tB\t10.0\t10.0\n", q5);
     }
 
+    @Test
+    public void testDuplicateColumnsInWindowModel() {
+
+    }
+
     protected QueryModel compileModel(String query) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             ExecutionModel model = compiler.testCompileModel(query, sqlExecutionContext);

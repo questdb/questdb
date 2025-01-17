@@ -1429,10 +1429,9 @@ public class SqlOptimiser implements Mutable {
             innerModel.addBottomUpColumn(columnAst.position, translatedColumn, true);
             groupByModel.addBottomUpColumn(translatedColumn);
 
-            // window model is used together with inner model
-            final CharSequence windowAlias = createColumnAlias(innerAlias, windowModel);
-            final QueryColumn windowColumn = nextColumn(windowAlias, innerAlias);
-            windowModel.addBottomUpColumn(windowColumn);
+            // case 1: inner model is redundant and will be eliminated, should add translatedColumn directly
+            // case 2: inner model will be sandwiched between the windowModel and the translateModel, while translatedColumn.token already exists as a column in the innerModel, adding translatedColumn is safe.
+            windowModel.addBottomUpColumn(translatedColumn);
             outerModel.addBottomUpColumn(translatedColumn);
             if (distinctModel != null) {
                 distinctModel.addBottomUpColumn(translatedColumn);
