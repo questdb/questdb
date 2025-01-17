@@ -2330,7 +2330,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 if (columnType != ColumnType.CHAR) {
                     utf8Sink.putIntDirect(INT_NULL_X);
                 } else {
-                    utf8Sink.putIntDirect(PG_CHAR_TYPE_MODIFIER);
+                    utf8Sink.putIntDirect(X_PG_CHAR_TYPE_MODIFIER);
                 }
 
                 // this is special behaviour for binary fields to prevent binary data being hex encoded on the wire

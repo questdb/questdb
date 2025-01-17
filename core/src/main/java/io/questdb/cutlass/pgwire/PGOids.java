@@ -52,8 +52,6 @@ public class PGOids {
     public static final int PG_BYTEA = 17;
     public static final int PG_CATALOG_OID = 11;
     public static final int PG_CHAR = 1042;
-    // Postgres type modifier returns n+4 for CHAR(n) and since all our CHAR columns are equivalent to CHAR(1) we do the same
-    public static final int PG_CHAR_TYPE_MODIFIER = Numbers.bswap(5);
     public static final int PG_CLASS_OID = 1259;
     public static final int PG_DATE = 1082;
     public static final int PG_FLOAT4 = 700;
@@ -86,6 +84,8 @@ public class PGOids {
     public static final int X_B_PG_BYTEA = 1 | X_PG_BYTEA;
     public static final int X_PG_CHAR = ((PG_CHAR >> 24) & 0xff) | ((PG_CHAR << 8) & 0xff0000) | ((PG_CHAR >> 8) & 0xff00) | ((PG_CHAR << 24) & 0xff000000);
     public static final int X_B_PG_CHAR = 1 | X_PG_CHAR;
+    // PostgreSQL type modifier returns n+4 for CHAR(n) and since all our CHAR columns are equivalent to CHAR(1) we do the same
+    public static final int X_PG_CHAR_TYPE_MODIFIER = Numbers.bswap(5);
     @SuppressWarnings("NumericOverflow")
     public static final int X_PG_DATE = ((PG_DATE >> 24) & 0xff) | ((PG_DATE << 8) & 0xff0000) | ((PG_DATE >> 8) & 0xff00) | ((PG_DATE << 24) & 0xff000000);
     public static final int X_B_PG_DATE = 1 | X_PG_DATE;
