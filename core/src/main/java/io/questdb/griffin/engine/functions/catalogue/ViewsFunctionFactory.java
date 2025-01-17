@@ -74,8 +74,7 @@ public class ViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_NAME = 0;
         private static final int COLUMN_BASE_TABLE_NAME = COLUMN_NAME + 1;
         private static final int COLUMN_LAST_REFRESH_TIMESTAMP = COLUMN_BASE_TABLE_NAME + 1;
-        private static final int COLUMN_REFRESH_PENDING = COLUMN_LAST_REFRESH_TIMESTAMP + 1;
-        private static final int COLUMN_VIEW_SQL = COLUMN_REFRESH_PENDING + 1;
+        private static final int COLUMN_VIEW_SQL = COLUMN_LAST_REFRESH_TIMESTAMP + 1;
         private static final int COLUMN_TABLE_DIR_NAME = COLUMN_VIEW_SQL + 1;
         private static final int COLUMN_LAST_ERROR = COLUMN_TABLE_DIR_NAME + 1;
         private static final int COLUMN_LAST_ERROR_CODE = COLUMN_LAST_ERROR + 1;
@@ -133,12 +132,12 @@ public class ViewsFunctionFactory implements FunctionFactory {
                     final MatViewRefreshState viewState = matViewGraph.getViewRefreshState(viewToken);
                     if (viewState != null && !viewState.isDropped()) {
                         viewState.copyError(errorHolder);
+                        // TODO(puzpuzpuz): include lastRefreshBaseTxn and base table txn
                         record.of(
                                 viewState.getViewDefinition(),
                                 viewState.getLastRefreshTimestamp(),
                                 errorHolder.getErrorMsg(),
-                                errorHolder.getErrorCode(),
-                                viewState.isRefreshPending()
+                                errorHolder.getErrorCode()
                         );
                         viewIndex++;
                         return true;
@@ -169,13 +168,7 @@ public class ViewsFunctionFactory implements FunctionFactory {
                 private CharSequence lastError;
                 private int lastErrorCode;
                 private long lastRefreshTimestamp;
-                private boolean refreshPending;
                 private MatViewDefinition viewDefinition;
-
-                @Override
-                public boolean getBool(int col) {
-                    return col == COLUMN_REFRESH_PENDING && refreshPending;
-                }
 
                 @Override
                 public int getInt(int col) {
@@ -217,14 +210,12 @@ public class ViewsFunctionFactory implements FunctionFactory {
                         MatViewDefinition viewDefinition,
                         long lastRefreshTimestamp,
                         CharSequence lastError,
-                        int lastErrorCode,
-                        boolean refreshPending
+                        int lastErrorCode
                 ) {
                     this.viewDefinition = viewDefinition;
                     this.lastRefreshTimestamp = lastRefreshTimestamp;
                     this.lastError = lastError != null && lastError.length() != 0 ? lastError : null;
                     this.lastErrorCode = this.lastError != null ? lastErrorCode : Integer.MIN_VALUE;
-                    this.refreshPending = refreshPending;
                 }
             }
         }
@@ -234,7 +225,6 @@ public class ViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("name", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("base_table_name", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("last_refresh_timestamp", ColumnType.TIMESTAMP));
-            metadata.add(new TableColumnMetadata("refresh_pending", ColumnType.BOOLEAN));
             metadata.add(new TableColumnMetadata("view_sql", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("view_table_dir_name", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("last_error", ColumnType.STRING));

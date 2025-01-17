@@ -41,7 +41,6 @@ public class MatViewRefreshState implements QuietCloseable {
     private final SimpleReadWriteLock errorLock = new SimpleReadWriteLock();
     // used to avoid concurrent refresh runs
     private final AtomicBoolean latch = new AtomicBoolean(false);
-    private final AtomicBoolean newNotification = new AtomicBoolean();
     private final MatViewDefinition viewDefinition;
     private RecordCursorFactory cursorFactory;
     private int errorCode;
@@ -110,17 +109,8 @@ public class MatViewRefreshState implements QuietCloseable {
         return isDropped;
     }
 
-    public boolean isRefreshPending() {
-        return newNotification.get();
-    }
-
     public void markAsDropped() {
         isDropped = true;
-    }
-
-    // TODO(puzpuzpuz): more unused code?
-    public boolean notifyTxnApplied(long seqTxn) {
-        return newNotification.compareAndSet(false, true);
     }
 
     public void refreshFail(Throwable th, long refreshTimestamp) {
