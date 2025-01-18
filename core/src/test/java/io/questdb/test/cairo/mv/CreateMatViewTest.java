@@ -589,9 +589,79 @@ public class CreateMatViewTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testCreateRefreshConcurrent() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "  sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            final int iterations = 10;
+            final CyclicBarrier barrier = new CyclicBarrier(2);
+            final AtomicInteger errorCounter = new AtomicInteger();
+            final AtomicInteger createCounter = new AtomicInteger();
+
+            final Thread creator = new Thread(() -> {
+                try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                    barrier.await();
+                    for (int i = 0; i < iterations; i++) {
+                        execute(
+                                "create materialized view if not exists price_1h as (" +
+                                        "  select sym, last(price) as price, ts from base_price sample by 1h" +
+                                        ") partition by DAY",
+                                executionContext
+                        );
+                        execute("insert into base_price values('gbpusd', 1.320, now())", executionContext);
+                        drainWalQueue();
+                        execute("drop materialized view if exists price_1h", executionContext);
+                        createCounter.incrementAndGet();
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace(System.out);
+                    errorCounter.incrementAndGet();
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            });
+            creator.start();
+
+            final Thread refresher = new Thread(() -> {
+                final MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
+                try {
+                    barrier.await();
+                    while (createCounter.get() < iterations) {
+                        if (!refreshJob.run(0)) {
+                            Os.sleep(1);
+                        }
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace(System.out);
+                    errorCounter.incrementAndGet();
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            });
+            refresher.start();
+
+            creator.join();
+            refresher.join();
+
+            Assert.assertEquals(0, errorCounter.get());
+        });
+    }
+
     private static void assertMatViewDefinition(
-            String name, String query, String baseTableName, long samplingInterval, char samplingIntervalUnit,
-            long fromMicros, long toMicros, String timeZone, String timeZoneOffset
+            String name,
+            String query,
+            String baseTableName,
+            long samplingInterval,
+            char samplingIntervalUnit,
+            long fromMicros,
+            long toMicros,
+            String timeZone,
+            String timeZoneOffset
     ) {
         final MatViewDefinition matViewDefinition = getMatViewDefinition(name);
         assertNotNull(matViewDefinition);
@@ -616,8 +686,15 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     private static void assertMatViewMetadata(
-            String name, String query, String baseTableName, long samplingInterval, char samplingIntervalUnit,
-            long fromMicros, long toMicros, String timeZone, String timeZoneOffset
+            String name,
+            String query,
+            String baseTableName,
+            long samplingInterval,
+            char samplingIntervalUnit,
+            long fromMicros,
+            long toMicros,
+            String timeZone,
+            String timeZoneOffset
     ) {
         final FilesFacade ff = configuration.getFilesFacade();
         final TableToken matViewToken = engine.getTableTokenIfExists(name);
