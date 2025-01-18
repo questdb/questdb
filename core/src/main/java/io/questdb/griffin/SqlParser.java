@@ -375,15 +375,16 @@ public class SqlParser {
     }
 
     private CharSequence createColumnAlias(
-            ExpressionNode node,
+            CharSequence token,
+            int type,
             LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap
     ) {
         return SqlUtil.createColumnAlias(
                 characterStore,
-                unquote(node.token),
-                Chars.indexOfUnquoted(node.token, '.'),
+                unquote(token),
+                Chars.indexOfUnquoted(token, '.'),
                 aliasToColumnMap,
-                node.type != ExpressionNode.LITERAL
+                type != ExpressionNode.LITERAL
         );
     }
 
@@ -2568,7 +2569,29 @@ public class SqlParser {
                 QueryColumn col;
                 final int colPosition = lexer.lastTokenPosition();
 
-                if (tok != null && isOverKeyword(tok)) {
+                // windowIgnoreNulls is 0 --> non-window context or default
+                // windowIgnoreNulls is 1 --> ignore nulls
+                // windowIgnoreNulls is 2 --> respect nulls
+                byte windowNullsDesc = 0;
+                if (tok != null) {
+                    if (isIgnoreWord(tok)) {
+                        windowNullsDesc = 1;
+                    } else if (isRespectWord(tok)) {
+                        windowNullsDesc = 2;
+                    }
+                }
+
+                if (tok != null && windowNullsDesc > 0) {
+                    CharSequence next = optTok(lexer);
+                    if (next != null && isNullsWord(next)) {
+                        expectTok(lexer, "over");
+                    } else {
+                        windowNullsDesc = 0;
+                        lexer.backTo(colPosition, tok);
+                    }
+                }
+
+                if ((tok != null && isOverKeyword(tok)) || windowNullsDesc > 0) {
                     // window function
                     expectTok(lexer, '(');
                     overClauseMode = true;//prevent lexer returning ')' ending over clause as null in a sub-query
@@ -2577,6 +2600,8 @@ public class SqlParser {
                         col = winCol;
 
                         tok = tokIncludingLocalBrace(lexer, "'partition' or 'order' or ')'");
+                        winCol.setIgnoreNulls(windowNullsDesc == 1);
+                        winCol.setNullsDescPos(windowNullsDesc > 0 ? colPosition : 0);
 
                         if (isPartitionKeyword(tok)) {
                             expectTok(lexer, "by");
@@ -2896,6 +2921,9 @@ public class SqlParser {
                 }
 
                 if (!Chars.equals(tok, ',')) {
+                    if (isIgnoreWord(tok) || isRespectWord(tok)) {
+                        throw err(lexer, tok, "',', 'nulls' or 'from' expected");
+                    }
                     throw err(lexer, tok, "',', 'from' or 'over' expected");
                 }
             }
@@ -2908,10 +2936,15 @@ public class SqlParser {
                         throw err(lexer, null, "'from' expected");
                     }
                     CharSequence alias;
+
                     if (qc.getAst().type == ExpressionNode.CONSTANT && Chars.indexOfUnquoted(token, '.') != -1) {
                         alias = createConstColumnAlias(aliasMap);
                     } else {
-                        alias = createColumnAlias(qc.getAst(), aliasMap);
+                        CharSequence tokenAlias = qc.getAst().token;
+                        if (qc.isWindowColumn() && ((WindowColumn) qc).isIgnoreNulls()) {
+                            tokenAlias += "_ignore_nulls";
+                        }
+                        alias = createColumnAlias(tokenAlias, qc.getAst().type, aliasMap);
                     }
                     qc.setAlias(alias);
                     aliasMap.put(alias, qc);

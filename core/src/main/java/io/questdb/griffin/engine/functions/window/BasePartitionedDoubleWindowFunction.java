@@ -50,7 +50,7 @@ abstract class BasePartitionedDoubleWindowFunction extends BaseDoubleWindowFunct
     @Override
     public void close() {
         super.close();
-        map.close();
+        Misc.free(map);
         Misc.freeObjList(partitionByRecord.getFunctions());
     }
 
@@ -62,18 +62,23 @@ abstract class BasePartitionedDoubleWindowFunction extends BaseDoubleWindowFunct
 
     @Override
     public void reopen() {
-        map.reopen();
+        if (map != null) {
+            map.reopen();
+        }
     }
 
     @Override
     public void reset() {
-        map.close();
+        Misc.free(map);
     }
 
     @Override
     public void toPlan(PlanSink sink) {
         sink.val(getName());
         sink.val('(').val(arg).val(')');
+        if (isIgnoreNulls()) {
+            sink.val(" ignore nulls");
+        }
         sink.val(" over (");
         sink.val("partition by ");
         sink.val(partitionByRecord.getFunctions());
@@ -83,6 +88,6 @@ abstract class BasePartitionedDoubleWindowFunction extends BaseDoubleWindowFunct
     @Override
     public void toTop() {
         super.toTop();
-        map.clear();
+        Misc.clear(map);
     }
 }

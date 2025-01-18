@@ -53,7 +53,7 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public void configureWindowContext(@Nullable VirtualRecord partitionByRecord, @Nullable RecordSink partitionBySink, @Nullable ColumnTypes keyTypes, boolean isOrdered, int orderByDirection, int orderByPos, boolean baseSupportsRandomAccess, int framingMode, long rowsLo, int rowsLoExprPos, long rowsHi, int rowsHiExprPos, int exclusionKind, int exclusionKindPos, int timestampIndex) {
+    public void configureWindowContext(@Nullable VirtualRecord partitionByRecord, @Nullable RecordSink partitionBySink, @Nullable ColumnTypes keyTypes, boolean isOrdered, int orderByDirection, int orderByPos, boolean baseSupportsRandomAccess, int framingMode, long rowsLo, int rowsLoExprPos, long rowsHi, int rowsHiExprPos, int exclusionKind, int exclusionKindPos, int timestampIndex, boolean ignoreNulls, int nullsDescPos) {
     }
 
     @Override

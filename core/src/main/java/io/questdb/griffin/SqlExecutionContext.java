@@ -71,7 +71,9 @@ public interface SqlExecutionContext extends Closeable {
             int rowsHiExprPos,
             int exclusionKind,
             int exclusionKindPos,
-            int timestampIndex
+            int timestampIndex,
+            boolean ignoreNulls,
+            int nullsDescPos
     );
 
     default void containsSecret(boolean b) {

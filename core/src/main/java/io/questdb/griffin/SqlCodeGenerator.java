@@ -4552,9 +4552,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (qc.isWindowColumn()) {
                     final WindowColumn ac = (WindowColumn) qc;
                     final ExpressionNode ast = qc.getAst();
-                    if (ast.paramCount > 1) {
-                        throw SqlException.$(ast.position, "too many arguments");
-                    }
 
                     partitionByFunctions = null;
                     int psz = ac.getPartitionBy().size();
@@ -4634,7 +4631,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             ac.getRowsHiKindPos(),
                             ac.getExclusionKind(),
                             ac.getExclusionKindPos(),
-                            baseMetadata.getTimestampIndex()
+                            baseMetadata.getTimestampIndex(),
+                            ac.isIgnoreNulls(),
+                            ac.getNullsDescPos()
                     );
                     final Function f;
                     try {
@@ -4722,7 +4721,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (!qc.isWindowColumn()) {
                     final int columnIndex = baseMetadata.getColumnIndexQuiet(qc.getAst().token);
                     final TableColumnMetadata m = baseMetadata.getColumnMetadata(columnIndex);
-                    chainMetadata.add(i, m);
+                    chainMetadata.addIfNotExists(i, m);
                     if (Chars.equalsIgnoreCase(qc.getAst().token, qc.getAlias())) {
                         factoryMetadata.add(i, m);
                     } else { // keep alias
@@ -4778,9 +4777,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (qc.isWindowColumn()) {
                     final WindowColumn ac = (WindowColumn) qc;
                     final ExpressionNode ast = qc.getAst();
-                    if (ast.paramCount > 1) {
-                        throw SqlException.$(ast.position, "too many arguments");
-                    }
 
                     partitionByFunctions = null;
                     int psz = ac.getPartitionBy().size();
@@ -4861,7 +4857,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             ac.getRowsHiKindPos(),
                             ac.getExclusionKind(),
                             ac.getExclusionKindPos(),
-                            chainMetadata.getTimestampIndex()
+                            chainMetadata.getTimestampIndex(),
+                            ac.isIgnoreNulls(),
+                            ac.getNullsDescPos()
                     );
                     final Function f;
                     try {
@@ -4878,6 +4876,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     WindowFunction windowFunction = (WindowFunction) f;
 
                     if (osz > 0 && !dismissOrder) {
+                        IntList directions = ac.getOrderByDirection();
+                        if (windowFunction.getPass1ScanDirection() == WindowFunction.Pass1ScanDirection.BACKWARD) {
+                            for (int j = 0, size = directions.size(); j < size; j++) {
+                                directions.set(j, 1 - directions.getQuick(j));
+                            }
+                        }
+
                         IntList order = toOrderIndices(chainMetadata, ac.getOrderBy(), ac.getOrderByDirection());
                         // init comparator if we need
                         windowFunction.initRecordComparator(recordComparatorCompiler, chainTypes, order);
