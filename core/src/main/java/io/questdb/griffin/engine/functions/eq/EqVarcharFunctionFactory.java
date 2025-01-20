@@ -125,10 +125,8 @@ public class EqVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            // getVarcharA/B returns a reusable sequence object.
-            // When using two at once, it's important to use both A and B.
             final Utf8Sequence a = left.getVarcharA(rec);
-            final Utf8Sequence b = right.getVarcharB(rec);
+            final Utf8Sequence b = right.getVarcharA(rec);
             if (a == null) {
                 return negated != (b == null);
             }

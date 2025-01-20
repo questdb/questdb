@@ -207,21 +207,15 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
 
     private class ParquetRecord implements Record {
         private final ObjList<DirectBinarySequence> bsViews;
-        private final ObjList<DirectString> csViewsA;
-        private final ObjList<DirectString> csViewsB;
-        private final ObjList<Long256Impl> longs256A;
-        private final ObjList<Long256Impl> longs256B;
-        private final ObjList<Utf8SplitString> utf8ViewsA;
-        private final ObjList<Utf8SplitString> utf8ViewsB;
+        private final ObjList<DirectString> csViews;
+        private final ObjList<Long256Impl> longs256;
+        private final ObjList<Utf8SplitString> usViews;
 
         public ParquetRecord(int columnCount) {
             this.bsViews = new ObjList<>(columnCount);
-            this.csViewsA = new ObjList<>(columnCount);
-            this.csViewsB = new ObjList<>(columnCount);
-            this.longs256A = new ObjList<>(columnCount);
-            this.longs256B = new ObjList<>(columnCount);
-            this.utf8ViewsA = new ObjList<>(columnCount);
-            this.utf8ViewsB = new ObjList<>(columnCount);
+            this.csViews = new ObjList<>(columnCount);
+            this.longs256 = new ObjList<>(columnCount);
+            this.usViews = new ObjList<>(columnCount);
         }
 
         @Override
@@ -329,14 +323,14 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
 
         @Override
         public Long256 getLong256A(int col) {
-            final Long256Impl long256 = long256A(col);
+            final Long256Impl long256 = long256(col);
             long256.fromAddress(getLong256Addr(col));
             return long256;
         }
 
         @Override
         public Long256 getLong256B(int col) {
-            final Long256Impl long256 = long256B(col);
+            final Long256Impl long256 = long256(col);
             long256.fromAddress(getLong256Addr(col));
             return long256;
         }
@@ -349,12 +343,12 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
 
         @Override
         public CharSequence getStrA(int col) {
-            return getStr(getStrAddr(col), csViewA(col));
+            return getStr(getStrAddr(col), csView(col));
         }
 
         @Override
         public CharSequence getStrB(int col) {
-            return getStr(getStrAddr(col), csViewB(col));
+            return getStrA(col);
         }
 
         @Override
@@ -367,15 +361,13 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         public Utf8Sequence getVarcharA(int col) {
             long auxPtr = auxPtrs.get(col);
             long dataPtr = dataPtrs.get(col);
-            return VarcharTypeDriver.getSplitValue(auxPtr, Long.MAX_VALUE, dataPtr, Long.MAX_VALUE, currentRowInRowGroup, utf8ViewA(col));
+            return VarcharTypeDriver.getSplitValue(auxPtr, Long.MAX_VALUE, dataPtr, Long.MAX_VALUE, currentRowInRowGroup, usView(col));
         }
 
         @Nullable
         @Override
         public Utf8Sequence getVarcharB(int col) {
-            long auxPtr = auxPtrs.get(col);
-            long dataPtr = dataPtrs.get(col);
-            return VarcharTypeDriver.getSplitValue(auxPtr, Long.MAX_VALUE, dataPtr, Long.MAX_VALUE, currentRowInRowGroup, utf8ViewB(col));
+            return getVarcharA(col);
         }
 
         @Override
@@ -391,18 +383,11 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             return bsViews.getQuick(columnIndex);
         }
 
-        private DirectString csViewA(int columnIndex) {
-            if (csViewsA.getQuiet(columnIndex) == null) {
-                csViewsA.extendAndSet(columnIndex, new DirectString());
+        private DirectString csView(int columnIndex) {
+            if (csViews.getQuiet(columnIndex) == null) {
+                csViews.extendAndSet(columnIndex, new DirectString());
             }
-            return csViewsA.getQuick(columnIndex);
-        }
-
-        private DirectString csViewB(int columnIndex) {
-            if (csViewsB.getQuiet(columnIndex) == null) {
-                csViewsB.extendAndSet(columnIndex, new DirectString());
-            }
-            return csViewsB.getQuick(columnIndex);
+            return csViews.getQuick(columnIndex);
         }
 
         private long getLong256Addr(int col) {
@@ -418,32 +403,18 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             return null;
         }
 
-        private Long256Impl long256A(int columnIndex) {
-            if (longs256A.getQuiet(columnIndex) == null) {
-                longs256A.extendAndSet(columnIndex, new Long256Impl());
+        private Long256Impl long256(int columnIndex) {
+            if (longs256.getQuiet(columnIndex) == null) {
+                longs256.extendAndSet(columnIndex, new Long256Impl());
             }
-            return longs256A.getQuick(columnIndex);
+            return longs256.getQuick(columnIndex);
         }
 
-        private Long256Impl long256B(int columnIndex) {
-            if (longs256B.getQuiet(columnIndex) == null) {
-                longs256B.extendAndSet(columnIndex, new Long256Impl());
+        private Utf8SplitString usView(int columnIndex) {
+            if (usViews.getQuiet(columnIndex) == null) {
+                usViews.extendAndSet(columnIndex, new Utf8SplitString());
             }
-            return longs256B.getQuick(columnIndex);
-        }
-
-        private Utf8SplitString utf8ViewA(int columnIndex) {
-            if (utf8ViewsA.getQuiet(columnIndex) == null) {
-                utf8ViewsA.extendAndSet(columnIndex, new Utf8SplitString());
-            }
-            return utf8ViewsA.getQuick(columnIndex);
-        }
-
-        private Utf8SplitString utf8ViewB(int columnIndex) {
-            if (utf8ViewsB.getQuiet(columnIndex) == null) {
-                utf8ViewsB.extendAndSet(columnIndex, new Utf8SplitString());
-            }
-            return utf8ViewsB.getQuick(columnIndex);
+            return usViews.getQuick(columnIndex);
         }
     }
 }

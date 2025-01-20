@@ -50,18 +50,18 @@ import java.io.Closeable;
 
 public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, WindowSPI, Reopenable {
     protected final int columnCount;
-    private final long[] columnOffsets;
     protected final long fixOffset;
     protected final MemoryCARW mem;
     protected final RecordChainRecord recordA;
     protected final RecordChainRecord recordB;
     protected final RecordSink recordSink;
     protected final long varOffset;
+    private final long[] columnOffsets;
+    protected long recordOffset;
+    protected long varAppendOffset = 0L;
     private long nextRecordOffset = -1L;
     private RecordChainRecord recordC;
-    protected long recordOffset;
     private SymbolTableSource symbolTableResolver;
-    protected long varAppendOffset = 0L;
 
     public RecordChain(
             @Transient @NotNull ColumnTypes columnTypes,
@@ -352,40 +352,34 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
         }
     }
 
-    protected long rowToDataOffset(long row) {
-        return row + 8;
+    private void putNull() {
+        mem.putLong(rowToDataOffset(recordOffset), TableUtils.NULL_LEN);
+        recordOffset += 8;
     }
 
     protected RecordChainRecord newChainRecord() {
         return new RecordChainRecord(columnCount);
     }
 
-    private void putNull() {
-        mem.putLong(rowToDataOffset(recordOffset), TableUtils.NULL_LEN);
-        recordOffset += 8;
+    protected long rowToDataOffset(long row) {
+        return row + 8;
     }
 
     protected class RecordChainRecord implements Record {
         private final ObjList<MemoryCR.ByteSequenceView> bsViews;
-        private final ObjList<DirectString> csViewsA;
-        private final ObjList<DirectString> csViewsB;
+        private final ObjList<DirectString> csViews;
         private final ObjList<Interval> intervals;
-        private final ObjList<Long256Impl> longs256A;
-        private final ObjList<Long256Impl> longs256B;
-        private final ObjList<DirectUtf8String> utf8ViewsA;
-        private final ObjList<DirectUtf8String> utf8ViewsB;
+        private final ObjList<Long256Impl> longs256;
+        private final ObjList<DirectUtf8String> usViews;
         protected long baseOffset;
         private long fixedOffset;
 
         public RecordChainRecord(int columnCount) {
             this.bsViews = new ObjList<>(columnCount);
-            this.csViewsA = new ObjList<>(columnCount);
-            this.csViewsB = new ObjList<>(columnCount);
+            this.csViews = new ObjList<>(columnCount);
             this.intervals = new ObjList<>(columnCount);
-            this.longs256A = new ObjList<>(columnCount);
-            this.longs256B = new ObjList<>(columnCount);
-            this.utf8ViewsA = new ObjList<>(columnCount);
-            this.utf8ViewsB = new ObjList<>(columnCount);
+            this.longs256 = new ObjList<>(columnCount);
+            this.usViews = new ObjList<>(columnCount);
         }
 
         @Override
@@ -487,16 +481,14 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
 
         @Override
         public Long256 getLong256A(int col) {
-            Long256Impl long256 = long256A(col);
+            Long256Impl long256 = long256(col);
             mem.getLong256(fixedWithColumnOffset(col), long256);
             return long256;
         }
 
         @Override
         public Long256 getLong256B(int col) {
-            Long256Impl long256 = long256B(col);
-            mem.getLong256(fixedWithColumnOffset(col), long256);
-            return long256;
+            return getLong256A(col);
         }
 
         @Override
@@ -518,14 +510,12 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
         public CharSequence getStrA(int col) {
             long offset = varWidthColumnOffset(col);
             assert offset > -2;
-            return offset == -1 ? null : mem.getStr(offset, csViewA(col));
+            return offset == -1 ? null : mem.getStr(offset, csView(col));
         }
 
         @Override
         public CharSequence getStrB(int col) {
-            long offset = varWidthColumnOffset(col);
-            assert offset > -2;
-            return offset == -1 ? null : mem.getStr(offset, csViewB(col));
+            return getStrA(col);
         }
 
         @Override
@@ -554,17 +544,12 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
                 return null;
             }
             long addr = mem.addressOf(offset);
-            return VarcharTypeDriver.getPlainValue(addr, utf8ViewA(col));
+            return VarcharTypeDriver.getPlainValue(addr, usView(col));
         }
 
         @Override
         public Utf8Sequence getVarcharB(int col) {
-            long offset = varWidthColumnOffset(col);
-            if (offset == -1) {
-                return null;
-            }
-            long addr = mem.addressOf(offset);
-            return VarcharTypeDriver.getPlainValue(addr, utf8ViewB(col));
+            return getVarcharA(col);
         }
 
         @Override
@@ -583,18 +568,11 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
             return bsViews.getQuick(columnIndex);
         }
 
-        private DirectString csViewA(int columnIndex) {
-            if (csViewsA.getQuiet(columnIndex) == null) {
-                csViewsA.extendAndSet(columnIndex, new DirectString());
+        private DirectString csView(int columnIndex) {
+            if (csViews.getQuiet(columnIndex) == null) {
+                csViews.extendAndSet(columnIndex, new DirectString());
             }
-            return csViewsA.getQuick(columnIndex);
-        }
-
-        private DirectString csViewB(int columnIndex) {
-            if (csViewsB.getQuiet(columnIndex) == null) {
-                csViewsB.extendAndSet(columnIndex, new DirectString());
-            }
-            return csViewsB.getQuick(columnIndex);
+            return csViews.getQuick(columnIndex);
         }
 
         private long fixedWithColumnOffset(int index) {
@@ -608,41 +586,27 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
             return intervals.getQuick(columnIndex);
         }
 
-        private Long256Impl long256A(int columnIndex) {
-            if (longs256A.getQuiet(columnIndex) == null) {
-                longs256A.extendAndSet(columnIndex, new Long256Impl());
+        private Long256Impl long256(int columnIndex) {
+            if (longs256.getQuiet(columnIndex) == null) {
+                longs256.extendAndSet(columnIndex, new Long256Impl());
             }
-            return longs256A.getQuick(columnIndex);
+            return longs256.getQuick(columnIndex);
         }
 
-        private Long256Impl long256B(int columnIndex) {
-            if (longs256B.getQuiet(columnIndex) == null) {
-                longs256B.extendAndSet(columnIndex, new Long256Impl());
+        private DirectUtf8String usView(int columnIndex) {
+            if (usViews.getQuiet(columnIndex) == null) {
+                usViews.extendAndSet(columnIndex, new DirectUtf8String());
             }
-            return longs256B.getQuick(columnIndex);
+            return usViews.getQuick(columnIndex);
+        }
+
+        private long varWidthColumnOffset(int index) {
+            return mem.getLong(baseOffset + columnOffsets[index]);
         }
 
         protected void of(long offset) {
             this.baseOffset = offset;
             this.fixedOffset = offset + varOffset;
-        }
-
-        private DirectUtf8String utf8ViewA(int columnIndex) {
-            if (utf8ViewsA.getQuiet(columnIndex) == null) {
-                utf8ViewsA.extendAndSet(columnIndex, new DirectUtf8String());
-            }
-            return utf8ViewsA.getQuick(columnIndex);
-        }
-
-        private DirectUtf8String utf8ViewB(int columnIndex) {
-            if (utf8ViewsB.getQuiet(columnIndex) == null) {
-                utf8ViewsB.extendAndSet(columnIndex, new DirectUtf8String());
-            }
-            return utf8ViewsB.getQuick(columnIndex);
-        }
-
-        private long varWidthColumnOffset(int index) {
-            return mem.getLong(baseOffset + columnOffsets[index]);
         }
     }
 }

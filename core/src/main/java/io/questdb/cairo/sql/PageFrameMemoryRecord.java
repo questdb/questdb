@@ -58,16 +58,13 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     public static final byte RECORD_A_LETTER = 0;
     public static final byte RECORD_B_LETTER = 1;
     private final ObjList<MemoryCR.ByteSequenceView> bsViews = new ObjList<>();
-    private final ObjList<DirectString> csViewsA = new ObjList<>();
-    private final ObjList<DirectString> csViewsB = new ObjList<>();
+    private final ObjList<DirectString> csViews = new ObjList<>();
     // Letters are used for parquet buffer reference counting in PageFrameMemoryPool.
     // RECORD_A_LETTER (0) stands for record A, RECORD_B_LETTER (1) stands for record B.
     private final byte letter;
-    private final ObjList<Long256Impl> longs256A = new ObjList<>();
-    private final ObjList<Long256Impl> longs256B = new ObjList<>();
+    private final ObjList<Long256Impl> longs256 = new ObjList<>();
     private final ObjList<SymbolTable> symbolTableCache = new ObjList<>();
-    private final ObjList<Utf8SplitString> utf8ViewsA = new ObjList<>();
-    private final ObjList<Utf8SplitString> utf8ViewsB = new ObjList<>();
+    private final ObjList<Utf8SplitString> utf8Views = new ObjList<>();
     private LongList auxPageAddresses;
     private LongList auxPageSizes;
     private byte frameFormat = -1;
@@ -314,16 +311,14 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public Long256 getLong256A(int columnIndex) {
-        Long256 long256 = long256A(columnIndex);
+        Long256 long256 = long256(columnIndex);
         getLong256(columnIndex, long256);
         return long256;
     }
 
     @Override
     public Long256 getLong256B(int columnIndex) {
-        Long256 long256 = long256B(columnIndex);
-        getLong256(columnIndex, long256);
-        return long256;
+        return getLong256A(columnIndex);
     }
 
     @Override
@@ -351,12 +346,12 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public CharSequence getStrA(int columnIndex) {
-        return getStr0(columnIndex, csViewA(columnIndex));
+        return getStr0(columnIndex, csView(columnIndex));
     }
 
     @Override
     public CharSequence getStrB(int columnIndex) {
-        return getStr0(columnIndex, csViewB(columnIndex));
+        return getStrA(columnIndex);
     }
 
     @Override
@@ -413,12 +408,12 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public Utf8Sequence getVarcharA(int columnIndex) {
-        return getVarchar(columnIndex, utf8ViewA(columnIndex));
+        return getVarchar(columnIndex, utf8View(columnIndex));
     }
 
     @Override
     public Utf8Sequence getVarcharB(int columnIndex) {
-        return getVarchar(columnIndex, utf8ViewB(columnIndex));
+        return getVarcharA(columnIndex);
     }
 
     @Override
@@ -465,18 +460,11 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return bsViews.getQuick(columnIndex);
     }
 
-    private DirectString csViewA(int columnIndex) {
-        if (csViewsA.getQuiet(columnIndex) == null) {
-            csViewsA.extendAndSet(columnIndex, new DirectString(this));
+    private DirectString csView(int columnIndex) {
+        if (csViews.getQuiet(columnIndex) == null) {
+            csViews.extendAndSet(columnIndex, new DirectString(this));
         }
-        return csViewsA.getQuick(columnIndex);
-    }
-
-    private DirectString csViewB(int columnIndex) {
-        if (csViewsB.getQuiet(columnIndex) == null) {
-            csViewsB.extendAndSet(columnIndex, new DirectString(this));
-        }
-        return csViewsB.getQuick(columnIndex);
+        return csViews.getQuick(columnIndex);
     }
 
     private BinarySequence getBin(long base, long offset, long dataLim, MemoryCR.ByteSequenceView view) {
@@ -579,32 +567,18 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return null; // Column top.
     }
 
-    private Long256Impl long256A(int columnIndex) {
-        if (longs256A.getQuiet(columnIndex) == null) {
-            longs256A.extendAndSet(columnIndex, new Long256Impl());
+    private Long256Impl long256(int columnIndex) {
+        if (longs256.getQuiet(columnIndex) == null) {
+            longs256.extendAndSet(columnIndex, new Long256Impl());
         }
-        return longs256A.getQuick(columnIndex);
+        return longs256.getQuick(columnIndex);
     }
 
-    private Long256Impl long256B(int columnIndex) {
-        if (longs256B.getQuiet(columnIndex) == null) {
-            longs256B.extendAndSet(columnIndex, new Long256Impl());
+    private Utf8SplitString utf8View(int columnIndex) {
+        if (utf8Views.getQuiet(columnIndex) == null) {
+            utf8Views.extendAndSet(columnIndex, new Utf8SplitString(this));
         }
-        return longs256B.getQuick(columnIndex);
-    }
-
-    private Utf8SplitString utf8ViewA(int columnIndex) {
-        if (utf8ViewsA.getQuiet(columnIndex) == null) {
-            utf8ViewsA.extendAndSet(columnIndex, new Utf8SplitString(this));
-        }
-        return utf8ViewsA.getQuick(columnIndex);
-    }
-
-    private Utf8SplitString utf8ViewB(int columnIndex) {
-        if (utf8ViewsB.getQuiet(columnIndex) == null) {
-            utf8ViewsB.extendAndSet(columnIndex, new Utf8SplitString(this));
-        }
-        return utf8ViewsB.getQuick(columnIndex);
+        return utf8Views.getQuick(columnIndex);
     }
 
     void init(

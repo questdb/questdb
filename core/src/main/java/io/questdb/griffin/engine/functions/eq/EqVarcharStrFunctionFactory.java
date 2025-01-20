@@ -96,16 +96,11 @@ public class EqVarcharStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            // important to compare A and B varchars in case
-            // these are columns of the same record
-            // records have re-usable character sequences
             final CharSequence a = left.getStrA(rec);
-            final Utf8Sequence b = right.getVarcharB(rec);
-
+            final Utf8Sequence b = right.getVarcharA(rec);
             if (a == null) {
                 return negated != (b == null);
             }
-
             return negated != Utf8s.equalsUtf16Nc(a, b);
         }
 

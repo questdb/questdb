@@ -46,8 +46,7 @@ import org.jetbrains.annotations.Nullable;
  */
 final class Unordered4MapRecord implements MapRecord {
     private final long[] columnOffsets;
-    private final Long256Impl[] keyLong256A;
-    private final Long256Impl[] keyLong256B;
+    private final Long256Impl[] longs256;
     private final Unordered4MapValue value;
     private final long[] valueOffsets;
     private final long valueSize;
@@ -80,18 +79,15 @@ final class Unordered4MapRecord implements MapRecord {
 
         columnOffsets = new long[nColumns];
 
-        Long256Impl[] long256A = null;
-        Long256Impl[] long256B = null;
+        Long256Impl[] longs256 = null;
         long offset = 0;
         for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
             final int columnType = keyTypes.getColumnType(i);
             if (ColumnType.tagOf(columnType) == ColumnType.LONG256) {
-                if (long256A == null) {
-                    long256A = new Long256Impl[nColumns];
-                    long256B = new Long256Impl[nColumns];
+                if (longs256 == null) {
+                    longs256 = new Long256Impl[nColumns];
                 }
-                long256A[i + keyIndexOffset] = new Long256Impl();
-                long256B[i + keyIndexOffset] = new Long256Impl();
+                longs256[i + keyIndexOffset] = new Long256Impl();
             }
             final int size = ColumnType.sizeOf(columnType);
             if (size <= 0) {
@@ -107,12 +103,10 @@ final class Unordered4MapRecord implements MapRecord {
             for (int i = 0, n = valueTypes.getColumnCount(); i < n; i++) {
                 int columnType = valueTypes.getColumnType(i);
                 if (ColumnType.tagOf(columnType) == ColumnType.LONG256) {
-                    if (long256A == null) {
-                        long256A = new Long256Impl[nColumns];
-                        long256B = new Long256Impl[nColumns];
+                    if (longs256 == null) {
+                        longs256 = new Long256Impl[nColumns];
                     }
-                    long256A[i] = new Long256Impl();
-                    long256B[i] = new Long256Impl();
+                    longs256[i] = new Long256Impl();
                 }
                 final int size = ColumnType.sizeOf(columnType);
                 if (size <= 0) {
@@ -123,47 +117,40 @@ final class Unordered4MapRecord implements MapRecord {
             }
         }
 
-        this.keyLong256A = long256A;
-        this.keyLong256B = long256B;
+        this.longs256 = longs256;
     }
 
     private Unordered4MapRecord(
             long valueSize,
             long[] valueOffsets,
             long[] columnOffsets,
-            Long256Impl[] keyLong256A,
-            Long256Impl[] keyLong256B
+            Long256Impl[] longs256
     ) {
         this.valueSize = valueSize;
         this.valueOffsets = valueOffsets;
         this.columnOffsets = columnOffsets;
         this.value = new Unordered4MapValue(valueSize, valueOffsets);
-        this.keyLong256A = keyLong256A;
-        this.keyLong256B = keyLong256B;
+        this.longs256 = longs256;
     }
 
     @SuppressWarnings("MethodDoesntCallSuperMethod")
     @Override
     public Unordered4MapRecord clone() {
-        final Long256Impl[] long256A;
-        final Long256Impl[] long256B;
+        final Long256Impl[] longs256;
 
-        if (this.keyLong256A != null) {
-            int n = this.keyLong256A.length;
-            long256A = new Long256Impl[n];
-            long256B = new Long256Impl[n];
+        if (this.longs256 != null) {
+            int n = this.longs256.length;
+            longs256 = new Long256Impl[n];
 
             for (int i = 0; i < n; i++) {
-                if (this.keyLong256A[i] != null) {
-                    long256A[i] = new Long256Impl();
-                    long256B[i] = new Long256Impl();
+                if (this.longs256[i] != null) {
+                    longs256[i] = new Long256Impl();
                 }
             }
         } else {
-            long256A = null;
-            long256B = null;
+            longs256 = null;
         }
-        return new Unordered4MapRecord(valueSize, valueOffsets, columnOffsets, long256A, long256B);
+        return new Unordered4MapRecord(valueSize, valueOffsets, columnOffsets, longs256);
     }
 
     @Override
@@ -255,12 +242,14 @@ final class Unordered4MapRecord implements MapRecord {
 
     @Override
     public Long256 getLong256A(int columnIndex) {
-        return getLong256Generic(keyLong256A, columnIndex);
+        Long256Impl long256 = longs256[columnIndex];
+        long256.fromAddress(addressOfColumn(columnIndex));
+        return long256;
     }
 
     @Override
     public Long256 getLong256B(int columnIndex) {
-        return getLong256Generic(keyLong256B, columnIndex);
+        return getLong256A(columnIndex);
     }
 
     @Override
@@ -311,12 +300,5 @@ final class Unordered4MapRecord implements MapRecord {
 
     private long addressOfColumn(int index) {
         return startAddress + columnOffsets[index];
-    }
-
-    @NotNull
-    private Long256 getLong256Generic(Long256Impl[] keyLong256, int columnIndex) {
-        Long256Impl long256 = keyLong256[columnIndex];
-        long256.fromAddress(addressOfColumn(columnIndex));
-        return long256;
     }
 }

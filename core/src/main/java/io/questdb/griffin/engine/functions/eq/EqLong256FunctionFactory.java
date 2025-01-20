@@ -34,17 +34,25 @@ import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
 
 public class EqLong256FunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "=(HH)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         return new Func(args.getQuick(0), args.getQuick(1));
     }
 
     private static class Func extends AbstractEqBinaryFunction {
+
         public Func(Function left, Function right) {
             super(left, right);
         }
@@ -52,7 +60,7 @@ public class EqLong256FunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             final Long256 lv = left.getLong256A(rec);
-            final Long256 rv = right.getLong256B(rec);
+            final Long256 rv = right.getLong256A(rec);
             return negated != lv.equals(rv);
         }
     }
