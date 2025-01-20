@@ -7224,7 +7224,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             try {
                 long totalRows = segmentCopyInfo.getTotalRows() + walLagRowCount;
-                long outBufferSize = totalRows * Long.BYTES * 2;
+                // This sort apart from creating normal merge index with 2 longs
+                // creates reverse long index at the end, e.g. it needs one more long per row
+                // It does not need all 64 bits, sometimes it can do with 32bit but here we overallocate
+                // and let native code to use what's needed
+                long outBufferSize = totalRows * Long.BYTES * 3;
                 o3TimestampMem.jumpTo(outBufferSize);
                 o3TimestampMemCpy.jumpTo(outBufferSize);
 
@@ -7375,17 +7379,83 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         try {
             if (!varSize) {
-                var destinationColumn = o3MemColumns1.get(getPrimaryColumnIndex(columnIndex));
-                destinationColumn.jumpTo(totalRows << shl);
+                if (!ColumnType.isSymbol(columnType)) {
+                    var destinationColumn = o3MemColumns1.get(getPrimaryColumnIndex(columnIndex));
+                    destinationColumn.jumpTo(totalRows << shl);
 
-                Vect.mergeShuffleColumnFromManyAddresses(
-                        (1 << shl),
-                        (int) mergeIndexEncodingSegmentBytes,
-                        mappedAddrBuffPrimary,
-                        destinationColumn.getAddress(),
-                        mergeIndex,
-                        totalRows
-                );
+                    Vect.mergeShuffleColumnFromManyAddresses(
+                            (1 << shl),
+                            (int) mergeIndexEncodingSegmentBytes,
+                            mappedAddrBuffPrimary,
+                            destinationColumn.getAddress(),
+                            mergeIndex,
+                            totalRows
+                    );
+                } else {
+                    // Symbols need remapping. Create mapping from transaction symbol keys to column symbol keys
+                    var mapWriter = symbolMapWriters.get(columnIndex);
+                    int denseSymbolCount = denseSymbolMapWriters.size();
+                    long txnCount = this.segmentCopyInfo.getTxnCount();
+                    try (DirectIntList symbolMap = new DirectIntList(txnCount * 2, MemoryTag.MMAP_O3)) {
+                        // Header, 2 ints per symbol,
+                        // - clear symbol count
+                        // - offset of the map start for the transactions
+                        int mapOffsetStart = (int) (txnCount * 2);
+
+                        boolean updatedNullFlag = false;
+
+                        // For each transaction there will be an area in the symbolMap
+                        // where (transaction symbol key - clearCount) index contains the new symbol key
+                        for (long txnIndex = 0; txnIndex < txnCount; txnIndex++) {
+                            // Set in the
+
+                            long seqTxn = this.segmentCopyInfo.getSeqTxn(txnIndex);
+                            SymbolMapDiff symbolMapDiff = walTxnDetails.getWalSymbolColMap(seqTxn, columnIndex);
+                            symbolMap.setPos(mapOffsetStart + symbolMapDiff.getRecordCount());
+
+                            SymbolMapDiffEntry entry;
+                            int cleanSymbolCount = symbolMapDiff.getCleanSymbolCount();
+
+                            boolean identical = true;
+                            while ((entry = symbolMapDiff.nextEntry()) != null) {
+                                final CharSequence symbolValue = entry.getSymbol();
+                                final int newKey = mapWriter.put(symbolValue);
+                                assert newKey >= cleanSymbolCount;
+                                identical &= newKey == entry.getKey();
+                                symbolMap.set(mapOffsetStart + entry.getKey() - cleanSymbolCount, newKey);
+                            }
+
+                            if (!updatedNullFlag && symbolMapDiff.hasNullValue()) {
+                                mapWriter.updateNullFlag(true);
+                                updatedNullFlag = true;
+                            }
+
+                            if (!identical) {
+                                symbolMap.set(txnIndex * 2, cleanSymbolCount);
+                                symbolMap.set(txnIndex * 2 + 1, mapOffsetStart);
+                            } else {
+                                // Nothing to remap
+                                symbolMap.set(txnIndex * 2, Integer.MAX_VALUE);
+                            }
+                            mapOffsetStart = (int) symbolMap.size();
+                        }
+
+                        var destinationColumn = o3MemColumns1.get(getPrimaryColumnIndex(columnIndex));
+                        destinationColumn.jumpTo(totalRows << shl);
+                        Vect.mergeShuffleSymbolColumnFromManyAddresses(
+                                (int) mergeIndexEncodingSegmentBytes,
+                                mappedAddrBuffPrimary,
+                                destinationColumn.getAddress(),
+                                mergeIndex,
+                                totalRows,
+                                segmentCopyInfo.getTxnInfoAddress(),
+                                txnCount,
+                                symbolMap.getAddress(),
+                                symbolMap.size()
+                        );
+                    }
+
+                }
 
             } else {
                 ColumnTypeDriver driver = ColumnType.getDriver(columnType);

@@ -230,6 +230,8 @@ public final class Vect {
 
     public static native int mergeShuffleStringColumnFromManyAddresses(int mergeIndexEncodingSegmentBytes, int dataLengthBytes, long primaryAddressList, long secondaryAddressList, long outPrimaryAddress, long outSecondaryAddress, long mergeIndex, long rowCount, long destVarOffset);
 
+    public static native int mergeShuffleSymbolColumnFromManyAddresses(int mergeIndexEncodingSegmentBytes, long srcAddresses, long dstAddress, long mergeIndex, long rowCount, long txnInfo, long txnCount, long symbolMapAddress, long symbolMapSize);
+
     public static native int mergeShuffleVarcharColumnFromManyAddresses(int mergeIndexEncodingSegmentBytes, long primaryAddressList, long secondaryAddressList, long outPrimaryAddress, long outSecondaryAddress, long mergeIndex, long rowCount, long destVarOffset);
 
     public static native long mergeTwoLongIndexesAsc(long pTs, long tsIndexLo, long tsCount, long pIndex2, long index2Count, long pIndexDest);

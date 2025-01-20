@@ -237,7 +237,7 @@ void radix_sort_long_index_asc_in_place(T *array, uint64_t size, T *cpy) {
 
 template<uint16_t n>
 void
-radix_sort_ab_long_index_asc(const int64_t *arrayA, const uint64_t sizeA, const index_l *arrayB, const uint64_t sizeB,
+radix_sort_ab_long_index_asc(const int64_t *arrayA, const uint64_t sizeA, const index_l * arrayB, const uint64_t sizeB,
                              index_l *out, index_l *cpy, int64_t minValue) {
     uint64_t counts[n][256] = {{0}};
     uint64_t x;
@@ -767,20 +767,22 @@ Java_io_questdb_std_Vect_radixSortManySegmentsIndexAsc(
         jlong lagTsAddr,
         jlong lagRowCount,
         jlong minTimestamp,
-        jlong maxTimestamp
+        jlong maxTimestamp,
+        jlong totalRowCount
 ) {
     auto *out = reinterpret_cast<index_l *>(pDataOut);
     auto *cpy = reinterpret_cast<index_l *>(pDataCpy);
     auto **segment_map_addresses = reinterpret_cast<const index_l **>(segmentAddresses);
     auto *lag_ts_addr = reinterpret_cast<const int64_t *>(lagTsAddr);
     auto *txn_info_addr = reinterpret_cast<const txn_info *>(txnInfo);
+    auto txn_count = __JLONG_REINTERPRET_CAST__(uint64_t, txnCount);
 
     auto segment_count = (uint32_t) segmentCount;
     auto max_segment_row_count = __JLONG_REINTERPRET_CAST__(uint64_t, maxSegmentRowCount);
     auto min_ts = __JLONG_REINTERPRET_CAST__(int64_t, minTimestamp);
     auto max_ts = __JLONG_REINTERPRET_CAST__(int64_t, maxTimestamp);
     auto lag_row_count = __JLONG_REINTERPRET_CAST__(uint64_t, lagRowCount);
-    auto txn_count = __JLONG_REINTERPRET_CAST__(uint64_t, txnCount);
+    auto total_row_count_bytes = (range_bytes(totalRowCount) + 3) / 4;
 
     auto ts_range_bytes = range_bytes(max_ts - min_ts);
     auto txn_bytes = range_bytes(txn_count);
@@ -798,11 +800,17 @@ Java_io_questdb_std_Vect_radixSortManySegmentsIndexAsc(
         return -2;
     }
 
+    // Check that total rows fits 64 bits
+    if (total_row_count_bytes < 0 || total_row_count_bytes > 8) {
+        return -3;
+    }
+
     radix_copy_segments_index_asc_precompiled(ts_range_bytes * 8u, txn_bytes * 8u, segments_range_bytes * 8u,
                                               lag_ts_addr, lag_row_count,
                                               segment_map_addresses, txn_info_addr, txn_count, out, cpy,
                                               segment_count,
-                                              min_ts);
+                                              min_ts,
+                                              total_row_count_bytes);
 
     return segments_range_bytes;
 }
@@ -913,6 +921,45 @@ Java_io_questdb_std_Vect_mergeShuffleVarcharColumnFromManyAddresses(
             break;
         default:
             return -1;
+    }
+
+    return 0;
+}
+
+
+JNIEXPORT jint JNICALL
+Java_io_questdb_std_Vect_mergeShuffleSymbolColumnFromManyAddresses(
+        JNIEnv *env,
+        jclass cl,
+        jint indexSegmentEncodingBytes,
+        jlong srcAddresses,
+        jlong dstAddress,
+        jlong mergeIndex,
+        jlong rowCount,
+        jlong txnInfo,
+        jlong txnCount,
+        jlong symbolMap,
+        jlong symbolMapSize
+) {
+    auto merge_index_address = reinterpret_cast<const index_l *>(mergeIndex);
+    auto row_count = __JLONG_REINTERPRET_CAST__(int64_t, rowCount);
+    auto src = reinterpret_cast<const int32_t **>(srcAddresses);
+    auto dst = reinterpret_cast<int32_t*>(dstAddress);
+    auto *txn_info_addr = reinterpret_cast<const txn_info *>(txnInfo);
+    auto txn_count = __JLONG_REINTERPRET_CAST__(uint64_t, txnCount);
+    auto symbol_map = reinterpret_cast<const int32_t *>(symbolMap);
+    auto symbol_map_size = __JLONG_REINTERPRET_CAST__(uint64_t, symbolMapSize);
+    auto row_index_bytes = range_bytes(row_count);
+
+    switch (row_index_bytes) {
+        case 1:
+        case 2:
+        case 3:
+        case 4:
+            merge_shuffle_symbol_column_from_many_addresses<uint32_t>(src, dst, merge_index_address, row_count, txn_info_addr, txn_count, symbol_map, symbol_map_size);
+            break;
+        default:
+            merge_shuffle_symbol_column_from_many_addresses<uint64_t>(src, dst, merge_index_address, row_count, txn_info_addr, txn_count, symbol_map, symbol_map_size);
     }
 
     return 0;

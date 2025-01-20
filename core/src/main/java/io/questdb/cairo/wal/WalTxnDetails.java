@@ -86,8 +86,9 @@ public class WalTxnDetails {
             }
         }
 
-        // TODO: support blocked transactions
-        return blockSize;
+        return 1;
+//         TODO: support blocked transactions
+//        return blockSize;
     }
 
     public long getCommitToTimestamp(long seqTxn) {
@@ -144,6 +145,18 @@ public class WalTxnDetails {
 
     public int getWalId(long seqTxn) {
         return Numbers.decodeHighInt(transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ID_WAL_SEG_ID_OFFSET)));
+    }
+
+    public SymbolMapDiff getWalSymbolColMap(long seqTxn, int columnIndex) {
+        long offset = transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_SYMBOL_DIFF_OFFSET));
+        symbolMapDiffCursor.of((int) (offset - symbolIndexStartOffset));
+        SymbolMapDiff symbolMapDiff;
+        while ((symbolMapDiff = symbolMapDiffCursor.nextSymbolMapDiff()) != null) {
+            if (symbolMapDiff.getColumnIndex() == columnIndex) {
+                return symbolMapDiff;
+            }
+        }
+        throw CairoException.nonCritical().put("Cannot find symbol map diff for column index ").put(columnIndex);
     }
 
     public SymbolMapDiffCursor getWalSymbolDiffCursor(long seqTxn) {

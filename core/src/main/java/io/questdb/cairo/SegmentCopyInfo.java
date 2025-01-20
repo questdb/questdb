@@ -99,6 +99,10 @@ public class SegmentCopyInfo implements QuietCloseable {
         return segments.getAddress();
     }
 
+    public long getSeqTxn(long txnIndex) {
+        return txns.get(txnIndex * 4L + 1);
+    }
+
     public long getTotalRows() {
         return totalRows;
     }

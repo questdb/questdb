@@ -32,8 +32,12 @@ typedef struct index_l {
     int64_t ts;
     uint64_t i;
 
-    int64_t operator>>(uint8_t shr) const {
+    uint64_t operator>>(uint64_t shr) const {
         return ts >> shr;
+    }
+
+    uint64_t operator&(uint64_t mask) const{
+        return ts & mask;
     }
 } index_l;
 
