@@ -1706,8 +1706,6 @@ public class SqlParser {
             parseSelectFrom(lexer, model, masterModel.getWithClauses(), sqlParserCallback);
             tok = setModelAliasAndTimestamp(lexer, model);
 
-            // nw todo: stop pivot being confused as an alias for the table
-
             // expect [latest by] (deprecated syntax)
             if (tok != null && isLatestKeyword(tok)) {
                 parseLatestBy(lexer, model);
@@ -1718,6 +1716,11 @@ public class SqlParser {
         if (tok != null && isPivotKeyword(tok)) {
             lexer.unparseLast();
             tok = parsePivot(lexer, model, sqlParserCallback);
+        }
+
+        if (tok != null && isUnpivotKeyword(tok))  {
+            lexer.unparseLast();
+            tok = parseUnpivot(lexer, model, sqlParserCallback);
         }
 
         // expect multiple [[inner | outer | cross] join]
@@ -2269,6 +2272,67 @@ public class SqlParser {
             }
 
         } while (tok != null && Chars.equals(tok, ','));
+        return tok;
+    }
+
+    private CharSequence parseUnpivot(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
+        // FROM monthly_sales UNPIVOT (
+        //      sales
+        //      FOR month IN (jan, feb, mar, apr, may, jun)
+        lexer.unparseLast();
+
+        CharSequence tok = optTok(lexer);
+
+        if (tok == null || !isUnpivotKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "expected UNPIVOT keyword");
+        }
+
+        tok = optTok(lexer);
+
+        // this corrects some issue where UNPIVOT is returned twice by the lexer
+        if (tok != null && isUnpivotKeyword(tok)) {
+            tok = optTok(lexer);
+        }
+
+        if (tok == null || !Chars.equals(tok, "(")) {
+            throw SqlException.$(lexer.lastTokenPosition(), "expected `(`");
+        }
+
+        ExpressionNode expr = expr(lexer, model, sqlParserCallback);
+
+        if (expr == null) {
+            throw SqlException.$(lexer.lastTokenPosition(), "missing column expression");
+        }
+
+        QueryColumn col = queryColumnPool.next().of(null, expr);
+        model.addUnpivotColumn(col);
+        lexer.unparseLast();
+
+        tok = optTok(lexer);
+
+        if (tok != null && !isForKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "expected `FOR`");
+        }
+
+        while (true) {
+            expr = expr(lexer, model, sqlParserCallback);
+
+            if (expr == null) {
+                break;
+            }
+
+            if (expr.type != ExpressionNode.FUNCTION || !Chars.equals(expr.token, "in")) {
+                throw SqlException.$(expr.position, "expected `IN` clause");
+            }
+
+            model.addUnpivotFor(expr);
+
+            tok = optTok(lexer);
+
+            if (tok != ")") {
+                throw SqlException.$(lexer.lastTokenPosition(), "expected `)`");
+            }
+        }
         return tok;
     }
 
@@ -3688,6 +3752,7 @@ public class SqlParser {
         tableAliasStop.add("intersect");
         tableAliasStop.add("from");
         tableAliasStop.add("pivot");
+        tableAliasStop.add("unpivot");
         //
         columnAliasStop.add("from");
         columnAliasStop.add(",");

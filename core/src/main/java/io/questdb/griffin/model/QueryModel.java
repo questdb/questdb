@@ -195,6 +195,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private ExpressionNode outerJoinExpressionClause;
     private @Nullable ObjList<QueryColumn> pivotColumns = null;
     private @Nullable ObjList<ExpressionNode> pivotFor = null;
+    private @Nullable ObjList<QueryColumn> unpivotColumns = null;
+    private @Nullable ObjList<ExpressionNode> unpivotFor = null;
+
     private ExpressionNode postJoinWhereClause;
     private ExpressionNode sampleBy;
     private ExpressionNode sampleByFrom;
@@ -472,6 +475,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         skipped = false;
         pivotColumns = null;
         pivotFor = null;
+        unpivotColumns = null;
+        unpivotFor = null;
         allowPropagationOfOrderByAdvice = true;
         decls.clear();
     }
@@ -913,6 +918,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return pivotColumns;
     }
 
+    public @Nullable ObjList<QueryColumn> getUnpivotColumns() {
+        return unpivotColumns;
+    }
+
     public void addPivotColumn(QueryColumn column) {
         if (pivotColumns == null) {
             pivotColumns = new ObjList<>();
@@ -920,8 +929,19 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         pivotColumns.add(column);
     }
 
+    public void addUnpivotColumn(QueryColumn column) {
+        if (unpivotColumns == null) {
+            unpivotColumns = new ObjList<>();
+        }
+        unpivotColumns.add(column);
+    }
+
     public @Nullable ObjList<ExpressionNode> getPivotFor() {
         return pivotFor;
+    }
+
+    public @Nullable ObjList<ExpressionNode> getUnpivotFor() {
+        return unpivotFor;
     }
 
     public void addPivotFor(ExpressionNode _for) {
@@ -929,6 +949,13 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             pivotFor = new ObjList<>();
         }
         pivotFor.add(_for);
+    }
+
+    public void addUnpivotFor(ExpressionNode _for) {
+        if (unpivotFor == null) {
+            unpivotFor = new ObjList<>();
+        }
+        unpivotFor.add(_for);
     }
 
     public ExpressionNode getPostJoinWhereClause() {
@@ -1406,14 +1433,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setOuterJoinExpressionClause(ExpressionNode outerJoinExpressionClause) {
         this.outerJoinExpressionClause = outerJoinExpressionClause;
-    }
-
-    public void setPivotColumns(@Nullable ObjList<QueryColumn> pivotColumns) {
-        this.pivotColumns = pivotColumns;
-    }
-
-    public void setPivotFor(@Nullable ObjList<ExpressionNode> pivotFor) {
-        this.pivotFor = pivotFor;
     }
 
     public void setPostJoinWhereClause(ExpressionNode postJoinWhereClause) {
