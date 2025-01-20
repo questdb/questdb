@@ -24,20 +24,18 @@
 
 package io.questdb.cutlass.http.processors;
 
-import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpMultipartContentListener;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
-import io.questdb.network.PeerDisconnectedException;
-import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.network.QueryPausedException;
-import io.questdb.network.ServerDisconnectException;
+import io.questdb.std.str.StringSink;
 
 public interface RejectProcessor extends HttpRequestProcessor, HttpMultipartContentListener {
 
     void clear();
 
     boolean isRequestBeingRejected();
+
+    RejectMessageBuilder newRejectMessageBuilder();
 
     default void onChunk(long lo, long hi) {
     }
@@ -48,11 +46,40 @@ public interface RejectProcessor extends HttpRequestProcessor, HttpMultipartCont
     default void onPartEnd() {
     }
 
-    HttpRequestProcessor rejectRequest(int code, CharSequence userMessage, CharSequence cookieName, CharSequence cookieValue, byte authenticationType, boolean shutdownWrite);
+    RejectProcessor reject(int rejectCode);
 
-    default void resumeSend(
-            HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
-        onRequestComplete(context);
+    RejectProcessor reject(int rejectCode, CharSequence rejectMessage);
+
+    RejectProcessor withAuthenticationType(byte authenticationType);
+
+    RejectProcessor withCookie(CharSequence cookieName, CharSequence cookieValue);
+
+    RejectProcessor withShutdownWrite();
+
+    class RejectMessageBuilder {
+        private final StringSink rejectMessage = new StringSink();
+
+        public RejectMessageBuilder $(CharSequence message) {
+            rejectMessage.put(message);
+            return this;
+        }
+
+        public RejectMessageBuilder $(int i) {
+            rejectMessage.put(i);
+            return this;
+        }
+
+        public RejectMessageBuilder $(char c) {
+            rejectMessage.put(c);
+            return this;
+        }
+
+        public CharSequence $() {
+            return rejectMessage.toString();
+        }
+
+        public CharSequence I$() {
+            return $(']').$();
+        }
     }
 }

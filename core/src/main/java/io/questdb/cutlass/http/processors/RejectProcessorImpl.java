@@ -25,8 +25,9 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.cutlass.http.HttpConnectionContext;
-import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.HttpResponseSink;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 
@@ -34,6 +35,7 @@ import static io.questdb.cairo.SecurityContext.AUTH_TYPE_NONE;
 import static java.net.HttpURLConnection.HTTP_UNAUTHORIZED;
 
 public class RejectProcessorImpl implements RejectProcessor {
+    private static final Log LOG = LogFactory.getLog(RejectProcessorImpl.class);
     protected final HttpConnectionContext httpConnectionContext;
     protected byte authenticationType = AUTH_TYPE_NONE;
     protected int rejectCode = 0;
@@ -53,6 +55,7 @@ public class RejectProcessorImpl implements RejectProcessor {
         rejectCookieName = null;
         rejectCookieValue = null;
         rejectMessage = null;
+        shutdownWrite = false;
     }
 
     @Override
@@ -63,6 +66,11 @@ public class RejectProcessorImpl implements RejectProcessor {
     @Override
     public boolean isRequestBeingRejected() {
         return rejectCode != 0;
+    }
+
+    @Override
+    public RejectMessageBuilder newRejectMessageBuilder() {
+        return new RejectMessageBuilder();
     }
 
     @Override
@@ -81,13 +89,36 @@ public class RejectProcessorImpl implements RejectProcessor {
     }
 
     @Override
-    public HttpRequestProcessor rejectRequest(int code, CharSequence userMessage, CharSequence cookieName, CharSequence cookieValue, byte authenticationType, boolean shutdownWrite) {
-        this.rejectCode = code;
-        this.rejectMessage = userMessage;
+    public RejectProcessor reject(int rejectCode) {
+        LOG.error().$("rejecting request [code=").$(rejectCode).I$();
+        this.rejectCode = rejectCode;
+        return this;
+    }
+
+    @Override
+    public RejectProcessor reject(int rejectCode, CharSequence rejectMessage) {
+        LOG.error().$(rejectMessage).$(" [code=").$(rejectCode).I$();
+        this.rejectCode = rejectCode;
+        this.rejectMessage = rejectMessage;
+        return this;
+    }
+
+    @Override
+    public RejectProcessor withAuthenticationType(byte authenticationType) {
+        this.authenticationType = authenticationType;
+        return this;
+    }
+
+    @Override
+    public RejectProcessor withCookie(CharSequence cookieName, CharSequence cookieValue) {
         this.rejectCookieName = cookieName;
         this.rejectCookieValue = cookieValue;
-        this.authenticationType = authenticationType;
-        this.shutdownWrite = shutdownWrite;
+        return this;
+    }
+
+    @Override
+    public RejectProcessor withShutdownWrite() {
+        this.shutdownWrite = true;
         return this;
     }
 }
