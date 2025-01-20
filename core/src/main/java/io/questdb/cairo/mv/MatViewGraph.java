@@ -70,11 +70,11 @@ public class MatViewGraph implements QuietCloseable {
     // must be called after creating the underlying table
     public void createView(MatViewDefinition viewDefinition) {
         final TableToken matViewToken = viewDefinition.getMatViewToken();
-        final MatViewRefreshState viewRefreshState = new MatViewRefreshState(viewDefinition);
-        final MatViewRefreshState prevState = refreshStateByTableDirName.putIfAbsent(matViewToken.getDirName(), viewRefreshState);
+        final MatViewRefreshState state = new MatViewRefreshState(viewDefinition);
+        final MatViewRefreshState prevState = refreshStateByTableDirName.putIfAbsent(matViewToken.getDirName(), state);
         // WAL table directories are unique, so we don't expect previous value
         if (prevState != null) {
-            Misc.free(viewRefreshState);
+            Misc.free(state);
             throw CairoException.critical(0).put("mat view state already exists [dir=")
                     .put(matViewToken.getDirName());
         }
@@ -95,19 +95,12 @@ public class MatViewGraph implements QuietCloseable {
     }
 
     public void dropViewIfExists(TableToken viewToken) {
-        final MatViewRefreshState refreshState = refreshStateByTableDirName.remove(viewToken.getDirName());
-        if (refreshState != null) {
-            if (refreshState.tryLock()) {
-                try {
-                    Misc.free(refreshState);
-                } finally {
-                    refreshState.unlock();
-                }
-            } else {
-                refreshState.markAsDropped();
-            }
+        final MatViewRefreshState state = refreshStateByTableDirName.remove(viewToken.getDirName());
+        if (state != null) {
+            state.markAsDropped();
+            state.tryCloseIfDropped();
 
-            final CharSequence baseTableName = refreshState.getViewDefinition().getBaseTableName();
+            final CharSequence baseTableName = state.getViewDefinition().getBaseTableName();
             final MatViewRefreshList dependentViews = dependentViewsByTableName.get(baseTableName);
             if (dependentViews != null) {
                 final ObjList<TableToken> matViews = dependentViews.lockForWrite();
@@ -142,6 +135,7 @@ public class MatViewGraph implements QuietCloseable {
             if (state.isDropped()) {
                 // Housekeeping
                 refreshStateByTableDirName.remove(matViewToken.getDirName(), state);
+                state.tryCloseIfDropped();
                 return null;
             }
             return state.getViewDefinition();

@@ -183,7 +183,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     private boolean insertAsSelect(MatViewRefreshState state, MatViewDefinition viewDef, TableWriterAPI tableWriter) throws SqlException {
-        RecordCursorFactory factory;
+        RecordCursorFactory factory = null;
         RecordToRowCopier copier;
         long rowCount;
         long refreshTimestamp = microsecondClock.getTicks();
@@ -207,7 +207,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 copier = getRecordToRowCopier(tableWriter, factory, compiler);
                             }
                         } catch (SqlException e) {
-                            Misc.free(factory);
+                            factory = Misc.free(factory);
                             LOG.error().$("error refreshing materialized view, compilation error [view=").$(viewDef.getMatViewToken())
                                     .$(", error=").$(e.getFlyweightMessage())
                                     .I$();
@@ -244,7 +244,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         return false;
                     }
                 } catch (Throwable th) {
-                    Misc.free(factory);
+                    factory = Misc.free(factory);
                     state.refreshFail(th, refreshTimestamp);
                     throw th;
                 }
@@ -255,6 +255,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             state.refreshSuccess(factory, copier, tableWriter.getMetadata().getMetadataVersion(), refreshTimestamp);
         } catch (Throwable th) {
             LOG.error().$("error refreshing materialized view [view=").$(viewDef.getMatViewToken()).$(", error=").$(th).I$();
+            Misc.free(factory);
             state.refreshFail(th, refreshTimestamp);
             throw th;
         }
@@ -290,11 +291,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     }
 
                     try {
-                        refreshed = refreshView(viewGraph, state, baseToken, viewSeqTracker, viewToken, appliedToViewTxn, lastBaseQueryableTxn);
+                        refreshed = refreshView(state, baseToken, viewSeqTracker, viewToken, appliedToViewTxn, lastBaseQueryableTxn);
                     } catch (Throwable th) {
                         state.refreshFail(th, microsecondClock.getTicks());
                     } finally {
                         state.unlock();
+                        // Try closing the factory if there was a concurrent drop mat view.
+                        state.tryCloseIfDropped();
                     }
                 }
             }
@@ -305,9 +308,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     private boolean refreshNotifiedViews() {
-        MatViewGraph materializedViewGraph = engine.getMatViewGraph();
+        final MatViewGraph matViewGraph = engine.getMatViewGraph();
         boolean refreshed = false;
-        while (materializedViewGraph.tryDequeueRefreshTask(mvRefreshTask)) {
+        while (matViewGraph.tryDequeueRefreshTask(mvRefreshTask)) {
             TableToken baseTable = mvRefreshTask.baseTable;
             TableToken viewToken = mvRefreshTask.viewToken;
             if (viewToken == null) {
@@ -320,22 +323,22 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     continue;
                 }
                 LOG.info().$("refreshing materialized views dependent on [table=").$(baseTable).I$();
-                refreshed = refreshDependentViews(baseTable, materializedViewGraph);
+                refreshed = refreshDependentViews(baseTable, matViewGraph);
             } else {
-                refreshed = refreshView(viewToken, materializedViewGraph);
+                refreshed = refreshView(viewToken, matViewGraph);
             }
         }
         return refreshed;
     }
 
     private boolean refreshView(@NotNull TableToken viewToken, MatViewGraph viewGraph) {
-        MatViewRefreshState state = viewGraph.getViewRefreshState(viewToken);
+        final MatViewRefreshState state = viewGraph.getViewRefreshState(viewToken);
         if (state == null || state.isDropped()) {
             return false;
         }
 
         if (!state.tryLock()) {
-            LOG.info().$("skipping mat view refresh, locked by another refresh run").$();
+            LOG.info().$("skipping mat view refresh, locked by another refresh run[view=").$(viewToken).I$();
             return false;
         }
 
@@ -345,7 +348,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 baseTableToken = engine.verifyTableName(state.getViewDefinition().getBaseTableName());
             } catch (CairoException th) {
                 LOG.error().$("error refreshing materialized view, cannot resolve base table [view=").$(viewToken)
-                        .$(", error=").$(th.getFlyweightMessage()).I$();
+                        .$(", error=").$(th.getFlyweightMessage())
+                        .I$();
                 state.refreshFail(th, microsecondClock.getTicks());
                 return false;
             }
@@ -360,7 +364,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             SeqTxnTracker viewSeqTracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
             long appliedToParentTxn = viewSeqTracker.getLastRefreshBaseTxn();
             if (appliedToParentTxn < 0 || appliedToParentTxn < lastBaseQueryableTxn) {
-                return refreshView(viewGraph, state, baseTableToken, viewSeqTracker, viewToken, appliedToParentTxn, lastBaseQueryableTxn);
+                return refreshView(state, baseTableToken, viewSeqTracker, viewToken, appliedToParentTxn, lastBaseQueryableTxn);
             }
             return false;
         } catch (Throwable th) {
@@ -369,18 +373,21 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return false;
         } finally {
             state.unlock();
+            // Try closing the factory if there was a concurrent drop mat view.
+            state.tryCloseIfDropped();
         }
     }
 
     private boolean refreshView(
-            MatViewGraph viewGraph,
-            MatViewRefreshState state,
-            TableToken baseToken,
-            SeqTxnTracker viewTxnTracker,
-            TableToken viewToken,
+            @NotNull MatViewRefreshState state,
+            @NotNull TableToken baseToken,
+            @NotNull SeqTxnTracker viewTxnTracker,
+            @NotNull TableToken viewToken,
             long fromBaseTxn,
             long toBaseTxn
     ) {
+        assert state.isLocked();
+
         final MatViewDefinition viewDef = state.getViewDefinition();
         if (viewDef == null) {
             // View must be deleted
@@ -424,8 +431,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         return changed;
                     } catch (CairoException ex) {
                         if (ex.isTableDropped() || ex.tableDoesNotExist()) {
-                            LOG.info().$("materialized view is dropped, removing it from materialized view graph [view=").$(viewToken).I$();
-                            viewGraph.dropViewIfExists(viewToken);
+                            // There is an ongoing drop mat view. It will clean up the state.
+                            LOG.info().$("materialized view is dropped, it will be removed from materialized view graph [view=").$(viewToken).I$();
                         } else {
                             throw ex;
                         }

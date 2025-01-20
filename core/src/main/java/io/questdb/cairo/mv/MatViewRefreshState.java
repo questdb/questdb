@@ -109,6 +109,10 @@ public class MatViewRefreshState implements QuietCloseable {
         return dropped;
     }
 
+    public boolean isLocked() {
+        return latch.get();
+    }
+
     public void markAsDropped() {
         dropped = true;
     }
@@ -158,6 +162,16 @@ public class MatViewRefreshState implements QuietCloseable {
         this.recordToRowCopier = copier;
         this.recordRowCopierMetadataVersion = recordRowCopierMetadataVersion;
         this.lastRefreshTimestamp = refreshTimestamp;
+    }
+
+    public void tryCloseIfDropped() {
+        if (dropped && tryLock()) {
+            try {
+                close();
+            } finally {
+                unlock();
+            }
+        }
     }
 
     public boolean tryLock() {
