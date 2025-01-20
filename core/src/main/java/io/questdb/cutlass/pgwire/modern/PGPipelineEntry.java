@@ -1149,7 +1149,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 continue;
             }
 
-            // value must remain within message limit. this will never happen with a full-functioning client, but
+            // value must remain within message limit. this will never happen with a well-functioning client, but
             // a non-compliant client could send us rubbish or a bad actor could try to crash the server.
             if (lo + valueSize > msgLimit) {
                 throw kaput()
