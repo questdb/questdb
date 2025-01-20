@@ -186,12 +186,12 @@ public class TestRunner
 
         if (queryType == "select")
         {
-            var result = new List<Dictionary<string, object>>();
+            var result = new List<OrderedDictionary<string, object>>();
             await using var reader = await cmd.ExecuteReaderAsync();
 
             while (await reader.ReadAsync())
             {
-                var row = new Dictionary<string, object>();
+                var row = new OrderedDictionary<string, object>();
                 for (var i = 0; i < reader.FieldCount; i++)
                 {
                     row[reader.GetName(i)] = reader.GetValue(i);
@@ -204,7 +204,7 @@ public class TestRunner
         }
 
         var rowsAffected = await cmd.ExecuteNonQueryAsync();
-        return new List<Dictionary<string, object>>
+        return new List<OrderedDictionary<string, object>>
         {
             new() { { "count", rowsAffected } }
         };
@@ -307,7 +307,7 @@ public class TestRunner
 
     private List<List<object>> ConvertQueryResult(object result)
     {
-        if (result is not List<Dictionary<string, object>> dictList)
+        if (result is not List<OrderedDictionary<string, object>> dictList)
             return new List<List<object>>();
 
         return dictList.Select(dict => dict.Values
