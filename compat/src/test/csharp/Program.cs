@@ -156,7 +156,7 @@ public class TestRunner
         var query = AdjustPlaceholderSyntax(substitutedQuery);
 
         var resolvedParameters = ResolveParameters(parameters, variables);
-        var result = await ExecuteQuery(connection, query, resolvedParameters);
+        var result = await ExecuteQuery(connection, query, step.Action, resolvedParameters);
 
         if (expect != null)
         {
@@ -177,14 +177,13 @@ public class TestRunner
         return System.Text.RegularExpressions.Regex.Replace(query, @"\$\[(\d+)\]", "@p$1");
     }
 
-    private async Task<object> ExecuteQuery(NpgsqlConnection connection, string query, List<NpgsqlParameter> parameters)
+    private async Task<object> ExecuteQuery(NpgsqlConnection connection, string query, Action queryType,
+        List<NpgsqlParameter> parameters)
     {
-        var queryType = query.Trim().Split(' ')[0].ToLower();
-
         await using var cmd = new NpgsqlCommand(query, connection);
         cmd.Parameters.AddRange(parameters.ToArray());
 
-        if (queryType == "select")
+        if (queryType == Action.Query)
         {
             var result = new List<OrderedDictionary<string, object>>();
             await using var reader = await cmd.ExecuteReaderAsync();
@@ -320,7 +319,7 @@ public class TestRunner
                     int i => i.ToString(CultureInfo.InvariantCulture),
                     short s => s.ToString(CultureInfo.InvariantCulture),
                     decimal dec => dec.ToString(CultureInfo.InvariantCulture),
-                    _ => value?.ToString() ?? ""
+                    _ => value.ToString() ?? ""
                 })
                 .ToList())
             .ToList();
@@ -354,9 +353,15 @@ public class Test
     public string Description { get; set; } = "";
 }
 
+public enum Action
+{
+    Query,
+    Execute
+}
+
 public class Step
 {
-    public string? Action { get; set; }
+    public Action Action { get; set; } = Action.Execute;
     public string Query { get; set; } = "";
     public List<Parameter>? Parameters { get; set; }
     public ExpectDefinition? Expect { get; set; }
