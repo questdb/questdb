@@ -4542,6 +4542,77 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                 "1970-01-01T00:00:06.000010Z\tB\t10.0\t10.0\n", q5);
     }
 
+    @Test
+    public void testDuplicateColumnsInWindowModel() throws SqlException {
+        execute("create table cpu_ts ( hostname symbol, usage_system double, ts timestamp) timestamp(ts);");
+        execute("insert into cpu_ts select rnd_symbol('A', 'B', 'C'), x, x::timestamp from long_sequence(3)");
+        String q1 = "select rank() over(), t1.usage_system, t1.usage_system from cpu_ts t1 join cpu_ts t2 on t1.ts > t2.ts";
+
+        assertPlanNoLeakCheck(
+                q1,
+                "CachedWindow\n" +
+                        "  unorderedFunctions: [rank()]\n" +
+                        "    SelectedRecord\n" +
+                        "        Filter filter: t2.ts<t1.ts\n" +
+                        "            Cross Join\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: cpu_ts\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: cpu_ts\n"
+        );
+        assertSql("rank\tusage_system\tusage_system1\n" +
+                "1\t2.0\t2.0\n" +
+                "1\t3.0\t3.0\n" +
+                "1\t3.0\t3.0\n", q1);
+
+        String q2 = "select rank() over(partition by t1.hostname order by t1.ts), t2.usage_system, t2.usage_system from cpu_ts t1 join cpu_ts t2 on t1.ts > t2.ts";
+
+        assertPlanNoLeakCheck(
+                q2,
+                "Window\n" +
+                        "  functions: [rank() over (partition by [hostname])]\n" +
+                        "    SelectedRecord\n" +
+                        "        Filter filter: t2.ts<t1.ts\n" +
+                        "            Cross Join\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: cpu_ts\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: cpu_ts\n"
+        );
+        assertSql("rank\tusage_system\tusage_system1\n" +
+                "1\t1.0\t1.0\n" +
+                "1\t1.0\t1.0\n" +
+                "2\t2.0\t2.0\n", q2);
+
+        // useInnerModel
+        String q3 = "select rank() over(partition by t1.hostname order by t1.ts), t2.usage_system, t2.usage_system, t1.usage_system + 10 from cpu_ts t1 join cpu_ts t2 on t1.ts > t2.ts";
+
+        assertPlanNoLeakCheck(
+                q3,
+                "Window\n" +
+                        "  functions: [rank() over (partition by [hostname])]\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [hostname,ts,usage_system,usage_system1+10]\n" +
+                        "        SelectedRecord\n" +
+                        "            Filter filter: t2.ts<t1.ts\n" +
+                        "                Cross Join\n" +
+                        "                    PageFrame\n" +
+                        "                        Row forward scan\n" +
+                        "                        Frame forward scan on: cpu_ts\n" +
+                        "                    PageFrame\n" +
+                        "                        Row forward scan\n" +
+                        "                        Frame forward scan on: cpu_ts\n"
+        );
+        assertSql("rank\tusage_system\tusage_system1\tcolumn\n" +
+                "1\t1.0\t1.0\t12.0\n" +
+                "1\t1.0\t1.0\t13.0\n" +
+                "2\t2.0\t2.0\t13.0\n", q3);
+    }
+
     protected QueryModel compileModel(String query) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             ExecutionModel model = compiler.testCompileModel(query, sqlExecutionContext);
