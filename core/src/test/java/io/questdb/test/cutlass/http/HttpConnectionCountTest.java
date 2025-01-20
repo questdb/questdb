@@ -48,6 +48,7 @@ import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.QueryPausedException;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
@@ -75,6 +76,7 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
     private static final String EXEC_URI = "/exec";
     private static final String ILP_PATH = "/write";
     private static final String ILP_TEST_PATH = "/write-test";
+    private static final String PING_PATH = "/ping";
 
     @Before
     public void setUp() {
@@ -246,8 +248,34 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
 
                     // test that the connection cannot be used anymore
                     try {
-                        sendIlpRequest(httpClient, "tab col=3i 2000000");
-                        assertResponse(responseHeaders, HTTP_BAD_REQUEST, "exceeded connection limit [name=line_http_connections, numOfConnections=5, connectionLimit=4]\r\n");
+                        assertIlpRequest(httpClient, "tab col=3i 2000000", HTTP_BAD_REQUEST, "exceeded connection limit [name=line_http_connections, numOfConnections=5, connectionLimit=4]\r\n");
+                        fail("Exception expected");
+                    } catch (Exception e) {
+                        TestUtils.assertContains(e.getMessage(), "peer disconnect");
+                    }
+                } catch (Throwable e) {
+                    errorCount.incrementAndGet();
+                    LOG.error().$("Error while ingesting [error=").$(e.getMessage()).$(']').$();
+                }
+
+                // wait for the rejected connection to be closed to avoid race in the next assert
+                while (serverMain.getEngine().getMetrics().lineMetrics().httpConnectionCountGauge().getValue() > numOfThreads) {
+                    Os.sleep(50);
+                }
+
+                // ilp ping, should fail with soft limit breach
+                try (final HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration() {
+                    @Override
+                    public boolean fixBrokenConnection() {
+                        return false;
+                    }
+                })) {
+                    final HttpClient.ResponseHeaders responseHeaders = sendPingRequest(httpClient);
+                    assertResponse(responseHeaders, HTTP_BAD_REQUEST, "exceeded connection limit [name=line_http_connections, numOfConnections=5, connectionLimit=4]\r\n");
+
+                    // test that the connection cannot be used anymore
+                    try {
+                        assertPingRequest(httpClient, HTTP_BAD_REQUEST, "exceeded connection limit [name=line_http_connections, numOfConnections=5, connectionLimit=4]\r\n");
                         fail("Exception expected");
                     } catch (Exception e) {
                         TestUtils.assertContains(e.getMessage(), "peer disconnect");
@@ -362,8 +390,7 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
 
                     // test that the connection cannot be used anymore
                     try {
-                        sendExecRequest(httpClient, EXEC_URI, "select 3");
-                        assertResponse(responseHeaders, HTTP_BAD_REQUEST, "exceeded connection limit [name=json_queries_connections, numOfConnections=5, connectionLimit=4]\r\n");
+                        assertExecRequest(httpClient, EXEC_URI, "select 3", HTTP_BAD_REQUEST, "exceeded connection limit [name=json_queries_connections, numOfConnections=5, connectionLimit=4]\r\n");
                         fail("Exception expected");
                     } catch (Exception e) {
                         TestUtils.assertContains(e.getMessage(), "peer disconnect");
@@ -383,6 +410,14 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                 } catch (Throwable e) {
                     errorCount.incrementAndGet();
                     LOG.error().$("Sender error [error=").$(e.getMessage()).$(']').$();
+                }
+
+                // ilp ping, should be able to connect
+                try (final HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    assertPingRequest(httpClient, HTTP_NO_CONTENT, "");
+                } catch (Throwable e) {
+                    errorCount.incrementAndGet();
+                    LOG.error().$("Error executing ping request [error=").$(e.getMessage()).$(']').$();
                 }
 
                 // let threads finish
@@ -408,9 +443,30 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
             int expectedHttpStatusCode,
             String expectedHttpResponse
     ) {
-        final HttpClient.ResponseHeaders responseHeaders = sendExecRequest(httpClient, uri, sql);
-        assertResponse(responseHeaders, expectedHttpStatusCode, expectedHttpResponse);
-        responseHeaders.close();
+        try (final HttpClient.ResponseHeaders responseHeaders = sendExecRequest(httpClient, uri, sql)) {
+            assertResponse(responseHeaders, expectedHttpStatusCode, expectedHttpResponse);
+        }
+    }
+
+    private void assertIlpRequest(
+            HttpClient httpClient,
+            String line,
+            int expectedHttpStatusCode,
+            String expectedHttpResponse
+    ) {
+        try (final HttpClient.ResponseHeaders responseHeaders = sendIlpRequest(httpClient, line)) {
+            assertResponse(responseHeaders, expectedHttpStatusCode, expectedHttpResponse);
+        }
+    }
+
+    private void assertPingRequest(
+            HttpClient httpClient,
+            int expectedHttpStatusCode,
+            String expectedHttpResponse
+    ) {
+        try (final HttpClient.ResponseHeaders responseHeaders = sendPingRequest(httpClient)) {
+            assertResponse(responseHeaders, expectedHttpStatusCode, expectedHttpResponse);
+        }
     }
 
     private void assertResponse(
@@ -450,6 +506,13 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
     ) {
         final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
         return request.POST().url(ILP_PATH).withContent().put(line).send();
+    }
+
+    private HttpClient.ResponseHeaders sendPingRequest(
+            HttpClient httpClient
+    ) {
+        final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
+        return request.GET().url(PING_PATH).send();
     }
 
     private enum ConnectionType {
