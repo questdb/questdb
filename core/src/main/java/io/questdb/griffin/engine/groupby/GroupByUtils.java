@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory;
@@ -92,11 +93,13 @@ public class GroupByUtils {
             @Nullable ObjList<ExpressionNode> outKeyFunctionNodes,
             ArrayColumnTypes outValueTypes,
             ArrayColumnTypes outKeyTypes,
-            ListColumnFilter outColumnFilter
+            ListColumnFilter outColumnFilter,
+            @Nullable ObjList<ExpressionNode> sampleByFill // fill mode for sample by functions, for validation
     ) throws SqlException {
         try {
             outGroupByFunctionPositions.clear();
             outRecordFunctionPositions.clear();
+            int fillCount = sampleByFill != null ? sampleByFill.size() : 0;
 
             int columnKeyCount = 0;
             int lastIndex = -1;
@@ -126,6 +129,34 @@ public class GroupByUtils {
                         // some functions may need more than one column in values,
                         // so we have them do all the work
                         GroupByFunction func = (GroupByFunction) function;
+                        if (fillCount > 0) {
+                            // index of the function relative to the list of fill values
+                            // we might have the same fill value for all functions
+                            int funcIndex = outGroupByFunctions.size();
+                            int sampleByFlags = func.getSampleByFlags();
+                            ExpressionNode fillNode = sampleByFill.getQuick(Math.min(funcIndex, fillCount - 1));
+                            if (SqlKeywords.isNullKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_NULL) == 0) {
+                                throw SqlException.$(node.position, "support for NULL fill is not yet implemented [function=").put(node)
+                                        .put(", class=").put(func.getClass().getName())
+                                        .put(']');
+                            } else if (SqlKeywords.isPrevKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_PREVIOUS) == 0) {
+                                throw SqlException.$(node.position, "support for PREV fill is not yet implemented [function=").put(node)
+                                        .put(", class=").put(func.getClass().getName())
+                                        .put(']');
+                            } else if (SqlKeywords.isLinearKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_LINEAR) == 0) {
+                                throw SqlException.$(node.position, "support for LINEAR fill is not yet implemented [function=").put(node)
+                                        .put(", class=").put(func.getClass().getName())
+                                        .put(']');
+                            } else if (SqlKeywords.isNoneKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_NONE) == 0) {
+                                throw SqlException.$(node.position, "support for NONE fill is not yet implemented [function=").put(node)
+                                        .put(", class=").put(func.getClass().getName())
+                                        .put(']');
+                            } else if ((sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_VALUE) == 0) {
+                                throw SqlException.$(node.position, "support for VALUE fill is not yet implemented [function=").put(node)
+                                        .put(", class=").put(func.getClass().getName())
+                                        .put(']');
+                            }
+                        }
                         func.initValueTypes(outValueTypes);
                         outGroupByFunctions.add(func);
                         outGroupByFunctionPositions.add(node.position);

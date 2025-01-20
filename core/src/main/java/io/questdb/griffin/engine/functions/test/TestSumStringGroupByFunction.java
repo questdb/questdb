@@ -76,6 +76,11 @@ public class TestSumStringGroupByFunction extends StrFunction implements GroupBy
     }
 
     @Override
+    public int getSampleByFlags() {
+        return GroupByFunction.SAMPLE_BY_FILL_ALL;
+    }
+
+    @Override
     public CharSequence getStrA(Record rec) {
         return null;
     }
