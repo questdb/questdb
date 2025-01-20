@@ -49,6 +49,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 import static io.questdb.cutlass.pgwire.PGOids.PG_TYPE_TO_SIZE_MAP;
+import static io.questdb.cutlass.pgwire.PGOids.PG_TYPE_TO_TYPE_MODIFIER_MAP;
 
 public class PgAttributeFunctionFactory implements FunctionFactory {
 
@@ -179,8 +180,9 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
             record.intValues[N_ATTTYPID_COL] = type;
             record.name = column.getName();
             record.shortValues[N_ATTNUM_COL] = (short) (columnIdx + 1);
-            record.shortValues[N_ATTLEN_COL] = (short) PG_TYPE_TO_SIZE_MAP.get(type);
+            record.shortValues[N_ATTLEN_COL] = PG_TYPE_TO_SIZE_MAP.get(type);
             record.intValues[N_ATTRELID_COL] = tableId;
+            record.intValues[N_ATTTYPMOD_COL] = PG_TYPE_TO_TYPE_MODIFIER_MAP.get(type);
 
             return true;
         }

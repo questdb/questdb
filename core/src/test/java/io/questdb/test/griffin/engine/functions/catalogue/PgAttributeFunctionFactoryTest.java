@@ -215,18 +215,18 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     "nspname\trelname\tattname\tatttypid\tattnotnull\tatttypmod\tattlen\ttyptypmod\tattnum\tattidentity\tadsrc\tdescription\ttypbasetype\ttyptype\n" +
-                            "public\ty\ta\t23\tfalse\t0\t4\t0\t1\t\t\t\t0\tb\n" +
-                            "public\ty\tb\t21\tfalse\t0\t2\t0\t2\t\t\t\t0\tb\n" +
-                            "public\ty\tc\t21\tfalse\t0\t2\t0\t3\t\t\t\t0\tb\n" +
-                            "public\ty\td\t20\tfalse\t0\t8\t0\t4\t\t\t\t0\tb\n" +
-                            "public\ty\te\t1042\tfalse\t0\t2\t0\t5\t\t\t\t0\tb\n" +
-                            "public\ty\tf\t1043\tfalse\t0\t-1\t0\t6\t\t\t\t0\tb\n" +
-                            "public\ty\tg\t16\tfalse\t0\t1\t0\t7\t\t\t\t0\tb\n" +
-                            "public\ty\th\t1043\tfalse\t0\t-1\t0\t8\t\t\t\t0\tb\n" +
-                            "public\ty\ti\t700\tfalse\t0\t4\t0\t9\t\t\t\t0\tb\n" +
-                            "public\ty\tj\t701\tfalse\t0\t8\t0\t10\t\t\t\t0\tb\n" +
-                            "public\ty\tk\t1114\tfalse\t0\t-1\t0\t11\t\t\t\t0\tb\n" +
-                            "public\ty\tl\t1114\tfalse\t0\t-1\t0\t12\t\t\t\t0\tb\n",
+                            "public\ty\ta\t23\tfalse\t-1\t4\t0\t1\t\t\t\t0\tb\n" +
+                            "public\ty\tb\t21\tfalse\t-1\t2\t0\t2\t\t\t\t0\tb\n" +
+                            "public\ty\tc\t21\tfalse\t-1\t2\t0\t3\t\t\t\t0\tb\n" +
+                            "public\ty\td\t20\tfalse\t-1\t8\t0\t4\t\t\t\t0\tb\n" +
+                            "public\ty\te\t1042\tfalse\t5\t-1\t0\t5\t\t\t\t0\tb\n" +
+                            "public\ty\tf\t1043\tfalse\t-1\t-1\t0\t6\t\t\t\t0\tb\n" +
+                            "public\ty\tg\t16\tfalse\t-1\t1\t0\t7\t\t\t\t0\tb\n" +
+                            "public\ty\th\t1043\tfalse\t-1\t-1\t0\t8\t\t\t\t0\tb\n" +
+                            "public\ty\ti\t700\tfalse\t-1\t4\t0\t9\t\t\t\t0\tb\n" +
+                            "public\ty\tj\t701\tfalse\t-1\t8\t0\t10\t\t\t\t0\tb\n" +
+                            "public\ty\tk\t1114\tfalse\t-1\t8\t0\t11\t\t\t\t0\tb\n" +
+                            "public\ty\tl\t1114\tfalse\t-1\t8\t0\t12\t\t\t\t0\tb\n",
                     "SELECT * FROM (\n" +
                             "    SELECT \n" +
                             "        n.nspname,\n" +
@@ -278,18 +278,18 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     "nspname\trelname\tattname\tatttypid\tattnotnull\tatttypmod\tattlen\ttyptypmod\tattnum\tattidentity\tadsrc\tdescription\ttypbasetype\ttyptype\n" +
-                            "public\ty\ta\t23\tfalse\t0\t4\t0\t1\t\t\t\t0\tb\n" +
-                            "public\ty\tb\t21\tfalse\t0\t2\t0\t2\t\t\t\t0\tb\n" +
-                            "public\ty\tc\t21\tfalse\t0\t2\t0\t3\t\t\t\t0\tb\n" +
-                            "public\ty\td\t20\tfalse\t0\t8\t0\t4\t\t\t\t0\tb\n" +
-                            "public\ty\te\t1042\tfalse\t0\t2\t0\t5\t\t\t\t0\tb\n" +
-                            "public\ty\tf\t1043\tfalse\t0\t-1\t0\t6\t\t\t\t0\tb\n" +
-                            "public\ty\tg\t16\tfalse\t0\t1\t0\t7\t\t\t\t0\tb\n" +
-                            "public\ty\th\t1043\tfalse\t0\t-1\t0\t8\t\t\t\t0\tb\n" +
-                            "public\ty\ti\t700\tfalse\t0\t4\t0\t9\t\t\t\t0\tb\n" +
-                            "public\ty\tj\t701\tfalse\t0\t8\t0\t10\t\t\t\t0\tb\n" +
-                            "public\ty\tk\t1114\tfalse\t0\t-1\t0\t11\t\t\t\t0\tb\n" +
-                            "public\ty\tl\t1114\tfalse\t0\t-1\t0\t12\t\t\t\t0\tb\n",
+                            "public\ty\ta\t23\tfalse\t-1\t4\t0\t1\t\t\t\t0\tb\n" +
+                            "public\ty\tb\t21\tfalse\t-1\t2\t0\t2\t\t\t\t0\tb\n" +
+                            "public\ty\tc\t21\tfalse\t-1\t2\t0\t3\t\t\t\t0\tb\n" +
+                            "public\ty\td\t20\tfalse\t-1\t8\t0\t4\t\t\t\t0\tb\n" +
+                            "public\ty\te\t1042\tfalse\t5\t-1\t0\t5\t\t\t\t0\tb\n" +
+                            "public\ty\tf\t1043\tfalse\t-1\t-1\t0\t6\t\t\t\t0\tb\n" +
+                            "public\ty\tg\t16\tfalse\t-1\t1\t0\t7\t\t\t\t0\tb\n" +
+                            "public\ty\th\t1043\tfalse\t-1\t-1\t0\t8\t\t\t\t0\tb\n" +
+                            "public\ty\ti\t700\tfalse\t-1\t4\t0\t9\t\t\t\t0\tb\n" +
+                            "public\ty\tj\t701\tfalse\t-1\t8\t0\t10\t\t\t\t0\tb\n" +
+                            "public\ty\tk\t1114\tfalse\t-1\t8\t0\t11\t\t\t\t0\tb\n" +
+                            "public\ty\tl\t1114\tfalse\t-1\t8\t0\t12\t\t\t\t0\tb\n",
                     "SELECT * FROM (\n" +
                             "    SELECT \n" +
                             "        n.nspname,\n" +
@@ -333,7 +333,7 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
     public void testPgAttributeFunc() throws Exception {
         assertQuery(
                 "attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n" +
-                        "1\ta\t1\t23\tfalse\t0\t4\t\tfalse\ttrue\n",
+                        "1\ta\t1\t23\tfalse\t-1\t4\t\tfalse\ttrue\n",
                 "pg_catalog.pg_attribute;",
                 "create table x(a int)",
                 null,
@@ -366,22 +366,22 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testPgAttributeFuncWith2Tables() throws Exception {
         assertQuery("attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n" +
-                        "1\ta\t1\t23\tfalse\t0\t4\t\tfalse\ttrue\n",
+                        "1\ta\t1\t23\tfalse\t-1\t4\t\tfalse\ttrue\n",
                 "pg_catalog.pg_attribute order by 1;",
                 "create table x(a int)",
                 null,
                 "create table y(a double, b string)",
                 "attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n" +
-                        "1\ta\t1\t23\tfalse\t0\t4\t\tfalse\ttrue\n" +
-                        "2\ta\t1\t701\tfalse\t0\t8\t\tfalse\ttrue\n" +
-                        "2\tb\t2\t1043\tfalse\t0\t-1\t\tfalse\ttrue\n", true, false, false);
+                        "1\ta\t1\t23\tfalse\t-1\t4\t\tfalse\ttrue\n" +
+                        "2\ta\t1\t701\tfalse\t-1\t8\t\tfalse\ttrue\n" +
+                        "2\tb\t2\t1043\tfalse\t-1\t-1\t\tfalse\ttrue\n", true, false, false);
     }
 
     @Test
     public void testPgAttributeFuncWith2TablesLimit1() throws Exception {
         assertQuery("attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n" +
-                "1\ta\t1\t23\tfalse\t0\t4\t\tfalse\ttrue\n", "pg_catalog.pg_attribute order by 1 limit 1;", "create table x(a int)", null, "create table y(a double, b string)", "attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n" +
-                "1\ta\t1\t23\tfalse\t0\t4\t\tfalse\ttrue\n", true, false, false);
+                "1\ta\t1\t23\tfalse\t-1\t4\t\tfalse\ttrue\n", "pg_catalog.pg_attribute order by 1 limit 1;", "create table x(a int)", null, "create table y(a double, b string)", "attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n" +
+                "1\ta\t1\t23\tfalse\t-1\t4\t\tfalse\ttrue\n", true, false, false);
     }
 
     @Test
@@ -421,7 +421,7 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
 
             assertQuery(
                     "nspname\trelname\tattname\tatttypid\tattnotnull\tatttypmod\tattlen\ttyptypmod\tattidentity\tadsrc\tdescription\ttypbasetype\ttyptype\n" +
-                            "public\tx\ta\t23\tfalse\t0\t4\t0\t\t\t\t0\tb\n",
+                            "public\tx\ta\t23\tfalse\t-1\t4\t0\t\t\t\t0\tb\n",
                     query,
                     "create table x(a int)",
                     null,

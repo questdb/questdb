@@ -27,6 +27,7 @@ package io.questdb.cutlass.pgwire;
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
+import io.questdb.std.IntShortHashMap;
 import io.questdb.std.Numbers;
 
 public class PGOids {
@@ -73,7 +74,8 @@ public class PGOids {
     public static final CharSequence[] PG_TYPE_TO_NAME = new CharSequence[14];
     public static final CharSequence[] PG_TYPE_TO_PROC_NAME = new CharSequence[14];
     public static final CharSequence[] PG_TYPE_TO_PROC_SRC = new CharSequence[14];
-    public static final IntIntHashMap PG_TYPE_TO_SIZE_MAP = new IntIntHashMap();
+    public static final IntShortHashMap PG_TYPE_TO_SIZE_MAP = new IntShortHashMap();
+    public static final IntIntHashMap PG_TYPE_TO_TYPE_MODIFIER_MAP = new IntIntHashMap();
     public static final int PG_UNSPECIFIED = 0;
     public static final int PG_UUID = 2950;
     public static final int PG_VARCHAR = 1043;
@@ -84,8 +86,6 @@ public class PGOids {
     public static final int X_B_PG_BYTEA = 1 | X_PG_BYTEA;
     public static final int X_PG_CHAR = ((PG_CHAR >> 24) & 0xff) | ((PG_CHAR << 8) & 0xff0000) | ((PG_CHAR >> 8) & 0xff00) | ((PG_CHAR << 24) & 0xff000000);
     public static final int X_B_PG_CHAR = 1 | X_PG_CHAR;
-    // PostgreSQL type modifier returns n+4 for CHAR(n) and since all our CHAR columns are equivalent to CHAR(1) we do the same
-    public static final int X_PG_CHAR_TYPE_MODIFIER = Numbers.bswap(5);
     @SuppressWarnings("NumericOverflow")
     public static final int X_PG_DATE = ((PG_DATE >> 24) & 0xff) | ((PG_DATE << 8) & 0xff0000) | ((PG_DATE >> 8) & 0xff00) | ((PG_DATE << 24) & 0xff000000);
     public static final int X_B_PG_DATE = 1 | X_PG_DATE;
@@ -106,6 +106,8 @@ public class PGOids {
     public static final int X_B_PG_TIMESTAMP = 1 | X_PG_TIMESTAMP;
     @SuppressWarnings("NumericOverflow")
     public static final int X_PG_TIMESTAMP_TZ = ((PG_TIMESTAMP_TZ >> 24) & 0xff) | ((PG_TIMESTAMP_TZ << 8) & 0xff0000) | ((PG_TIMESTAMP_TZ >> 8) & 0xff00) | ((PG_TIMESTAMP_TZ << 24) & 0xff000000);
+    public static final IntShortHashMap X_PG_TYPE_TO_SIZE_MAP = new IntShortHashMap();
+    public static final IntIntHashMap X_PG_TYPE_TO_TYPE_MODIFIER_MAP = new IntIntHashMap();
     @SuppressWarnings("NumericOverflow")
     public static final int X_PG_UUID = ((PG_UUID >> 24) & 0xff) | ((PG_UUID << 8) & 0xff0000) | ((PG_UUID >> 8) & 0xff00) | ((PG_UUID << 24) & 0xff000000);
     public static final int X_B_PG_UUID = 1 | X_PG_UUID;
@@ -194,14 +196,41 @@ public class PGOids {
         PG_TYPE_PROC_OIDS.add(0); // INTERNAL
         PG_TYPE_PROC_OIDS.add(2418); // OID
 
-        PG_TYPE_TO_SIZE_MAP.put(PG_FLOAT8, Double.BYTES);
-        PG_TYPE_TO_SIZE_MAP.put(PG_FLOAT4, Float.BYTES);
-        PG_TYPE_TO_SIZE_MAP.put(PG_INT4, Integer.BYTES);
-        PG_TYPE_TO_SIZE_MAP.put(PG_INT2, Short.BYTES);
-        PG_TYPE_TO_SIZE_MAP.put(PG_CHAR, Character.BYTES);
-        PG_TYPE_TO_SIZE_MAP.put(PG_INT8, Long.BYTES);
-        PG_TYPE_TO_SIZE_MAP.put(PG_BOOL, Byte.BYTES);
-        PG_TYPE_TO_SIZE_MAP.put(PG_UUID, Long.BYTES * 2);
+        // Fixed-size types only since variable size types have size -1 in PostgreSQL and -1 this happens
+        // to be a marker for 'no value' in this map.
+        // Note: PG_CHAR is fixed size in QuestDB, but variable size in PostgreSQL. PostgreSQL uses char(n) and
+        // when n is not specified it is as it was 1, but the type is still technically variable size.
+        // The actual 'n' value is communicated via type modifier, not the type itself.
+        PG_TYPE_TO_SIZE_MAP.put(PG_FLOAT8, (short) Double.BYTES);
+        PG_TYPE_TO_SIZE_MAP.put(PG_FLOAT4, (short) Float.BYTES);
+        PG_TYPE_TO_SIZE_MAP.put(PG_INT4, (short) Integer.BYTES);
+        PG_TYPE_TO_SIZE_MAP.put(PG_INT2, (short) Short.BYTES);
+        PG_TYPE_TO_SIZE_MAP.put(PG_INT8, (short) Long.BYTES);
+        PG_TYPE_TO_SIZE_MAP.put(PG_BOOL, (short) Byte.BYTES);
+        PG_TYPE_TO_SIZE_MAP.put(PG_TIMESTAMP, (short) Long.BYTES);
+        PG_TYPE_TO_SIZE_MAP.put(PG_UUID, (short) (Long.BYTES * 2));
+        PG_TYPE_TO_SIZE_MAP.put(PG_TIMESTAMP, (short) Long.BYTES);
+        PG_TYPE_TO_SIZE_MAP.put(PG_TIMESTAMP_TZ, (short) Long.BYTES);
+        PG_TYPE_TO_SIZE_MAP.put(PG_DATE, (short) Long.BYTES);
+
+        // The same table with big endian values, keep in sync with PG_TYPE_TO_SIZE_MAP
+        // This is to avoid converting endianness on every value read.
+        // Note: No entry value is -1, which is the same regardless of endianness since it's all 1s.
+        X_PG_TYPE_TO_SIZE_MAP.put(PG_FLOAT8, Numbers.bswap((short) Double.BYTES));
+        X_PG_TYPE_TO_SIZE_MAP.put(PG_FLOAT4, Numbers.bswap((short) Float.BYTES));
+        X_PG_TYPE_TO_SIZE_MAP.put(PG_INT4, Numbers.bswap((short) Integer.BYTES));
+        X_PG_TYPE_TO_SIZE_MAP.put(PG_INT2, Numbers.bswap((short) Short.BYTES));
+        X_PG_TYPE_TO_SIZE_MAP.put(PG_INT8, Numbers.bswap((short) Long.BYTES));
+        X_PG_TYPE_TO_SIZE_MAP.put(PG_BOOL, Numbers.bswap((short) Byte.BYTES));
+        X_PG_TYPE_TO_SIZE_MAP.put(PG_UUID, Numbers.bswap((short) (Long.BYTES * 2)));
+        X_PG_TYPE_TO_SIZE_MAP.put(PG_TIMESTAMP, Numbers.bswap((short) Long.BYTES));
+        X_PG_TYPE_TO_SIZE_MAP.put(PG_TIMESTAMP_TZ, Numbers.bswap((short) Long.BYTES));
+        X_PG_TYPE_TO_SIZE_MAP.put(PG_DATE, Numbers.bswap((short) Long.BYTES));
+
+        // PostgreSQL type modifier returns n+4 for CHAR(n) and since all our CHAR columns are equivalent to CHAR(1) we return 5
+        // All other types return -1 as per PostgreSQL documentation 
+        PG_TYPE_TO_TYPE_MODIFIER_MAP.put(PG_CHAR, 5);
+        X_PG_TYPE_TO_TYPE_MODIFIER_MAP.put(PG_CHAR, Numbers.bswap(5));
 
         PG_TYPE_TO_NAME[0] = "varchar";
         PG_TYPE_TO_NAME[1] = "timestamp";

@@ -47,6 +47,22 @@ public interface PGResponseSink extends Utf8Sink {
 
     void put(BinarySequence sequence);
 
+    /**
+     * Put int value into buffer, the value must be already in big endian format.
+     *
+     * @param xValue big endian byte value
+     * @see #putNetworkInt(int)
+     */
+    void putDirectInt(int xValue);
+
+    /**
+     * Put short value into buffer, the value must be already in big endian format.
+     *
+     * @param xValue big endian byte value
+     * @see #putNetworkShort(short)
+     */
+    void putDirectShort(short xValue);
+
     void putIntDirect(int value);
 
     void putIntUnsafe(long offset, int value);
@@ -59,10 +75,24 @@ public interface PGResponseSink extends Utf8Sink {
 
     void putNetworkFloat(float value);
 
+    /**
+     * Put int value into buffer. The value is assumed to be in little endian format
+     * and will be converted to big endian before being written to buffer.
+     *
+     * @param value little endian int value
+     * @see #putDirectInt(int)
+     */
     void putNetworkInt(int value);
 
     void putNetworkLong(long value);
 
+    /**
+     * Put short value into buffer. The value is assumed to be in little endian format
+     * and will be converted to big endian before being written to buffer.
+     *
+     * @param value little endian short value
+     * @see #putDirectShort(short)
+     */
     void putNetworkShort(short value);
 
     void putZ(CharSequence value);
