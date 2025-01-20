@@ -37,6 +37,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 public interface HttpRequestProcessor {
     AtomicInteger jsonQueryConnectionsCounter = new AtomicInteger();
 
+    default LongGauge connectionCountGauge(Metrics metrics) {
+        return metrics.jsonQueryMetrics().connectionCountGauge();
+    }
+
     // after this callback is invoked the server will disconnect the client
     // if processor desires to write a goodbye letter to the client
     // it must also send TCP FIN by invoking socket.shutdownWrite()
@@ -52,10 +56,6 @@ public interface HttpRequestProcessor {
 
     default AtomicInteger getConnectionsCounter() {
         return jsonQueryConnectionsCounter;
-    }
-
-    default LongGauge getConnectionsGauge(Metrics metrics) {
-        return metrics.jsonQueryMetrics().connectionsGauge();
     }
 
     default byte getRequiredAuthType() {

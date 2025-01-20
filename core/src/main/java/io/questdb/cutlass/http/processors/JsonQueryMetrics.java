@@ -35,11 +35,11 @@ public class JsonQueryMetrics implements Mutable {
     private final Counter cacheMissCounter;
     private final LongGauge cachedQueriesGauge;
     private final Counter completedQueriesCounter;
-    private final LongGauge connectionsGauge;
+    private final LongGauge connectionCountGauge;
     private final Counter startedQueriesCounter;
 
     public JsonQueryMetrics(MetricsRegistry metricsRegistry) {
-        this.connectionsGauge = metricsRegistry.newLongGauge("json_queries_connections");
+        this.connectionCountGauge = metricsRegistry.newLongGauge("json_queries_connections");
         this.startedQueriesCounter = metricsRegistry.newCounter("json_queries");
         this.completedQueriesCounter = metricsRegistry.newCounter("json_queries_completed");
         this.cachedQueriesGauge = metricsRegistry.newLongGauge("json_queries_cached");
@@ -61,7 +61,7 @@ public class JsonQueryMetrics implements Mutable {
 
     @Override
     public void clear() {
-        connectionsGauge.setValue(0);
+        connectionCountGauge.setValue(0);
         cacheHitCounter.reset();
         cacheMissCounter.reset();
         cachedQueriesGauge.setValue(0);
@@ -74,8 +74,8 @@ public class JsonQueryMetrics implements Mutable {
         return completedQueriesCounter.getValue();
     }
 
-    public LongGauge connectionsGauge() {
-        return connectionsGauge;
+    public LongGauge connectionCountGauge() {
+        return connectionCountGauge;
     }
 
     public void markComplete() {

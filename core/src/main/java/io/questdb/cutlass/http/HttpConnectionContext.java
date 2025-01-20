@@ -471,7 +471,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private HttpRequestProcessor checkConnectionLimit(HttpRequestProcessor processor) {
         final int connectionLimit = processor.getConnectionLimit(configuration.getHttpContextConfiguration());
         if (connectionLimit > -1) {
-            connectionsGauge = processor.getConnectionsGauge(metrics);
+            connectionsGauge = processor.connectionCountGauge(metrics);
             connectionsCounter = processor.getConnectionsCounter();
             connectionsGauge.inc();
             final int numOfConnections = connectionsCounter.incrementAndGet();

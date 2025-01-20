@@ -35,6 +35,11 @@ public interface LineHttpProcessor extends HttpRequestProcessor {
     AtomicInteger lineHttpConnectionsCounter = new AtomicInteger();
 
     @Override
+    default LongGauge connectionCountGauge(Metrics metrics) {
+        return metrics.lineMetrics().httpConnectionCountGauge();
+    }
+
+    @Override
     default int getConnectionLimit(HttpContextConfiguration configuration) {
         return configuration.getIlpConnectionLimit();
     }
@@ -42,10 +47,5 @@ public interface LineHttpProcessor extends HttpRequestProcessor {
     @Override
     default AtomicInteger getConnectionsCounter() {
         return lineHttpConnectionsCounter;
-    }
-
-    @Override
-    default LongGauge getConnectionsGauge(Metrics metrics) {
-        return metrics.lineMetrics().httpConnectionCountGauge();
     }
 }
