@@ -57,11 +57,13 @@ def convert_and_append_parameters(value, type, resolved_parameters):
     elif type == 'float4' or type == 'float8':
         resolved_parameters.append(float(value))
     elif type == 'boolean':
-        if isinstance(value, str):
-            value = value.lower().strip()
-            resolved_parameters.append(value in ('true', '1', 'yes', 'on'))
+        value = value.lower().strip()
+        if value == 'true':
+            resolved_parameters.append(True)
+        elif value == 'false':
+            resolved_parameters.append(False)
         else:
-            resolved_parameters.append(bool(value))
+            raise ValueError(f"Invalid boolean value: {value}")
     elif type == 'varchar':
         resolved_parameters.append(str(value))
     elif type == 'timestamp':
