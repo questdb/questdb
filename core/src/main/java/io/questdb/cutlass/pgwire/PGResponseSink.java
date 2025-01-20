@@ -48,18 +48,26 @@ public interface PGResponseSink extends Utf8Sink {
     void put(BinarySequence sequence);
 
     /**
-     * Put int value into buffer, the value must be already in big endian format.
+     * Writes a pre-formatted int value directly to the buffer without byte order conversion.
+     * <p>
+     * IMPORTANT: When using this method with PGWire protocol, the input value must already
+     * be in network byte order (big-endian). Since QuestDB operates on little-endian architecture,
+     * this means the bytes must be reversed before calling this method.
      *
-     * @param xValue big endian byte value
-     * @see #putNetworkInt(int)
+     * @param xValue the int value in big-endian byte order
+     * @see #putNetworkInt(int) for automatic byte order conversion
      */
     void putDirectInt(int xValue);
 
     /**
-     * Put short value into buffer, the value must be already in big endian format.
+     * Writes a pre-formatted show value directly to the buffer without byte order conversion.
+     * <p>
+     * IMPORTANT: When using this method with PGWire protocol, the input value must already
+     * be in network byte order (big-endian). Since QuestDB operates on little-endian architecture,
+     * this means the bytes must be reversed before calling this method.
      *
-     * @param xValue big endian byte value
-     * @see #putNetworkShort(short)
+     * @param xValue the int value in big-endian byte order
+     * @see #putNetworkInt(int) for automatic byte order conversion
      */
     void putDirectShort(short xValue);
 
@@ -76,22 +84,28 @@ public interface PGResponseSink extends Utf8Sink {
     void putNetworkFloat(float value);
 
     /**
-     * Put int value into buffer. The value is assumed to be in little endian format
-     * and will be converted to big endian before being written to buffer.
+     * Writes an int value to the buffer in PGWire network byte order (big-endian).
+     * <p>
+     * This method handles the necessary byte order conversion internally. Since QuestDB
+     * operates on a little-endian architecture, this method will reverse the bytes before
+     * writing to ensure PGWire compatibility.
      *
-     * @param value little endian int value
-     * @see #putDirectInt(int)
+     * @param value the int value to write
+     * @see #putDirectInt(int) for writing pre-reversed bytes
      */
     void putNetworkInt(int value);
 
     void putNetworkLong(long value);
 
     /**
-     * Put short value into buffer. The value is assumed to be in little endian format
-     * and will be converted to big endian before being written to buffer.
+     * Writes a short value to the buffer in PGWire network byte order (big-endian).
+     * <p>
+     * This method handles the necessary byte order conversion internally. Since QuestDB
+     * operates on little-endian architecture, this method will reverse the bytes before
+     * writing to ensure PGWire compatibility.
      *
-     * @param value little endian short value
-     * @see #putDirectShort(short)
+     * @param value the int value to write
+     * @see #putDirectInt(int) for writing pre-reversed bytes
      */
     void putNetworkShort(short value);
 
