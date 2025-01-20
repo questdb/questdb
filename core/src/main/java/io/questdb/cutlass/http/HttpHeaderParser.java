@@ -37,6 +37,7 @@ import io.questdb.std.ObjectPool;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Utf8SequenceObjHashMap;
+import io.questdb.std.Vect;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
@@ -44,6 +45,7 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.Comparator;
 
@@ -87,6 +89,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
     private boolean needProtocol = true;
     private DirectUtf8String protocol;
     private DirectUtf8String protocolLine;
+    private DirectUtf8String query;
     private long statementTimeout = -1L;
     private DirectUtf8String statusCode;
     private DirectUtf8String statusText;
@@ -106,7 +109,9 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         this.incomplete = true;
         this.headers.clear();
         this.method = null;
+        this.methodLine = null;
         this.url = null;
+        this.query = null;
         this.headerName = null;
         this.contentType = null;
         this.boundary = null;
@@ -211,6 +216,11 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
 
     public DirectUtf8Sequence getProtocolLine() {
         return protocolLine;
+    }
+
+    @Override
+    public @Nullable DirectUtf8String getQuery() {
+        return query;
     }
 
     @Override
@@ -745,10 +755,9 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                         isUrl = false;
                         _lo = _wptr + 1;
                     } else if (isQueryParams) {
-                        int o = urlDecode(_lo, _wptr, urlParams);
-                        isQueryParams = false;
-                        _lo = _wptr;
-                        _wptr -= o;
+                        query = csPool.next().of(_lo, _wptr);
+                        _lo = _wptr + 1;
+                        break;
                     }
                     break;
                 case '?':
@@ -763,6 +772,13 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                     }
                     methodLine = csPool.next().of(method.lo(), _wptr);
                     needMethod = false;
+
+                    // parse and decode query string
+                    if (query != null) {
+                        Vect.memcpy(_wptr, query.ptr(), query.size());
+                        int o = urlDecode(_wptr, _wptr + query.size(), urlParams);
+                        _wptr += query.size() - o;
+                    }
                     this._lo = _wptr;
                     return (int) (p - lo);
                 default:

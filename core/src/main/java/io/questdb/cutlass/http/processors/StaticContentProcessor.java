@@ -114,7 +114,13 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
         final Utf8SequenceObjHashMap<Utf8Sequence> redirectMap = configuration.getRedirectMap();
         int index = redirectMap.keyIndex(url);
         if (index < 0) {
-            context.simpleResponse().sendStatusNoContent(HTTP_MOVED_PERM, redirectMap.valueAt(index));
+            utf8Sink.clear();
+            utf8Sink.putAscii("Location: ").put(redirectMap.valueAt(index));
+            if (headers.getQuery() != null) {
+                utf8Sink.putAscii('?').put(headers.getQuery());
+            }
+            utf8Sink.putAscii(Misc.EOL);
+            context.simpleResponse().sendStatusNoContent(HTTP_MOVED_PERM, utf8Sink);
             return;
         }
 
@@ -220,6 +226,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
         if (rangeParser.of(range)) {
             StaticContentProcessorState state = LV.get(context);
             if (state == null) {
+                //noinspection resource
                 LV.set(context, state = new StaticContentProcessorState());
             }
 
@@ -273,6 +280,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
         } else {
             StaticContentProcessorState h = LV.get(context);
             if (h == null) {
+                //noinspection resource
                 LV.set(context, h = new StaticContentProcessorState());
             }
             h.fd = fd;

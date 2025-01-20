@@ -28,6 +28,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.Nullable;
 
 public interface HttpRequestHeader {
     DirectUtf8Sequence getBoundary();
@@ -51,6 +52,8 @@ public interface HttpRequestHeader {
     DirectUtf8Sequence getMethod();
 
     DirectUtf8Sequence getMethodLine();
+
+    @Nullable DirectUtf8String getQuery();
 
     long getStatementTimeout();
 

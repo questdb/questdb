@@ -978,7 +978,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                             String from = parts[0].trim();
                             String to = parts[1].trim();
                             if (!from.isEmpty() && !to.isEmpty()) {
-                                redirectMap.put(new Utf8String(from), new Utf8String("Location: " + to + Misc.EOL));
+                                redirectMap.put(new Utf8String(from), new Utf8String(to));
                             }
                         } else {
                             throw new ServerConfigurationException("could not parse redirect value [key=" + key.getPropertyPath() + ", value=" + redirectConfig + ']');
@@ -989,7 +989,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 }
             }
             // also add web console redirect for custom context
-            Utf8String redirectTarget = new Utf8String("Location: " + httpContextWebConsole + "/index.html" + Misc.EOL);
+            Utf8String redirectTarget = new Utf8String(httpContextWebConsole + "/index.html");
             redirectMap.put(new Utf8String(httpContextWebConsole), redirectTarget);
             redirectMap.put(new Utf8String(httpContextWebConsole + "/"), redirectTarget);
 
