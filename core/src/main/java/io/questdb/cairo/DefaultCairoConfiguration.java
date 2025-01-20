@@ -1241,6 +1241,26 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public void setIsWalSupported(boolean isWalSupported) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setIsReadOnly(boolean isReadOnly) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void disableHttpServer() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void disablePGWireServer() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public boolean isWriterMixedIOEnabled() {
         return writerMixedIOEnabled;
     }

@@ -347,6 +347,26 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public void setIsWalSupported(boolean isWalSupported) {
+        getDelegate().setIsWalSupported(isWalSupported);
+    }
+
+    @Override
+    public void setIsReadOnly(boolean isReadOnly) {
+        getDelegate().setIsReadOnly(isReadOnly);
+    }
+
+    @Override
+    public void disableHttpServer() {
+        getDelegate().disableHttpServer();
+    }
+
+    @Override
+    public void disablePGWireServer() {
+        getDelegate().disablePGWireServer();
+    }
+
+    @Override
     public long getInactiveReaderTTL() {
         return getDelegate().getInactiveReaderTTL();
     }

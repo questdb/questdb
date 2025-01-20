@@ -368,12 +368,16 @@ public class ServerMain implements Closeable {
             setupWalApplyJob(walApplyWorkerPool, engine, workerPoolManager.getSharedWorkerCount());
         }
 
-        // http
-        freeOnExit.register(httpServer = services().createHttpServer(
-                config,
-                engine,
-                workerPoolManager
-        ));
+
+        if (config.getHttpServerConfiguration().isEnabled()) {
+            // http
+            freeOnExit.register(httpServer = services().createHttpServer(
+                    config,
+                    engine,
+                    workerPoolManager
+            ));
+        }
+
 
         // http min
         freeOnExit.register(services().createMinHttpServer(
@@ -381,12 +385,14 @@ public class ServerMain implements Closeable {
                 workerPoolManager
         ));
 
-        // pg wire
-        freeOnExit.register(pgWireServer = services().createPGWireServer(
-                config.getPGWireConfiguration(),
-                engine,
-                workerPoolManager
-        ));
+        if (config.getPGWireConfiguration().isEnabled()) {
+            // pg wire
+            freeOnExit.register(pgWireServer = services().createPGWireServer(
+                    config.getPGWireConfiguration(),
+                    engine,
+                    workerPoolManager
+            ));
+        }
 
         workerPoolManager.getSharedPool().assign(new FlushQueryCacheJob(
                 engine.getMessageBus(),

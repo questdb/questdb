@@ -659,6 +659,15 @@ public interface CairoConfiguration {
 
     boolean isWalSupported();
 
+    void setIsWalSupported(boolean isWalSupported);
+
+    void setIsReadOnly(boolean isReadOnly);
+
+    void disableHttpServer();
+
+    void disablePGWireServer();
+
+
     boolean isWriterMixedIOEnabled();
 
     /**

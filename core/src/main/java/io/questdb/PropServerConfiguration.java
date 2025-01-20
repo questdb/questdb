@@ -204,7 +204,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String httpPassword;
     private final boolean httpPessimisticHealthCheckEnabled;
     private final int httpSendBufferSize;
-    private final boolean httpServerEnabled;
+    public  boolean httpServerEnabled;
     private final int httpSqlCacheBlockCount;
     private final boolean httpSqlCacheEnabled;
     private final int httpSqlCacheRowCount;
@@ -231,7 +231,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long instanceHashLo;
     private final boolean interruptOnClosedConnection;
     private final boolean ioURingEnabled;
-    private final boolean isReadOnlyInstance;
+    public boolean isReadOnlyInstance;
     private final int jsonCacheLimit;
     private final int jsonCacheSize;
     private final String keepAliveHeader;
@@ -302,7 +302,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int partitionEncoderParquetRowGroupSize;
     private final boolean partitionEncoderParquetStatisticsEnabled;
     private final int partitionEncoderParquetVersion;
-    private final boolean pgEnabled;
+    public  boolean pgEnabled;
     private final PropPGWireConcurrentCacheConfiguration pgWireConcurrentCacheConfiguration = new PropPGWireConcurrentCacheConfiguration();
     private final PGWireConfiguration pgWireConfiguration = new PropPGWireConfiguration();
     private final String posthogApiKey;
@@ -453,7 +453,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int walRecreateDistressedSequencerAttempts;
     private final long walSegmentRolloverRowCount;
     private final double walSquashUncommittedRowsMultiplier;
-    private final boolean walSupported;
+    private boolean walSupported;
     private final int walTxnNotificationQueueCapacity;
     private final long walWriterDataAppendPageSize;
     private final long walWriterEventAppendPageSize;
@@ -3435,8 +3435,29 @@ public class PropServerConfiguration implements ServerConfiguration {
             return walApplyEnabled;
         }
 
+        @Override
         public boolean isWalSupported() {
             return walSupported;
+        }
+
+        @Override
+        public void setIsWalSupported(boolean isWalSupported) {
+            walSupported = isWalSupported;
+        }
+
+        @Override
+        public void setIsReadOnly(boolean isReadOnly) {
+            isReadOnlyInstance = isReadOnly;
+        }
+
+        @Override
+        public void disableHttpServer() {
+            httpServerEnabled = false;
+        }
+
+        @Override
+        public void disablePGWireServer() {
+            pgEnabled = false;
         }
 
         @Override
