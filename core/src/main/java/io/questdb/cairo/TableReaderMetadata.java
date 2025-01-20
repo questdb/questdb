@@ -59,6 +59,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     private TableToken tableToken;
     private TableReaderMetadataTransitionIndex transitionIndex;
     private MemoryMR transitionMeta;
+    private int ttlHoursOrMonths;
     private boolean walEnabled;
 
     public TableReaderMetadata(CairoConfiguration configuration, TableToken tableToken) {
@@ -103,6 +104,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
         this.o3MaxLag = metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG);
         this.walEnabled = metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
+        this.ttlHoursOrMonths = metaMem.getInt(TableUtils.META_OFFSET_TTL_HOURS_OR_MONTHS);
 
         int shiftLeft = 0, existingIndex = 0;
         buildWriterOrderMap(metaMem, columnCount);
@@ -299,6 +301,11 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
+    public int getTtlHoursOrMonths() {
+        return ttlHoursOrMonths;
+    }
+
+    @Override
     public boolean isIndexed(int columnIndex) {
         return getColumnMetadata(columnIndex).isSymbolIndexFlag();
     }
@@ -318,6 +325,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             TableUtils.validateMeta(metaMem, null, ColumnType.VERSION);
             int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
             int timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
+            this.ttlHoursOrMonths = metaMem.getInt(TableUtils.META_OFFSET_TTL_HOURS_OR_MONTHS);
             this.partitionBy = metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
             this.tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
             this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);

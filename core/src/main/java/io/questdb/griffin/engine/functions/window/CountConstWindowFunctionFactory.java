@@ -112,7 +112,7 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
                                 partitionByKeyTypes,
                                 CountFunctionFactoryHelper.COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES
                         );
-                        mem = Vm.getARWInstance(
+                        mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(),
                                 MemoryTag.NATIVE_CIRCULAR_BUFFER
@@ -416,7 +416,7 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void reset() {
             super.reset();
-            count = 0;
+            count = rowsHi;
         }
 
         @Override
@@ -442,7 +442,7 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void toTop() {
             super.toTop();
-            count = 0;
+            count = rowsHi;
         }
     }
 }

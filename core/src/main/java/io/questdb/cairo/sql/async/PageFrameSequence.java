@@ -400,9 +400,11 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             // It is essential to init the atom after we prepared sequence for dispatch.
             // If atom is to fail, we will be releasing whatever we prepared.
             atom.init(frameCursor, executionContext);
-        } catch (Throwable e) {
+        } catch (Throwable th) {
+            // Log the OG exception as the below frame cursor close call may throw.
+            LOG.error().$("could not initialize page frame sequence [error=").$(th).I$();
             frameCursor = Misc.freeIfCloseable(frameCursor);
-            throw e;
+            throw th;
         }
         return this;
     }

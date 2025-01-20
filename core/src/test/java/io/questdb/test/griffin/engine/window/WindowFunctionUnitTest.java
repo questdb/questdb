@@ -36,11 +36,13 @@ import io.questdb.griffin.engine.functions.window.CountConstWindowFunctionFactor
 import io.questdb.griffin.engine.functions.window.CountDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.CountFunctionFactoryHelper;
 import io.questdb.griffin.engine.functions.window.FirstValueDoubleWindowFunctionFactory;
+import io.questdb.griffin.engine.functions.window.LastValueDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.MaxDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.MinDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.SumDoubleWindowFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestDefaults;
@@ -158,6 +160,29 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                         return new FirstValueDoubleWindowFunctionFactory.FirstValueOverWholeResultSetFunction(TestDefaults.createLongFunction(x -> x.getLong(2)));
                     }
                     return new FirstValueDoubleWindowFunctionFactory.FirstValueOverRowsFrameFunction(
+                            TestDefaults.createLongFunction(x -> x.getLong(2)),
+                            rangeLo,
+                            rangeHi,
+                            TestDefaults.createMemoryCARW()
+                    );
+                },
+                (a, b) -> b
+        );
+    }
+
+    @Test
+    public void testFirstNotNullOverRowsFuzz() throws Exception {
+        fuzzTestBase(
+                TestUtils.generateRandom(LOG),
+                false,
+                true,
+                rnd -> rnd.nextInt(8) == 0 ? Long.MIN_VALUE : -rnd.nextLong(1024),
+                rnd -> -rnd.nextLong(1024),
+                (rangeLo, rangeHi) -> {
+                    if (rangeLo == Long.MIN_VALUE && rangeHi == 0) {
+                        return new FirstValueDoubleWindowFunctionFactory.FirstValueOverWholeResultSetFunction(TestDefaults.createLongFunction(x -> x.getLong(2)));
+                    }
+                    return new FirstValueDoubleWindowFunctionFactory.FirstNotNullValueOverRowsFrameFunction(
                             TestDefaults.createLongFunction(x -> x.getLong(2)),
                             rangeLo,
                             rangeHi,
@@ -793,6 +818,233 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
         Assert.assertEquals(f.getDouble(null), b, 1e-6);
     }
 
+    @Test
+    public void testLastOverRowsFuzz() throws Exception {
+        fuzzTestBase(
+                TestUtils.generateRandom(LOG),
+                false,
+                true,
+                rnd -> rnd.nextInt(8) == 0 ? Long.MIN_VALUE : -rnd.nextLong(1024),
+                rnd -> -rnd.nextLong(1024),
+                (rangeLo, rangeHi) -> {
+                    if (rangeHi == 0) {
+                        return new LastValueDoubleWindowFunctionFactory.LastValueIncludeCurrentFrameFunction(rangeLo, false, TestDefaults.createLongFunction(x -> x.getLong(2)));
+                    }
+                    return new LastValueDoubleWindowFunctionFactory.LastValueOverRowsFrameFunction(
+                            TestDefaults.createLongFunction(x -> x.getLong(2)),
+                            rangeLo,
+                            rangeHi,
+                            TestDefaults.createMemoryCARW()
+                    );
+                },
+                (a, b) -> a
+        );
+    }
+
+    @Test
+    public void testLastOverRangeFuzz() throws Exception {
+        fuzzTestBase(
+                TestUtils.generateRandom(LOG),
+                false,
+                false,
+                rnd -> rnd.nextInt(8) == 0 ? Long.MIN_VALUE : -rnd.nextLong(1024),
+                rnd -> -rnd.nextLong(1024),
+                (rangeLo, rangeHi) -> {
+                    if (rangeHi == 0) {
+                        return new LastValueDoubleWindowFunctionFactory.LastValueIncludeCurrentFrameFunction(rangeLo, true, TestDefaults.createLongFunction(x -> x.getLong(2)));
+                    }
+                    return new LastValueDoubleWindowFunctionFactory.LastValueOverRangeFrameFunction(
+                            rangeLo,
+                            rangeHi,
+                            TestDefaults.createLongFunction(x -> x.getLong(2)),
+                            configuration,
+                            0
+                    );
+                },
+                (a, b) -> a
+        );
+    }
+
+    @Test
+    public void testLastOverPartitionRowsFuzz() throws Exception {
+        fuzzTestBase(
+                TestUtils.generateRandom(LOG),
+                true,
+                true,
+                rnd -> rnd.nextInt(8) == 0 ? Long.MIN_VALUE : -rnd.nextLong(1024),
+                rnd -> -rnd.nextLong(1024),
+                (rangeLo, rangeHi) -> {
+                    if (rangeHi == 0) {
+                        return new LastValueDoubleWindowFunctionFactory.LastValueIncludeCurrentPartitionRowsFrameFunction(rangeLo,
+                                false,
+                                TestDefaults.createVirtualRecord(TestDefaults.createIntFunction(x -> x.getInt(1))),
+                                TestDefaults.createRecordSink((r, w) -> w.putInt(r.getInt(0))),
+                                TestDefaults.createLongFunction(x -> x.getLong(2)));
+                    }
+                    return new LastValueDoubleWindowFunctionFactory.LastValueOverPartitionRowsFrameFunction(
+                            TestDefaults.createOrderedMap(new SingleColumnType(columnTypes[1]), LastValueDoubleWindowFunctionFactory.LAST_VALUE_PARTITION_ROWS_COLUMN_TYPES),
+                            TestDefaults.createVirtualRecord(TestDefaults.createIntFunction(x -> x.getInt(1))),
+                            TestDefaults.createRecordSink((r, w) -> w.putInt(r.getInt(0))),
+                            rangeLo,
+                            rangeHi,
+                            TestDefaults.createLongFunction(x -> x.getLong(2)),
+                            TestDefaults.createMemoryCARW()
+                    );
+                },
+                (a, b) -> a
+        );
+    }
+
+    @Test
+    public void testLastOverPartitionRangeFuzz() throws Exception {
+        fuzzTestBase(
+                TestUtils.generateRandom(LOG),
+                true,
+                false,
+                rnd -> rnd.nextInt(8) == 0 ? Long.MIN_VALUE : -rnd.nextLong(1024),
+                rnd -> -rnd.nextLong(1024),
+                (rangeLo, rangeHi) -> {
+                    if (rangeHi == 0) {
+                        return new LastValueDoubleWindowFunctionFactory.LastValueIncludeCurrentPartitionRowsFrameFunction(rangeLo,
+                                false,
+                                TestDefaults.createVirtualRecord(TestDefaults.createIntFunction(x -> x.getInt(1))),
+                                TestDefaults.createRecordSink((r, w) -> w.putInt(r.getInt(0))),
+                                TestDefaults.createLongFunction(x -> x.getLong(2)));
+                    }
+                    return new LastValueDoubleWindowFunctionFactory.LastValueOverPartitionRangeFrameFunction(
+                            TestDefaults.createOrderedMap(new SingleColumnType(columnTypes[1]), LastValueDoubleWindowFunctionFactory.LAST_VALUE_PARTITION_RANGE_COLUMN_TYPES),
+                            TestDefaults.createVirtualRecord(TestDefaults.createIntFunction(x -> x.getInt(1))),
+                            TestDefaults.createRecordSink((r, w) -> w.putInt(r.getInt(0))),
+                            rangeLo,
+                            rangeHi,
+                            TestDefaults.createLongFunction(x -> x.getLong(2)),
+                            TestDefaults.createMemoryCARW(),
+                            2,
+                            0
+                    );
+                },
+                (a, b) -> a
+        );
+    }
+
+    @Test
+    public void testLastNotNullOverPartitionRangeFuzz() throws Exception {
+        fuzzTestBase(
+                TestUtils.generateRandom(LOG),
+                true,
+                false,
+                true,
+                rnd -> rnd.nextInt(8) == 0 ? Long.MIN_VALUE : -rnd.nextLong(1024),
+                rnd -> -rnd.nextLong(1024),
+                (rangeLo, rangeHi) -> {
+                    if (rangeHi == 0 && rangeLo == Long.MIN_VALUE) {
+                        return new LastValueDoubleWindowFunctionFactory.LastNotNullValueOverUnboundedPartitionRowsFrameFunction(
+                                TestDefaults.createOrderedMap(new SingleColumnType(columnTypes[1]), LastValueDoubleWindowFunctionFactory.LAST_VALUE_COLUMN_TYPES),
+                                TestDefaults.createVirtualRecord(TestDefaults.createIntFunction(x -> x.getInt(1))),
+                                TestDefaults.createRecordSink((r, w) -> w.putInt(r.getInt(0))),
+                                TestDefaults.createLongFunction(x -> x.getLong(2))
+                        );
+                    }
+                    return new LastValueDoubleWindowFunctionFactory.LastNotNullValueOverPartitionRangeFrameFunction(
+                            TestDefaults.createOrderedMap(new SingleColumnType(columnTypes[1]), LastValueDoubleWindowFunctionFactory.LAST_VALUE_PARTITION_RANGE_COLUMN_TYPES),
+                            TestDefaults.createVirtualRecord(TestDefaults.createIntFunction(x -> x.getInt(1))),
+                            TestDefaults.createRecordSink((r, w) -> w.putInt(r.getInt(0))),
+                            rangeLo,
+                            rangeHi,
+                            TestDefaults.createLongFunction(x -> x.getLong(2)),
+                            TestDefaults.createMemoryCARW(),
+                            2,
+                            0
+                    );
+                },
+                (a, b) -> a
+        );
+    }
+
+    @Test
+    public void testLastNotNullOverPartitionRowsFuzz() throws Exception {
+        fuzzTestBase(
+                TestUtils.generateRandom(LOG),
+                true,
+                true,
+                true,
+                rnd -> rnd.nextInt(8) == 0 ? Long.MIN_VALUE : -rnd.nextLong(1024),
+                rnd -> -rnd.nextLong(1024),
+                (rangeLo, rangeHi) -> {
+                    if (rangeHi == 0 && rangeLo == Long.MIN_VALUE) {
+                        return new LastValueDoubleWindowFunctionFactory.LastNotNullValueOverUnboundedPartitionRowsFrameFunction(
+                                TestDefaults.createOrderedMap(new SingleColumnType(columnTypes[1]), LastValueDoubleWindowFunctionFactory.LAST_VALUE_COLUMN_TYPES),
+                                TestDefaults.createVirtualRecord(TestDefaults.createIntFunction(x -> x.getInt(1))),
+                                TestDefaults.createRecordSink((r, w) -> w.putInt(r.getInt(0))),
+                                TestDefaults.createLongFunction(x -> x.getLong(2))
+                        );
+                    }
+                    return new LastValueDoubleWindowFunctionFactory.LastNotNullValueOverPartitionRowsFrameFunction(
+                            TestDefaults.createOrderedMap(new SingleColumnType(columnTypes[1]), LastValueDoubleWindowFunctionFactory.LAST_NOT_NULL_VALUE_PARTITION_ROWS_COLUMN_TYPES),
+                            TestDefaults.createVirtualRecord(TestDefaults.createIntFunction(x -> x.getInt(1))),
+                            TestDefaults.createRecordSink((r, w) -> w.putInt(r.getInt(0))),
+                            rangeLo,
+                            rangeHi,
+                            TestDefaults.createLongFunction(x -> x.getLong(2)),
+                            TestDefaults.createMemoryCARW()
+                    );
+                },
+                (a, b) -> a
+        );
+    }
+
+    @Test
+    public void testLastNotNullOverRowsFuzz() throws Exception {
+        fuzzTestBase(
+                TestUtils.generateRandom(LOG),
+                false,
+                true,
+                true,
+                rnd -> rnd.nextInt(8) == 0 ? Long.MIN_VALUE : -rnd.nextLong(1024),
+                rnd -> -rnd.nextLong(1024),
+                (rangeLo, rangeHi) -> {
+                    if (rangeHi == 0 && rangeLo == Long.MIN_VALUE) {
+                        return new LastValueDoubleWindowFunctionFactory.LastNotNullOverUnboundedRowsFrameFunction(
+                                TestDefaults.createLongFunction(x -> x.getLong(2))
+                        );
+                    }
+                    return new LastValueDoubleWindowFunctionFactory.LastNotNullValueOverRowsFrameFunction(
+                            TestDefaults.createLongFunction(x -> x.getLong(2)),
+                            rangeLo,
+                            rangeHi,
+                            TestDefaults.createMemoryCARW()
+                    );
+                },
+                (a, b) -> a
+        );
+    }
+
+    @Test
+    public void testLastNotNullOverRangeFuzz() throws Exception {
+        fuzzTestBase(
+                TestUtils.generateRandom(LOG),
+                false,
+                false,
+                true,
+                rnd -> rnd.nextInt(8) == 0 ? Long.MIN_VALUE : -rnd.nextLong(1024),
+                rnd -> -rnd.nextLong(1024),
+                (rangeLo, rangeHi) -> {
+                    if (rangeHi == 0 && rangeLo == Long.MIN_VALUE) {
+                        return new LastValueDoubleWindowFunctionFactory.LastNotNullOverUnboundedRowsFrameFunction(
+                                TestDefaults.createLongFunction(x -> x.getLong(2))
+                        );
+                    }
+                    return new LastValueDoubleWindowFunctionFactory.LastNotNullValueOverRangeFrameFunction(
+                            rangeLo,
+                            rangeHi,
+                            TestDefaults.createLongFunction(x -> x.getLong(2)),
+                            configuration,
+                            0
+                    );
+                },
+                (a, b) -> a
+        );
+    }
 
     private void fuzzTestLong(
             Rnd rnd,
@@ -870,8 +1122,23 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
             java.util.function.BiFunction<Long, Long, BaseDoubleWindowFunction> windowFunctionFactory,
             java.util.function.BiFunction<Double, Double, Double> sum
     ) throws Exception {
+        fuzzTestBase(rnd, partitioned, rows, false, rangeLoGen, rangeHiGen, windowFunctionFactory, sum);
+    }
+
+    private void fuzzTestBase(
+            Rnd rnd,
+            boolean partitioned,
+            boolean rows,
+            boolean nullable,
+            java.util.function.Function<Rnd, Long> rangeLoGen,
+            java.util.function.Function<Rnd, Long> rangeHiGen,
+            java.util.function.BiFunction<Long, Long, BaseDoubleWindowFunction> windowFunctionFactory,
+            java.util.function.BiFunction<Double, Double, Double> sum
+    ) throws Exception {
         final int count = rnd.nextInt(1024) + 1;
-        Record[] records = generateTestRecords(rnd, count, 1 + rnd.nextInt(32), 1 + rnd.nextLong(65536));
+        Record[] records = nullable ?
+                generateTestRecordsWithNull(rnd, count, 1 + rnd.nextInt(32), 1 + rnd.nextLong(65536)) :
+                generateTestRecords(rnd, count, 1 + rnd.nextInt(32), 1 + rnd.nextLong(65536));
         Arrays.sort(records, Comparator.comparingLong(a -> a.getLong(0)));
         long rangeLo = rangeLoGen.apply(rnd);
         long rangeHi = rangeHiGen.apply(rnd);
@@ -900,10 +1167,12 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                     }
                     if (!rows) {
                         if ((rangeLo == Long.MIN_VALUE || records[q].getLong(0) >= records[s].getLong(0) + rangeLo) && records[q].getLong(0) <= records[s].getLong(0) + rangeHi) {
+                            long l = records[q].getLong(2);
+                            double d = Numbers.LONG_NULL == l ? Double.NaN : (double) l;
                             if (Double.isNaN(expected)) {
-                                expected = (double) records[q].getLong(2);
+                                expected = d;
                             } else {
-                                expected = sum.apply(expected, (double) records[q].getLong(2));
+                                expected = sum.apply(expected, d);
                             }
                         }
                         if (rangeLo != Long.MIN_VALUE && records[q].getLong(0) < records[s].getLong(0) + rangeLo) {
@@ -911,10 +1180,12 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                         }
                     } else {
                         if (row >= rangeLo && row <= rangeHi) {
+                            long l = records[q].getLong(2);
+                            double d = Numbers.LONG_NULL == l ? Double.NaN : (double) l;
                             if (Double.isNaN(expected)) {
-                                expected = (double) records[q].getLong(2);
+                                expected = d;
                             } else {
-                                expected = sum.apply(expected, (double) records[q].getLong(2));
+                                expected = sum.apply(expected, d);
                             }
                         }
                         if (row < rangeLo) {
@@ -938,6 +1209,19 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
         Record[] records = new Record[count];
         for (int i = 0; i < count; i++) {
             records[i] = TestDefaults.createRecord(columnTypes, rnd.nextLong(timestampLimit), rnd.nextInt(partitionsLimit), (long) rnd.nextInt());
+        }
+        return records;
+    }
+
+    private Record[] generateTestRecordsWithNull(Rnd rnd, int count, int partitionsLimit, long timestampLimit) {
+        Record[] records = new Record[count];
+        for (int i = 0; i < count; i++) {
+            long l = rnd.nextInt(10000000);
+            // 20% null value
+            if (l > 8000000) {
+                l = Numbers.LONG_NULL;
+            }
+            records[i] = TestDefaults.createRecord(columnTypes, rnd.nextLong(timestampLimit), rnd.nextInt(partitionsLimit), l);
         }
         return records;
     }

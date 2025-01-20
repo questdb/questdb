@@ -1,3 +1,5 @@
+import io.questdb.griffin.engine.functions.date.TimestampAddWithTimezoneFunctionFactory;
+
 /*******************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
@@ -27,6 +29,7 @@ open module io.questdb {
     requires static org.jetbrains.annotations;
     requires static java.management;
     requires jdk.management;
+    requires java.desktop;
 
     uses io.questdb.griffin.FunctionFactory;
     exports io.questdb;
@@ -382,6 +385,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.date.IsLeapYearFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampDiffFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampAddFunctionFactory,
+            io.questdb.griffin.engine.functions.date.TimestampAddWithTimezoneFunctionFactory,
             io.questdb.griffin.engine.functions.date.ToDateFunctionFactory,
             io.questdb.griffin.engine.functions.date.VarcharToDateFunctionFactory,
             io.questdb.griffin.engine.functions.date.ToPgDateFunctionFactory,
@@ -1018,6 +1022,9 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.window.CountVarcharWindowFunctionFactory,
             io.questdb.griffin.engine.functions.window.MaxDoubleWindowFunctionFactory,
             io.questdb.griffin.engine.functions.window.MinDoubleWindowFunctionFactory,
+            io.questdb.griffin.engine.functions.window.LastValueDoubleWindowFunctionFactory,
+            io.questdb.griffin.engine.functions.window.LagDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.window.LeadDoubleFunctionFactory,
 
             // metadata functions
             io.questdb.griffin.engine.functions.metadata.BuildFunctionFactory,

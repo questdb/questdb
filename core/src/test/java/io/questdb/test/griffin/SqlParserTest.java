@@ -56,6 +56,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static io.questdb.test.tools.TestUtils.getSystemTablesCount;
 
 public class SqlParserTest extends AbstractSqlParserTest {
+
     private static final List<String> frameTypes = Arrays.asList("rows  ", "groups", "range ");
 
     @Test
@@ -9575,7 +9576,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         " ts timestamp" +
                         ") timestamp(ts) partition by day",
                 7,
-                "too many arguments"
+                "wrong number of arguments for function `row_number`"
         );
     }
 

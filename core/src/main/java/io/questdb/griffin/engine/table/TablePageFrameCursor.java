@@ -22,8 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.griffin.engine.table;
 
-public class AlterTableUtils {
-    public static final String ALTER_TABLE_EXPECTED_TOKEN_DESCR = "'add', 'alter', 'attach', 'detach', 'drop', 'convert', 'resume', 'rename', 'set' or 'squash'";
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFrameCursor;
+
+public interface TablePageFrameCursor extends PageFrameCursor {
+
+    TableReader getTableReader();
+
+    TablePageFrameCursor of(PartitionFrameCursor partitionFrameCursor);
 }

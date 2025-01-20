@@ -72,6 +72,10 @@ public interface CairoConfiguration {
 
     boolean enableTestFactories();
 
+    default boolean freeLeakedReaders() {
+        return true;
+    }
+
     /**
      * All effective configuration values are seen by the server instance.
      *
@@ -261,6 +265,8 @@ public interface CairoConfiguration {
     int getMaxUncommittedRows();
 
     int getMetadataPoolCapacity();
+
+    Metrics getMetrics();
 
     @NotNull
     default MicrosecondClock getMicrosecondClock() {
@@ -649,6 +655,8 @@ public interface CairoConfiguration {
 
     boolean isSqlParallelGroupByEnabled();
 
+    boolean isSqlParallelReadParquetEnabled();
+
     boolean isTableTypeConversionEnabled();
 
     boolean isWalApplyEnabled();
@@ -671,6 +679,4 @@ public interface CairoConfiguration {
     }
 
     boolean useFastAsOfJoin();
-
-    Metrics getMetrics();
 }
