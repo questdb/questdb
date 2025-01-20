@@ -62,14 +62,15 @@ public class WalWriterTest extends AbstractCairoTest {
     @Test
     public void applyMaySmallCommitsHappyDays() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table sm (id int, ts timestamp, y long, s string, v varchar) timestamp(ts) partition by DAY WAL");
+            execute("create table sm (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("sm");
             long startTs = IntervalUtils.parseFloorPartialTimestamp("2022-02-24");
             long tsIncrement = Timestamps.MINUTE_MICROS;
 
             long ts = startTs;
-            int totalRows = 100;
+            int totalRows = 20;
             int iterations = 20;
+            int symbolCount = 75;
 
             Utf8StringSink sink = new Utf8StringSink();
             StringSink stringSink = new StringSink();
@@ -88,6 +89,9 @@ public class WalWriterTest extends AbstractCairoTest {
                             sink.clear();
                             sink.put(i);
                             row.putVarchar(4, sink);
+                            stringSink.clear();
+                            stringSink.put(i % symbolCount);
+                            row.putSym(5, stringSink);
                             row.append();
                             walWriter1.commit();
 
@@ -100,6 +104,9 @@ public class WalWriterTest extends AbstractCairoTest {
                             sink.clear();
                             sink.put(i + 1);
                             row2.putVarchar(4, sink);
+                            stringSink.clear();
+                            stringSink.put((i + 1) % symbolCount);
+                            row2.putSym(5, stringSink);
                             row2.append();
                             walWriter2.commit();
 
@@ -112,8 +119,9 @@ public class WalWriterTest extends AbstractCairoTest {
                     assertSql("count\tmin\tmax\n" +
                             (c + 1) * totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Timestamps.toUSecString(ts - tsIncrement) + "\n", "select count(*), min(ts), max(ts) from sm");
                     assertSqlCursors("sm", "select * from sm order by id");
-                    assertSql("id\tts\ty\ts\tv\n", "select * from sm WHERE id <> cast(s as int)");
-                    assertSql("id\tts\ty\ts\tv\n", "select * from sm WHERE id <> cast(v as int)");
+                    assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(s as int)");
+                    assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(v as int)");
+                    assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id % " + symbolCount + " <> cast(m as int)");
                 }
             }
         });

@@ -651,7 +651,7 @@ void merge_shuffle_symbol_column_from_many_addresses(
         const int32_t *symbol_map,
         uint64_t symbol_map_size) {
     // Reverse index is saved at the end of the merge_index
-    const TIdx *reverse_index = reinterpret_cast<const TIdx *>(merge_index + row_count);
+    const TIdx *reverse_index = reinterpret_cast<const TIdx *>(&merge_index[row_count]);
 
     TIdx out_index = 0;
     for (uint64_t txn_index = 0; txn_index < txn_count; txn_index++) {
@@ -662,7 +662,7 @@ void merge_shuffle_symbol_column_from_many_addresses(
 
         for (uint64_t seg_row = segment_txns[txn_index].segment_row_offset; seg_row < hi; seg_row++, out_index++) {
             int32_t value = segment_addr[seg_row];
-            if (value > clean_symbol_count) {
+            if (value >= clean_symbol_count) {
                 dst[reverse_index[out_index]] = symbol_map[map_offset + value - clean_symbol_count];
             } else {
                 dst[reverse_index[out_index]] = value;

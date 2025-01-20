@@ -782,7 +782,7 @@ Java_io_questdb_std_Vect_radixSortManySegmentsIndexAsc(
     auto min_ts = __JLONG_REINTERPRET_CAST__(int64_t, minTimestamp);
     auto max_ts = __JLONG_REINTERPRET_CAST__(int64_t, maxTimestamp);
     auto lag_row_count = __JLONG_REINTERPRET_CAST__(uint64_t, lagRowCount);
-    auto total_row_count_bytes = (range_bytes(totalRowCount) + 3) / 4;
+    auto total_row_count_bytes = range_bytes(totalRowCount);
 
     auto ts_range_bytes = range_bytes(max_ts - min_ts);
     auto txn_bytes = range_bytes(txn_count);
@@ -953,13 +953,18 @@ Java_io_questdb_std_Vect_mergeShuffleSymbolColumnFromManyAddresses(
 
     switch (row_index_bytes) {
         case 1:
+            merge_shuffle_symbol_column_from_many_addresses<uint8_t>(src, dst, merge_index_address, row_count, txn_info_addr, txn_count, symbol_map, symbol_map_size);
+            break;
         case 2:
+            merge_shuffle_symbol_column_from_many_addresses<uint16_t>(src, dst, merge_index_address, row_count, txn_info_addr, txn_count, symbol_map, symbol_map_size);
+            break;
         case 3:
         case 4:
             merge_shuffle_symbol_column_from_many_addresses<uint32_t>(src, dst, merge_index_address, row_count, txn_info_addr, txn_count, symbol_map, symbol_map_size);
             break;
         default:
             merge_shuffle_symbol_column_from_many_addresses<uint64_t>(src, dst, merge_index_address, row_count, txn_info_addr, txn_count, symbol_map, symbol_map_size);
+            break;
     }
 
     return 0;

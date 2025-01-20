@@ -7244,7 +7244,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         Math.abs(tsLagBufferAddr),
                         walLagRowCount,
                         Math.min(segmentCopyInfo.getMinTimestamp(), txWriter.getLagMinTimestamp()),
-                        Math.max(segmentCopyInfo.getMaxTimestamp(), txWriter.getLagMaxTimestamp())
+                        Math.max(segmentCopyInfo.getMaxTimestamp(), txWriter.getLagMaxTimestamp()),
+                        totalRows
                 );
 
                 if (segmentBytes < 0) {
@@ -7364,13 +7365,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long lagSize = 0, lagMemOffset = 0;
 
         long walLagRowCount = txWriter.getLagRowCount();
+        long lagAddr = 0;
         if (walLagRowCount > 0) {
             // Lag is stored in mapped columns
             if (!varSize) {
                 lagSize = walLagRowCount << 3;
                 lagMemOffset = (txWriter.getTransientRowCount() - getColumnTop(columnIndex)) << shl;
                 var lagMem = columns.get(getPrimaryColumnIndex(columnIndex));
-                long lagAddr = mapAppendColumnBuffer(lagMem, lagMemOffset, lagSize, false);
+                lagAddr = mapAppendColumnBuffer(lagMem, lagMemOffset, lagSize, false);
                 Unsafe.getUnsafe().putLong(mappedAddrBuffPrimary + totalSegmentAddresses - 1, Math.abs(lagAddr));
             } else {
                 throw new IllegalStateException("TODO var col lag");
@@ -7396,7 +7398,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     var mapWriter = symbolMapWriters.get(columnIndex);
                     int denseSymbolCount = denseSymbolMapWriters.size();
                     long txnCount = this.segmentCopyInfo.getTxnCount();
-                    try (DirectIntList symbolMap = new DirectIntList(txnCount * 2, MemoryTag.MMAP_O3)) {
+                    try (DirectIntList symbolMap = new DirectIntList(txnCount * 2, MemoryTag.NATIVE_O3)) {
                         // Header, 2 ints per symbol,
                         // - clear symbol count
                         // - offset of the map start for the transactions
@@ -7404,13 +7406,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                         boolean updatedNullFlag = false;
 
+                        // TODO: add symbols in the seqTxn order,
+                        //  not the order the transactions are recorded in segmentCopyInfo
+
                         // For each transaction there will be an area in the symbolMap
                         // where (transaction symbol key - clearCount) index contains the new symbol key
                         for (long txnIndex = 0; txnIndex < txnCount; txnIndex++) {
-                            // Set in the
 
-                            long seqTxn = this.segmentCopyInfo.getSeqTxn(txnIndex);
+                            long seqTxn = segmentCopyInfo.getSeqTxn(txnIndex);
                             SymbolMapDiff symbolMapDiff = walTxnDetails.getWalSymbolColMap(seqTxn, columnIndex);
+                            symbolMap.setCapacity(mapOffsetStart + symbolMapDiff.getRecordCount());
                             symbolMap.setPos(mapOffsetStart + symbolMapDiff.getRecordCount());
 
                             SymbolMapDiffEntry entry;
@@ -7454,7 +7459,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 symbolMap.size()
                         );
                     }
-
                 }
 
             } else {
@@ -7490,7 +7494,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (walLagRowCount > 0) {
                 // Lag is stored in mapped columns
                 if (!varSize) {
-                    long lagAddr = Unsafe.getUnsafe().getLong(mappedAddrBuffPrimary + totalSegmentAddresses - 1);
                     mapAppendColumnBufferRelease(lagAddr, lagMemOffset, lagSize);
                 }
             }

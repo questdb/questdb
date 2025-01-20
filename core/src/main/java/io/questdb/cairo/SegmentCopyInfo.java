@@ -35,8 +35,19 @@ public class SegmentCopyInfo implements QuietCloseable {
     private long maxTxnRowCount;
     private long minTimestamp = Long.MAX_VALUE;
     private DirectLongList segments = new DirectLongList(4, MemoryTag.NATIVE_TABLE_WRITER);
+    private long startSeqTxn;
     private DirectLongList txns = new DirectLongList(4, MemoryTag.NATIVE_TABLE_WRITER);
     private long totalRows;
+
+    public void clear() {
+        segments.clear();
+        txns.clear();
+        totalRows = 0;
+        maxTxnRowCount = 0;
+        startSeqTxn = 0;
+        minTimestamp = Long.MAX_VALUE;
+        maxTimestamp = Long.MIN_VALUE;
+    }
 
     public void addSegment(int walId, int segmentId, long segmentLo, long segmentHi) {
         segments.add(walId);
@@ -56,13 +67,8 @@ public class SegmentCopyInfo implements QuietCloseable {
         this.maxTimestamp = Math.max(this.maxTimestamp, maxTimestamp);
     }
 
-    public void clear() {
-        segments.clear();
-        txns.clear();
-        totalRows = 0;
-        maxTxnRowCount = 0;
-        minTimestamp = Long.MAX_VALUE;
-        maxTimestamp = Long.MIN_VALUE;
+    public long getSeqTxn(long txnIndex) {
+        return startSeqTxn + txns.get(txnIndex * 4L + 1);
     }
 
     @Override
@@ -99,8 +105,12 @@ public class SegmentCopyInfo implements QuietCloseable {
         return segments.getAddress();
     }
 
-    public long getSeqTxn(long txnIndex) {
-        return txns.get(txnIndex * 4L + 1);
+    public long getStartTxn() {
+        return startSeqTxn;
+    }
+
+    public void setStartSeqTxn(long seqTxn) {
+        startSeqTxn = seqTxn;
     }
 
     public long getTotalRows() {

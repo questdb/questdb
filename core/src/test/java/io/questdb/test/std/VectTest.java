@@ -1654,7 +1654,8 @@ public class VectTest {
                         lagBuf,
                         lagRows,
                         startTs,
-                        maxTs
+                        maxTs,
+                        totalRows
                 );
 
                 Assert.assertTrue("Internal sort failure: " + bytesPerSegmentId, bytesPerSegmentId >= 0 && bytesPerSegmentId <= 8);

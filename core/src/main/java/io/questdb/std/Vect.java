@@ -301,7 +301,8 @@ public final class Vect {
             long tsLagRowAddr,
             long tsLagRowCount,
             long minTimestamp,
-            long maxTimestamp
+            long maxTimestamp,
+            long totalRows
     );
 
     public static native void resetPerformanceCounters();

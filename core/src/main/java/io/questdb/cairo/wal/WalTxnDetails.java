@@ -86,9 +86,9 @@ public class WalTxnDetails {
             }
         }
 
-        return 1;
+//        return 1;
 //         TODO: support blocked transactions
-//        return blockSize;
+        return blockSize;
     }
 
     public long getCommitToTimestamp(long seqTxn) {
@@ -179,6 +179,7 @@ public class WalTxnDetails {
     }
 
     public void prepareCopySegments(long startSeqTxn, int blockTransactionCount, SegmentCopyInfo copyTasks) {
+        copyTasks.setStartSeqTxn(startSeqTxn);
         try (var sortedBySegmentTxnSlice = sortSliceByWalAndSegment(startSeqTxn, blockTransactionCount)) {
             int lastSegmentId = -1;
             int lastWalId = -1;
