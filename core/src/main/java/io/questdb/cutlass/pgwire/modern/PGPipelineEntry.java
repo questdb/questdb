@@ -1149,6 +1149,14 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 continue;
             }
 
+            // value must remain within message limit. this will never happen with a full-functioning client, but
+            // a non-compliant client could send us rubbish or a bad actor could try to crash the server.
+            if (lo + valueSize > msgLimit) {
+                throw kaput()
+                        .put("bind variable value is beyond the message limit [variableIndex=").put(i)
+                        .put(", valueSize=").put(valueSize).put(']');
+            }
+
             // read the pgwire protocol types
             if (msgBindParameterFormatCodes.get(i)) {
                 // beware, pgwire type is encoded as big endian
