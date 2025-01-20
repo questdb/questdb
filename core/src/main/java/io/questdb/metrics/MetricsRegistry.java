@@ -28,7 +28,7 @@ public interface MetricsRegistry extends Target {
 
     void addTarget(Target target);
 
-    CounterWithOneLabel newCounter(CharSequence name, CharSequence labelName0, CharSequence[] labelValues0);
+    AtomicLongGauge newAtomicLongGauge(CharSequence name);
 
     CounterWithTwoLabels newCounter(
             CharSequence name,
@@ -37,6 +37,8 @@ public interface MetricsRegistry extends Target {
     );
 
     Counter newCounter(CharSequence name);
+
+    CounterWithOneLabel newCounter(CharSequence name, CharSequence labelName0, CharSequence[] labelValues0);
 
     DoubleGauge newDoubleGauge(CharSequence name);
 

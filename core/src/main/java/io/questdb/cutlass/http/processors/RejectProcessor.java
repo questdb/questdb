@@ -64,8 +64,8 @@ public interface RejectProcessor extends HttpRequestProcessor, HttpMultipartCont
             return this;
         }
 
-        public RejectMessageBuilder $(int i) {
-            rejectMessage.put(i);
+        public RejectMessageBuilder $(long l) {
+            rejectMessage.put(l);
             return this;
         }
 

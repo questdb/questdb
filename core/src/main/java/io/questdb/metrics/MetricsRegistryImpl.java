@@ -37,6 +37,13 @@ public class MetricsRegistryImpl implements MetricsRegistry {
     }
 
     @Override
+    public AtomicLongGauge newAtomicLongGauge(CharSequence name) {
+        AtomicLongGauge gauge = new AtomicLongGaugeImpl(name);
+        metrics.add(gauge);
+        return gauge;
+    }
+
+    @Override
     public Counter newCounter(CharSequence name) {
         Counter counter = new CounterImpl(name);
         metrics.add(counter);

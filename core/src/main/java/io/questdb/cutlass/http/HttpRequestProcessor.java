@@ -26,18 +26,14 @@ package io.questdb.cutlass.http;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.SecurityContext;
-import io.questdb.metrics.LongGauge;
+import io.questdb.metrics.AtomicLongGauge;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.QueryPausedException;
 import io.questdb.network.ServerDisconnectException;
 
-import java.util.concurrent.atomic.AtomicInteger;
-
 public interface HttpRequestProcessor {
-    AtomicInteger jsonQueryConnectionsCounter = new AtomicInteger();
-
-    default LongGauge connectionCountGauge(Metrics metrics) {
+    default AtomicLongGauge connectionCountGauge(Metrics metrics) {
         return metrics.jsonQueryMetrics().connectionCountGauge();
     }
 
@@ -52,10 +48,6 @@ public interface HttpRequestProcessor {
 
     default int getConnectionLimit(HttpContextConfiguration configuration) {
         return configuration.getJsonQueryConnectionLimit();
-    }
-
-    default AtomicInteger getConnectionsCounter() {
-        return jsonQueryConnectionsCounter;
     }
 
     default byte getRequiredAuthType() {

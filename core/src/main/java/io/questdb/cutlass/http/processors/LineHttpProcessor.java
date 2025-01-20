@@ -27,25 +27,17 @@ package io.questdb.cutlass.http.processors;
 import io.questdb.Metrics;
 import io.questdb.cutlass.http.HttpContextConfiguration;
 import io.questdb.cutlass.http.HttpRequestProcessor;
-import io.questdb.metrics.LongGauge;
-
-import java.util.concurrent.atomic.AtomicInteger;
+import io.questdb.metrics.AtomicLongGauge;
 
 public interface LineHttpProcessor extends HttpRequestProcessor {
-    AtomicInteger lineHttpConnectionsCounter = new AtomicInteger();
 
     @Override
-    default LongGauge connectionCountGauge(Metrics metrics) {
+    default AtomicLongGauge connectionCountGauge(Metrics metrics) {
         return metrics.lineMetrics().httpConnectionCountGauge();
     }
 
     @Override
     default int getConnectionLimit(HttpContextConfiguration configuration) {
         return configuration.getIlpConnectionLimit();
-    }
-
-    @Override
-    default AtomicInteger getConnectionsCounter() {
-        return lineHttpConnectionsCounter;
     }
 }

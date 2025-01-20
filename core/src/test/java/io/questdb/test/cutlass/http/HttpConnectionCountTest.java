@@ -39,7 +39,6 @@ import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.client.Response;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
-import io.questdb.cutlass.http.processors.LineHttpProcessor;
 import io.questdb.cutlass.http.processors.LineHttpProcessorImpl;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
@@ -80,8 +79,6 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
 
     @Before
     public void setUp() {
-        HttpRequestProcessor.jsonQueryConnectionsCounter.set(0);
-        LineHttpProcessor.lineHttpConnectionsCounter.set(0);
         super.setUp();
     }
 

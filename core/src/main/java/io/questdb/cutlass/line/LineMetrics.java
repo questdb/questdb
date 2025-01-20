@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line;
 
+import io.questdb.metrics.AtomicLongGauge;
 import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.MetricsRegistry;
@@ -33,13 +34,13 @@ public class LineMetrics implements Mutable {
 
     private final Counter aboveMaxConnectionCountCounter;
     private final Counter belowMaxConnectionCountCounter;
-    private final LongGauge httpConnectionCountGauge;
+    private final AtomicLongGauge httpConnectionCountGauge;
     private final LongGauge tcpConnectionCountGauge;
     private final LongGauge totalIlpHttpBytesGauge;
     private final LongGauge totalIlpTcpBytesGauge;
 
     public LineMetrics(MetricsRegistry metricsRegistry) {
-        this.httpConnectionCountGauge = metricsRegistry.newLongGauge("line_http_connections");
+        this.httpConnectionCountGauge = metricsRegistry.newAtomicLongGauge("line_http_connections");
         this.tcpConnectionCountGauge = metricsRegistry.newLongGauge("line_tcp_connections");
         this.totalIlpTcpBytesGauge = metricsRegistry.newLongGauge("line_tcp_recv_bytes");
         this.totalIlpHttpBytesGauge = metricsRegistry.newLongGauge("line_http_recv_bytes");
@@ -65,7 +66,7 @@ public class LineMetrics implements Mutable {
         belowMaxConnectionCountCounter.reset();
     }
 
-    public LongGauge httpConnectionCountGauge() {
+    public AtomicLongGauge httpConnectionCountGauge() {
         return httpConnectionCountGauge;
     }
 

@@ -24,47 +24,6 @@
 
 package io.questdb.metrics;
 
-import io.questdb.std.str.BorrowableUtf8Sink;
-import org.jetbrains.annotations.NotNull;
-
-public class NullLongGauge implements AtomicLongGauge {
-    public static final NullLongGauge INSTANCE = new NullLongGauge();
-
-    private NullLongGauge() {
-    }
-
-    @Override
-    public void add(long value) {
-    }
-
-    @Override
-    public void dec() {
-    }
-
-    @Override
-    public CharSequence getName() {
-        return null;
-    }
-
-    @Override
-    public long getValue() {
-        return 0;
-    }
-
-    @Override
-    public void inc() {
-    }
-
-    @Override
-    public long incrementAndGet() {
-        return 0;
-    }
-
-    @Override
-    public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
-    }
-
-    @Override
-    public void setValue(long value) {
-    }
+public interface AtomicLongGauge extends LongGauge {
+    long incrementAndGet();
 }

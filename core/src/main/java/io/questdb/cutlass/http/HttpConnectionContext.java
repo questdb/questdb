@@ -38,7 +38,7 @@ import io.questdb.cutlass.http.ex.TooFewBytesReceivedException;
 import io.questdb.cutlass.http.processors.RejectProcessor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.metrics.LongGauge;
+import io.questdb.metrics.AtomicLongGauge;
 import io.questdb.network.HeartBeatException;
 import io.questdb.network.IOContext;
 import io.questdb.network.IODispatcher;
@@ -67,8 +67,6 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
-
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cutlass.http.HttpConstants.HEADER_CONTENT_ACCEPT_ENCODING;
 import static io.questdb.cutlass.http.HttpConstants.HEADER_TRANSFER_ENCODING;
@@ -102,9 +100,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     };
     private final AssociativeCache<RecordCursorFactory> selectCache;
     private long authenticationNanos = 0L;
+    private AtomicLongGauge connectionCountGauge;
     private boolean connectionCounted;
-    private AtomicInteger connectionsCounter;
-    private LongGauge connectionsGauge;
     private int nCompletedRequests;
     private boolean pendingRetry = false;
     private int receivedBytes;
@@ -186,12 +183,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         }
         this.localValueMap.disconnect();
 
-        if (connectionsCounter != null) {
-            connectionsCounter.decrementAndGet();
-            connectionsGauge.dec();
+        if (connectionCountGauge != null) {
+            connectionCountGauge.dec();
             connectionCounted = false;
-            connectionsCounter = null;
-            connectionsGauge = null;
+            connectionCountGauge = null;
         }
     }
 
@@ -471,13 +466,11 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private HttpRequestProcessor checkConnectionLimit(HttpRequestProcessor processor) {
         final int connectionLimit = processor.getConnectionLimit(configuration.getHttpContextConfiguration());
         if (connectionLimit > -1) {
-            connectionsGauge = processor.connectionCountGauge(metrics);
-            connectionsCounter = processor.getConnectionsCounter();
-            connectionsGauge.inc();
-            final int numOfConnections = connectionsCounter.incrementAndGet();
+            connectionCountGauge = processor.connectionCountGauge(metrics);
+            final long numOfConnections = connectionCountGauge.incrementAndGet();
             if (numOfConnections > connectionLimit) {
                 return rejectProcessor.withShutdownWrite().reject(HTTP_BAD_REQUEST, rejectProcessor.newRejectMessageBuilder()
-                        .$("exceeded connection limit [name=").$(connectionsGauge.getName())
+                        .$("exceeded connection limit [name=").$(connectionCountGauge.getName())
                         .$(", numOfConnections=").$(numOfConnections)
                         .$(", connectionLimit=").$(connectionLimit)
                         .I$()
@@ -485,7 +478,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             }
             if (numOfConnections == connectionLimit && !securityContext.isSystemAdmin()) {
                 return rejectProcessor.withShutdownWrite().reject(HTTP_BAD_REQUEST, rejectProcessor.newRejectMessageBuilder()
-                        .$("non-admin user exceeded connection limit [name=").$(connectionsGauge.getName())
+                        .$("non-admin user exceeded connection limit [name=").$(connectionCountGauge.getName())
                         .$(", numOfConnections=").$(numOfConnections)
                         .$(", connectionLimit=").$(connectionLimit)
                         .I$()
