@@ -24,43 +24,38 @@
 
 package io.questdb.metrics;
 
-import java.util.concurrent.atomic.AtomicLong;
+import io.questdb.std.str.BorrowableUtf8Sink;
+import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.NotNull;
 
-public class AtomicLongGaugeImpl extends AbstractLongGauge implements AtomicLongGauge {
-    private final AtomicLong counter;
+abstract class AbstractLongGauge implements LongGauge {
+    private final CharSequence name;
 
-    public AtomicLongGaugeImpl(CharSequence name) {
-        super(name);
-        counter = new AtomicLong();
+    AbstractLongGauge(CharSequence name) {
+        this.name = name;
     }
 
     @Override
-    public void add(long value) {
-        counter.addAndGet(value);
+    public CharSequence getName() {
+        return name;
     }
 
     @Override
-    public void dec() {
-        counter.decrementAndGet();
+    public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
+        appendType(sink);
+        appendMetricName(sink);
+        PrometheusFormatUtils.appendSampleLineSuffix(sink, getValue());
+        PrometheusFormatUtils.appendNewLine(sink);
     }
 
-    @Override
-    public long getValue() {
-        return counter.get();
+    private void appendMetricName(CharSink<?> sink) {
+        sink.putAscii(PrometheusFormatUtils.METRIC_NAME_PREFIX);
+        sink.put(name);
     }
 
-    @Override
-    public void inc() {
-        counter.incrementAndGet();
-    }
-
-    @Override
-    public long incrementAndGet() {
-        return counter.incrementAndGet();
-    }
-
-    @Override
-    public void setValue(long value) {
-        counter.set(value);
+    private void appendType(CharSink<?> sink) {
+        sink.putAscii(PrometheusFormatUtils.TYPE_PREFIX);
+        sink.put(name);
+        sink.putAscii(" gauge\n");
     }
 }
