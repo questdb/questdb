@@ -416,7 +416,7 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void reset() {
             super.reset();
-            count = 0;
+            count = rowsHi;
         }
 
         @Override
@@ -442,7 +442,7 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void toTop() {
             super.toTop();
-            count = 0;
+            count = rowsHi;
         }
     }
 }

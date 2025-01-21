@@ -44,10 +44,18 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
         return true;
     }
 
+    protected boolean supportNullsDesc() {
+        return false;
+    }
+
     protected void checkWindowParameter(int position, SqlExecutionContext sqlExecutionContext) throws SqlException {
         windowContext = sqlExecutionContext.getWindowContext();
         if (windowContext.isEmpty()) {
             throw SqlException.emptyWindowContext(position);
+        }
+
+        if (windowContext.getNullsDescPos() > 0 && !this.supportNullsDesc()) {
+            throw SqlException.$(windowContext.getNullsDescPos(), "RESPECT/IGNORE NULLS is not supported for current window function");
         }
 
         rowsLo = windowContext.getRowsLo();

@@ -9576,7 +9576,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         " ts timestamp" +
                         ") timestamp(ts) partition by day",
                 7,
-                "too many arguments"
+                "wrong number of arguments for function `row_number`"
         );
     }
 
