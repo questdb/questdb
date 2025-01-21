@@ -32,6 +32,12 @@ import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.std.Mutable;
 
 public interface GroupByFunction extends Function, Mutable {
+    int SAMPLE_BY_FILL_LINEAR = 4;
+    int SAMPLE_BY_FILL_NONE = 8;
+    int SAMPLE_BY_FILL_NULL = 16;
+    int SAMPLE_BY_FILL_PREVIOUS = 2;
+    int SAMPLE_BY_FILL_VALUE = 1;
+    int SAMPLE_BY_FILL_ALL = SAMPLE_BY_FILL_LINEAR | SAMPLE_BY_FILL_NONE | SAMPLE_BY_FILL_PREVIOUS | SAMPLE_BY_FILL_VALUE | SAMPLE_BY_FILL_NULL;
 
     @Override
     default void clear() {
@@ -74,6 +80,10 @@ public interface GroupByFunction extends Function, Mutable {
      */
     default boolean earlyExit(MapValue mapValue) {
         return false;
+    }
+
+    default int getSampleByFlags() {
+        return SAMPLE_BY_FILL_VALUE | SAMPLE_BY_FILL_NONE | SAMPLE_BY_FILL_NULL | SAMPLE_BY_FILL_PREVIOUS;
     }
 
     int getValueIndex();

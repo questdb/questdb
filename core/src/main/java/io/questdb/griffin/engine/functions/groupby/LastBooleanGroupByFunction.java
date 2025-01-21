@@ -31,7 +31,7 @@ import org.jetbrains.annotations.NotNull;
 
 public class LastBooleanGroupByFunction extends FirstBooleanGroupByFunction {
 
-    public LastBooleanGroupByFunction(int position, @NotNull Function arg) {
+    public LastBooleanGroupByFunction(@NotNull Function arg) {
         super(arg);
     }
 
