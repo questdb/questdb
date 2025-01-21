@@ -74,10 +74,12 @@ public class RejectProcessorImpl implements RejectProcessor {
     }
 
     @Override
-    public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    public void onRequestComplete(
+            HttpConnectionContext context
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final HttpResponseSink.SimpleResponseImpl response = httpConnectionContext.simpleResponse();
         if (rejectCode == HTTP_UNAUTHORIZED) {
-            response.sendStatusTextContent(HTTP_UNAUTHORIZED);
+            handleHttpUnauthorized(response);
         } else {
             response.sendStatusWithCookie(rejectCode, rejectMessage, rejectCookieName, rejectCookieValue);
         }
@@ -120,5 +122,11 @@ public class RejectProcessorImpl implements RejectProcessor {
     public RejectProcessor withShutdownWrite() {
         this.shutdownWrite = true;
         return this;
+    }
+
+    protected void handleHttpUnauthorized(
+            HttpResponseSink.SimpleResponseImpl response
+    ) throws PeerIsSlowToReadException, PeerDisconnectedException {
+        response.sendStatusTextContent(HTTP_UNAUTHORIZED);
     }
 }
