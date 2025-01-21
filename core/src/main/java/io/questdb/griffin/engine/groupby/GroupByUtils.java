@@ -94,7 +94,8 @@ public class GroupByUtils {
             ArrayColumnTypes outValueTypes,
             ArrayColumnTypes outKeyTypes,
             ListColumnFilter outColumnFilter,
-            @Nullable ObjList<ExpressionNode> sampleByFill // fill mode for sample by functions, for validation
+            @Nullable ObjList<ExpressionNode> sampleByFill, // fill mode for sample by functions, for validation
+            boolean validateFill
     ) throws SqlException {
         try {
             outGroupByFunctionPositions.clear();
@@ -135,26 +136,28 @@ public class GroupByUtils {
                             int funcIndex = outGroupByFunctions.size();
                             int sampleByFlags = func.getSampleByFlags();
                             ExpressionNode fillNode = sampleByFill.getQuick(Math.min(funcIndex, fillCount - 1));
-                            if (SqlKeywords.isNullKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_NULL) == 0) {
-                                throw SqlException.$(node.position, "support for NULL fill is not yet implemented [function=").put(node)
-                                        .put(", class=").put(func.getClass().getName())
-                                        .put(']');
-                            } else if (SqlKeywords.isPrevKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_PREVIOUS) == 0) {
-                                throw SqlException.$(node.position, "support for PREV fill is not yet implemented [function=").put(node)
-                                        .put(", class=").put(func.getClass().getName())
-                                        .put(']');
-                            } else if (SqlKeywords.isLinearKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_LINEAR) == 0) {
-                                throw SqlException.$(node.position, "support for LINEAR fill is not yet implemented [function=").put(node)
-                                        .put(", class=").put(func.getClass().getName())
-                                        .put(']');
-                            } else if (SqlKeywords.isNoneKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_NONE) == 0) {
-                                throw SqlException.$(node.position, "support for NONE fill is not yet implemented [function=").put(node)
-                                        .put(", class=").put(func.getClass().getName())
-                                        .put(']');
-                            } else if ((sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_VALUE) == 0) {
-                                throw SqlException.$(node.position, "support for VALUE fill is not yet implemented [function=").put(node)
-                                        .put(", class=").put(func.getClass().getName())
-                                        .put(']');
+                            if (validateFill) {
+                                if (SqlKeywords.isNullKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_NULL) == 0) {
+                                    throw SqlException.$(node.position, "support for NULL fill is not yet implemented [function=").put(node)
+                                            .put(", class=").put(func.getClass().getName())
+                                            .put(']');
+                                } else if (SqlKeywords.isPrevKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_PREVIOUS) == 0) {
+                                    throw SqlException.$(node.position, "support for PREV fill is not yet implemented [function=").put(node)
+                                            .put(", class=").put(func.getClass().getName())
+                                            .put(']');
+                                } else if (SqlKeywords.isLinearKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_LINEAR) == 0) {
+                                    throw SqlException.$(node.position, "support for LINEAR fill is not yet implemented [function=").put(node)
+                                            .put(", class=").put(func.getClass().getName())
+                                            .put(']');
+                                } else if (SqlKeywords.isNoneKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_NONE) == 0) {
+                                    throw SqlException.$(node.position, "support for NONE fill is not yet implemented [function=").put(node)
+                                            .put(", class=").put(func.getClass().getName())
+                                            .put(']');
+                                } else if ((sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_VALUE) == 0) {
+                                    throw SqlException.$(node.position, "support for VALUE fill is not yet implemented [function=").put(node)
+                                            .put(", class=").put(func.getClass().getName())
+                                            .put(']');
+                                }
                             }
                         }
                         func.initValueTypes(outValueTypes);
