@@ -206,6 +206,29 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                             "{\"query\":\"select length('qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq');\",\"columns\":[{\"name\":\"length\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[150]],\"count\":1}",
                             query
                     );
+                    Assert.fail();
+                } catch (HttpClientException ignore) {
+
+                }
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("http.net.bind.to=0.0.0.0:9001\n");
+                    // add size for the second copy of the URL query
+                    w.write("http.request.header.buffer.size=500\n");
+                    w.write("http.recv.buffer.size=300\n");
+                }
+
+                assertReloadConfig(true);
+
+                // second reload should not reload (no changes)
+                assertReloadConfig(false);
+
+                try (TestHttpClient testHttpClient = new TestHttpClient()) {
+                    testHttpClient.assertGet(
+                            "/exec",
+                            "{\"query\":\"select length('qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq');\",\"columns\":[{\"name\":\"length\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[150]],\"count\":1}",
+                            query
+                    );
                 }
             }
         });

@@ -776,9 +776,15 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
 
                     // parse and decode query string
                     if (query != null) {
-                        Vect.memcpy(_wptr, query.ptr(), query.size());
-                        int o = urlDecode(_wptr, _wptr + query.size(), urlParams);
-                        _wptr += query.size() - o;
+                        final int querySize = query.size();
+                        final long newBoundary = _wptr + querySize;
+                        if (querySize > 0 && newBoundary < this.hi) {
+                            Vect.memcpy(_wptr, query.ptr(), querySize);
+                            int o = urlDecode(_wptr, newBoundary, urlParams);
+                            _wptr = newBoundary - o;
+                        } else {
+                            throw HttpException.instance("URL query string is too long");
+                        }
                     }
                     this._lo = _wptr;
                     return (int) (p - lo);
