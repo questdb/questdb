@@ -566,22 +566,22 @@ public class TtlTest extends AbstractCairoTest {
     @Test
     public void testTablesFunction() throws Exception {
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR" + wal);
-        assertSql("ttlValue\tttlUnit\n0\tHOUR\n", "select ttlValue, ttlUnit from (tables())");
+        assertSql("ttlValue\tttlUnit\n0\tHOUR\n", "select ttlValue, ttlUnit from tables()");
         execute("ALTER TABLE tango SET TTL 2 HOURS");
         drainWalQueue();
-        assertSql("ttlValue\tttlUnit\n2\tHOUR\n", "select ttlValue, ttlUnit from (tables())");
+        assertSql("ttlValue\tttlUnit\n2\tHOUR\n", "select ttlValue, ttlUnit from tables()");
         execute("ALTER TABLE tango SET TTL 2 DAYS");
         drainWalQueue();
-        assertSql("ttlValue\tttlUnit\n2\tDAY\n", "select ttlValue, ttlUnit from (tables())");
+        assertSql("ttlValue\tttlUnit\n2\tDAY\n", "select ttlValue, ttlUnit from tables()");
         execute("ALTER TABLE tango SET TTL 2 WEEKS");
         drainWalQueue();
-        assertSql("ttlValue\tttlUnit\n2\tWEEK\n", "select ttlValue, ttlUnit from (tables())");
+        assertSql("ttlValue\tttlUnit\n2\tWEEK\n", "select ttlValue, ttlUnit from tables()");
         execute("ALTER TABLE tango SET TTL 2 MONTHS");
         drainWalQueue();
-        assertSql("ttlValue\tttlUnit\n2\tMONTH\n", "select ttlValue, ttlUnit from (tables())");
+        assertSql("ttlValue\tttlUnit\n2\tMONTH\n", "select ttlValue, ttlUnit from tables()");
         execute("ALTER TABLE tango SET TTL 2 YEARS");
         drainWalQueue();
-        assertSql("ttlValue\tttlUnit\n2\tYEAR\n", "select ttlValue, ttlUnit from (tables())");
+        assertSql("ttlValue\tttlUnit\n2\tYEAR\n", "select ttlValue, ttlUnit from tables()");
     }
 
     @Test

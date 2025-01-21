@@ -402,6 +402,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals("unknown", configuration.getCairoConfiguration().getBuildInformation().getCommitHash());
 
         Assert.assertFalse(configuration.getMetricsConfiguration().isEnabled());
+        Assert.assertFalse(configuration.getCairoConfiguration().isQueryTracingEnabled());
 
         Assert.assertEquals(4, configuration.getCairoConfiguration().getQueryCacheEventQueueCapacity());
         Assert.assertEquals(16777216, configuration.getCairoConfiguration().getDataAppendPageSize());

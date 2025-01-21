@@ -81,7 +81,8 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             PropertyKey.HTTP_RECV_BUFFER_SIZE,
             PropertyKey.HTTP_SEND_BUFFER_SIZE,
             PropertyKey.HTTP_NET_CONNECTION_LIMIT,
-            PropertyKey.LINE_TCP_NET_CONNECTION_LIMIT
+            PropertyKey.LINE_TCP_NET_CONNECTION_LIMIT,
+            PropertyKey.QUERY_TRACING_ENABLED
     ));
     private static final Function<String, ? extends ConfigPropertyKey> keyResolver = (k) -> {
         Optional<PropertyKey> prop = PropertyKey.getByString(k);

@@ -53,6 +53,7 @@ public final class Timestamps {
     public static final long FIRST_CENTURY_MICROS = -62135596800000000L;
     public static final long HOUR_MICROS = 3600000000L;
     public static final long HOUR_SECONDS = 3600;
+    public static final long MICRO_NANOS = 1000;
     public static final long MILLI_MICROS = 1000;
     public static final long MINUTE_MICROS = 60000000;
     public static final long MINUTE_SECONDS = 60;

@@ -49,7 +49,7 @@ public class TelemetryTask implements AbstractTelemetryTask {
                             "created timestamp, " +
                             "event short, " +
                             "origin short" +
-                            ") timestamp(created)"
+                            ") TIMESTAMP(created) PARTITION BY DAY TTL 1 WEEK BYPASS WAL"
                     );
         }
 

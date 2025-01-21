@@ -217,6 +217,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
             try (FileWriter w = new FileWriter(serverConf)) {
                 w.write("http.net.bind.to=0.0.0.0:9001\n");
                 w.write("http.send.buffer.size=100\n");
+                w.write("query.tracing.enabled=true\n");
             }
 
             try (ServerMain serverMain = new ServerMain(getBootstrap())) {
@@ -520,6 +521,55 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 ) {
                     Assert.assertTrue(rs.next());
                     Assert.assertEquals(len, rs.getString(1).length());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testQueryTracingReload() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                try (Connection conn = getConnection("admin", "quest");
+                     PreparedStatement queryTraceStmt = conn.prepareStatement("query_trace()")
+                ) {
+                    Runnable assertTableDoesntExist = () -> {
+                        try (ResultSet ignored = queryTraceStmt.executeQuery()) {
+                            Assert.fail("Query Trace table exists, but query tracing is disabled");
+                        } catch (SQLException e) {
+                            Assert.assertEquals(
+                                    "ERROR: table does not exist [table=sys.query_trace]\n  Position: 1",
+                                    e.getMessage());
+                        }
+                    };
+
+                    // this executes a query, and would trigger query tracing (if it was enabled) as a side effect
+                    assertTableDoesntExist.run();
+                    Thread.sleep(1_000);
+                    // by this time the query_trace table would most likely exist if tracing was enabled
+                    assertTableDoesntExist.run();
+
+                    try (FileWriter w = new FileWriter(serverConf)) {
+                        w.write("query.tracing.enabled=true\n");
+                    }
+                    // This is also a query. With tracing now on, it triggers creating the query_trace table:
+                    assertReloadConfig(true);
+
+                    int sleepMillis = 100;
+                    while (true) {
+                        Thread.sleep(sleepMillis);
+                        try (ResultSet rs = queryTraceStmt.executeQuery()) {
+                            Assert.assertTrue(rs.next());
+                            break;
+                        } catch (AssertionError | SQLException e) {
+                            if (sleepMillis >= 6400) {
+                                throw e;
+                            }
+                            sleepMillis *= 2;
+                        }
+                    }
                 }
             }
         });
