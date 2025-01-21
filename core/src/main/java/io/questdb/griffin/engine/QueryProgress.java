@@ -67,7 +67,6 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     private final QueryTrace queryTrace = new QueryTrace();
     private final ObjList<TableReader> readers = new ObjList<>();
     private final QueryRegistry registry;
-    private final String sqlText;
     private long beginNanos;
     private SqlExecutionContext executionContext;
     private long sqlId;
@@ -76,9 +75,9 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         super(base.getMetadata());
         this.base = base;
         this.registry = registry;
-        this.sqlText = Chars.toString(sqlText);
         this.cursor = new RegisteredRecordCursor();
         this.jit = base.usesCompiledFilter();
+        queryTrace.queryText = Chars.toString(sqlText);
     }
 
     public static void logEnd(
@@ -132,10 +131,12 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                 log.I$();
             }
         }
+        // When queryTrace is not null, queryTrace.queryText is already set and equal to sqlText,
+        // as well as already converted to an immutable String, as needed to queue it up for handling
+        // at a later time. For this reason, do not assign queryTrace.queryText = sqlText here.
         if (queryTrace != null && engine.getConfiguration().isQueryTracingEnabled()) {
             queryTrace.isJit = isJit;
             queryTrace.timestamp = config.getMicrosecondClock().getTicks();
-            queryTrace.queryText = sqlText;
             queryTrace.executionNanos = durationNanos;
             engine.getMessageBus().getQueryTraceQueue().enqueue(queryTrace);
         }
@@ -266,6 +267,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         if (!cursor.isOpen) {
             this.executionContext = executionContext;
+            CharSequence sqlText = queryTrace.queryText;
             sqlId = registry.register(sqlText, executionContext);
             beginNanos = executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks();
             logStart(sqlId, sqlText, executionContext, jit);
@@ -472,6 +474,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                 // In this case we must be certain that we still track the reader leak
                 if (executionContext != null) {
                     try {
+                        String sqlText = queryTrace.queryText;
                         if (th == null) {
                             logEnd(sqlId, sqlText, executionContext, beginNanos, readers, queryTrace);
                         } else {

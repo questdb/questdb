@@ -25,26 +25,20 @@
 package io.questdb.metrics;
 
 import io.questdb.mp.ValueHolder;
-import io.questdb.std.Misc;
 import io.questdb.std.ObjectFactory;
-
-import java.io.Closeable;
 
 public class QueryTrace implements ValueHolder<QueryTrace> {
     public static final ObjectFactory<QueryTrace> ITEM_FACTORY = QueryTrace::new;
 
     public long executionNanos;
     public boolean isJit;
-    public CharSequence queryText;
+    public String queryText;
     public long timestamp;
 
     @Override
     public void clear() {
         executionNanos = 0;
         isJit = false;
-        if (queryText instanceof Closeable) {
-            Misc.free((Closeable) queryText);
-        }
         queryText = null;
         timestamp = 0;
     }
