@@ -68,7 +68,7 @@ public class WalWriterTest extends AbstractCairoTest {
             long tsIncrement = Timestamps.MINUTE_MICROS;
 
             long ts = startTs;
-            int totalRows = 20;
+            int totalRows = 2000;
             int iterations = 20;
             int symbolCount = 75;
 

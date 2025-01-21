@@ -296,7 +296,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private boolean o3InError = false;
     private long o3MasterRef = -1L;
     private ObjList<MemoryCARW> o3MemColumns1;
-    private final ColumnTaskHandler cthMergeWalColumnManySegments = this::processWalCommitBlockSortWalSegmentTimestampsDispatchColumnSortTasksCthMergeWalColumnManySegments;
     private ObjList<MemoryCARW> o3MemColumns2;
     private ObjList<Runnable> o3NullSetters1;
     private ObjList<Runnable> o3NullSetters2;
@@ -326,6 +325,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private UpdateOperatorImpl updateOperatorImpl;
     private int walFdCacheSize;
     private WalTxnDetails walTxnDetails;
+    private final ColumnTaskHandler cthMergeWalColumnManySegments = this::processWalCommitBlockSortWalSegmentTimestampsDispatchColumnSortTasksCthMergeWalColumnManySegments;
 
     public TableWriter(
             CairoConfiguration configuration,
@@ -7170,6 +7170,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private boolean assertTsIndex(long timestampAddr, long min, long max, long totalRows) {
+        long lastTs = min;
+        for (long j = 0; j < totalRows; j++) {
+            long ts = getTimestampIndexValue(timestampAddr, j);
+            if (ts < min || ts > max || ts < lastTs) {
+                return false;
+            }
+            lastTs = ts;
+        }
+        return true;
+    }
+
+    private boolean assertTsIndexRange(long timestampAddr, long min, long max, long totalRows) {
+        for (long j = 0; j < totalRows; j++) {
+            long ts = getTimestampIndexValue(timestampAddr, j);
+            if (ts < min || ts > max) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private int processWalCommitBlock(
             @Transient Path walPath,
             long startSeqTxn,
@@ -7179,13 +7201,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         segmentCopyInfo.clear();
         walTxnDetails.prepareCopySegments(startSeqTxn, blockTransactionCount, segmentCopyInfo);
 
+        LOG.info().$("processing WAL transaction block [table=").$(tableToken.getDirName())
+                .$(", seqTxn=").$(startSeqTxn).$("..").$(startSeqTxn + blockTransactionCount - 1)
+                .$(", rowCount=").$(segmentCopyInfo.getTotalRows())
+                .$(", minTimestamp=").$ts(segmentCopyInfo.getMinTimestamp())
+                .$(", maxTimestamp=").$ts(segmentCopyInfo.getMaxTimestamp())
+                .I$();
+
         mmapWalColumns(segmentCopyInfo);
         long rowCount = processWalCommitBlockSortWalSegmentTimestamps(walMappedColumns);
         if (rowCount > 0) {
             long walLagCount = 0;
             try {
-                processWalCommitFinishApply(walLagCount, o3TimestampMem.getAddress(), 0, rowCount, regulator, true, partitionTimestampHi);
                 lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
+                processWalCommitFinishApply(walLagCount, o3TimestampMem.getAddress(), 0, rowCount, regulator, true, partitionTimestampHi);
+            } catch (Throwable th) {
+                LOG.critical().$("failed to commit WAL block [table=").$(tableToken.getDirName()).$(", ex=").$(th).I$();
+                throw th;
             } finally {
                 finishO3Append(0);
                 closeWalColumns(true, 0);
@@ -7197,6 +7229,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private long processWalCommitBlockSortWalSegmentTimestamps(ObjList<MemoryCMOR> walMappedColumns) {
         int timestampIndex = metadata.getTimestampIndex();
+        // Timestamp column is special, exclude it here
+        // TODO: we can exclude deleted columns
         int walColumnCountPerSegment = metadata.getColumnCount() * 2;
 
         long walLagRowCount = txWriter.getLagRowCount();
@@ -7204,11 +7238,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long totalSegmentAddresses = segmentCopyInfo.size() + oneForLag;
         long totalColumnAddressSize = totalSegmentAddresses * walColumnCountPerSegment;
 
-        try (var tsAddresses = new DirectLongList(totalColumnAddressSize, MemoryTag.NATIVE_TABLE_WRITER)) {
+        // TODO: make DirectLongList reused
+        try (var tsAddresses = new DirectLongList(totalColumnAddressSize, MemoryTag.NATIVE_O3)) {
 
+            tsAddresses.setPos(totalColumnAddressSize);
             for (int i = 0, n = segmentCopyInfo.size(); i < n; i++) {
                 var segmentTimestampColumn = walMappedColumns.get(walColumnCountPerSegment * i + 2 * timestampIndex);
-                tsAddresses.add(segmentTimestampColumn.addressOf(0));
+                tsAddresses.set(i, segmentTimestampColumn.addressOf(0));
+
+                assert assertTsIndexRange(segmentTimestampColumn.addressOf(0) + 16 * segmentCopyInfo.getRowLo(i),
+                        segmentCopyInfo.getMinTimestamp(),
+                        segmentCopyInfo.getMaxTimestamp(),
+                        segmentCopyInfo.getRowHi(i) - segmentCopyInfo.getRowLo(i));
             }
 
             // sort the LAG rows too
@@ -7226,13 +7267,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 long totalRows = segmentCopyInfo.getTotalRows() + walLagRowCount;
                 // This sort apart from creating normal merge index with 2 longs
                 // creates reverse long index at the end, e.g. it needs one more long per row
-                // It does not need all 64 bits, sometimes it can do with 32bit but here we overallocate
+                // It does not need all 64 bits, most of the cases it can do with 32bit but here we overallocate
                 // and let native code to use what's needed
-                long outBufferSize = totalRows * Long.BYTES * 3;
-                o3TimestampMem.jumpTo(outBufferSize);
-                o3TimestampMemCpy.jumpTo(outBufferSize);
+                o3TimestampMem.jumpTo(totalRows * Long.BYTES * 3);
+                o3TimestampMemCpy.jumpTo(totalRows * Long.BYTES * 3);
 
                 long timestampAddr = o3TimestampMem.getAddress();
+                // TODO: make debug
+                LOG.info().$("sorting [table=").$(tableToken.getTableName())
+                        .$(", newRows=").$(segmentCopyInfo.getTotalRows())
+                        .$(", lagRows=").$(walLagRowCount)
+                        .I$();
+
                 int segmentBytes = Vect.radixSortManySegmentsIndexAsc(
                         timestampAddr,
                         o3TimestampMemCpy.addressOf(0),
@@ -7253,6 +7299,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     throw CairoException.nonCritical().put("could not sort WAL segment timestamps");
                 }
 
+                assert assertTsIndex(timestampAddr,
+                        Math.min(segmentCopyInfo.getMinTimestamp(), txWriter.getLagMinTimestamp()),
+                        Math.max(segmentCopyInfo.getMaxTimestamp(), txWriter.getLagMaxTimestamp()),
+                        totalRows);
+
                 // Add all columns segment mapped addresses
 
                 if (walLagRowCount > 0) {
@@ -7261,8 +7312,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 tsAddresses.setPos(totalColumnAddressSize);
 
+                // TODO: make debug
+                LOG.info().$("shuffling [table=").$(tableToken.getDirName()).$(", columCount=").$(metadata.getColumnCount() - 1)
+                        .$(", segmentBytes=").$(segmentBytes).I$();
                 processWalCommitBlockSortWalSegmentTimestampsDispatchColumnSortTasks(timestampAddr, totalRows, tsAddresses.getAddress(), totalSegmentAddresses, segmentBytes, cthMergeWalColumnManySegments);
+
+                assert o3MemColumns1.get(getPrimaryColumnIndex(timestampIndex)) == o3TimestampMem;
+                assert o3MemColumns2.get(getPrimaryColumnIndex(timestampIndex)) == o3TimestampMemCpy;
+                assert assertTsIndex(timestampAddr,
+                        Math.min(segmentCopyInfo.getMinTimestamp(), txWriter.getLagMinTimestamp()),
+                        Math.max(segmentCopyInfo.getMaxTimestamp(), txWriter.getLagMaxTimestamp()),
+                        totalRows);
+
+
                 o3Columns = o3MemColumns1;
+                activeColumns = o3MemColumns1;
 
                 txWriter.setLagMinTimestamp(Math.min(txWriter.getLagMinTimestamp(), segmentCopyInfo.getMinTimestamp()));
                 txWriter.setLagMaxTimestamp(Math.max(txWriter.getLagMaxTimestamp(), segmentCopyInfo.getMaxTimestamp()));
@@ -7292,15 +7356,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         lastErrno = 0;
         int queuedCount = 0;
 
+        long totalSegmentAddressesBytes = totalSegmentAddresses * Long.BYTES;
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             if (columnIndex != timestampColumnIndex) {
                 int columnType = metadata.getColumnType(columnIndex);
                 if (columnType > 0) {
-                    long cursor = pubSeq.next();
+                    long cursor = -1;//pubSeq.next();
                     long mappedAddrBuffPrimary = columnAddressesBuffer;
-                    columnAddressesBuffer += totalSegmentAddresses;
+                    columnAddressesBuffer += totalSegmentAddressesBytes;
                     if (ColumnType.isVarSize(columnType)) {
-                        columnAddressesBuffer += totalSegmentAddresses;
+                        columnAddressesBuffer += totalSegmentAddressesBytes;
                     }
 
                     if (cursor > -1) {
@@ -7315,7 +7380,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     timestampAddr,
                                     mappedAddrBuffPrimary,
                                     totalRows,
-                                    totalSegmentAddresses,
+                                    totalSegmentAddressesBytes,
                                     segmentBytes,
                                     taskHandler
                             );
@@ -7331,9 +7396,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 timestampAddr,
                                 mappedAddrBuffPrimary,
                                 totalRows,
-                                totalSegmentAddresses,
+                                totalSegmentAddressesBytes,
                                 segmentBytes
                         );
+                        columnAddressesBuffer -= totalSegmentAddressesBytes;
+                        if (ColumnType.isVarSize(columnType)) {
+                            columnAddressesBuffer -= totalSegmentAddressesBytes;
+                        }
                     }
                 }
             }
@@ -7349,13 +7418,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long mergeIndex,
             long mappedAddrBuffPrimary,
             long totalRows,
-            long totalSegmentAddresses,
+            long totalSegmentAddressesBytes,
             long mergeIndexEncodingSegmentBytes
     ) {
         boolean varSize = ColumnType.isVarSize(columnType);
         final int shl = ColumnType.pow2SizeOf(columnType);
         int walColumnCountPerSegment = metadata.getColumnCount() * 2;
-        long mappedAddrBuffSecondary = varSize ? mappedAddrBuffPrimary + totalSegmentAddresses * Long.BYTES : 0;
+        long mappedAddrBuffSecondary = varSize ? mappedAddrBuffPrimary + totalSegmentAddressesBytes : 0;
 
         for (int i = 0, n = segmentCopyInfo.size(); i < n; i++) {
             var segmentColumnPrimary = walMappedColumns.get(walColumnCountPerSegment * i + 2 * columnIndex);
@@ -7373,7 +7442,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 lagMemOffset = (txWriter.getTransientRowCount() - getColumnTop(columnIndex)) << shl;
                 var lagMem = columns.get(getPrimaryColumnIndex(columnIndex));
                 lagAddr = mapAppendColumnBuffer(lagMem, lagMemOffset, lagSize, false);
-                Unsafe.getUnsafe().putLong(mappedAddrBuffPrimary + totalSegmentAddresses - 1, Math.abs(lagAddr));
+                Unsafe.getUnsafe().putLong(mappedAddrBuffPrimary + (totalSegmentAddressesBytes - 1) * Long.BYTES, Math.abs(lagAddr));
             } else {
                 throw new IllegalStateException("TODO var col lag");
             }
@@ -7415,8 +7484,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                             long seqTxn = segmentCopyInfo.getSeqTxn(txnIndex);
                             SymbolMapDiff symbolMapDiff = walTxnDetails.getWalSymbolColMap(seqTxn, columnIndex);
-                            symbolMap.setCapacity(mapOffsetStart + symbolMapDiff.getRecordCount());
-                            symbolMap.setPos(mapOffsetStart + symbolMapDiff.getRecordCount());
+                            int capacity = mapOffsetStart + symbolMapDiff.getRecordCount();
+                            symbolMap.setCapacity(capacity);
+                            symbolMap.setPos(capacity);
 
                             SymbolMapDiffEntry entry;
                             int cleanSymbolCount = symbolMapDiff.getCleanSymbolCount();

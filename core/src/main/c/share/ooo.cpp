@@ -782,7 +782,8 @@ Java_io_questdb_std_Vect_radixSortManySegmentsIndexAsc(
     auto min_ts = __JLONG_REINTERPRET_CAST__(int64_t, minTimestamp);
     auto max_ts = __JLONG_REINTERPRET_CAST__(int64_t, maxTimestamp);
     auto lag_row_count = __JLONG_REINTERPRET_CAST__(uint64_t, lagRowCount);
-    auto total_row_count_bytes = range_bytes(totalRowCount);
+    auto total_row_count = __JLONG_REINTERPRET_CAST__(uint64_t, totalRowCount);
+    auto total_row_count_bytes = range_bytes(total_row_count);
 
     auto ts_range_bytes = range_bytes(max_ts - min_ts);
     auto txn_bytes = range_bytes(txn_count);
@@ -805,13 +806,16 @@ Java_io_questdb_std_Vect_radixSortManySegmentsIndexAsc(
         return -3;
     }
 
-    radix_copy_segments_index_asc_precompiled(ts_range_bytes * 8u, txn_bytes * 8u, segments_range_bytes * 8u,
+    auto sorted_count = radix_copy_segments_index_asc_precompiled(ts_range_bytes * 8u, txn_bytes * 8u, segments_range_bytes * 8u,
                                               lag_ts_addr, lag_row_count,
                                               segment_map_addresses, txn_info_addr, txn_count, out, cpy,
                                               segment_count,
                                               min_ts,
                                               total_row_count_bytes);
 
+    if (sorted_count != total_row_count) {
+        return -4;
+    }
     return segments_range_bytes;
 }
 

@@ -1617,8 +1617,8 @@ public class VectTest {
         Assume.assumeTrue(totalRows < 2E6);
 
         try (DirectLongList segmentAddresses = new DirectLongList(4, MemoryTag.NATIVE_DEFAULT)) {
-            long buf1 = Unsafe.malloc(totalRows * 2L * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            long buf2 = Unsafe.malloc(totalRows * 2L * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            long buf1 = Unsafe.malloc(totalRows * 3L * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            long buf2 = Unsafe.malloc(totalRows * 3L * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             for (int s = 0; s < segmentCount; s++) {
                 segmentAddresses.add(Unsafe.malloc(rowsPerSegment * 2L * Long.BYTES, MemoryTag.NATIVE_DEFAULT));
             }
@@ -1700,8 +1700,8 @@ public class VectTest {
                     Unsafe.free(segmentAddresses.get(s), rowsPerSegment * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
                 }
                 Unsafe.free(lagBuf, lagRows * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(buf1, totalRows * 2L * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(buf2, totalRows * 2L * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(buf1, totalRows * 3L * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(buf2, totalRows * 3L * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             }
         }
     }

@@ -77,13 +77,12 @@ public class WalTxnDetails {
         long lastSeqTxn = getLastSeqTxn();
         long totalRowCount = 0;
         for (long nextTxn = seqTxn; nextTxn < lastSeqTxn; nextTxn++) {
-            long txnRowCount = getSegmentRowHi(nextTxn) - getSegmentRowLo(nextTxn);
-            totalRowCount += txnRowCount;
-            blockSize++;
-
             if (getCommitToTimestamp(nextTxn) == FORCE_FULL_COMMIT || totalRowCount > maxBlockRecordCount) {
                 break;
             }
+            long txnRowCount = getSegmentRowHi(nextTxn) - getSegmentRowLo(nextTxn);
+            totalRowCount += txnRowCount;
+            blockSize++;
         }
 
 //        return 1;
