@@ -778,11 +778,29 @@ public class SqlParser {
         ));
 
         CharSequence baseTableName = null;
-        tok = tok(lexer, "'as' or 'with' expected");
-        if (SqlKeywords.isWithKeyword(tok)) {
-            expectTok(lexer, "base");
-            baseTableName = tok(lexer, "base table expected").toString();
-            tok = tok(lexer, "'as' expected");
+        boolean baseTableDefined = false;
+        for (; ; ) {
+            tok = tok(lexer, "'as' or 'with' or 'refresh'");
+            if (SqlKeywords.isWithKeyword(tok)) {
+                expectTok(lexer, "base");
+                if (baseTableDefined) {
+                    throw SqlException.position(lexer.getPosition()).put("base table already defined");
+                }
+                baseTableName = Chars.toString(tok(lexer, "base table expected"));
+                baseTableDefined = true;
+            } else if (SqlKeywords.isRefreshKeyword(tok)) {
+                tok = tok(lexer, "'incremental' or 'manual' or 'interval' expected");
+                if (SqlKeywords.isManualKeyword(tok)) {
+                    throw SqlException.position(lexer.lastTokenPosition()).put("manual refresh is not yet supported");
+                } else if (SqlKeywords.isIntervalKeyword(tok)) {
+                    throw SqlException.position(lexer.lastTokenPosition()).put("interval refresh is not yet supported");
+                } else if (!SqlKeywords.isIncrementalKeyword(tok)) {
+                    // For now, incremental refresh is the only supported behavior.
+                    throw SqlException.position(lexer.lastTokenPosition()).put("'incremental' or 'manual' or 'interval' expected");
+                }
+            } else {
+                break;
+            }
         }
 
         final QueryModel queryModel;
@@ -841,7 +859,7 @@ public class SqlParser {
             createTableOperationBuilder.setQueryModel(queryModel);
             expectTok(lexer, ')');
         } else {
-            throw SqlException.position(lexer.getPosition()).put("'as' expected");
+            throw SqlException.position(lexer.getPosition()).put("'as' or 'with' or 'refresh' expected");
         }
 
         while ((tok = optTok(lexer)) != null && Chars.equals(tok, ',')) {
@@ -966,6 +984,7 @@ public class SqlParser {
             final QueryColumn column = columns.getQuick(i);
             final ExpressionNode ast = column.getAst();
             switch (ast.type) {
+                // TODO(puzpuzpuz): this won't work if the sample by has function or expression keys; see CreateMatViewTest
                 case ExpressionNode.FUNCTION:
                 case ExpressionNode.CONSTANT:
                 case ExpressionNode.OPERATION:
@@ -980,8 +999,7 @@ public class SqlParser {
                     model.setIsDedupKey();
                     break;
                 default:
-                    // TODO: any other type can be allowed?
-                    throw SqlException.$(lexer.lastTokenPosition(), "Unsupported materialized view query");
+                    throw SqlException.$(lexer.lastTokenPosition(), "unsupported materialized view query");
             }
         }
         return builder;
@@ -1029,7 +1047,7 @@ public class SqlParser {
         } else if (SqlKeywords.isTableKeyword(tok)) {
             tok = tok(lexer, "table name or 'if'");
         } else {
-            throw SqlException.$(lexer.lastTokenPosition(), "expected 'atomic' or 'table' or 'batch'");
+            throw SqlException.$(lexer.lastTokenPosition(), "'atomic' or 'table' or 'batch' expected");
         }
 
         if (SqlKeywords.isIfKeyword(tok)) {
@@ -1151,9 +1169,8 @@ public class SqlParser {
                         walSetting = WAL_DISABLED;
                         tok = optTok(lexer);
                     } else {
-                        throw SqlException.position(
-                                        tok == null ? lexer.getPosition() : lexer.lastTokenPosition()
-                                ).put(" invalid syntax, should be BYPASS WAL but was BYPASS ")
+                        throw SqlException.position(tok == null ? lexer.getPosition() : lexer.lastTokenPosition())
+                                .put(" invalid syntax, should be BYPASS WAL but was BYPASS ")
                                 .put(tok != null ? tok : "");
                     }
                 }

@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -46,6 +47,7 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
+import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -56,8 +58,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static io.questdb.test.tools.TestUtils.getSystemTablesCount;
 
 public class SqlParserTest extends AbstractSqlParserTest {
-
     private static final List<String> frameTypes = Arrays.asList("rows  ", "groups", "range ");
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
+    }
 
     @Test
     public void test2Between() throws Exception {
@@ -1662,6 +1669,96 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "create table x (like Y.z)",
                 22,
                 "unexpected token [.]"
+        );
+    }
+
+    @Test
+    public void testCreateMatView0() throws Exception {
+        assertSyntaxError(
+                "create",
+                6,
+                "'atomic' or 'table' or 'batch' or 'materialized' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView1() throws Exception {
+        assertSyntaxError(
+                "create foobar",
+                7,
+                "'atomic' or 'table' or 'batch' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView2() throws Exception {
+        assertSyntaxError(
+                "create materialized",
+                19,
+                "'view' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView3() throws Exception {
+        assertSyntaxError(
+                "create materialized foobar",
+                20,
+                "'view' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView4() throws Exception {
+        assertSyntaxError(
+                "create materialized view 'myview' foobar",
+                40,
+                "'as' or 'with' or 'refresh' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView5() throws Exception {
+        assertSyntaxError(
+                "create materialized view 'myview' refresh with",
+                42,
+                "'incremental' or 'manual' or 'interval' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView6() throws Exception {
+        assertSyntaxError(
+                "create materialized view 'myview' with refresh",
+                39,
+                "'base' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView7() throws Exception {
+        assertSyntaxError(
+                "create materialized view 'myview' refresh manual",
+                42,
+                "manual refresh is not yet supported"
+        );
+    }
+
+    @Test
+    public void testCreateMatView8() throws Exception {
+        assertSyntaxError(
+                "create materialized view 'myview' refresh interval",
+                42,
+                "interval refresh is not yet supported"
+        );
+    }
+
+    @Test
+    public void testCreateMatView9() throws Exception {
+        assertSyntaxError(
+                "create materialized view 'myview' with base 'mytable' refresh incremental",
+                73,
+                "'as' or 'with' or 'refresh' expected"
         );
     }
 

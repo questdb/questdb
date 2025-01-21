@@ -152,6 +152,44 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewExpressionKey() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final String query = "select ts, k || '10' as k, v+10 as v from " + TABLE1 + " sample by 30s";
+            execute("create materialized view test as (" + query + ") partition by week");
+            assertMatViewDefinition("test", query, TABLE1, 30, 's');
+            assertMatViewMetadata("test", query, TABLE1, 30, 's');
+
+            try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
+                assertEquals(0, metadata.getTimestampIndex());
+                assertTrue(metadata.isDedupKey(0));
+                assertTrue(metadata.isDedupKey(1));
+                assertFalse(metadata.isDedupKey(2));
+            }
+        });
+    }
+
+    @Test
+    public void testCreateMatViewFunctionKey() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final String query = "select ts, concat(k, '10') as k, v+10 as v from " + TABLE1 + " sample by 30s";
+            execute("create materialized view test as (" + query + ") partition by week");
+            assertMatViewDefinition("test", query, TABLE1, 30, 's');
+            assertMatViewMetadata("test", query, TABLE1, 30, 's');
+
+            try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
+                assertEquals(0, metadata.getTimestampIndex());
+                assertTrue(metadata.isDedupKey(0));
+                assertTrue(metadata.isDedupKey(1));
+                assertFalse(metadata.isDedupKey(2));
+            }
+        });
+    }
+
+    @Test
     public void testCreateMatViewGroupByTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -778,7 +816,11 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     private void createTable(String tableName, boolean walEnabled) throws SqlException {
-        execute("create table if not exists " + tableName + " (ts timestamp, k symbol, v long) timestamp(ts) partition by day" + (walEnabled ? "" : " bypass") + " wal");
+        execute(
+                "create table if not exists " + tableName +
+                        " (ts timestamp, k symbol, v long)" +
+                        " timestamp(ts) partition by day" + (walEnabled ? "" : " bypass") + " wal"
+        );
         for (int i = 0; i < 9; i++) {
             execute("insert into " + tableName + " values (" + (i * 10000000) + ", 'k" + i + "', " + i + ")");
         }

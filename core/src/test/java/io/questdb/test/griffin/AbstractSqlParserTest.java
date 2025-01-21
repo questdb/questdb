@@ -34,7 +34,11 @@ import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
 import io.questdb.test.AbstractCairoTest;
@@ -43,6 +47,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 
 public class AbstractSqlParserTest extends AbstractCairoTest {
+
     private static void assertSyntaxError0(
             String query,
             int position,
