@@ -60,7 +60,7 @@ import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.RescheduleContext;
 import io.questdb.cutlass.http.processors.HealthCheckProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
-import io.questdb.cutlass.http.processors.StaticContentProcessor;
+import io.questdb.cutlass.http.processors.StaticContentProcessorFactory;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.QueryRegistry;
@@ -119,6 +119,7 @@ import io.questdb.std.Zip;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.AbstractCharSequence;
+import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -485,7 +486,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor select(Utf8Sequence url) {
+                    public HttpRequestProcessor select(DirectUtf8String url) {
                         return null;
                     }
                 };
@@ -498,7 +499,7 @@ public class IODispatcherTest extends AbstractTest {
                         while (serverRunning.get()) {
                             dispatcher.run(0);
                             dispatcher.processIOQueue(
-                                    (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, EmptyRescheduleContext, dispatcher1)
+                                    (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, dispatcher1)
                             );
                         }
                     } finally {
@@ -2547,22 +2548,11 @@ public class IODispatcherTest extends AbstractTest {
                     CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir));
                     HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)
             ) {
+                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
-                    public String getUrl() {
-                        return HttpFullFatServerConfiguration.DEFAULT_PROCESSOR_URL;
-                    }
-
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration);
-                    }
-                });
-
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public String getUrl() {
-                        return "/upload";
+                    public ObjList<String> getUrls() {
+                        return new ObjList<>("/upload");
                     }
 
                     @Override
@@ -3160,33 +3150,8 @@ public class IODispatcherTest extends AbstractTest {
                     CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir));
                     HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)
             ) {
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public String getUrl() {
-                        return HttpFullFatServerConfiguration.DEFAULT_PROCESSOR_URL;
-                    }
-
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration);
-                    }
-                });
-
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public String getUrl() {
-                        return "/query";
-                    }
-
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new JsonQueryProcessor(
-                                httpConfiguration.getJsonQueryProcessorConfiguration(),
-                                engine,
-                                workerPool.getWorkerCount()
-                        );
-                    }
-                });
+                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
+                httpServer.bind(new TestJsonQueryProcessorFactory(engine, httpConfiguration, workerPool.getWorkerCount()));
 
                 workerPool.start(LOG);
 
@@ -5102,33 +5067,8 @@ public class IODispatcherTest extends AbstractTest {
                     CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir));
                     HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)
             ) {
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public String getUrl() {
-                        return HttpFullFatServerConfiguration.DEFAULT_PROCESSOR_URL;
-                    }
-
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration);
-                    }
-                });
-
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public String getUrl() {
-                        return "/query";
-                    }
-
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new JsonQueryProcessor(
-                                httpConfiguration.getJsonQueryProcessorConfiguration(),
-                                engine,
-                                workerPool.getWorkerCount()
-                        );
-                    }
-                });
+                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
+                httpServer.bind(new TestJsonQueryProcessorFactory(engine, httpConfiguration, workerPool.getWorkerCount()));
 
                 workerPool.start(LOG);
 
@@ -5339,33 +5279,8 @@ public class IODispatcherTest extends AbstractTest {
             try (
                     CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir));
                     HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)) {
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public String getUrl() {
-                        return HttpFullFatServerConfiguration.DEFAULT_PROCESSOR_URL;
-                    }
-
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration);
-                    }
-                });
-
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public String getUrl() {
-                        return "/query";
-                    }
-
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new JsonQueryProcessor(
-                                httpConfiguration.getJsonQueryProcessorConfiguration(),
-                                engine,
-                                workerPool.getWorkerCount()
-                        );
-                    }
-                });
+                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
+                httpServer.bind(new TestJsonQueryProcessorFactory(engine, httpConfiguration, workerPool.getWorkerCount()));
 
                 workerPool.start(LOG);
 
@@ -5413,33 +5328,8 @@ public class IODispatcherTest extends AbstractTest {
                     CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir));
                     HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)
             ) {
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public String getUrl() {
-                        return HttpFullFatServerConfiguration.DEFAULT_PROCESSOR_URL;
-                    }
-
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration);
-                    }
-                });
-
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public String getUrl() {
-                        return "/query";
-                    }
-
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new JsonQueryProcessor(
-                                httpConfiguration.getJsonQueryProcessorConfiguration(),
-                                engine,
-                                workerPool.getWorkerCount()
-                        );
-                    }
-                });
+                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
+                httpServer.bind(new TestJsonQueryProcessorFactory(engine, httpConfiguration, workerPool.getWorkerCount()));
 
                 workerPool.start(LOG);
 
@@ -5504,33 +5394,8 @@ public class IODispatcherTest extends AbstractTest {
             });
                  HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)
             ) {
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public String getUrl() {
-                        return HttpFullFatServerConfiguration.DEFAULT_PROCESSOR_URL;
-                    }
-
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration);
-                    }
-                });
-
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public String getUrl() {
-                        return "/query";
-                    }
-
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new JsonQueryProcessor(
-                                httpConfiguration.getJsonQueryProcessorConfiguration(),
-                                engine,
-                                workerPool.getWorkerCount()
-                        );
-                    }
-                });
+                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
+                httpServer.bind(new TestJsonQueryProcessorFactory(engine, httpConfiguration, workerPool.getWorkerCount()));
 
                 TestUtils.setupWorkerPool(workerPool, engine);
 
@@ -5822,7 +5687,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor select(Utf8Sequence url) {
+                    public HttpRequestProcessor select(DirectUtf8String url) {
                         return null;
                     }
                 }) {
@@ -5835,7 +5700,7 @@ public class IODispatcherTest extends AbstractTest {
                             do {
                                 dispatcher.run(0);
                                 dispatcher.processIOQueue(
-                                        (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, EmptyRescheduleContext, dispatcher1)
+                                        (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, dispatcher1)
                                 );
                             } while (serverRunning.get());
                         } finally {
@@ -6243,17 +6108,7 @@ public class IODispatcherTest extends AbstractTest {
             try (
                     HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)
             ) {
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public String getUrl() {
-                        return HttpFullFatServerConfiguration.DEFAULT_PROCESSOR_URL;
-                    }
-
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration);
-                    }
-                });
+                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
 
                 workerPool.start(LOG);
 
@@ -6371,17 +6226,7 @@ public class IODispatcherTest extends AbstractTest {
             try (
                     HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)
             ) {
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public String getUrl() {
-                        return HttpFullFatServerConfiguration.DEFAULT_PROCESSOR_URL;
-                    }
-
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration);
-                    }
-                });
+                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
 
                 workerPool.start(LOG);
 
@@ -6521,17 +6366,7 @@ public class IODispatcherTest extends AbstractTest {
             try (
                     HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)
             ) {
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public String getUrl() {
-                        return HttpFullFatServerConfiguration.DEFAULT_PROCESSOR_URL;
-                    }
-
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration);
-                    }
-                });
+                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
 
                 workerPool.start(LOG);
 
@@ -6663,7 +6498,7 @@ public class IODispatcherTest extends AbstractTest {
                 "\r\n";
 
         // the difference between request and expected is url encoding (and ':' padding, which can easily be fixed)
-        final String expected = "GET /status?x=1&a=&b&c&d=x HTTP/1.1\r\n" +
+        final String expected = "GET /status?x=1&a=%26b&c&d=x HTTP/1.1\r\n" +
                 "Host:localhost:9000\r\n" +
                 "Connection:keep-alive\r\n" +
                 "Cache-Control:max-age=0\r\n" +
@@ -6716,7 +6551,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor select(Utf8Sequence url) {
+                    public HttpRequestProcessor select(DirectUtf8String url) {
                         return new HttpRequestProcessor() {
                             @Override
                             public void onHeadersReady(HttpConnectionContext context) {
@@ -6744,7 +6579,7 @@ public class IODispatcherTest extends AbstractTest {
                         while (serverRunning.get()) {
                             dispatcher.run(0);
                             dispatcher.processIOQueue(
-                                    (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, EmptyRescheduleContext, dispatcher1)
+                                    (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, dispatcher1)
                             );
                         }
                     } finally {
@@ -6812,7 +6647,7 @@ public class IODispatcherTest extends AbstractTest {
                 "\r\n";
 
         // the difference between request and expected is url encoding (and ':' padding, which can easily be fixed)
-        final String expected = "GET /status?x=1&a=&b&c&d=x HTTP/1.1\r\n" +
+        final String expected = "GET /status?x=1&a=%26b&c&d=x HTTP/1.1\r\n" +
                 "Host:localhost:9000\r\n" +
                 "Connection:keep-alive\r\n" +
                 "Cache-Control:max-age=0\r\n" +
@@ -6907,7 +6742,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor select(Utf8Sequence url) {
+                    public HttpRequestProcessor select(DirectUtf8String url) {
                         return null;
                     }
                 };
@@ -6920,7 +6755,7 @@ public class IODispatcherTest extends AbstractTest {
                         while (serverRunning.get()) {
                             dispatcher.run(0);
                             dispatcher.processIOQueue(
-                                    (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, EmptyRescheduleContext, dispatcher1)
+                                    (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, dispatcher1)
                             );
                         }
                     } finally {
@@ -7062,7 +6897,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor select(Utf8Sequence url) {
+                    public HttpRequestProcessor select(DirectUtf8String url) {
                         return null;
                     }
                 };
@@ -7075,7 +6910,7 @@ public class IODispatcherTest extends AbstractTest {
                         while (serverRunning.get()) {
                             dispatcher.run(0);
                             dispatcher.processIOQueue(
-                                    (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, EmptyRescheduleContext, dispatcher1)
+                                    (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, dispatcher1)
                             );
                         }
                     } finally {
@@ -8083,7 +7918,7 @@ public class IODispatcherTest extends AbstractTest {
                 "\r\n";
 
         // the difference between request and expected is url encoding (and ':' padding, which can easily be fixed)
-        final String expected = "GET /status?x=1&a=&b&c&d=x HTTP/1.1\r\n" +
+        final String expected = "GET /status?x=1&a=%26b&c&d=x HTTP/1.1\r\n" +
                 "Host:localhost:9000\r\n" +
                 "Connection:keep-alive\r\n" +
                 "Cache-Control:max-age=0\r\n" +
@@ -8182,7 +8017,7 @@ public class IODispatcherTest extends AbstractTest {
                                 }
 
                                 @Override
-                                public HttpRequestProcessor select(Utf8Sequence url) {
+                                public HttpRequestProcessor select(DirectUtf8String url) {
                                     return null;
                                 }
                             }) {
@@ -8191,7 +8026,7 @@ public class IODispatcherTest extends AbstractTest {
                                     while (serverRunning.get()) {
                                         dispatcher.run(0);
                                         dispatcher.processIOQueue(
-                                                (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, EmptyRescheduleContext, dispatcher1)
+                                                (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, dispatcher1)
                                         );
                                     }
                                 } finally {
@@ -8420,33 +8255,8 @@ public class IODispatcherTest extends AbstractTest {
                  HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE);
                  SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public String getUrl() {
-                        return HttpFullFatServerConfiguration.DEFAULT_PROCESSOR_URL;
-                    }
-
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration);
-                    }
-                });
-
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public String getUrl() {
-                        return "/query";
-                    }
-
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new JsonQueryProcessor(
-                                httpConfiguration.getJsonQueryProcessorConfiguration(),
-                                engine,
-                                workerPool.getWorkerCount()
-                        );
-                    }
-                });
+                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
+                httpServer.bind(new TestJsonQueryProcessorFactory(engine, httpConfiguration, workerPool.getWorkerCount()));
 
                 WorkerPoolUtils.setupQueryJobs(workerPool, engine);
                 workerPool.start(LOG);
@@ -8894,11 +8704,10 @@ public class IODispatcherTest extends AbstractTest {
             HttpConnectionContext context,
             int operation,
             HttpRequestProcessorSelector selector,
-            RescheduleContext rescheduleContext,
             IODispatcher<HttpConnectionContext> dispatcher
     ) {
         try {
-            return context.handleClientOperation(operation, selector, rescheduleContext);
+            return context.handleClientOperation(operation, selector, IODispatcherTest.EmptyRescheduleContext);
         } catch (HeartBeatException e) {
             dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
         } catch (PeerIsSlowToReadException e) {
@@ -9913,5 +9722,31 @@ public class IODispatcherTest extends AbstractTest {
 
     static class Status {
         boolean valid;
+    }
+
+    private static class TestJsonQueryProcessorFactory implements HttpRequestProcessorFactory {
+        private final CairoEngine engine;
+        private final HttpFullFatServerConfiguration httpConfiguration;
+        private final int workerCount;
+
+        public TestJsonQueryProcessorFactory(CairoEngine engine, HttpFullFatServerConfiguration httpConfiguration, int workerCount) {
+            this.engine = engine;
+            this.httpConfiguration = httpConfiguration;
+            this.workerCount = workerCount;
+        }
+
+        @Override
+        public ObjList<String> getUrls() {
+            return new ObjList<>("/query");
+        }
+
+        @Override
+        public HttpRequestProcessor newInstance() {
+            return new JsonQueryProcessor(
+                    httpConfiguration.getJsonQueryProcessorConfiguration(),
+                    engine,
+                    workerCount
+            );
+        }
     }
 }

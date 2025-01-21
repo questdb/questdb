@@ -90,6 +90,10 @@ public class DirectUtf8String implements DirectUtf8Sequence, Mutable {
         this.hi--;
     }
 
+    public void squeezeHi(long delta) {
+        this.hi -= delta;
+    }
+
     @NotNull
     @Override
     public String toString() {

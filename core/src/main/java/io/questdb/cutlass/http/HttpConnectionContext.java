@@ -849,8 +849,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     private HttpRequestProcessor getHttpRequestProcessor(HttpRequestProcessorSelector selector) {
         HttpRequestProcessor processor;
-        final Utf8Sequence url = headerParser.getUrl();
-        processor = selector.select(url);
+        processor = selector.select(headerParser.getUrl());
         if (processor == null) {
             return selector.getDefaultProcessor();
         }

@@ -40,6 +40,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.metrics.Target;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.PlainSocketFactory;
+import io.questdb.std.ObjList;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.mp.TestWorkerPool;
 import org.junit.rules.TemporaryFolder;
@@ -81,8 +82,8 @@ public class HttpMinTestBuilder {
                 httpServer.registerClosable(requestStatePool);
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
-                    public String getUrl() {
-                        return "/metrics";
+                    public ObjList<String> getUrls() {
+                        return httpConfiguration.getContextPathMetrics();
                     }
 
                     @Override
@@ -96,8 +97,8 @@ public class HttpMinTestBuilder {
                 // It mirrors the setup of the min http server.
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
-                    public String getUrl() {
-                        return "/status";
+                    public ObjList<String> getUrls() {
+                        return httpConfiguration.getContextPathStatus();
                     }
 
                     @Override

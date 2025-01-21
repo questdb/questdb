@@ -58,11 +58,6 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
         }
 
         @Override
-        public CharSequence getIndexFileName() {
-            return "index.html";
-        }
-
-        @Override
         public String getKeepAliveHeader() {
             return null;
         }

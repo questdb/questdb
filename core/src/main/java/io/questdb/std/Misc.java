@@ -31,12 +31,10 @@ import io.questdb.std.str.Utf8StringSink;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.Arrays;
-import java.util.function.BiConsumer;
 
 public final class Misc {
     public static final int CACHE_LINE_SIZE = 64;
     public static final String EOL = "\r\n";
-    public static final BiConsumer<CharSequence, ? super Closeable> HASH_MAP_CLEANER = (k, v) -> Misc.free(v);
     private static final ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
     private static final ThreadLocal<Utf8StringSink> tlUtf8Sink = new ThreadLocal<>(Utf8StringSink::new);
 

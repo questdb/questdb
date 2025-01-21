@@ -22,32 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http;
+package io.questdb.cutlass.http.processors;
 
-import io.questdb.FactoryProvider;
-import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
+import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.cutlass.http.HttpRequestProcessorFactory;
 import io.questdb.std.ObjList;
 
-public interface HttpServerConfiguration extends IODispatcherConfiguration, WorkerPoolConfiguration {
+public class StaticContentProcessorFactory implements HttpRequestProcessorFactory {
+    private final HttpFullFatServerConfiguration httpConfiguration;
 
-    default ObjList<String> getContextPathMetrics() {
-        return new ObjList<>("/metrics");
+    public StaticContentProcessorFactory(HttpFullFatServerConfiguration httpConfiguration) {
+        this.httpConfiguration = httpConfiguration;
     }
 
-    default ObjList<String> getContextPathStatus() {
-        return new ObjList<>(getHttpContextConfiguration().getMetrics().isEnabled() ? "/status" : "*");
+    @Override
+    public ObjList<String> getUrls() {
+        return httpConfiguration.getContextPathDefault();
     }
 
-    FactoryProvider getFactoryProvider();
+    @Override
+    public HttpRequestProcessor newInstance() {
+        return new StaticContentProcessor(httpConfiguration);
+    }
 
-    HttpContextConfiguration getHttpContextConfiguration();
-
-    byte getRequiredAuthType();
-
-    WaitProcessorConfiguration getWaitProcessorConfiguration();
-
-    boolean isPessimisticHealthCheckEnabled();
-
-    boolean preAllocateBuffers();
 }

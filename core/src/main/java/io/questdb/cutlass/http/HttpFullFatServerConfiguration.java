@@ -28,11 +28,52 @@ import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.std.ConcurrentCacheConfiguration;
+import io.questdb.std.ObjList;
 
 public interface HttpFullFatServerConfiguration extends HttpServerConfiguration {
     String DEFAULT_PROCESSOR_URL = "*";
 
     ConcurrentCacheConfiguration getConcurrentCacheConfiguration();
+
+    default ObjList<String> getContextPathDefault() {
+        return new ObjList<>(DEFAULT_PROCESSOR_URL);
+    }
+
+    default ObjList<String> getContextPathExec() {
+        return new ObjList<>("/exec");
+    }
+
+    default ObjList<String> getContextPathExport() {
+        return new ObjList<>("/exp");
+    }
+
+    default ObjList<String> getContextPathILP() {
+        return new ObjList<>("/write", "/api/v2/write");
+    }
+
+    default ObjList<String> getContextPathILPPing() {
+        return new ObjList<>("/ping");
+    }
+
+    default ObjList<String> getContextPathImport() {
+        return new ObjList<>("/imp");
+    }
+
+    default ObjList<String> getContextPathSettings() {
+        return new ObjList<>("/settings");
+    }
+
+    default ObjList<String> getContextPathTableStatus() {
+        return new ObjList<>("/chk");
+    }
+
+    default ObjList<String> getContextPathWarnings() {
+        return new ObjList<>("/warnings");
+    }
+
+    default String getContextPathWebConsole() {
+        return "";
+    }
 
     JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration();
 

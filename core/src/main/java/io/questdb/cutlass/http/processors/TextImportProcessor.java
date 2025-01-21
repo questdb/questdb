@@ -85,7 +85,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
 
     @Override
     public void failRequest(HttpConnectionContext context, HttpException e) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-        sendErrorAndThrowDisconnect(((FlyweightMessageContainer) e).getFlyweightMessage());
+        sendErrorAndThrowDisconnect(e.getFlyweightMessage());
     }
 
     @Override
