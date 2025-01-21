@@ -32,6 +32,7 @@ import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.QueryPausedException;
 import io.questdb.network.ServerDisconnectException;
+import io.questdb.std.str.Utf16Sink;
 
 public interface RejectProcessor extends HttpRequestProcessor, HttpMultipartContentListener {
 
@@ -48,11 +49,20 @@ public interface RejectProcessor extends HttpRequestProcessor, HttpMultipartCont
     default void onPartEnd() {
     }
 
-    HttpRequestProcessor rejectRequest(int code, CharSequence userMessage, CharSequence cookieName, CharSequence cookieValue, byte authenticationType);
+    RejectProcessor reject(int rejectCode);
 
-    default void resumeSend(
-            HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+    RejectProcessor reject(int rejectCode, CharSequence rejectMessage);
+
+    Utf16Sink getMessageSink();
+
+    RejectProcessor withAuthenticationType(byte authenticationType);
+
+    RejectProcessor withCookie(CharSequence cookieName, CharSequence cookieValue);
+
+    RejectProcessor withShutdownWrite();
+
+    default void resumeSend(HttpConnectionContext context)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
         onRequestComplete(context);
     }
 }

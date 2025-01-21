@@ -54,6 +54,7 @@ public class MemoryTagLongGauge implements LongGauge {
         // do nothing as this gauge is RO view of memory tag stats
     }
 
+    @Override
     public String getName() {
         return MemoryTag.nameOf(memoryTag);
     }
