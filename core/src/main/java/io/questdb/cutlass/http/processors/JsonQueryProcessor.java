@@ -55,7 +55,6 @@ import io.questdb.griffin.SqlTimeoutException;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.metrics.QueryTrace;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
@@ -68,7 +67,6 @@ import io.questdb.std.NanosecondClock;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.TestOnly;
@@ -92,10 +90,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private final CairoEngine engine;
     private final int maxSqlRecompileAttempts;
     private final Metrics metrics;
-    private final MicrosecondClock microsecondClock;
     private final NanosecondClock nanosecondClock;
     private final Path path;
-    private final QueryTrace queryTrace = new QueryTrace();
     private final byte requiredAuthType;
     private final SqlExecutionContextImpl sqlExecutionContext;
 
@@ -165,7 +161,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             // Query types start with 1 instead of 0, so we have to add 1 to the expected size.
             assert this.queryExecutors.size() == (CompiledQuery.TYPES_COUNT + 1);
             this.sqlExecutionContext = sqlExecutionContext;
-            this.microsecondClock = engine.getConfiguration().getMicrosecondClock();
             this.nanosecondClock = configuration.getNanosecondClock();
             this.maxSqlRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
             this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB3);
@@ -540,8 +535,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             for (int retries = 0; ; retries++) {
                 final long compilationStart = nanosecondClock.getTicks();
-                String query = state.getQuery().toString();
-                final CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
+                final CompiledQuery cc = compiler.compile(state.getQuery(), sqlExecutionContext);
                 sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_JSON);
                 state.setCompilerNanos(nanosecondClock.getTicks() - compilationStart);
                 state.setQueryType(cc.getType());
