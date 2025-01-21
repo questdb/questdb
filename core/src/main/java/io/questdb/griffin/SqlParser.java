@@ -43,7 +43,6 @@ import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.RenameTableModel;
 import io.questdb.griffin.model.WindowColumn;
 import io.questdb.griffin.model.WithClauseModel;
-import io.questdb.metrics.QueryTracingJob;
 import io.questdb.std.BufferWindowCharSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
@@ -98,7 +97,6 @@ public class SqlParser {
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCountRef = this::rewriteCount;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteJsonExtractCastRef = this::rewriteJsonExtractCast;
     private final PostOrderTreeTraversalAlgo.Visitor rewritePgCastRef = this::rewritePgCast;
-    private final PostOrderTreeTraversalAlgo.Visitor rewriteQueryTraceFunctionRef = this::rewriteQueryTraceFunction;
     private final ObjList<ExpressionNode> tempExprNodes = new ObjList<>();
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCaseRef = this::rewriteCase;
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> topLevelWithModel = new LowerCaseCharSequenceObjHashMap<>();
@@ -3167,7 +3165,6 @@ public class SqlParser {
             @Nullable CharSequence exprTargetVariableName
     ) throws SqlException {
         traversalAlgo.traverse(parent, rewriteCountRef);
-        traversalAlgo.traverse(parent, rewriteQueryTraceFunctionRef);
         traversalAlgo.traverse(parent, rewriteCaseRef);
         traversalAlgo.traverse(parent, rewriteConcatRef);
         traversalAlgo.traverse(parent, rewritePgCastRef);
@@ -3193,27 +3190,6 @@ public class SqlParser {
                 node.rhs.token = "short";
             }
         }
-    }
-
-    /*
-     * Rewrites the query_trace() pseudo-function to the table name sys.query_trace
-     */
-    private void rewriteQueryTraceFunction(ExpressionNode node) throws SqlException {
-        if (node.type != ExpressionNode.FUNCTION || !Chars.equalsIgnoreCase(node.token, QueryTracingJob.TABLE_NAME)) {
-            return;
-        }
-        int paramCount = node.paramCount;
-        if (paramCount == 0) {
-            node.type = ExpressionNode.LITERAL;
-            node.token = configuration.getSystemTableNamePrefix() + QueryTracingJob.TABLE_NAME;
-            return;
-        }
-        ExpressionNode firstParam = paramCount == 1 ? node.rhs
-                : paramCount == 2 ? node.lhs
-                : node.args.getLast();
-        throw SqlException.position(firstParam.position)
-                .put(QueryTracingJob.TABLE_NAME)
-                .put("() does not take any parameters");
     }
 
     private CharSequence setModelAliasAndGetOptTok(GenericLexer lexer, QueryModel joinModel) throws SqlException {
