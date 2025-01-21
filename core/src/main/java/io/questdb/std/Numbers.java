@@ -45,6 +45,7 @@ public final class Numbers {
     public static final double DOUBLE_TOLERANCE = 0.0000000001;
     public static final int INT_NULL = Integer.MIN_VALUE;
     public static final int IPv4_NULL = 0;
+    public static final long JULIAN_EPOCH_OFFSET_MILLIS = 946684800000L;
     public static final long JULIAN_EPOCH_OFFSET_USEC = 946684800000000L;
     public static final long LONG_NULL = Long.MIN_VALUE;
     public static final int MAX_DOUBLE_SCALE = 19;
