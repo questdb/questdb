@@ -193,24 +193,17 @@ public class MetadataCache implements QuietCloseable {
                     .$(", version=").$(metadataVersion)
                     .I$();
 
+            boolean isMetaFormatUpToDate = isMetaFormatUpToDate(metadataVersion, columnCount);
             table.setPartitionBy(metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY));
             table.setMaxUncommittedRows(metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS));
             table.setO3MaxLag(metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG));
             table.setTimestampIndex(metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX));
-            table.setTtlHoursOrMonths(metaMem.getInt(TableUtils.META_OFFSET_TTL_HOURS_OR_MONTHS));
+            if (isMetaFormatUpToDate) {
+                table.setTtlHoursOrMonths(metaMem.getInt(TableUtils.META_OFFSET_TTL_HOURS_OR_MONTHS));
+            }
             table.setIsSoftLink(isSoftLink);
 
             TableUtils.buildWriterOrderMap(metaMem, table.columnOrderMap, metaMem, columnCount);
-
-            // Check that metadata minor version is up-to-date
-            int metadataMinorVersion = metaMem.getInt(TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION);
-            // metadataMinorVersion is 2 shorts
-            // Low short is metadataVersion + column count and it is effectively a signature that changes with every update to _meta.
-            // If Low short mismatches it means we cannot rely on High short value.
-            // High short is TableUtils.META_MINOR_VERSION_LATEST.
-            boolean symbolCapacitiesUpToDate =
-                    Numbers.decodeLowShort(metadataMinorVersion) == Numbers.decodeLowShort(Numbers.decodeLowInt(table.getMetadataVersion()) + columnCount)
-                            && Numbers.decodeHighShort(metadataMinorVersion) >= TableUtils.META_MINOR_VERSION_LATEST;
 
             // populate columns
             for (int i = 0, n = table.columnOrderMap.size(); i < n; i += 3) {
@@ -250,7 +243,7 @@ public class MetadataCache implements QuietCloseable {
                     column.setWriterIndex(writerIndex);
                     column.setIsDesignated(writerIndex == table.getTimestampIndex());
                     if (columnType == ColumnType.SYMBOL) {
-                        if (symbolCapacitiesUpToDate) {
+                        if (isMetaFormatUpToDate) {
                             column.setSymbolCapacity(TableUtils.getSymbolCapacity(metaMem, writerIndex));
                             column.setSymbolCached(TableUtils.isSymbolCached(metaMem, writerIndex));
                         } else {
@@ -292,6 +285,29 @@ public class MetadataCache implements QuietCloseable {
         } finally {
             Misc.free(metaMem);
         }
+    }
+
+    /*
+     * Checks that the minor version of the metadata format is up to date, i.e., at least the value
+     * of the TableUtils.META_FORMAT_MINOR_VERSION_LATEST constant.
+     *
+     * Metadata Format Minor Version field encodes 2 shorts:
+     * - Low short is a checksum that changes with every update to the metadata record
+     * - High short is set to TableUtils.META_FORMAT_MINOR_VERSION_LATEST
+     *
+     * The Metadata Format Minor Version field was not present in the initial version the metadata format. This is
+     * why we need the checksum: when it doesn't match, we can't trust the version stored in it, and should assume
+     * the QuestDB version that wrote the metadata predates its introduction.
+     *
+     * Table storage itself is forward- and backward-compatible, so it's safe to read regardless of this version.
+     */
+    private boolean isMetaFormatUpToDate(int metadataVersion, int columnCount) {
+        int metaFormatMinorVersionField = metaMem.getInt(TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION);
+        short savedChecksum = Numbers.decodeLowShort(metaFormatMinorVersionField);
+        short actualChecksum = TableUtils.checksumForMetaFormatMinorVersionField(metadataVersion, columnCount);
+        short savedMetaFormatMinorVersion = Numbers.decodeHighShort(metaFormatMinorVersionField);
+        return savedChecksum == actualChecksum
+                && savedMetaFormatMinorVersion >= TableUtils.META_FORMAT_MINOR_VERSION_LATEST;
     }
 
     private void loadCapacities(CairoColumn column, TableToken token, Path path, CairoConfiguration configuration, ColumnVersionReader columnVersionReader) {

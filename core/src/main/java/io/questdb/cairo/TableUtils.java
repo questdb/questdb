@@ -99,7 +99,7 @@ public final class TableUtils {
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
     public static final long META_COLUMN_DATA_SIZE = 32;
     public static final String META_FILE_NAME = "_meta";
-    public static final short META_MINOR_VERSION_LATEST = 1;
+    public static final short META_FORMAT_MINOR_VERSION_LATEST = 1;
     public static final long META_OFFSET_COLUMN_TYPES = 128;
     public static final long META_OFFSET_COUNT = 0;
     public static final long META_OFFSET_MAX_UNCOMMITTED_ROWS = 20; // INT
@@ -224,14 +224,15 @@ public final class TableUtils {
         allocateDiskSpace(ff, fd, size);
     }
 
-    public static int calculateMetadataMinorFormatVersion(int metadataVersion) {
-        // Metadata Minor Version is 2 shorts
-        // Low short is metadataVersion + column count and it is effectively a signature that changes with every update to _meta.
-        // If Low short mismatches it means we cannot rely on High short value.
-        // High short is TableUtils.META_MINOR_VERSION_LATEST.
-        // Metadata minor version mismatch still allows to read the table, the table storage is forward and backward compatible.
-        // However, it indicates some minor flags may be stored incorrectly and have to be re-calculated.
-        return Numbers.encodeLowHighShorts(Numbers.decodeLowShort(metadataVersion), META_MINOR_VERSION_LATEST);
+    public static int calculateMetaFormatMinorVersionField(int metadataVersion, int columnCount) {
+        // Metadata Format Minor Version field is 2 shorts:
+        // - Low short is a checksum that changes with every update to _meta
+        // - High short is TableUtils.META_FORMAT_MINOR_VERSION_LATEST
+        // When reading the Metadata Format Minor Version field from the metadata record, use the checksum
+        // to decide whether to trust the version stored in this field.
+        return Numbers.encodeLowHighShorts(
+                checksumForMetaFormatMinorVersionField(metadataVersion, columnCount),
+                META_FORMAT_MINOR_VERSION_LATEST);
     }
 
     public static int calculateTxRecordSize(int bytesSymbols, int bytesPartitions) {
@@ -299,6 +300,14 @@ public final class TableUtils {
             throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(minSize);
         }
         return memSize;
+    }
+
+    public static short checksumForMetaFormatMinorVersionField(int metadataVersion, int columnCount) {
+        short checksum = Numbers.decodeLowShort(17 * metadataVersion + 73 * columnCount);
+        if (checksum == 0) {
+            checksum = -1773;
+        }
+        return checksum;
     }
 
     public static int compressColumnCount(RecordMetadata metadata) {
@@ -1747,9 +1756,9 @@ public final class TableUtils {
         mem.putInt(tableId);
         mem.putInt(tableStruct.getMaxUncommittedRows());
         mem.putLong(tableStruct.getO3MaxLag());
-        mem.putLong(0); // Structure version.
+        mem.putLong(0); // Metadata version.
         mem.putBool(tableStruct.isWalEnabled());
-        mem.putInt(TableUtils.calculateMetadataMinorFormatVersion(count));
+        mem.putInt(TableUtils.calculateMetaFormatMinorVersionField(0, count));
         mem.putInt(tableStruct.getTtlHoursOrMonths());
         mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
