@@ -773,8 +773,9 @@ public class SqlParser {
             }
         }
         assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
-        createTableOperationBuilder.setTableNameExpr(
-                nextLiteral(assertNoDotsAndSlashes(unquote(tok), lexer.lastTokenPosition()), lexer.lastTokenPosition()));
+        createTableOperationBuilder.setTableNameExpr(nextLiteral(
+                assertNoDotsAndSlashes(unquote(tok), lexer.lastTokenPosition()), lexer.lastTokenPosition()
+        ));
 
         CharSequence baseTableName = null;
         tok = tok(lexer, "'as' or 'with' expected");
@@ -795,16 +796,18 @@ public class SqlParser {
             final QueryModel nestedModel = qm.getNestedModel();
             if (nestedModel.getSampleByFrom() != null) {
                 try {
-                    builder.setFromMicros(
-                            DAY_FORMAT.parse(unquote(nestedModel.getSampleByFrom().token), configuration.getDefaultDateLocale()));
+                    builder.setFromMicros(DAY_FORMAT.parse(
+                            unquote(nestedModel.getSampleByFrom().token), configuration.getDefaultDateLocale()
+                    ));
                 } catch (NumericException e) {
                     throw SqlException.position(lexer.getPosition()).put("cannot parse sample by FROM date");
                 }
             }
             if (nestedModel.getSampleByTo() != null) {
                 try {
-                    builder.setToMicros(
-                            DAY_FORMAT.parse(unquote(nestedModel.getSampleByTo().token), configuration.getDefaultDateLocale()));
+                    builder.setToMicros(DAY_FORMAT.parse(
+                            unquote(nestedModel.getSampleByTo().token), configuration.getDefaultDateLocale()
+                    ));
                 } catch (NumericException e) {
                     throw SqlException.position(lexer.getPosition()).put("cannot parse sample by TO date");
                 }

@@ -51,7 +51,17 @@ public class CreateMatViewOperationBuilder implements Mutable, ExecutionModel, S
 
     public CreateMatViewOperation build(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence sqlText) throws SqlException {
         final CreateTableOperation createTableOperation = createTableOperationBuilder.build(compiler, sqlExecutionContext, sqlText);
-        return new CreateMatViewOperation(createTableOperation, baseTableName, fromMicros, samplingInterval, samplingIntervalUnit, timeZone, timeZoneOffset, toMicros, viewSql);
+        return new CreateMatViewOperation(
+                createTableOperation,
+                baseTableName,
+                fromMicros,
+                samplingInterval,
+                samplingIntervalUnit,
+                timeZone,
+                timeZoneOffset,
+                toMicros,
+                viewSql
+        );
     }
 
     @Override
