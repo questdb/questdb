@@ -63,6 +63,7 @@ import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StdoutSink;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
@@ -469,20 +470,21 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             connectionCountGauge = processor.connectionCountGauge(metrics);
             final long numOfConnections = connectionCountGauge.incrementAndGet();
             if (numOfConnections > connectionLimit) {
-                return rejectProcessor.withShutdownWrite().reject(HTTP_BAD_REQUEST, rejectProcessor.newRejectMessageBuilder()
-                        .$("exceeded connection limit [name=").$(connectionCountGauge.getName())
-                        .$(", numOfConnections=").$(numOfConnections)
-                        .$(", connectionLimit=").$(connectionLimit)
-                        .I$()
-                );
+                Utf16Sink utf16Sink = rejectProcessor.getMessageSink();
+                utf16Sink
+                        .put("exceeded connection limit [name=").put(connectionCountGauge.getName())
+                        .put(", numOfConnections=").put(numOfConnections)
+                        .put(", connectionLimit=").put(connectionLimit)
+                        .put(']');
+                return rejectProcessor.withShutdownWrite().reject(HTTP_BAD_REQUEST);
             }
             if (numOfConnections == connectionLimit && !securityContext.isSystemAdmin()) {
-                return rejectProcessor.withShutdownWrite().reject(HTTP_BAD_REQUEST, rejectProcessor.newRejectMessageBuilder()
-                        .$("non-admin user exceeded connection limit [name=").$(connectionCountGauge.getName())
-                        .$(", numOfConnections=").$(numOfConnections)
-                        .$(", connectionLimit=").$(connectionLimit)
-                        .I$()
-                );
+                Utf16Sink utf16Sink = rejectProcessor.getMessageSink();
+                utf16Sink.put("non-admin user reached connection limit [name=").put(connectionCountGauge.getName())
+                        .put(", numOfConnections=").put(numOfConnections)
+                        .put(", connectionLimit=").put(connectionLimit)
+                        .put(']');
+                return rejectProcessor.withShutdownWrite().reject(HTTP_BAD_REQUEST);
             }
         }
         return processor;

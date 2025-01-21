@@ -30,6 +30,8 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 
 import static io.questdb.cairo.SecurityContext.AUTH_TYPE_NONE;
 import static java.net.HttpURLConnection.HTTP_UNAUTHORIZED;
@@ -37,11 +39,11 @@ import static java.net.HttpURLConnection.HTTP_UNAUTHORIZED;
 public class RejectProcessorImpl implements RejectProcessor {
     private static final Log LOG = LogFactory.getLog(RejectProcessorImpl.class);
     protected final HttpConnectionContext httpConnectionContext;
+    private final StringSink rejectMessage = new StringSink();
     protected byte authenticationType = AUTH_TYPE_NONE;
     protected int rejectCode = 0;
     protected CharSequence rejectCookieName = null;
     protected CharSequence rejectCookieValue = null;
-    protected CharSequence rejectMessage = null;
     protected boolean shutdownWrite = false;
 
     public RejectProcessorImpl(HttpConnectionContext httpConnectionContext) {
@@ -54,8 +56,13 @@ public class RejectProcessorImpl implements RejectProcessor {
         authenticationType = AUTH_TYPE_NONE;
         rejectCookieName = null;
         rejectCookieValue = null;
-        rejectMessage = null;
+        rejectMessage.clear();
         shutdownWrite = false;
+    }
+
+    @Override
+    public Utf16Sink getMessageSink() {
+        return rejectMessage;
     }
 
     @Override
@@ -69,14 +76,7 @@ public class RejectProcessorImpl implements RejectProcessor {
     }
 
     @Override
-    public RejectMessageBuilder newRejectMessageBuilder() {
-        return new RejectMessageBuilder();
-    }
-
-    @Override
-    public void onRequestComplete(
-            HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final HttpResponseSink.SimpleResponseImpl response = httpConnectionContext.simpleResponse();
         if (rejectCode == HTTP_UNAUTHORIZED) {
             handleHttpUnauthorized(response);
@@ -101,7 +101,7 @@ public class RejectProcessorImpl implements RejectProcessor {
     public RejectProcessor reject(int rejectCode, CharSequence rejectMessage) {
         LOG.error().$(rejectMessage).$(" [code=").$(rejectCode).I$();
         this.rejectCode = rejectCode;
-        this.rejectMessage = rejectMessage;
+        this.rejectMessage.put(rejectMessage);
         return this;
     }
 

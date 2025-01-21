@@ -32,15 +32,13 @@ import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.QueryPausedException;
 import io.questdb.network.ServerDisconnectException;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 
 public interface RejectProcessor extends HttpRequestProcessor, HttpMultipartContentListener {
 
     void clear();
 
     boolean isRequestBeingRejected();
-
-    RejectMessageBuilder newRejectMessageBuilder();
 
     default void onChunk(long lo, long hi) {
     }
@@ -55,11 +53,7 @@ public interface RejectProcessor extends HttpRequestProcessor, HttpMultipartCont
 
     RejectProcessor reject(int rejectCode, CharSequence rejectMessage);
 
-    default void resumeSend(
-            HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
-        onRequestComplete(context);
-    }
+    Utf16Sink getMessageSink();
 
     RejectProcessor withAuthenticationType(byte authenticationType);
 
@@ -67,30 +61,8 @@ public interface RejectProcessor extends HttpRequestProcessor, HttpMultipartCont
 
     RejectProcessor withShutdownWrite();
 
-    class RejectMessageBuilder {
-        private final StringSink rejectMessage = new StringSink();
-
-        public RejectMessageBuilder $(CharSequence message) {
-            rejectMessage.put(message);
-            return this;
-        }
-
-        public RejectMessageBuilder $(long l) {
-            rejectMessage.put(l);
-            return this;
-        }
-
-        public RejectMessageBuilder $(char c) {
-            rejectMessage.put(c);
-            return this;
-        }
-
-        public CharSequence $() {
-            return rejectMessage.toString();
-        }
-
-        public CharSequence I$() {
-            return $(']').$();
-        }
+    default void resumeSend(HttpConnectionContext context)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+        onRequestComplete(context);
     }
 }

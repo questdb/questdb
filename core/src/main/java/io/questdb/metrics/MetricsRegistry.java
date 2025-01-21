@@ -32,8 +32,10 @@ public interface MetricsRegistry extends Target {
 
     CounterWithTwoLabels newCounter(
             CharSequence name,
-            CharSequence labelName0, CharSequence[] labelValues0,
-            CharSequence labelName1, CharSequence[] labelValues1
+            CharSequence labelName0,
+            CharSequence[] labelValues0,
+            CharSequence labelName1,
+            CharSequence[] labelValues1
     );
 
     Counter newCounter(CharSequence name);

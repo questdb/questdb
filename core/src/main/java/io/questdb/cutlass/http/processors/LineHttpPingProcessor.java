@@ -29,6 +29,8 @@ import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 
+// Inherits the same connection limit gauges as the ILP HTTP processor
+// This processor handles compatibility with InfluxDB line drivers that ping the server.
 public class LineHttpPingProcessor implements LineHttpProcessor {
     private final String header;
 
