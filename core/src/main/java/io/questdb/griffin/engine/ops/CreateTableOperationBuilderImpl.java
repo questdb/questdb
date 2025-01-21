@@ -51,9 +51,6 @@ import org.jetbrains.annotations.Nullable;
 
 public class CreateTableOperationBuilderImpl implements Mutable, Sinkable, CreateTableOperationBuilder {
     public static final ObjectFactory<CreateTableOperationBuilderImpl> FACTORY = CreateTableOperationBuilderImpl::new;
-    static final int COLUMN_FLAG_CACHED = 1;
-    static final int COLUMN_FLAG_INDEXED = COLUMN_FLAG_CACHED << 1;
-    static final int COLUMN_FLAG_DEDUP_KEY = COLUMN_FLAG_INDEXED << 1;
     private static final IntList castGroups = new IntList();
     private final LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> columnModels = new LowerCaseCharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
@@ -170,6 +167,10 @@ public class CreateTableOperationBuilderImpl implements Mutable, Sinkable, Creat
         ttlHoursOrMonths = 0;
     }
 
+    public int getColumnCount() {
+        return columnNames.size();
+    }
+
     public int getColumnIndex(CharSequence columnName) {
         return columnNameIndexMap.get(columnName);
     }
@@ -178,10 +179,15 @@ public class CreateTableOperationBuilderImpl implements Mutable, Sinkable, Creat
         return columnModels.get(columnName);
     }
 
+    public CharSequence getColumnName(int index) {
+        return columnNames.get(index);
+    }
+
     public int getPartitionByFromExpr() {
         return partitionByExpr == null ? PartitionBy.NONE : PartitionBy.fromString(partitionByExpr.token);
     }
 
+    @Override
     public QueryModel getQueryModel() {
         return queryModel;
     }
@@ -201,6 +207,10 @@ public class CreateTableOperationBuilderImpl implements Mutable, Sinkable, Creat
 
     public int getTimestampIndex() {
         return timestampExpr != null ? getColumnIndex(timestampExpr.token) : -1;
+    }
+
+    public CharSequence getVolumeAlias() {
+        return volumeAlias;
     }
 
     public boolean isAtomic() {

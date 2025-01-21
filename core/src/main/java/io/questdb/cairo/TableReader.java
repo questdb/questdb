@@ -353,6 +353,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         return metadata.getPartitionBy();
     }
 
+    public long getSeqTxn() {
+        return txFile.getSeqTxn();
+    }
+
     public SymbolMapReader getSymbolMapReader(int columnIndex) {
         return symbolMapReaders.getQuick(columnIndex);
     }

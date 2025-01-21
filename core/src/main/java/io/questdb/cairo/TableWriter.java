@@ -6348,7 +6348,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             MemoryARW o3IndexMem = o3MemColumns1.get(getSecondaryColumnIndex(columnIndex));
 
             long size;
-            if (null == o3IndexMem) {
+            if (o3IndexMem == null) {
                 // Fixed size column
                 size = o3RowCount << ColumnType.pow2SizeOf(columnType);
             } else {
@@ -6664,7 +6664,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int inflightPartitions = 0;
             while (srcOoo < srcOooMax) {
                 inflightPartitions++;
-                regulator.updateInflightPartitions(inflightPartitions);
+                regulator.updateInFlightPartitions(inflightPartitions);
                 try {
                     final long srcOooLo = srcOoo;
                     final long o3Timestamp = getTimestampIndexValue(sortedTimestampsAddr, srcOoo);

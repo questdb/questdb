@@ -105,7 +105,7 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
     }
 
     @NotNull
-    private static Bootstrap newBootstrapWithEnvVariables(Map<String, String> envs) {
+    protected static Bootstrap newBootstrapWithEnvVariables(Map<String, String> envs) {
         Map<String, String> env = new HashMap<>(System.getenv());
 
         env.putAll(envs);

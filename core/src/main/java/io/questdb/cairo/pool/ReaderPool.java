@@ -47,6 +47,16 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
         this(configuration, messageBus, null);
     }
 
+    public void attach(TableReader reader) {
+        ReaderPool.R rdr = (ReaderPool.R) reader;
+        rdr.attach();
+    }
+
+    public void detach(TableReader reader) {
+        ReaderPool.R rdr = (ReaderPool.R) reader;
+        rdr.detach();
+    }
+
     @TestOnly
     public void setTableReaderListener(ReaderListener readerListener) {
         this.readerListener = readerListener;
@@ -71,6 +81,7 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
     public static class R extends TableReader implements PoolTenant<R> {
         private final int index;
         private final ReaderListener readerListener;
+        private boolean detached;
         private Entry<R> entry;
         private AbstractMultiTenantPool<R> pool;
         private ResourcePoolSupervisor<R> supervisor;
@@ -93,9 +104,13 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
             this.supervisor = supervisor;
         }
 
+        public void attach() {
+            detached = false;
+        }
+
         @Override
         public void close() {
-            if (isOpen()) {
+            if (!detached && isOpen()) {
                 // report reader closure to the supervisor
                 // so that we do not freak out about reader leaks
                 if (supervisor != null) {
@@ -108,6 +123,10 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
                     super.close();
                 }
             }
+        }
+
+        public void detach() {
+            detached = true;
         }
 
         @Override

@@ -234,7 +234,7 @@ public final class PartitionBy {
                 // maybe the user used a timestamp, or a date, string.
                 int localLimit = DAY_PATTERN.length();
                 try {
-                    // trim to lowest precision needed and get the timestamp
+                    // trim to the lowest precision needed and get the timestamp
                     // convert timestamp to first day of the week
                     return Timestamps.floorDOW(DAY_FORMAT.parse(partitionName, 0, localLimit, DateFormatUtils.EN_LOCALE));
                 } catch (NumericException ignore) {

@@ -36,6 +36,7 @@ import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
@@ -53,7 +54,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
@@ -84,6 +84,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private final int lookAheadTransactionCount;
     private final WalMetrics metrics;
     private final MicrosecondClock microClock;
+    private final MatViewRefreshTask mvRefreshTask = new MatViewRefreshTask();
     private final OperationExecutor operationExecutor;
     private final Rnd rnd = new Rnd();
     private final long tableTimeQuotaMicros;
@@ -262,6 +263,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         final TableSequencerAPI tableSequencerAPI = engine.getTableSequencerAPI();
         boolean isTerminating;
         boolean finishedAll = true;
+        long initialSeqTxn = writer.getSeqTxn();
 
         try (TransactionLogCursor transactionLogCursor = tableSequencerAPI.getCursor(tableToken, writer.getAppliedSeqTxn())) {
             TableMetadataChangeLog structuralChangeCursor = null;
@@ -418,6 +420,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             .$("rows/s, ampl=").$(Math.round(100.0 * physicalRowsAdded / rowsAdded) / 100.0)
                             .I$();
                 }
+
+                if (initialSeqTxn < writer.getAppliedSeqTxn()) {
+                    mvRefreshTask.baseTable = writer.getTableToken();
+                    engine.notifyMaterializedViewBaseCommit(mvRefreshTask, writer.getSeqTxn());
+                }
             } catch (Throwable th) {
                 // We could have been applying multiple txns, and we failed somewhere in the middle. The writer will
                 // be returned to the pool and dirty writes will be rolled back. We have to update the sequencer
@@ -455,9 +462,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         if (throwable instanceof CairoException) {
             CairoException cairoException = (CairoException) throwable;
             if (cairoException.isOutOfMemory()) {
-                if (txnTracker != null && txnTracker.onOutOfMemory(
-                        MicrosecondClockImpl.INSTANCE.getTicks(), tableToken.getTableName(), rnd)
-                ) {
+                if (txnTracker != null && txnTracker.onOutOfMemory(microClock.getTicks(), tableToken.getTableName(), rnd)) {
                     engine.notifyWalTxnRepublisher(tableToken);
                     return;
                 }
@@ -651,7 +656,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 try {
                     writer = engine.getWriterUnsafe(updatedToken, WAL_2_TABLE_WRITE_REASON);
                     assert writer.getMetadata().getTableId() == tableToken.getTableId();
-                    if (txnTracker.shouldBackOffDueToMemoryPressure(MicrosecondClockImpl.INSTANCE.getTicks())) {
+                    if (txnTracker.shouldBackOffDueToMemoryPressure(microClock.getTicks())) {
                         // rely on CheckWalTransactionsJob to notify us when to apply transactions
                         return;
                     }
@@ -664,7 +669,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     if (tableBusy.getReason() != NO_LOCK_REASON
                             && !WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason())
                             && !WAL_2_TABLE_RESUME_REASON.equals(tableBusy.getReason())) {
-                        LOG.critical().$("unsolicited table lock [table=").utf8(tableToken.getDirName()).$(", lockReason=").$(tableBusy.getReason()).I$();
+                        LOG.critical().$("unsolicited table lock [table=").utf8(tableToken.getDirName())
+                                .$(", lockReason=").$(tableBusy.getReason())
+                                .I$();
                         // This is abnormal termination but table is not set to suspended state.
                         // Reset state of SeqTxnTracker so that next CheckWalTransactionJob run will send job notification if necessary.
                         engine.notifyWalTxnRepublisher(tableToken);

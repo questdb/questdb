@@ -62,7 +62,7 @@ public class SignLongFunctionFactory implements FunctionFactory {
         @Override
         public long getLong(Record rec) {
             long val = arg.getLong(rec);
-            if (Numbers.LONG_NULL == val) {
+            if (val == Numbers.LONG_NULL) {
                 return Numbers.LONG_NULL;
             }
             return Long.signum(val);

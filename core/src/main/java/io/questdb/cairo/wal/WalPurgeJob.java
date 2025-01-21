@@ -24,7 +24,13 @@
 
 package io.questdb.cairo.wal;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.log.Log;
@@ -32,7 +38,15 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.mp.SynchronizedJob;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.IntIntHashMap;
+import io.questdb.std.LongList;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8StringZ;
@@ -273,38 +287,39 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                             path.trimTo(rootPathLen).concat(pUtf8NameZ);
                             final int walPathLen = path.size();
                             final long sp = ff.findFirst(path.$());
+                            if (sp > 0) {
+                                try {
+                                    do {
+                                        type = ff.findType(sp);
+                                        pUtf8NameZ = ff.findName(sp);
 
-                            try {
-                                do {
-                                    type = ff.findType(sp);
-                                    pUtf8NameZ = ff.findName(sp);
-
-                                    if (type == Files.DT_DIR && matchesNumberPattern(walName.of(pUtf8NameZ))) {
-                                        try {
-                                            final int segmentId = Numbers.parseInt(walName);
-                                            if ((segmentId < WalUtils.SEG_MIN_ID) || (segmentId > WalUtils.SEG_MAX_ID)) {
-                                                throw NumericException.INSTANCE;
-                                            }
-                                            path.trimTo(walPathLen);
-                                            final Path segmentPath = setSegmentLockPath(tableToken, walId, segmentId);
-                                            long lockFd = TableUtils.lock(ff, segmentPath.$(), false);
-                                            if (lockFd > -1) {
-                                                final boolean pendingTasks = segmentHasPendingTasks(walId, segmentId);
-                                                if (pendingTasks) {
-                                                    // Treat is as being locked.
-                                                    ff.close(lockFd);
-                                                    lockFd = -1;
+                                        if (type == Files.DT_DIR && matchesNumberPattern(walName.of(pUtf8NameZ))) {
+                                            try {
+                                                final int segmentId = Numbers.parseInt(walName);
+                                                if ((segmentId < WalUtils.SEG_MIN_ID) || (segmentId > WalUtils.SEG_MAX_ID)) {
+                                                    throw NumericException.INSTANCE;
                                                 }
+                                                path.trimTo(walPathLen);
+                                                final Path segmentPath = setSegmentLockPath(tableToken, walId, segmentId);
+                                                long lockFd = TableUtils.lock(ff, segmentPath.$(), false);
+                                                if (lockFd > -1) {
+                                                    final boolean pendingTasks = segmentHasPendingTasks(walId, segmentId);
+                                                    if (pendingTasks) {
+                                                        // Treat is as being locked.
+                                                        ff.close(lockFd);
+                                                        lockFd = -1;
+                                                    }
+                                                }
+                                                walHasPendingTasks |= lockFd < 0;
+                                                logic.trackDiscoveredSegment(walId, segmentId, lockFd);
+                                            } catch (NumericException ne) {
+                                                // Non-Segment directory, ignore.
                                             }
-                                            walHasPendingTasks |= lockFd < 0;
-                                            logic.trackDiscoveredSegment(walId, segmentId, lockFd);
-                                        } catch (NumericException ne) {
-                                            // Non-Segment directory, ignore.
                                         }
-                                    }
-                                } while (ff.findNext(sp) > 0);
-                            } finally {
-                                ff.findClose(sp);
+                                    } while (ff.findNext(sp) > 0);
+                                } finally {
+                                    ff.findClose(sp);
+                                }
                             }
                             if (walLockFd > -1 && walHasPendingTasks) {
                                 // WAL dir cannot be deleted, there are busy segments.

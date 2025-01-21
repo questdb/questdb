@@ -3,6 +3,8 @@ package io.questdb.griffin.engine.ops;
 import io.questdb.std.Chars;
 import io.questdb.std.Mutable;
 
+// used in ent
+@SuppressWarnings("unused")
 public class GenericDropOperationBuilder implements Mutable {
     private CharSequence entityName;
     private int entityNamePosition;

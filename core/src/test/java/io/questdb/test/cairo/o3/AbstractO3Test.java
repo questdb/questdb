@@ -466,7 +466,7 @@ public class AbstractO3Test extends AbstractTest {
             int timestampIndex = writer.getMetadata().getTimestampIndex();
             EntityColumnFilter toColumnFilter = new EntityColumnFilter();
             toColumnFilter.of(metadata.getColumnCount());
-            if (null == copier) {
+            if (copier == null) {
                 copier = RecordToRowCopierUtils.generateCopier(
                         new BytecodeAssembler(),
                         metadata,

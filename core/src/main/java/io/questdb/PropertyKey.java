@@ -166,6 +166,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_O3_MIN_LAG("cairo.o3.min.lag"),
     CAIRO_SQL_BACKUP_ROOT("cairo.sql.backup.root"),
     CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS("cairo.sql.max.recompile.attempts"),
+    CAIRO_MAT_VIEW_ENABLED("cairo.mat.view.enabled"),
     CAIRO_ATTACH_PARTITION_SUFFIX("cairo.attach.partition.suffix"),
     CAIRO_ATTACH_PARTITION_COPY("cairo.attach.partition.copy"),
     CAIRO_COMMIT_LATENCY("cairo.commit.latency"),
@@ -514,7 +515,14 @@ public enum PropertyKey implements ConfigPropertyKey {
     HTTP_MIN_MULTIPART_IDLE_SPIN_COUNT("http.min.multipart.idle.spin.count"),
     HTTP_MIN_ALLOW_DEFLATE_BEFORE_SEND("http.min.allow.deflate.before.send"),
     HTTP_MIN_SERVER_KEEP_ALIVE("http.min.server.keep.alive"),
-    HTTP_MIN_REQUEST_HEADER_BUFFER_SIZE("http.min.request.header.buffer.size");
+    HTTP_MIN_REQUEST_HEADER_BUFFER_SIZE("http.min.request.header.buffer.size"),
+    MAT_VIEW_REFRESH_WORKER_COUNT("mat.view.refresh.worker.count"),
+    MAT_VIEW_REFRESH_WORKER_AFFINITY("mat.view.refresh.worker.affinity"),
+    MAT_VIEW_REFRESH_WORKER_HALT_ON_ERROR("mat.view.refresh.worker.haltOnError"),
+    MAT_VIEW_REFRESH_WORKER_NAP_THRESHOLD("mat.view.refresh.worker.nap.threshold"),
+    MAT_VIEW_REFRESH_WORKER_SLEEP_THRESHOLD("mat.view.refresh.worker.sleep.threshold"),
+    MAT_VIEW_REFRESH_WORKER_SLEEP_TIMEOUT("mat.view.refresh.worker.sleep.timeout"),
+    MAT_VIEW_REFRESH_WORKER_YIELD_THRESHOLD("mat.view.refresh.worker.yield.threshold");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;

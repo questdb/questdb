@@ -1152,6 +1152,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isMatViewEnabled() {
+        return getDelegate().isMatViewEnabled();
+    }
+
+    @Override
     public boolean isMultiKeyDedupEnabled() {
         return getDelegate().isMultiKeyDedupEnabled();
     }

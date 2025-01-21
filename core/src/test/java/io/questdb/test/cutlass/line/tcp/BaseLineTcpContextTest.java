@@ -118,6 +118,11 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     private static WorkerPool createWorkerPool(final int workerCount, final boolean haltOnError, Metrics metrics) {
         return new WorkerPool(new WorkerPoolConfiguration() {
             @Override
+            public Metrics getMetrics() {
+                return metrics;
+            }
+
+            @Override
             public long getSleepTimeout() {
                 return 1;
             }
@@ -130,11 +135,6 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             @Override
             public boolean haltOnError() {
                 return haltOnError;
-            }
-
-            @Override
-            public Metrics getMetrics() {
-                return metrics;
             }
         });
     }
@@ -320,7 +320,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
                     LineTcpConnectionContext context,
                     LineTcpParser parser
             ) throws Exception {
-                if (null != onCommitNewEvent) {
+                if (onCommitNewEvent != null) {
                     onCommitNewEvent.run();
                 }
                 return super.scheduleEvent(securityContext, netIoJob, context, parser);

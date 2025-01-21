@@ -62,7 +62,7 @@ public class SignIntFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             int val = arg.getInt(rec);
-            if (Numbers.INT_NULL == val) {
+            if (val == Numbers.INT_NULL) {
                 return Numbers.INT_NULL;
             }
 

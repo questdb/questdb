@@ -66,6 +66,8 @@ public interface ServerConfiguration {
         return 0;
     }
 
+    WorkerPoolConfiguration getMatViewRefreshPoolConfiguration();
+
     WorkerPoolConfiguration getWalApplyPoolConfiguration();
 
     WorkerPoolConfiguration getWorkerPoolConfiguration();

@@ -172,6 +172,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Before
     public void setUp() {
         super.setUp();
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
+        engine.getMatViewGraph().clear();
         inputRoot = root;
     }
 
@@ -1346,6 +1348,24 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "                Frame forward scan on: a\n"
             );
         });
+    }
+
+    @Test
+    public void testExplainCreateMatView() throws Exception {
+        assertPlan(
+                "create table tab (ts timestamp, k symbol, v long) timestamp(ts) partition by day wal",
+                "create materialized view test as (select ts, k, avg(v) from tab sample by 30s) partition by day",
+                "Create materialized view: test\n" +
+                        "    Radix sort light\n" +
+                        "      keys: [ts]\n" +
+                        "        Async Group By workers: 1\n" +
+                        "          keys: [ts,k]\n" +
+                        "          values: [avg(v)]\n" +
+                        "          filter: null\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: tab\n"
+        );
     }
 
     @Test
