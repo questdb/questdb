@@ -70,12 +70,23 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void test2FailOnAggregateFunctionAliasInGroupByClause() throws Exception {
+    public void test2FailOnAggregateFunctionAliasInGroupByClause1() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (x long, y long);");
             assertError(
                     "select x, avg(x) as agx, avg(y) from t group by agx ",
                     "[48] aggregate functions are not allowed in GROUP BY"
+            );
+        });
+    }
+
+    @Test
+    public void test2FailOnAggregateFunctionAliasInGroupByClause2() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, y long);");
+            assertError(
+                    "select x, 2*avg(y) agy from t group by agy;",
+                    "[39] aggregate functions are not allowed in GROUP BY"
             );
         });
     }

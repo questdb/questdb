@@ -576,7 +576,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             } else {
                 ExpressionNode columnAst = column.getAst();
                 CharSequence token = columnAst.token;
-                if (!SqlKeywords.isFirstKeyword(token) && !SqlKeywords.isLastKeyword(token)) {
+                if (!isFirstKeyword(token) && !isLastKeyword(token)) {
                     return false;
                 }
 
@@ -728,11 +728,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private VectorAggregateFunctionConstructor assembleFunctionReference(RecordMetadata metadata, ExpressionNode ast) {
         int columnIndex;
-        if (ast.type == FUNCTION && ast.paramCount == 1 && SqlKeywords.isSumKeyword(ast.token) && ast.rhs.type == LITERAL) {
+        if (ast.type == FUNCTION && ast.paramCount == 1 && isSumKeyword(ast.token) && ast.rhs.type == LITERAL) {
             columnIndex = metadata.getColumnIndex(ast.rhs.token);
             tempVecConstructorArgIndexes.add(columnIndex);
             return sumConstructors.get(metadata.getColumnType(columnIndex));
-        } else if (ast.type == FUNCTION && SqlKeywords.isCountKeyword(ast.token)
+        } else if (ast.type == FUNCTION && isCountKeyword(ast.token)
                 && (ast.paramCount == 0 || (ast.paramCount == 1 && ast.rhs.type == CONSTANT && !isNullKeyword(ast.rhs.token)))) {
             // count() is a no-arg function, count(1) is the same as count(*)
             tempVecConstructorArgIndexes.add(-1);
@@ -5953,7 +5953,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return;
         }
 
-        if (curr.getFillValues().size() == 1 && SqlKeywords.isNoneKeyword(curr.getFillValues().getQuick(0).token)) {
+        if (curr.getFillValues().size() == 1 && isNoneKeyword(curr.getFillValues().getQuick(0).token)) {
             return;
         }
 

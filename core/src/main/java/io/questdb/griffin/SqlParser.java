@@ -987,24 +987,13 @@ public class SqlParser {
         final ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
         for (int i = 0, n = columns.size(); i < n; i++) {
             final QueryColumn column = columns.getQuick(i);
-            final ExpressionNode ast = column.getAst();
-            switch (ast.type) {
-                // TODO(puzpuzpuz): this won't work if the sample by has function or expression keys; see CreateMatViewTest
-                case ExpressionNode.FUNCTION:
-                case ExpressionNode.CONSTANT:
-                case ExpressionNode.OPERATION:
-                    // allowed, nothing to do
-                    break;
-                case ExpressionNode.LITERAL:
-                    // aggregation key, add as dedup key
-                    final CreateTableColumnModel model = createTableOperationBuilder.getColumnModel(column.getName());
-                    if (model == null) {
-                        throw SqlException.$(lexer.lastTokenPosition(), "Missing column [name=" + column.getName() + "]");
-                    }
-                    model.setIsDedupKey();
-                    break;
-                default:
-                    throw SqlException.$(lexer.lastTokenPosition(), "unsupported materialized view query");
+            if (!optimiser.hasAggregates(column.getAst())) {
+                // aggregation key, add as dedup key
+                final CreateTableColumnModel model = createTableOperationBuilder.getColumnModel(column.getName());
+                if (model == null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "Missing column [name=" + column.getName() + "]");
+                }
+                model.setIsDedupKey();
             }
         }
         return builder;

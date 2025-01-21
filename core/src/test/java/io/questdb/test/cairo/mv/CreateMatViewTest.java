@@ -156,7 +156,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
-            final String query = "select ts, k || '10' as k, v+10 as v from " + TABLE1 + " sample by 30s";
+            final String query = "select ts, k || '10' as k, max(v) as v_max from " + TABLE1 + " sample by 30s";
             execute("create materialized view test as (" + query + ") partition by week");
             assertMatViewDefinition("test", query, TABLE1, 30, 's');
             assertMatViewMetadata("test", query, TABLE1, 30, 's');
@@ -175,7 +175,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
-            final String query = "select ts, concat(k, '10') as k, v+10 as v from " + TABLE1 + " sample by 30s";
+            final String query = "select ts, concat(k, '10') as k, max(v) as v_max from " + TABLE1 + " sample by 30s";
             execute("create materialized view test as (" + query + ") partition by week");
             assertMatViewDefinition("test", query, TABLE1, 30, 's');
             assertMatViewMetadata("test", query, TABLE1, 30, 's');
