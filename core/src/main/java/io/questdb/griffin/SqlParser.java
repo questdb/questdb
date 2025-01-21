@@ -779,6 +779,7 @@ public class SqlParser {
 
         CharSequence baseTableName = null;
         boolean baseTableDefined = false;
+        boolean refreshDefined = false;
         for (; ; ) {
             tok = tok(lexer, "'as' or 'with' or 'refresh'");
             if (SqlKeywords.isWithKeyword(tok)) {
@@ -789,6 +790,9 @@ public class SqlParser {
                 baseTableName = Chars.toString(tok(lexer, "base table expected"));
                 baseTableDefined = true;
             } else if (SqlKeywords.isRefreshKeyword(tok)) {
+                if (refreshDefined) {
+                    throw SqlException.position(lexer.getPosition()).put("refresh already defined");
+                }
                 tok = tok(lexer, "'incremental' or 'manual' or 'interval' expected");
                 if (SqlKeywords.isManualKeyword(tok)) {
                     throw SqlException.position(lexer.lastTokenPosition()).put("manual refresh is not yet supported");
@@ -798,6 +802,7 @@ public class SqlParser {
                     // For now, incremental refresh is the only supported behavior.
                     throw SqlException.position(lexer.lastTokenPosition()).put("'incremental' or 'manual' or 'interval' expected");
                 }
+                refreshDefined = true;
             } else {
                 break;
             }

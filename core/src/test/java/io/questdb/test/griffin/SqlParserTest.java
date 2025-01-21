@@ -1691,6 +1691,24 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateMatView10() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW 'myview' REFRESH INCREMENTAL refresh",
+                61,
+                "refresh already defined"
+        );
+    }
+
+    @Test
+    public void testCreateMatView11() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW 'myview' with base 'mytable1' with base 'mytable2'",
+                65,
+                "base table already defined"
+        );
+    }
+
+    @Test
     public void testCreateMatView2() throws Exception {
         assertSyntaxError(
                 "create materialized",
@@ -1756,7 +1774,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateMatView9() throws Exception {
         assertSyntaxError(
-                "create materialized view 'myview' with base 'mytable' refresh incremental",
+                "CREATE MATERIALIZED VIEW 'myview' WITH BASE 'mytable' REFRESH INCREMENTAL",
                 73,
                 "'as' or 'with' or 'refresh' expected"
         );
