@@ -57,7 +57,7 @@ public interface RejectProcessor extends HttpRequestProcessor, HttpMultipartCont
 
     default void resumeSend(
             HttpConnectionContext context
-    ) throws PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException, PeerDisconnectedException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
         onRequestComplete(context);
     }
 
