@@ -24,45 +24,43 @@
 
 package io.questdb.metrics;
 
-/**
- * Read-only gauge used to expose various stats.
- */
-public class VirtualLongGauge extends AbstractLongGauge implements LongGauge {
+import java.util.concurrent.atomic.AtomicLong;
 
-    private final StatProvider provider;
+public class AtomicLongGaugeImpl extends AbstractLongGauge implements AtomicLongGauge {
+    private final AtomicLong counter;
 
-    public VirtualLongGauge(CharSequence name, StatProvider statProvider) {
+    public AtomicLongGaugeImpl(CharSequence name) {
         super(name);
-        provider = statProvider;
+        counter = new AtomicLong();
     }
 
     @Override
     public void add(long value) {
-        // do nothing as this gauge is RO view of some stat
+        counter.addAndGet(value);
     }
 
     @Override
     public void dec() {
-        // do nothing as this gauge is RO view of some stat
+        counter.decrementAndGet();
     }
 
     @Override
     public long getValue() {
-        return provider.getValue();
+        return counter.get();
     }
 
     @Override
     public void inc() {
-        // do nothing as this gauge is RO view of some stat
+        counter.incrementAndGet();
+    }
+
+    @Override
+    public long incrementAndGet() {
+        return counter.incrementAndGet();
     }
 
     @Override
     public void setValue(long value) {
-        // do nothing as this gauge is RO view of some stat
-    }
-
-    @FunctionalInterface
-    public interface StatProvider {
-        long getValue();
+        counter.set(value);
     }
 }

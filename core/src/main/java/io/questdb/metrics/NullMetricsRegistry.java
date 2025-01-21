@@ -34,6 +34,11 @@ public class NullMetricsRegistry implements MetricsRegistry {
     }
 
     @Override
+    public AtomicLongGauge newAtomicLongGauge(CharSequence name) {
+        return NullLongGauge.INSTANCE;
+    }
+
+    @Override
     public Counter newCounter(CharSequence name) {
         return NullCounter.INSTANCE;
     }

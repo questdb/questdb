@@ -25,7 +25,9 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.cutlass.http.HttpConnectionContext;
-import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.cutlass.http.HttpResponseSink;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 
@@ -33,12 +35,14 @@ import static io.questdb.cairo.SecurityContext.AUTH_TYPE_NONE;
 import static java.net.HttpURLConnection.HTTP_UNAUTHORIZED;
 
 public class RejectProcessorImpl implements RejectProcessor {
+    private static final Log LOG = LogFactory.getLog(RejectProcessorImpl.class);
     protected final HttpConnectionContext httpConnectionContext;
     protected byte authenticationType = AUTH_TYPE_NONE;
     protected int rejectCode = 0;
     protected CharSequence rejectCookieName = null;
     protected CharSequence rejectCookieValue = null;
     protected CharSequence rejectMessage = null;
+    protected boolean shutdownWrite = false;
 
     public RejectProcessorImpl(HttpConnectionContext httpConnectionContext) {
         this.httpConnectionContext = httpConnectionContext;
@@ -51,6 +55,7 @@ public class RejectProcessorImpl implements RejectProcessor {
         rejectCookieName = null;
         rejectCookieValue = null;
         rejectMessage = null;
+        shutdownWrite = false;
     }
 
     @Override
@@ -64,23 +69,64 @@ public class RejectProcessorImpl implements RejectProcessor {
     }
 
     @Override
-    public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        if (rejectCode == HTTP_UNAUTHORIZED) {
-            httpConnectionContext.simpleResponse().sendStatusTextContent(HTTP_UNAUTHORIZED);
-            httpConnectionContext.reset();
-        } else {
-            httpConnectionContext.simpleResponse().sendStatusWithCookie(rejectCode, rejectMessage, rejectCookieName, rejectCookieValue);
-            httpConnectionContext.reset();
-        }
+    public RejectMessageBuilder newRejectMessageBuilder() {
+        return new RejectMessageBuilder();
     }
 
     @Override
-    public HttpRequestProcessor rejectRequest(int code, CharSequence userMessage, CharSequence cookieName, CharSequence cookieValue, byte authenticationType) {
-        this.rejectCode = code;
-        this.rejectMessage = userMessage;
-        this.rejectCookieName = cookieName;
-        this.rejectCookieValue = cookieValue;
+    public void onRequestComplete(
+            HttpConnectionContext context
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        final HttpResponseSink.SimpleResponseImpl response = httpConnectionContext.simpleResponse();
+        if (rejectCode == HTTP_UNAUTHORIZED) {
+            handleHttpUnauthorized(response);
+        } else {
+            response.sendStatusWithCookie(rejectCode, rejectMessage, rejectCookieName, rejectCookieValue);
+        }
+
+        if (shutdownWrite) {
+            response.shutdownWrite();
+        }
+        httpConnectionContext.reset();
+    }
+
+    @Override
+    public RejectProcessor reject(int rejectCode) {
+        LOG.error().$("rejecting request [code=").$(rejectCode).I$();
+        this.rejectCode = rejectCode;
+        return this;
+    }
+
+    @Override
+    public RejectProcessor reject(int rejectCode, CharSequence rejectMessage) {
+        LOG.error().$(rejectMessage).$(" [code=").$(rejectCode).I$();
+        this.rejectCode = rejectCode;
+        this.rejectMessage = rejectMessage;
+        return this;
+    }
+
+    @Override
+    public RejectProcessor withAuthenticationType(byte authenticationType) {
         this.authenticationType = authenticationType;
         return this;
+    }
+
+    @Override
+    public RejectProcessor withCookie(CharSequence cookieName, CharSequence cookieValue) {
+        this.rejectCookieName = cookieName;
+        this.rejectCookieValue = cookieValue;
+        return this;
+    }
+
+    @Override
+    public RejectProcessor withShutdownWrite() {
+        this.shutdownWrite = true;
+        return this;
+    }
+
+    protected void handleHttpUnauthorized(
+            HttpResponseSink.SimpleResponseImpl response
+    ) throws PeerIsSlowToReadException, PeerDisconnectedException {
+        response.sendStatusTextContent(HTTP_UNAUTHORIZED);
     }
 }

@@ -38,6 +38,7 @@ import io.questdb.cutlass.http.ex.TooFewBytesReceivedException;
 import io.questdb.cutlass.http.processors.RejectProcessor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.metrics.AtomicLongGauge;
 import io.questdb.network.HeartBeatException;
 import io.questdb.network.IOContext;
 import io.questdb.network.IODispatcher;
@@ -67,7 +68,6 @@ import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
-import static io.questdb.cairo.SecurityContext.AUTH_TYPE_NONE;
 import static io.questdb.cutlass.http.HttpConstants.HEADER_CONTENT_ACCEPT_ENCODING;
 import static io.questdb.cutlass.http.HttpConstants.HEADER_TRANSFER_ENCODING;
 import static io.questdb.network.IODispatcher.*;
@@ -100,6 +100,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     };
     private final AssociativeCache<RecordCursorFactory> selectCache;
     private long authenticationNanos = 0L;
+    private AtomicLongGauge connectionCountGauge;
+    private boolean connectionCounted;
     private int nCompletedRequests;
     private boolean pendingRetry = false;
     private int receivedBytes;
@@ -180,6 +182,12 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             this.multipartContentHeaderParser.close();
         }
         this.localValueMap.disconnect();
+
+        if (connectionCountGauge != null) {
+            connectionCountGauge.dec();
+            connectionCounted = false;
+            connectionCountGauge = null;
+        }
     }
 
     @Override
@@ -257,6 +265,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return responseSink.getRawSocket();
     }
 
+    public RejectProcessor getRejectProcessor() {
+        return rejectProcessor;
+    }
+
     public HttpRequestHeader getRequestHeader() {
         return headerParser;
     }
@@ -322,6 +334,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 throw CairoException.nonCritical().put("failed to start TLS session");
             }
         }
+        connectionCounted = false;
     }
 
     @Override
@@ -343,20 +356,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         headerParser.reopen(configuration.getHttpContextConfiguration().getRequestHeaderBufferSize());
         multipartContentHeaderParser.reopen(configuration.getHttpContextConfiguration().getMultipartHeaderBufferSize());
         return this;
-    }
-
-    public HttpRequestProcessor rejectRequest(int code, CharSequence userMessage) {
-        return rejectRequest(code, userMessage, null, null);
-    }
-
-    public HttpRequestProcessor rejectRequest(int code, byte authenticationType) {
-        LOG.error().$("rejecting request [code=").$(code).I$();
-        return rejectProcessor.rejectRequest(code, null, null, null, authenticationType);
-    }
-
-    public HttpRequestProcessor rejectRequest(int code, CharSequence userMessage, CharSequence cookieName, CharSequence cookieValue) {
-        LOG.error().$(userMessage).$(" [code=").$(code).I$();
-        return rejectProcessor.rejectRequest(code, userMessage, cookieName, cookieValue, AUTH_TYPE_NONE);
     }
 
     public void reset() {
@@ -464,6 +463,31 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         }
     }
 
+    private HttpRequestProcessor checkConnectionLimit(HttpRequestProcessor processor) {
+        final int connectionLimit = processor.getConnectionLimit(configuration.getHttpContextConfiguration());
+        if (connectionLimit > -1) {
+            connectionCountGauge = processor.connectionCountGauge(metrics);
+            final long numOfConnections = connectionCountGauge.incrementAndGet();
+            if (numOfConnections > connectionLimit) {
+                return rejectProcessor.withShutdownWrite().reject(HTTP_BAD_REQUEST, rejectProcessor.newRejectMessageBuilder()
+                        .$("exceeded connection limit [name=").$(connectionCountGauge.getName())
+                        .$(", numOfConnections=").$(numOfConnections)
+                        .$(", connectionLimit=").$(connectionLimit)
+                        .I$()
+                );
+            }
+            if (numOfConnections == connectionLimit && !securityContext.isSystemAdmin()) {
+                return rejectProcessor.withShutdownWrite().reject(HTTP_BAD_REQUEST, rejectProcessor.newRejectMessageBuilder()
+                        .$("non-admin user exceeded connection limit [name=").$(connectionCountGauge.getName())
+                        .$(", numOfConnections=").$(numOfConnections)
+                        .$(", connectionLimit=").$(connectionLimit)
+                        .I$()
+                );
+            }
+        }
+        return processor;
+    }
+
     private HttpRequestProcessor checkProcessorValidForRequest(
             Utf8Sequence method,
             HttpRequestProcessor processor,
@@ -479,26 +503,26 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         if (Utf8s.equalsNcAscii("POST", method) || Utf8s.equalsNcAscii("PUT", method)) {
             if (!multipartProcessor) {
                 if (multipartRequest) {
-                    return rejectRequest(HTTP_NOT_FOUND, "Method (multipart POST) not supported");
+                    return rejectProcessor.reject(HTTP_NOT_FOUND, "Method (multipart POST) not supported");
                 } else {
-                    return rejectRequest(HTTP_NOT_FOUND, "Method not supported");
+                    return rejectProcessor.reject(HTTP_NOT_FOUND, "Method not supported");
                 }
             }
             if (chunked && contentLength > 0) {
-                return rejectRequest(HTTP_BAD_REQUEST, "Invalid chunked request; content-length specified");
+                return rejectProcessor.reject(HTTP_BAD_REQUEST, "Invalid chunked request; content-length specified");
             }
             if (!chunked && !multipartRequest && contentLength < 0) {
-                return rejectRequest(HTTP_BAD_REQUEST, "Content-length not specified for POST/PUT request");
+                return rejectProcessor.reject(HTTP_BAD_REQUEST, "Content-length not specified for POST/PUT request");
             }
         } else if (Utf8s.equalsNcAscii("GET", method)) {
             if (chunked || multipartRequest || contentLength > 0) {
-                return rejectRequest(HTTP_BAD_REQUEST, "GET request method cannot have content");
+                return rejectProcessor.reject(HTTP_BAD_REQUEST, "GET request method cannot have content");
             }
             if (multipartProcessor) {
-                return rejectRequest(HTTP_NOT_FOUND, "Method GET not supported");
+                return rejectProcessor.reject(HTTP_NOT_FOUND, "Method GET not supported");
             }
         } else {
-            return rejectRequest(HTTP_BAD_REQUEST, "Method not supported");
+            return rejectProcessor.reject(HTTP_BAD_REQUEST, "Method not supported");
         }
 
         return processor;
@@ -912,7 +936,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 final byte requiredAuthType = processor.getRequiredAuthType();
                 if (newRequest) {
                     if (processor.requiresAuthentication() && !configureSecurityContext()) {
-                        processor = rejectRequest(HTTP_UNAUTHORIZED, requiredAuthType);
+                        processor = rejectProcessor.withAuthenticationType(requiredAuthType).reject(HTTP_UNAUTHORIZED);
                     }
 
                     if (configuration.getHttpContextConfiguration().areCookiesEnabled()) {
@@ -924,7 +948,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     try {
                         securityContext.checkEntityEnabled();
                     } catch (CairoException e) {
-                        processor = rejectRequest(HTTP_FORBIDDEN, e.getFlyweightMessage());
+                        processor = rejectProcessor.reject(HTTP_FORBIDDEN, e.getFlyweightMessage());
                     }
                 }
 
@@ -936,6 +960,11 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                         contentLength,
                         multipartProcessor
                 );
+
+                if (!connectionCounted) {
+                    processor = checkConnectionLimit(processor);
+                    connectionCounted = true;
+                }
 
                 if (chunked) {
                     busyRecv = consumeChunked(processor, headerEnd, read, newRequest);
@@ -1057,5 +1086,4 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         Vect.memmove(recvBuffer, start, receivedBytes);
         LOG.debug().$("peer is slow, waiting for bigger part to parse [multipart]").$();
     }
-
 }

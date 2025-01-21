@@ -26,11 +26,10 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.HttpConnectionContext;
-import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 
-public class LineHttpPingProcessor implements HttpRequestProcessor {
+public class LineHttpPingProcessor implements LineHttpProcessor {
     private final String header;
 
     public LineHttpPingProcessor(CharSequence version) {

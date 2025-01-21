@@ -25,6 +25,7 @@
 package io.questdb.test;
 
 import io.questdb.Metrics;
+import io.questdb.metrics.AtomicLongGauge;
 import io.questdb.metrics.Counter;
 import io.questdb.metrics.CounterWithOneLabel;
 import io.questdb.metrics.CounterWithTwoLabels;
@@ -157,6 +158,12 @@ public class MetricsTest {
 
         public Set<CharSequence> getNotUniqueMetrics() {
             return notUniqueMetrics;
+        }
+
+        @Override
+        public AtomicLongGauge newAtomicLongGauge(CharSequence name) {
+            addMetricName(name);
+            return delegate.newAtomicLongGauge(name);
         }
 
         @Override
