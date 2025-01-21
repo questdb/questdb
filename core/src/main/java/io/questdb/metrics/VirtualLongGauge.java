@@ -24,21 +24,16 @@
 
 package io.questdb.metrics;
 
-import io.questdb.std.str.BorrowableUtf8Sink;
-import io.questdb.std.str.CharSink;
-import org.jetbrains.annotations.NotNull;
-
 /**
  * Read-only gauge used to expose various stats.
  */
-public class VirtualLongGauge implements LongGauge {
+public class VirtualLongGauge extends AbstractLongGauge implements LongGauge {
 
-    private final CharSequence name;
     private final StatProvider provider;
 
     public VirtualLongGauge(CharSequence name, StatProvider statProvider) {
-        this.name = name;
-        this.provider = statProvider;
+        super(name);
+        provider = statProvider;
     }
 
     @Override
@@ -52,11 +47,6 @@ public class VirtualLongGauge implements LongGauge {
     }
 
     @Override
-    public CharSequence getName() {
-        return name;
-    }
-
-    @Override
     public long getValue() {
         return provider.getValue();
     }
@@ -67,27 +57,8 @@ public class VirtualLongGauge implements LongGauge {
     }
 
     @Override
-    public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
-        appendType(sink);
-        appendMetricName(sink);
-        PrometheusFormatUtils.appendSampleLineSuffix(sink, getValue());
-        PrometheusFormatUtils.appendNewLine(sink);
-    }
-
-    @Override
     public void setValue(long value) {
         // do nothing as this gauge is RO view of some stat
-    }
-
-    private void appendMetricName(CharSink<?> sink) {
-        sink.putAscii(PrometheusFormatUtils.METRIC_NAME_PREFIX);
-        sink.put(name);
-    }
-
-    private void appendType(CharSink<?> sink) {
-        sink.putAscii(PrometheusFormatUtils.TYPE_PREFIX);
-        sink.put(name);
-        sink.putAscii(" gauge\n");
     }
 
     @FunctionalInterface
