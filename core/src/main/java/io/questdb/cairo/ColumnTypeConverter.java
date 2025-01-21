@@ -557,10 +557,10 @@ public class ColumnTypeConverter {
     ) {
         MemoryCMARW dstFixMem = dstFixMemTL.get();
         int dstTypeSize = ColumnType.sizeOf(dstColumnType);
-        dstFixMem.of(ff, dstFixFd, true, null, Files.PAGE_SIZE, (rowHi - rowLo) * dstTypeSize, memoryTag);
-        dstFixMem.jumpTo(0);
 
         try {
+            dstFixMem.of(ff, dstFixFd, true, null, Files.PAGE_SIZE, (rowHi - rowLo) * dstTypeSize, memoryTag);
+            dstFixMem.jumpTo(0);
             for (long i = rowLo; i < rowHi; i++) {
                 Utf8Sequence utf8 = VarcharTypeDriver.getSplitValue(srcFixMem, srcVarMem, i, 1);
                 converter.convert(utf8 != null ? utf8.asAsciiCharSequence() : null, dstFixMem);
@@ -585,15 +585,15 @@ public class ColumnTypeConverter {
     ) {
         MemoryCMARW dstFixMem = dstFixMemTL.get();
         MemoryCMARW dstVarMem = dstVarMemTL.get();
-
-        dstVarMem.of(ff, dstVarFd, true, null, appendPageSize, appendPageSize, memoryTag);
-        dstVarMem.jumpTo(0);
-        dstFixMem.of(ff, dstFixFd, true, null, appendPageSize, StringTypeDriver.INSTANCE.getAuxVectorSize(rowHi - rowLo), memoryTag);
-        dstFixMem.jumpTo(0);
-        dstFixMem.putLong(0L);
         StringSink sink = sinkUtf16TL.get();
 
         try {
+            dstVarMem.of(ff, dstVarFd, true, null, appendPageSize, appendPageSize, memoryTag);
+            dstVarMem.jumpTo(0);
+            dstFixMem.of(ff, dstFixFd, true, null, appendPageSize, StringTypeDriver.INSTANCE.getAuxVectorSize(rowHi - rowLo), memoryTag);
+            dstFixMem.jumpTo(0);
+            dstFixMem.putLong(0L);
+
             for (long i = rowLo; i < rowHi; i++) {
                 Utf8Sequence utf8 = VarcharTypeDriver.getSplitValue(srcFixMem, srcVarMem, i, 1);
 
@@ -623,12 +623,11 @@ public class ColumnTypeConverter {
             ColumnConversionOffsetSink columnSizesSink
     ) {
         MemoryCMARW dstFixMem = dstFixMemTL.get();
-
-        dstFixMem.of(ff, dstFixFd, true, null, Files.PAGE_SIZE, (rowHi - rowLo) * Integer.BYTES, memoryTag);
-        dstFixMem.jumpTo(0);
         StringSink sink = sinkUtf16TL.get();
 
         try {
+            dstFixMem.of(ff, dstFixFd, true, null, Files.PAGE_SIZE, (rowHi - rowLo) * Integer.BYTES, memoryTag);
+            dstFixMem.jumpTo(0);
             for (long i = rowLo; i < rowHi; i++) {
                 Utf8Sequence utf8 = VarcharTypeDriver.getSplitValue(srcFixMem, srcVarMem, i, 1);
 
@@ -661,9 +660,10 @@ public class ColumnTypeConverter {
         MemoryCMARW dstFixMem = dstFixMemTL.get();
         int dstTypeSize = ColumnType.sizeOf(dstColumnType);
         assert dstTypeSize > 0;
-        dstFixMem.of(ff, dstFixFd, true, null, Files.PAGE_SIZE, rowCount * dstTypeSize, memoryTag);
-        dstFixMem.jumpTo(0);
         try {
+            dstFixMem.of(ff, dstFixFd, true, null, Files.PAGE_SIZE, rowCount * dstTypeSize, memoryTag);
+            dstFixMem.jumpTo(0);
+
             long offset = skipOffset;
             for (long i = 0; i < rowCount; i++) {
                 CharSequence str = srcVarMem.getStrA(offset);
@@ -687,9 +687,9 @@ public class ColumnTypeConverter {
             ColumnConversionOffsetSink columnSizesSink
     ) {
         MemoryCMARW dstFixMem = dstFixMemTL.get();
-        dstFixMem.of(ff, dstFixFd, true, null, Files.PAGE_SIZE, rowCount * Integer.BYTES, memoryTag);
-        dstFixMem.jumpTo(0);
         try {
+            dstFixMem.of(ff, dstFixFd, true, null, Files.PAGE_SIZE, rowCount * Integer.BYTES, memoryTag);
+            dstFixMem.jumpTo(0);
             long offset = skipOffset;
             for (long i = 0; i < rowCount; i++) {
                 CharSequence str = srcVarMem.getStrA(offset);
@@ -762,10 +762,10 @@ public class ColumnTypeConverter {
         MemoryCMARW dstFixMem = dstFixMemTL.get();
         int dstSize = ColumnType.sizeOf(dstColumnType);
         assert dstSize > 0;
-        dstFixMem.of(ff, dstFixFd, true, null, appendPageSize, rowCount * dstSize, memoryTag);
-        dstFixMem.jumpTo(0);
 
         try {
+            dstFixMem.of(ff, dstFixFd, true, null, appendPageSize, rowCount * dstSize, memoryTag);
+            dstFixMem.jumpTo(0);
             for (long lo = symbolMapAddress, hi = symbolMapAddress + rowCount * Integer.BYTES; lo < hi; lo += Integer.BYTES) {
                 int symbol = Unsafe.getUnsafe().getInt(lo);
                 CharSequence str = symbolTable.valueOf(symbol);
@@ -793,14 +793,15 @@ public class ColumnTypeConverter {
 
         ColumnTypeDriver typeDriver = StringTypeDriver.INSTANCE;
         long dstFixSize = typeDriver.getAuxVectorSize(rowCount);
-        dstFixMem.of(ff, dstFixFd, true, null, appendPageSize, dstFixSize, memoryTag);
-        dstFixMem.jumpTo(0);
-        dstFixMem.putLong(0);
-
-        dstVarMem.of(ff, dstVarFd, true, null, appendPageSize, appendPageSize, memoryTag);
-        dstVarMem.jumpTo(0);
 
         try {
+            dstFixMem.of(ff, dstFixFd, true, null, appendPageSize, dstFixSize, memoryTag);
+            dstFixMem.jumpTo(0);
+            dstFixMem.putLong(0);
+
+            dstVarMem.of(ff, dstVarFd, true, null, appendPageSize, appendPageSize, memoryTag);
+            dstVarMem.jumpTo(0);
+
             for (long lo = symbolMapAddress, hi = symbolMapAddress + rowCount * Integer.BYTES; lo < hi; lo += Integer.BYTES) {
                 int symbol = Unsafe.getUnsafe().getInt(lo);
                 CharSequence str = symbolTable.valueOf(symbol);
@@ -829,16 +830,16 @@ public class ColumnTypeConverter {
     ) {
         MemoryCMARW dstFixMem = dstFixMemTL.get();
         MemoryCMARW dstVarMem = dstVarMemTL.get();
-
-        ColumnTypeDriver typeDriver = VarcharTypeDriver.INSTANCE;
-        dstFixMem.of(ff, dstFixFd, true, null, appendPageSize, typeDriver.getAuxVectorSize(rowCount), memoryTag);
-        dstFixMem.jumpTo(0);
-
-        dstVarMem.of(ff, dstVarFd, true, null, appendPageSize, appendPageSize, memoryTag);
-        dstVarMem.jumpTo(0);
-
         Utf8StringSink sink = sinkUtf8TL.get();
+
         try {
+            ColumnTypeDriver typeDriver = VarcharTypeDriver.INSTANCE;
+            dstFixMem.of(ff, dstFixFd, true, null, appendPageSize, typeDriver.getAuxVectorSize(rowCount), memoryTag);
+            dstFixMem.jumpTo(0);
+
+            dstVarMem.of(ff, dstVarFd, true, null, appendPageSize, appendPageSize, memoryTag);
+            dstVarMem.jumpTo(0);
+
             for (long lo = symbolMapAddress, hi = symbolMapAddress + rowCount * Integer.BYTES; lo < hi; lo += Integer.BYTES) {
                 int symbol = Unsafe.getUnsafe().getInt(lo);
                 CharSequence str = symbolTable.valueOf(symbol);

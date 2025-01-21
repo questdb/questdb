@@ -1973,6 +1973,36 @@ public class SqlKeywords {
                 && (tok.charAt(3) | 32) == 'e';
     }
 
+    public static boolean isRespectWord(CharSequence tok) {
+        return tok.length() == 7
+                && (tok.charAt(0) | 32) == 'r'
+                && (tok.charAt(1) | 32) == 'e'
+                && (tok.charAt(2) | 32) == 's'
+                && (tok.charAt(3) | 32) == 'p'
+                && (tok.charAt(4) | 32) == 'e'
+                && (tok.charAt(5) | 32) == 'c'
+                && (tok.charAt(6) | 32) == 't';
+    }
+
+    public static boolean isIgnoreWord(CharSequence tok) {
+        return tok.length() == 6
+                && (tok.charAt(0) | 32) == 'i'
+                && (tok.charAt(1) | 32) == 'g'
+                && (tok.charAt(2) | 32) == 'n'
+                && (tok.charAt(3) | 32) == 'o'
+                && (tok.charAt(4) | 32) == 'r'
+                && (tok.charAt(5) | 32) == 'e';
+    }
+
+    public static boolean isNullsWord(CharSequence tok) {
+        return tok.length() == 5
+                && (tok.charAt(0) | 32) == 'n'
+                && (tok.charAt(1) | 32) == 'u'
+                && (tok.charAt(2) | 32) == 'l'
+                && (tok.charAt(3) | 32) == 'l'
+                && (tok.charAt(4) | 32) == 's';
+    }
+
     public static boolean startsWithGeoHashKeyword(CharSequence tok) {
         return (tok.length() >= 7)
                 && isGeoHashKeywordInternal(tok);

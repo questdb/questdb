@@ -507,14 +507,8 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         NullMemoryCMR.INSTANCE.getLong256(0, sink);
     }
 
-    private void getLong256(long offset, CharSink<?> sink) {
-        final long addr = offset + Long.BYTES * 4;
-        final long a, b, c, d;
-        a = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 4);
-        b = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 3);
-        c = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 2);
-        d = Unsafe.getUnsafe().getLong(addr - Long.BYTES);
-        Numbers.appendLong256(a, b, c, d, sink);
+    private void getLong256(long addr, CharSink<?> sink) {
+        Numbers.appendLong256FromUnsafe(addr, sink);
     }
 
     private DirectString getStr(long base, long offset, long dataLim, DirectString view) {

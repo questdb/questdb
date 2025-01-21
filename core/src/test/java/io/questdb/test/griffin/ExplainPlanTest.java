@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
@@ -131,21 +132,28 @@ import io.questdb.griffin.engine.functions.rnd.RndSymbolListFunctionFactory;
 import io.questdb.griffin.engine.functions.table.HydrateTableMetadataFunctionFactory;
 import io.questdb.griffin.engine.functions.table.ReadParquetFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.window.LagDoubleFunctionFactory;
+import io.questdb.griffin.engine.functions.window.LeadDoubleFunctionFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
+import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
+import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.griffin.model.WindowColumn;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
+import io.questdb.std.Files;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.StationaryMicrosClock;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -159,6 +167,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public static void setUpStatic() throws Exception {
         testMicrosClock = StationaryMicrosClock.INSTANCE;
         AbstractCairoTest.setUpStatic();
+    }
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        inputRoot = root;
     }
 
     @Test
@@ -2440,6 +2454,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                         sigArgType = ColumnType.DOUBLE;
                                     } else if (factory instanceof LevelTwoPriceFunctionFactory) {
                                         sigArgType = ColumnType.DOUBLE;
+                                    } else if (factory instanceof LagDoubleFunctionFactory || factory instanceof LeadDoubleFunctionFactory) {
+                                        sigArgType = ColumnType.INT;
+                                        useConst = true;
                                     } else {
                                         sigArgType = ColumnType.STRING;
                                     }
@@ -2555,7 +2572,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                             // TODO: test with partition by, order by and various frame modes
                             if (factory.isWindow()) {
-                                sqlExecutionContext.configureWindowContext(null, null, null, false, PageFrameRecordCursorFactory.SCAN_DIRECTION_FORWARD, -1, true, WindowColumn.FRAMING_RANGE, Long.MIN_VALUE, 10, 0, 20, WindowColumn.EXCLUDE_NO_OTHERS, 0, -1);
+                                sqlExecutionContext.configureWindowContext(null, null, null, false, PageFrameRecordCursorFactory.SCAN_DIRECTION_FORWARD, -1, true, WindowColumn.FRAMING_RANGE, Long.MIN_VALUE, 10, 0, 20, WindowColumn.EXCLUDE_NO_OTHERS, 0, -1, false, 0);
                             }
                             Function function = null;
                             try {
@@ -5995,6 +6012,53 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "                  functions: [11L,11]\n" +
                             "                    long_sequence count: 1\n"
             );
+        });
+    }
+
+    @Test
+    public void testReadParquet() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table x as (select" +
+                            " x as a_long," +
+                            " rnd_str(4,4,4,2) as a_str," +
+                            " rnd_timestamp('2015','2016',2) as a_ts" +
+                            " from long_sequence(3))"
+            );
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                assertPlanNoLeakCheck(
+                        "select * from read_parquet('x.parquet') where a_long = 42;",
+                        "Async JIT Filter workers: 1\n" +
+                                "  filter: a_long=42\n" +
+                                "    parquet page frame scan\n"
+                );
+
+                assertPlanNoLeakCheck(
+                        "select avg(a_long) from read_parquet('x.parquet');",
+                        "GroupBy vectorized: true workers: 1\n" +
+                                "  values: [avg(a_long)]\n" +
+                                "    parquet page frame scan\n"
+                );
+
+                assertPlanNoLeakCheck(
+                        "select a_str, max(a_long) from read_parquet('x.parquet');",
+                        "Async Group By workers: 1\n" +
+                                "  keys: [a_str]\n" +
+                                "  values: [max(a_long)]\n" +
+                                "  filter: null\n" +
+                                "    parquet page frame scan\n"
+                );
+            }
         });
     }
 
@@ -10377,9 +10441,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    CachedWindow\n" +
                             "      orderedFunctions: [[i desc, j] => [row_number() over (partition by [i])]," +
-                            "[j, i desc] => [avg(j) over (partition by [i] rows between unbounded preceding and current row )," +
-                            "sum(j) over (partition by [i] rows between unbounded preceding and current row )," +
-                            "first_value(j) over (partition by [i] rows between unbounded preceding and current row )]]\n" +
+                            "[j, i desc] => [avg(j) over (partition by [i] rows between unbounded preceding and current row)," +
+                            "sum(j) over (partition by [i] rows between unbounded preceding and current row)," +
+                            "first_value(j) over (partition by [i] rows between unbounded preceding and current row)]]\n" +
                             "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: tab\n"
@@ -10394,9 +10458,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "from tab order by ts desc",
                     "SelectedRecord\n" +
                             "    CachedWindow\n" +
-                            "      orderedFunctions: [[i desc, j] => [row_number() over (partition by [i]),avg(j) over (partition by [i,j] rows between unbounded preceding and current row )," +
-                            "sum(j) over (partition by [i,j] rows between unbounded preceding and current row )," +
-                            "first_value(j) over (partition by [i,j] rows between unbounded preceding and current row )]]\n" +
+                            "      orderedFunctions: [[i desc, j] => [row_number() over (partition by [i]),avg(j) over (partition by [i,j] rows between unbounded preceding and current row)," +
+                            "sum(j) over (partition by [i,j] rows between unbounded preceding and current row)," +
+                            "first_value(j) over (partition by [i,j] rows between unbounded preceding and current row)]]\n" +
                             "      unorderedFunctions: [rank() over (partition by [j,i])]\n" +
                             "        PageFrame\n" +
                             "            Row backward scan\n" +
@@ -10949,9 +11013,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Limit lo: 3\n" +
                             "    Window\n" +
                             "      functions: [row_number() over (partition by [sym])," +
-                            "avg(i) over (partition by [i] rows between unbounded preceding and current row )," +
-                            "sum(i) over (partition by [i] rows between unbounded preceding and current row )," +
-                            "first_value(i) over (partition by [i] rows between unbounded preceding and current row )]\n" +
+                            "avg(i) over (partition by [i] rows between unbounded preceding and current row)," +
+                            "sum(i) over (partition by [i] rows between unbounded preceding and current row)," +
+                            "first_value(i) over (partition by [i] rows between unbounded preceding and current row)]\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: x\n"

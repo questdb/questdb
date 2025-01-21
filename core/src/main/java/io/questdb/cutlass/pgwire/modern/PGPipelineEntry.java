@@ -85,6 +85,7 @@ import io.questdb.std.Vect;
 import io.questdb.std.WeakSelfReturningObjectPool;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -1031,20 +1032,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         bindVariableService.setBin(variableIndex, binarySequenceParamsPool.next().of(valueAddr, valueSize));
     }
 
-    private static void setBindVariableAsBoolean(
-            int variableIndex,
-            int valueSize,
-            BindVariableService bindVariableService
-    ) throws SqlException {
-        if (valueSize != 4 && valueSize != 5) {
-            throw SqlException
-                    .$(0, "bad value for BOOLEAN parameter [variableIndex=").put(variableIndex)
-                    .put(", valueSize=").put(valueSize)
-                    .put(']');
-        }
-        bindVariableService.setBoolean(variableIndex, valueSize == 4);
-    }
-
     private long calculateRecordTailSize(
             Record record,
             int startFrom,
@@ -1162,6 +1149,14 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 continue;
             }
 
+            // value must remain within message limit. this will never happen with a well-functioning client, but
+            // a non-compliant client could send us rubbish or a bad actor could try to crash the server.
+            if (lo + valueSize > msgLimit) {
+                throw kaput()
+                        .put("bind variable value is beyond the message limit [variableIndex=").put(i)
+                        .put(", valueSize=").put(valueSize).put(']');
+            }
+
             // read the pgwire protocol types
             if (msgBindParameterFormatCodes.get(i)) {
                 // beware, pgwire type is encoded as big endian
@@ -1191,10 +1186,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         setBindVariableAsChar(i, lo, valueSize, bindVariableService, characterStore);
                         break;
                     case X_PG_DATE:
-                        setBindVariableAsDate(i, lo, valueSize, bindVariableService, characterStore);
+                        setBindVariableAsDate(i, lo, valueSize, bindVariableService);
                         break;
                     case X_PG_BOOL:
-                        setBindVariableAsBoolean(i, valueSize, bindVariableService);
+                        setBindVariableAsBoolean(i, lo, valueSize, bindVariableService);
                         break;
                     case X_PG_BYTEA:
                         setBindVariableAsBin(i, lo, valueSize, bindVariableService, binarySequenceParamsPool);
@@ -1911,7 +1906,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             utf8Sink.setNullValue();
         } else {
             final long a = utf8Sink.skipInt();
-            Numbers.appendLong256(long256Value.getLong0(), long256Value.getLong1(), long256Value.getLong2(), long256Value.getLong3(), utf8Sink);
+            Numbers.appendLong256(long256Value, utf8Sink);
             utf8Sink.putLenEx(a);
         }
     }
@@ -2328,16 +2323,16 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 utf8Sink.putZ(pgResultSetColumnNames.get(i));
                 utf8Sink.putIntDirect(0); // tableOid for each column is optional, so we always set it to zero
                 utf8Sink.putNetworkShort((short) (i + 1)); //column number, starting from 1
-                utf8Sink.putNetworkInt(PGOids.getTypeOid(columnType)); // type
-                // type size
-                if (ColumnType.tagOf(columnType) < ColumnType.STRING) {
-                    utf8Sink.putNetworkShort((short) ColumnType.sizeOf(columnType));
-                } else {
-                    utf8Sink.putNetworkShort((short) -1);
-                }
+                int pgType = getTypeOid(columnType);
+                utf8Sink.putNetworkInt(pgType); // type
 
-                // type modifier
-                utf8Sink.putIntDirect(INT_NULL_X);
+                // type size
+                short xSize = X_PG_TYPE_TO_SIZE_MAP.get(pgType);
+                utf8Sink.putDirectShort(xSize);
+
+                int xTypeModifier = PGOids.getXAttTypMod(pgType);
+                utf8Sink.putDirectInt(xTypeModifier);
+
                 // this is special behaviour for binary fields to prevent binary data being hex encoded on the wire
                 // format code
                 utf8Sink.putNetworkShort(getPgResultSetColumnFormatCode(i)); // format code
@@ -2386,6 +2381,17 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         utf8Sink.resetToBookmark(messageLengthAddress - Byte.BYTES);
     }
 
+    private void setBindVariableAsBoolean(
+            int variableIndex,
+            long valueAddr,
+            int valueSize,
+            BindVariableService bindVariableService
+    ) throws SqlException, BadProtocolException {
+        ensureValueLength(variableIndex, Byte.BYTES, valueSize);
+        byte val = Unsafe.getUnsafe().getByte(valueAddr);
+        bindVariableService.setBoolean(variableIndex, val == 1);
+    }
+
     private void setBindVariableAsChar(
             int variableIndex,
             long valueAddr,
@@ -2405,16 +2411,14 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             int variableIndex,
             long valueAddr,
             int valueSize,
-            BindVariableService bindVariableService,
-            CharacterStore characterStore
+            BindVariableService bindVariableService
     ) throws SqlException, BadProtocolException {
-        CharacterStoreEntry e = characterStore.newEntry();
-        if (Utf8s.utf8ToUtf16(valueAddr, valueAddr + valueSize, e)) {
-            bindVariableService.define(variableIndex, ColumnType.DATE, 0);
-            bindVariableService.setStr(variableIndex, characterStore.toImmutable());
-        } else {
-            throw kaput().put("invalid str UTF8 bytes [variableIndex=").put(variableIndex).put(']');
-        }
+        ensureValueLength(variableIndex, Integer.BYTES, valueSize);
+
+        // represents the number of days since 2000-01-01
+        int days = getIntUnsafe(valueAddr);
+        long millis = Dates.addDays(Numbers.JULIAN_EPOCH_OFFSET_MILLIS, days);
+        bindVariableService.setDate(variableIndex, millis);
     }
 
     private void setBindVariableAsDouble(

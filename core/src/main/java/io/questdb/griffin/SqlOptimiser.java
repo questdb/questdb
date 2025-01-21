@@ -1429,10 +1429,10 @@ public class SqlOptimiser implements Mutable {
             innerModel.addBottomUpColumn(columnAst.position, translatedColumn, true);
             groupByModel.addBottomUpColumn(translatedColumn);
 
-            // window model is used together with inner model
-            final CharSequence windowAlias = createColumnAlias(innerAlias, windowModel);
-            final QueryColumn windowColumn = nextColumn(windowAlias, innerAlias);
-            windowModel.addBottomUpColumn(windowColumn);
+            // case 1: inner model is redundant and will be eliminated, should add translatedColumn directly
+            // case 2: inner model will be sandwiched between the windowModel and the translateModel, while translatedColumn.token already exists as a column in the innerModel,
+            // adding translatedColumn to windowModel is safe.
+            windowModel.addBottomUpColumn(translatedColumn);
             outerModel.addBottomUpColumn(translatedColumn);
             if (distinctModel != null) {
                 distinctModel.addBottomUpColumn(translatedColumn);
@@ -4720,6 +4720,11 @@ public class SqlOptimiser implements Mutable {
         next = model.getNestedModel();
         if (next != null) {
             rewriteOrderByPositionForUnionModels(next);
+        }
+
+        ObjList<QueryModel> joinModels = model.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            rewriteOrderByPositionForUnionModels(joinModels.getQuick(i));
         }
     }
 

@@ -42,6 +42,8 @@ public interface PGWireConfiguration extends IODispatcherConfiguration, WorkerPo
 
     SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
 
+    ConcurrentCacheConfiguration getConcurrentCacheConfiguration();
+
     int getConnectionPoolInitialCapacity();
 
     DateLocale getDefaultDateLocale();
@@ -100,6 +102,4 @@ public interface PGWireConfiguration extends IODispatcherConfiguration, WorkerPo
     boolean isUpdateCacheEnabled();
 
     boolean readOnlySecurityContext();
-
-    ConcurrentCacheConfiguration getConcurrentCacheConfiguration();
 }
