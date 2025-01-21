@@ -46,7 +46,7 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
     public static final String COLUMN_EXECUTION_MICROS = "execution_micros";
     public static final String COLUMN_QUERY_TEXT = "query_text";
     public static final String COLUMN_TS = "ts";
-    public static final String TABLE_NAME = "query_trace";
+    public static final String TABLE_NAME = "_query_trace";
     private static final int BATCH_LIMIT = 1024;
     private static final int INITIAL_CAPACITY = 128;
     private static final Log LOG = LogFactory.getLog(QueryTracingJob.class.getName());
@@ -78,21 +78,20 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
     }
 
     private void init() throws SqlException {
-        String fullName = engine.getConfiguration().getSystemTableNamePrefix() + TABLE_NAME;
         TableToken tableToken;
         try {
-            tableToken = engine.verifyTableName(fullName);
+            tableToken = engine.verifyTableName(TABLE_NAME);
         } catch (Exception recoverable) {
             try (SqlCompiler sqlCompiler = engine.getSqlCompiler()) {
                 CompiledQuery query = sqlCompiler.query()
-                        .$("CREATE TABLE IF NOT EXISTS '").$(fullName).$("' (")
+                        .$("CREATE TABLE IF NOT EXISTS '").$(TABLE_NAME).$("' (")
                         .$(COLUMN_TS).$(" TIMESTAMP, ")
                         .$(COLUMN_QUERY_TEXT).$(" VARCHAR, ")
                         .$(COLUMN_EXECUTION_MICROS).$(" LONG")
                         .$(") TIMESTAMP(").$(COLUMN_TS).$(") PARTITION BY HOUR TTL 1 DAY BYPASS WAL")
                         .compile(sqlExecutionContext);
                 query.getOperation().execute(sqlExecutionContext, null);
-                tableToken = engine.verifyTableName(fullName);
+                tableToken = engine.verifyTableName(TABLE_NAME);
             }
         }
         tableWriter = engine.getWriter(tableToken, "query_tracing");
