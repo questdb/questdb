@@ -2330,7 +2330,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 short xSize = X_PG_TYPE_TO_SIZE_MAP.get(pgType);
                 utf8Sink.putDirectShort(xSize);
 
-                int xTypeModifier = X_PG_TYPE_TO_TYPE_MODIFIER_MAP.get(pgType);
+                int xTypeModifier = PGOids.getXAttTypMod(pgType);
                 utf8Sink.putDirectInt(xTypeModifier);
 
                 // this is special behaviour for binary fields to prevent binary data being hex encoded on the wire

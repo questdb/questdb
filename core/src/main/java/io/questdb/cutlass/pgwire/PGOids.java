@@ -75,7 +75,6 @@ public class PGOids {
     public static final CharSequence[] PG_TYPE_TO_PROC_NAME = new CharSequence[14];
     public static final CharSequence[] PG_TYPE_TO_PROC_SRC = new CharSequence[14];
     public static final IntShortHashMap PG_TYPE_TO_SIZE_MAP = new IntShortHashMap();
-    public static final IntIntHashMap PG_TYPE_TO_TYPE_MODIFIER_MAP = new IntIntHashMap();
     public static final int PG_UNSPECIFIED = 0;
     public static final int PG_UUID = 2950;
     public static final int PG_VARCHAR = 1043;
@@ -107,13 +106,27 @@ public class PGOids {
     @SuppressWarnings("NumericOverflow")
     public static final int X_PG_TIMESTAMP_TZ = ((PG_TIMESTAMP_TZ >> 24) & 0xff) | ((PG_TIMESTAMP_TZ << 8) & 0xff0000) | ((PG_TIMESTAMP_TZ >> 8) & 0xff00) | ((PG_TIMESTAMP_TZ << 24) & 0xff000000);
     public static final IntShortHashMap X_PG_TYPE_TO_SIZE_MAP = new IntShortHashMap();
-    public static final IntIntHashMap X_PG_TYPE_TO_TYPE_MODIFIER_MAP = new IntIntHashMap();
     @SuppressWarnings("NumericOverflow")
     public static final int X_PG_UUID = ((PG_UUID >> 24) & 0xff) | ((PG_UUID << 8) & 0xff0000) | ((PG_UUID >> 8) & 0xff00) | ((PG_UUID << 24) & 0xff000000);
     public static final int X_B_PG_UUID = 1 | X_PG_UUID;
     @SuppressWarnings("NumericOverflow")
     public static final int X_PG_VOID = ((PG_VOID >> 24) & 0xff) | ((PG_VOID << 8) & 0xff0000) | ((PG_VOID >> 8) & 0xff00) | ((PG_VOID << 24) & 0xff000000);
+    private static final int CHAR_ATT_TYP_MOD = 5; // CHAR(n) in PostgreSQL has n+4 as type modifier
     private static final IntList TYPE_OIDS = new IntList();
+    private static final int X_CHAR_ATT_TYP_MOD = Numbers.bswap(CHAR_ATT_TYP_MOD);
+
+    public static int getAttTypMod(int pgOidType) {
+        // PG_CHAR is the only type that has type modifier
+        // for all other types it is -1 = no value
+
+        // we use a simple branch here, if we add more types with typmod, we should consider using a map
+        // but it's an overkill for just one type.
+        // if you modify this method, make sure to update also getXAttTypMod.
+        if (pgOidType == PG_CHAR) {
+            return CHAR_ATT_TYP_MOD;
+        }
+        return -1;
+    }
 
     public static short getColumnBinaryFlag(int type) {
         return (short) ((type >>> 31) & 0xff);
@@ -121,6 +134,14 @@ public class PGOids {
 
     public static int getTypeOid(int type) {
         return TYPE_OIDS.getQuick(ColumnType.tagOf(type));
+    }
+
+    public static int getXAttTypMod(int pgOidType) {
+        // see getAttTypMod for explanation
+        if (pgOidType == PG_CHAR) {
+            return X_CHAR_ATT_TYP_MOD;
+        }
+        return -1;
     }
 
     public static int toColumnBinaryType(short code, int type) {
@@ -226,11 +247,6 @@ public class PGOids {
         X_PG_TYPE_TO_SIZE_MAP.put(PG_TIMESTAMP, Numbers.bswap((short) Long.BYTES));
         X_PG_TYPE_TO_SIZE_MAP.put(PG_TIMESTAMP_TZ, Numbers.bswap((short) Long.BYTES));
         X_PG_TYPE_TO_SIZE_MAP.put(PG_DATE, Numbers.bswap((short) Long.BYTES));
-
-        // PostgreSQL type modifier returns n+4 for CHAR(n) and since all our CHAR columns are equivalent to CHAR(1) we return 5
-        // All other types return -1 as per PostgreSQL documentation 
-        PG_TYPE_TO_TYPE_MODIFIER_MAP.put(PG_CHAR, 5);
-        X_PG_TYPE_TO_TYPE_MODIFIER_MAP.put(PG_CHAR, Numbers.bswap(5));
 
         PG_TYPE_TO_NAME[0] = "varchar";
         PG_TYPE_TO_NAME[1] = "timestamp";

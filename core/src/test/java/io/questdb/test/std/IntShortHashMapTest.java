@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2025 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,11 +25,12 @@
 package io.questdb.test.std;
 
 import io.questdb.std.IntShortHashMap;
+import io.questdb.test.AbstractTest;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-public class IntShortHashMapTest {
+public class IntShortHashMapTest extends AbstractTest {
     private static final short NO_ENTRY_VALUE = -1;
     private IntShortHashMap map;
 
