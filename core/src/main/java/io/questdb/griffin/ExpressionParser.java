@@ -1017,23 +1017,23 @@ public class ExpressionParser {
                                 final CharSequence isTok = GenericLexer.immutableOf(tok);
                                 tok = SqlUtil.fetchNext(lexer);
                                 if (tok == null) {
-                                    throw SqlException.$(lastPos, "IS must be followed by [NOT] NULL");
+                                    throw SqlException.$(lastPos, "IS must be followed by [NOT] NULL, TRUE or FALSE");
                                 }
                                 if (SqlKeywords.isNotKeyword(tok)) {
                                     final int notTokPosition = lexer.lastTokenPosition();
                                     final CharSequence notTok = GenericLexer.immutableOf(tok);
                                     tok = SqlUtil.fetchNext(lexer);
-                                    if (tok != null && SqlKeywords.isNullKeyword(tok)) {
+                                    if (tok != null && (SqlKeywords.isNullKeyword(tok) || SqlKeywords.isTrueKeyword(tok) || SqlKeywords.isFalseKeyword(tok))) {
                                         lexer.backTo(notTokPosition + 3, notTok);
                                         tok = "!=";
                                     } else {
-                                        throw SqlException.$(lastPos, "IS NOT must be followed by NULL");
+                                        throw SqlException.$(lastPos, "IS NOT must be followed by NULL, TRUE or FALSE");
                                     }
-                                } else if (SqlKeywords.isNullKeyword(tok)) {
+                                } else if (SqlKeywords.isNullKeyword(tok) || SqlKeywords.isTrueKeyword(tok) || SqlKeywords.isFalseKeyword(tok)) {
                                     lexer.backTo(lastPos + 2, isTok);
                                     tok = "=";
                                 } else {
-                                    throw SqlException.$(lastPos, "IS must be followed by NULL");
+                                    throw SqlException.$(lastPos, "IS must be followed by NULL, TRUE or FALSE");
                                 }
                             } else {
                                 throw SqlException.$(lastPos, "IS [NOT] not allowed here");
