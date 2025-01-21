@@ -47,6 +47,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 import static io.questdb.cutlass.http.HttpConstants.HEADER_IF_NONE_MATCH;
+import static java.net.HttpURLConnection.*;
 
 public class WebConsoleLoadingTest extends AbstractBootstrapTest {
     private static final String TEST_PAYLOAD = "<html><body><p>Dummy Web Console</p></body></html>";
@@ -84,6 +85,13 @@ public class WebConsoleLoadingTest extends AbstractBootstrapTest {
         testWebConsoleLoads("/context", true);
     }
 
+    @Test
+    public void testWebConsoleRootRedirects() throws Exception {
+        testWebConsoleRootRedirects("");
+        testWebConsoleRootRedirects("/");
+        testWebConsoleRootRedirects("/context");
+    }
+
     private void assertRequest(HttpClient.Request request, int responseCode, String expectedResponse) {
         try (HttpClient.ResponseHeaders responseHeaders = request.send()) {
             responseHeaders.await();
@@ -103,13 +111,20 @@ public class WebConsoleLoadingTest extends AbstractBootstrapTest {
         }
     }
 
-    private void assertRequest(HttpClient httpClient, String contextPath, boolean cachedResponse) {
+    private void assertRequest(
+            HttpClient httpClient,
+            String contextPath,
+            String resource,
+            boolean cachedResponse,
+            int expectedResponseCode,
+            String expectedResponse
+    ) {
         final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
-        request.GET().url(contextPath + "/index.html");
+        request.GET().url(contextPath + resource);
         if (cachedResponse) {
             request.header(HEADER_IF_NONE_MATCH.toString(), "\"" + indexFileLastModified + "\"");
         }
-        assertRequest(request, cachedResponse ? 304 : 200, cachedResponse ? "" : WebConsoleLoadingTest.TEST_PAYLOAD);
+        assertRequest(request, expectedResponseCode, expectedResponse);
     }
 
     private void testHttpContextPathExecEndpoint(String contextPathWebConsole) throws Exception {
@@ -156,8 +171,38 @@ public class WebConsoleLoadingTest extends AbstractBootstrapTest {
                 serverMain.start();
 
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
-                    assertRequest(httpClient, contextPath, true);
-                    assertRequest(httpClient, contextPath, false);
+                    assertRequest(httpClient, contextPath, "/index.html", true, HTTP_NOT_MODIFIED, "");
+                    assertRequest(httpClient, contextPath, "/index.html", false, HTTP_OK, TEST_PAYLOAD);
+                }
+            }
+        });
+    }
+
+    private void testWebConsoleRootRedirects(String contextPath) throws Exception {
+        final Bootstrap bootstrap = new Bootstrap(
+                new PropBootstrapConfiguration() {
+                    @Override
+                    public Map<String, String> getEnv() {
+                        final Map<String, String> env = new HashMap<>(super.getEnv());
+                        env.put(PropertyKey.HTTP_CONTEXT_WEB_CONSOLE.getEnvVarName(), contextPath);
+                        return Collections.unmodifiableMap(env);
+                    }
+
+                    @Override
+                    public boolean useSite() {
+                        return false;
+                    }
+                },
+                getServerMainArgs()
+        );
+
+        TestUtils.assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = new ServerMain(bootstrap)) {
+                serverMain.start();
+
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    assertRequest(httpClient, contextPath, "", true, HTTP_MOVED_PERM, "");
+                    assertRequest(httpClient, contextPath, "", false, HTTP_MOVED_PERM, "");
                 }
             }
         });

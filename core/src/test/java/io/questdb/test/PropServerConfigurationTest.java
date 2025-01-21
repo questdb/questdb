@@ -74,6 +74,7 @@ import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.AfterClass;
@@ -736,6 +737,23 @@ public class PropServerConfigurationTest {
             PropServerConfiguration configuration = newPropServerConfiguration(properties);
             Assert.assertFalse(configuration.getHttpServerConfiguration().isEnabled());
         }
+    }
+
+    @Test
+    public void testHttpRedirects() throws Exception {
+        final Properties properties = new Properties();
+        properties.setProperty(PropertyKey.HTTP_REDIRECT_COUNT.getPropertyPath(), "2");
+        properties.setProperty(PropertyKey.HTTP_REDIRECT_PREFIX.getPropertyPath() + "1", "/ -> /index.html");
+        properties.setProperty(PropertyKey.HTTP_REDIRECT_PREFIX.getPropertyPath() + "2", "/x -> /x/index.html");
+
+        final PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        final Utf8SequenceObjHashMap<Utf8Sequence> redirects = configuration.getHttpServerConfiguration()
+                .getStaticContentProcessorConfiguration().getRedirectMap();
+
+        Assert.assertEquals(3, redirects.size());
+        Assert.assertEquals("/index.html", Utf8s.toString(redirects.get(new Utf8String(""))));
+        Assert.assertEquals("/index.html", Utf8s.toString(redirects.get(new Utf8String("/"))));
+        Assert.assertEquals("/x/index.html", Utf8s.toString(redirects.get(new Utf8String("/x"))));
     }
 
     @Test
