@@ -33,74 +33,12 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Before;
 import org.junit.Test;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.fail;
-
 public class QueryTracingTest extends AbstractCairoTest {
-
-    private String queryTraceTableName;
 
     @Before
     public void setup() throws SqlException {
         node1.getConfigurationOverrides().setProperty(PropertyKey.QUERY_TRACING_ENABLED, true);
-        queryTraceTableName = engine.getConfiguration().getSystemTableNamePrefix() + QueryTracingJob.TABLE_NAME;
-        engine.execute("DROP TABLE IF EXISTS '" + queryTraceTableName + "'");
-    }
-
-    @Test
-    public void testQueryTraceFunction() throws Exception {
-        try (WorkerPool workerPool = new WorkerPool(() -> 1);
-             QueryTracingJob job = new QueryTracingJob(engine)
-        ) {
-            workerPool.assign(job);
-            workerPool.start(LOG);
-            String exampleQuery = "SELECT table_name FROM tables()";
-            assertSql("table_name\n", exampleQuery);
-            int sleepMillis = 100;
-            while (true) {
-                Thread.sleep(sleepMillis);
-                try {
-                    assertSql(
-                            String.format("%s\n%s\n", QueryTracingJob.COLUMN_QUERY_TEXT, exampleQuery),
-                            String.format("SELECT %s from %s() WHERE %s='%s' LIMIT 1",
-                                    QueryTracingJob.COLUMN_QUERY_TEXT,
-                                    QueryTracingJob.TABLE_NAME,
-                                    QueryTracingJob.COLUMN_QUERY_TEXT,
-                                    exampleQuery
-                            ));
-                    break;
-                } catch (SqlException | AssertionError e) {
-                    if (sleepMillis >= 6400) {
-                        throw e;
-                    }
-                    sleepMillis *= 2;
-                }
-            }
-        }
-    }
-
-    @Test
-    public void testQueryTraceFunctionInvalidCall() {
-        String failureMessage = "query_trace() accepted a parameter";
-        String expectedErrorMessage = "[12] query_trace() does not take any parameters";
-        try {
-            engine.select("query_trace(a)", sqlExecutionContext);
-            fail(failureMessage);
-        } catch (SqlException e) {
-            assertEquals(expectedErrorMessage, e.getMessage());
-        }
-        try {
-            engine.select("query_trace(a, b)", sqlExecutionContext);
-            fail(failureMessage);
-        } catch (SqlException e) {
-            assertEquals(expectedErrorMessage, e.getMessage());
-        }
-        try {
-            engine.select("query_trace(a, b, c)", sqlExecutionContext);
-            fail(failureMessage);
-        } catch (SqlException e) {
-            assertEquals(expectedErrorMessage, e.getMessage());
-        }
+        engine.execute("DROP TABLE IF EXISTS '" + QueryTracingJob.TABLE_NAME + "'");
     }
 
     @Test
@@ -120,7 +58,7 @@ public class QueryTracingTest extends AbstractCairoTest {
                             String.format("%s\n%s\n", QueryTracingJob.COLUMN_QUERY_TEXT, exampleQuery),
                             String.format("SELECT %s from %s WHERE %s='%s' LIMIT 1",
                                     QueryTracingJob.COLUMN_QUERY_TEXT,
-                                    queryTraceTableName,
+                                    QueryTracingJob.TABLE_NAME,
                                     QueryTracingJob.COLUMN_QUERY_TEXT,
                                     exampleQuery
                             ));
