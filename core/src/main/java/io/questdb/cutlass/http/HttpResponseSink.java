@@ -794,6 +794,10 @@ public class HttpResponseSink implements Closeable, Mutable {
             sendStatusTextContent(code, message, null, cookieName, cookieValue);
         }
 
+        public void shutdownWrite() {
+            socket.shutdown(Net.SHUT_WR);
+        }
+
         private void sendStatusWithContent(
                 String contentType,
                 int code,
