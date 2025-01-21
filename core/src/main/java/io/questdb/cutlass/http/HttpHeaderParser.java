@@ -757,6 +757,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                     } else if (isQueryParams) {
                         query = csPool.next().of(_lo, _wptr);
                         _lo = _wptr + 1;
+                        isQueryParams = false;
                         break;
                     }
                     break;

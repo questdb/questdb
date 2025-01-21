@@ -1504,8 +1504,8 @@ public class PropServerConfigurationTest {
 
         Utf8SequenceObjHashMap<Utf8Sequence> redirectMap = configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getRedirectMap();
         Assert.assertEquals(2, redirectMap.size());
-        Assert.assertEquals("Location: " + webConsolePath + "/index.html\r\n", redirectMap.get(new Utf8String(webConsolePath)).toString());
-        Assert.assertEquals("Location: " + webConsolePath + "/index.html\r\n", redirectMap.get(new Utf8String(webConsolePath + "/")).toString());
+        Assert.assertEquals(webConsolePath + "/index.html", redirectMap.get(new Utf8String(webConsolePath)).toString());
+        Assert.assertEquals(webConsolePath + "/index.html", redirectMap.get(new Utf8String(webConsolePath + "/")).toString());
     }
 
     private void assertInputWorkRootCantBeSetTo(Properties properties, String value) throws JsonException {

@@ -6498,7 +6498,7 @@ public class IODispatcherTest extends AbstractTest {
                 "\r\n";
 
         // the difference between request and expected is url encoding (and ':' padding, which can easily be fixed)
-        final String expected = "GET /status?x=1&a=&b&c&d=x HTTP/1.1\r\n" +
+        final String expected = "GET /status?x=1&a=%26b&c&d=x HTTP/1.1\r\n" +
                 "Host:localhost:9000\r\n" +
                 "Connection:keep-alive\r\n" +
                 "Cache-Control:max-age=0\r\n" +
@@ -6647,7 +6647,7 @@ public class IODispatcherTest extends AbstractTest {
                 "\r\n";
 
         // the difference between request and expected is url encoding (and ':' padding, which can easily be fixed)
-        final String expected = "GET /status?x=1&a=&b&c&d=x HTTP/1.1\r\n" +
+        final String expected = "GET /status?x=1&a=%26b&c&d=x HTTP/1.1\r\n" +
                 "Host:localhost:9000\r\n" +
                 "Connection:keep-alive\r\n" +
                 "Cache-Control:max-age=0\r\n" +
@@ -7918,7 +7918,7 @@ public class IODispatcherTest extends AbstractTest {
                 "\r\n";
 
         // the difference between request and expected is url encoding (and ':' padding, which can easily be fixed)
-        final String expected = "GET /status?x=1&a=&b&c&d=x HTTP/1.1\r\n" +
+        final String expected = "GET /status?x=1&a=%26b&c&d=x HTTP/1.1\r\n" +
                 "Host:localhost:9000\r\n" +
                 "Connection:keep-alive\r\n" +
                 "Cache-Control:max-age=0\r\n" +
