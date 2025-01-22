@@ -1,5 +1,3 @@
-import io.questdb.griffin.engine.functions.date.TimestampAddWithTimezoneFunctionFactory;
-
 /*******************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )

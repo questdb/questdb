@@ -36,6 +36,7 @@ import io.questdb.network.KqueueFacade;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.SelectFacade;
 import io.questdb.std.ConcurrentCacheConfiguration;
+import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 import java.util.concurrent.atomic.AtomicReference;
@@ -72,6 +73,51 @@ public class HttpServerConfigurationWrapper implements HttpFullFatServerConfigur
     @Override
     public LongGauge getConnectionCountGauge() {
         return metrics.httpMetrics().connectionCountGauge();
+    }
+
+    @Override
+    public ObjList<String> getContextPathExec() {
+        return getDelegate().getContextPathExec();
+    }
+
+    @Override
+    public ObjList<String> getContextPathExport() {
+        return getDelegate().getContextPathExport();
+    }
+
+    @Override
+    public ObjList<String> getContextPathILP() {
+        return getDelegate().getContextPathILP();
+    }
+
+    @Override
+    public ObjList<String> getContextPathILPPing() {
+        return getDelegate().getContextPathILPPing();
+    }
+
+    @Override
+    public ObjList<String> getContextPathImport() {
+        return getDelegate().getContextPathImport();
+    }
+
+    @Override
+    public ObjList<String> getContextPathSettings() {
+        return getDelegate().getContextPathSettings();
+    }
+
+    @Override
+    public ObjList<String> getContextPathTableStatus() {
+        return getDelegate().getContextPathTableStatus();
+    }
+
+    @Override
+    public ObjList<String> getContextPathWarnings() {
+        return getDelegate().getContextPathWarnings();
+    }
+
+    @Override
+    public String getContextPathWebConsole() {
+        return getDelegate().getContextPathWebConsole();
     }
 
     @Override

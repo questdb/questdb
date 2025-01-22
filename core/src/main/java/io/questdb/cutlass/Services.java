@@ -53,6 +53,7 @@ import io.questdb.cutlass.pgwire.IPGWireServer;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import org.jetbrains.annotations.Nullable;
 
@@ -207,33 +208,39 @@ public class Services {
 
         final HttpServer server = new HttpServer(configuration, workerPool, configuration.getFactoryProvider().getHttpMinSocketFactory());
         Metrics metrics = configuration.getHttpContextConfiguration().getMetrics();
-        server.bind(new HttpRequestProcessorFactory() {
-            @Override
-            public String getUrl() {
-                return metrics.isEnabled() ? "/status" : "*";
-            }
+        server.bind(
+                new HttpRequestProcessorFactory() {
+                    @Override
+                    public ObjList<String> getUrls() {
+                        return configuration.getContextPathStatus();
+                    }
 
-            @Override
-            public HttpRequestProcessor newInstance() {
-                return new HealthCheckProcessor(configuration);
-            }
-        }, true);
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new HealthCheckProcessor(configuration);
+                    }
+                },
+                true
+        );
+
         if (metrics.isEnabled()) {
             final PrometheusMetricsProcessor.RequestStatePool pool = new PrometheusMetricsProcessor.RequestStatePool(
                     configuration.getWorkerCount()
             );
             server.registerClosable(pool);
-            server.bind(new HttpRequestProcessorFactory() {
-                @Override
-                public String getUrl() {
-                    return "/metrics";
-                }
+            server.bind(
+                    new HttpRequestProcessorFactory() {
+                        @Override
+                        public ObjList<String> getUrls() {
+                            return configuration.getContextPathMetrics();
+                        }
 
-                @Override
-                public HttpRequestProcessor newInstance() {
-                    return new PrometheusMetricsProcessor(metrics, configuration, pool);
-                }
-            });
+                        @Override
+                        public HttpRequestProcessor newInstance() {
+                            return new PrometheusMetricsProcessor(metrics, configuration, pool);
+                        }
+                    }
+            );
         }
         return server;
     }

@@ -179,8 +179,8 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                             if (server != null) {
                                 server.bind(new HttpRequestProcessorFactory() {
                                     @Override
-                                    public String getUrl() {
-                                        return ILP_TEST_PATH;
+                                    public ObjList<String> getUrls() {
+                                        return new ObjList<>(ILP_TEST_PATH);
                                     }
 
                                     @Override
@@ -323,8 +323,8 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                             if (server != null) {
                                 server.bind(new HttpRequestProcessorFactory() {
                                     @Override
-                                    public String getUrl() {
-                                        return EXEC_TEST_URI;
+                                    public ObjList<String> getUrls() {
+                                        return new ObjList<>(EXEC_TEST_URI);
                                     }
 
                                     @Override

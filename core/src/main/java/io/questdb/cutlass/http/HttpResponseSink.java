@@ -50,6 +50,7 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -736,8 +737,19 @@ public class HttpResponseSink implements Closeable, Mutable {
             flushSingle();
         }
 
+        public void sendStatusNoContent(int code, @NotNull Utf8Sequence header) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            if (!headerSent) {
+                buffer.clearAndPrepareToWriteToBuffer();
+                headerImpl.status(httpVersion, code, null, -2L);
+                headerImpl.put(header).put(Misc.EOL);
+                prepareHeaderSink();
+                headerSent = true;
+            }
+            flushSingle();
+        }
+
         public void sendStatusNoContent(int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            sendStatusNoContent(code, null);
+            sendStatusNoContent(code, (CharSequence) null);
         }
 
         /**
@@ -838,6 +850,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         httpStatusMap.put(HTTP_OK, "OK");
         httpStatusMap.put(HTTP_NO_CONTENT, "OK");
         httpStatusMap.put(HTTP_PARTIAL, "Partial content");
+        httpStatusMap.put(HTTP_MOVED_PERM, "Moved Permanently");
         httpStatusMap.put(HTTP_MOVED_TEMP, "Temporarily Moved");
         httpStatusMap.put(HTTP_NOT_MODIFIED, "Not Modified");
         httpStatusMap.put(HTTP_BAD_REQUEST, "Bad request");
