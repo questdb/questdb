@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.cairo.Reopenable;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.LowerCaseUtf8SequenceObjHashMap;
@@ -36,6 +37,7 @@ import io.questdb.std.ObjectPool;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Utf8SequenceObjHashMap;
+import io.questdb.std.Vect;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
@@ -43,6 +45,7 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.Comparator;
 
@@ -57,11 +60,10 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
     private final Utf8SequenceObjHashMap<HttpCookie> cookies = new Utf8SequenceObjHashMap<>();
     private final ObjectPool<DirectUtf8String> csPool;
     private final LowerCaseUtf8SequenceObjHashMap<DirectUtf8String> headers = new LowerCaseUtf8SequenceObjHashMap<>();
-    private final long hi;
     private final DirectUtf8String temp = new DirectUtf8String();
     private final Utf8SequenceObjHashMap<DirectUtf8String> urlParams = new Utf8SequenceObjHashMap<>();
     protected boolean incomplete;
-    protected Utf8Sequence url;
+    protected DirectUtf8String url;
     private long _lo;
     private long _wptr;
     private DirectUtf8String boundary;
@@ -73,6 +75,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
     private DirectUtf8String contentType;
     private DirectUtf8String headerName;
     private long headerPtr;
+    private long hi;
     private int ignoredCookieCount;
     private boolean isMethod = true;
     private boolean isProtocol = true;
@@ -86,12 +89,12 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
     private boolean needProtocol = true;
     private DirectUtf8String protocol;
     private DirectUtf8String protocolLine;
+    private DirectUtf8String query;
     private long statementTimeout = -1L;
     private DirectUtf8String statusCode;
     private DirectUtf8String statusText;
 
-    public HttpHeaderParser(int bufferLen, ObjectPool<DirectUtf8String> csPool) {
-        int bufferSize = Numbers.ceilPow2(bufferLen);
+    public HttpHeaderParser(int bufferSize, ObjectPool<DirectUtf8String> csPool) {
         this.headerPtr = this._wptr = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_HTTP_CONN);
         this.hi = headerPtr + bufferSize;
         this.csPool = csPool;
@@ -106,7 +109,9 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         this.incomplete = true;
         this.headers.clear();
         this.method = null;
+        this.methodLine = null;
         this.url = null;
+        this.query = null;
         this.headerName = null;
         this.contentType = null;
         this.boundary = null;
@@ -137,7 +142,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
     public void close() {
         clear();
         if (headerPtr != 0) {
-            headerPtr = _wptr = Unsafe.free(headerPtr, hi - headerPtr, MemoryTag.NATIVE_HTTP_CONN);
+            headerPtr = _wptr = hi = Unsafe.free(headerPtr, hi - headerPtr, MemoryTag.NATIVE_HTTP_CONN);
             boundaryAugmenter.close();
         }
     }
@@ -214,6 +219,11 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
     }
 
     @Override
+    public @Nullable DirectUtf8String getQuery() {
+        return query;
+    }
+
+    @Override
     public long getStatementTimeout() {
         return statementTimeout;
     }
@@ -227,7 +237,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
     }
 
     @Override
-    public Utf8Sequence getUrl() {
+    public DirectUtf8String getUrl() {
         return url;
     }
 
@@ -305,6 +315,14 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
             }
         }
         return p;
+    }
+
+    public void reopen(int bufferSize) {
+        if (headerPtr == 0) {
+            this.headerPtr = this._wptr = this._lo = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_HTTP_CONN);
+            this.hi = headerPtr + bufferSize;
+        }
+        boundaryAugmenter.reopen();
     }
 
     public int size() {
@@ -737,10 +755,10 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                         isUrl = false;
                         _lo = _wptr + 1;
                     } else if (isQueryParams) {
-                        int o = urlDecode(_lo, _wptr, urlParams);
+                        query = csPool.next().of(_lo, _wptr);
+                        _lo = _wptr + 1;
                         isQueryParams = false;
-                        _lo = _wptr;
-                        _wptr -= o;
+                        break;
                     }
                     break;
                 case '?':
@@ -755,6 +773,19 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                     }
                     methodLine = csPool.next().of(method.lo(), _wptr);
                     needMethod = false;
+
+                    // parse and decode query string
+                    if (query != null) {
+                        final int querySize = query.size();
+                        final long newBoundary = _wptr + querySize;
+                        if (querySize > 0 && newBoundary < this.hi) {
+                            Vect.memcpy(_wptr, query.ptr(), querySize);
+                            int o = urlDecode(_wptr, newBoundary, urlParams);
+                            _wptr = newBoundary - o;
+                        } else {
+                            throw HttpException.instance("URL query string is too long");
+                        }
+                    }
                     this._lo = _wptr;
                     return (int) (p - lo);
                 default:
@@ -874,7 +905,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         return offset;
     }
 
-    public static class BoundaryAugmenter implements QuietCloseable {
+    public static class BoundaryAugmenter implements Reopenable, QuietCloseable {
         private static final Utf8String BOUNDARY_PREFIX = new Utf8String("\r\n--");
         private final DirectUtf8String export = new DirectUtf8String();
         private long _wptr;
@@ -883,7 +914,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
 
         public BoundaryAugmenter() {
             this.lim = 64;
-            this.lo = this._wptr = Unsafe.malloc(this.lim, MemoryTag.NATIVE_HTTP_CONN);
+            this.lo = this._wptr = Unsafe.malloc(lim, MemoryTag.NATIVE_HTTP_CONN);
             of0(BOUNDARY_PREFIX);
         }
 
@@ -902,6 +933,14 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
             _wptr = lo + BOUNDARY_PREFIX.size();
             of0(value);
             return export.of(lo, _wptr);
+        }
+
+        @Override
+        public void reopen() {
+            if (lo == 0) {
+                this.lo = this._wptr = Unsafe.malloc(lim, MemoryTag.NATIVE_HTTP_CONN);
+                of0(BOUNDARY_PREFIX);
+            }
         }
 
         private void of0(Utf8Sequence value) {

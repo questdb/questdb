@@ -32,6 +32,7 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
+import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -99,6 +100,7 @@ public class DropIndexTest extends AbstractCairoTest {
         execute("alter table " + tableName + " add column sym symbol index");
         execute("insert into " + tableName +
                 " select x, timestamp_sequence('2022-02-24T01:30', 1000000000), rnd_symbol('A', 'B', 'C') from long_sequence(5)");
+        assertIndexFileExist(tableName, "sym", ".1", true);
 
         assertSql("a\tts\tsym\n" +
                 "1\t2022-02-24T00:23:59.800000Z\t\n" +
@@ -120,6 +122,10 @@ public class DropIndexTest extends AbstractCairoTest {
                 "4\t2022-02-24T01:35:59.200000Z\t\n" +
                 "5\t2022-02-24T01:59:59.000000Z\t\n", "select * from " + tableName + " where sym is null");
 
+        if (Os.isWindows()) {
+            // Release readers so that we can drop index files
+            engine.releaseInactive();
+        }
         execute("alter table " + tableName + " alter column sym drop index");
 
         assertSql("a\tts\tsym\n" +
@@ -144,6 +150,8 @@ public class DropIndexTest extends AbstractCairoTest {
         assertSql("a\tts\tsym\n" +
                 "1\t2022-02-24T01:30:00.000000Z\tA\n" +
                 "2\t2022-02-24T01:46:40.000000Z\tA\n", "select * from " + tableName + " where sym = 'A'");
+
+        assertIndexFileExist(tableName, "sym", ".1", false);
     }
 
     @Test
@@ -608,6 +616,20 @@ public class DropIndexTest extends AbstractCairoTest {
             V = V + "." + txn;
         }
         return fn.endsWith(K) || fn.endsWith(V);
+    }
+
+    private void assertIndexFileExist(String tableName, String index, String version, boolean exists) {
+        Path path = Path.getThreadLocal(engine.getConfiguration().getRoot());
+        TableToken token = engine.verifyTableName(tableName);
+        path.concat(token);
+        try (TableReader rdr = engine.getReader(token)) {
+            long lastPartition = rdr.getTxFile().getLastPartitionTimestamp();
+            long lastPartitionNameTxn = rdr.getTxFile().getPartitionNameTxnByPartitionTimestamp(lastPartition);
+            int partitionBy = rdr.getPartitionedBy();
+            TableUtils.setPathForNativePartition(path, partitionBy, lastPartition, lastPartitionNameTxn);
+        }
+        path.concat(index).put(".k").put(version);
+        Assert.assertEquals(exists, engine.getConfiguration().getFilesFacade().exists(path.$()));
     }
 
     private long countDFiles(long txn) throws IOException {

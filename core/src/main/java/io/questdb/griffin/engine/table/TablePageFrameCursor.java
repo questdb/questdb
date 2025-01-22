@@ -22,25 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http;
+package io.questdb.griffin.engine.table;
 
-import io.questdb.FactoryProvider;
-import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFrameCursor;
 
-public interface HttpMinServerConfiguration extends WorkerPoolConfiguration {
+public interface TablePageFrameCursor extends PageFrameCursor {
 
-    IODispatcherConfiguration getDispatcherConfiguration();
+    TableReader getTableReader();
 
-    FactoryProvider getFactoryProvider();
-
-    HttpContextConfiguration getHttpContextConfiguration();
-
-    byte getRequiredAuthType();
-
-    WaitProcessorConfiguration getWaitProcessorConfiguration();
-
-    boolean isPessimisticHealthCheckEnabled();
-
-    boolean preAllocateBuffers();
+    TablePageFrameCursor of(PartitionFrameCursor partitionFrameCursor);
 }

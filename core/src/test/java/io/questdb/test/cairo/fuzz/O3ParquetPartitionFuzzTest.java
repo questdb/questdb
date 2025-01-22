@@ -22,20 +22,16 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.cairo.o3;
+package io.questdb.test.cairo.fuzz;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -45,6 +41,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.cairo.o3.AbstractO3Test;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.fuzz.FuzzTransactionGenerator;
 import io.questdb.test.fuzz.FuzzTransactionOperation;
@@ -158,13 +155,14 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
                     0,
                     0,
                     0,
-                    0,
-                    0.0,
                     rnd.nextDouble(),
                     0,
+                    0.0,
+                    0,
+                    0,
+                    0.0,
                     5,
                     new String[]{"ABC", "CDE", "XYZ"},
-                    0,
                     0
             );
 

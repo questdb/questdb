@@ -24,13 +24,43 @@
 
 package io.questdb.metrics;
 
-import io.questdb.std.str.BorrowableUtf8Sink;
+import java.util.concurrent.atomic.AtomicLong;
 
-/**
- * Anything that can be scraped for Prometheus metrics.
- */
-public interface Scrapable {
+public class AtomicLongGaugeImpl extends AbstractLongGauge implements AtomicLongGauge {
+    private final AtomicLong counter;
 
-    // We need a sink that we can borrow from and append to in native code.
-    void scrapeIntoPrometheus(BorrowableUtf8Sink sink);
+    public AtomicLongGaugeImpl(CharSequence name) {
+        super(name);
+        counter = new AtomicLong();
+    }
+
+    @Override
+    public void add(long value) {
+        counter.addAndGet(value);
+    }
+
+    @Override
+    public void dec() {
+        counter.decrementAndGet();
+    }
+
+    @Override
+    public long getValue() {
+        return counter.get();
+    }
+
+    @Override
+    public void inc() {
+        counter.incrementAndGet();
+    }
+
+    @Override
+    public long incrementAndGet() {
+        return counter.incrementAndGet();
+    }
+
+    @Override
+    public void setValue(long value) {
+        counter.set(value);
+    }
 }

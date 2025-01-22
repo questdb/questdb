@@ -56,8 +56,7 @@ public class SortedSymbolIndexRecordCursorFactory extends AbstractPageFrameRecor
                 new SortedSymbolIndexRowCursorFactory(
                         columnIndex,
                         columnOrderAsc,
-                        indexDirection,
-                        columnIndexes
+                        indexDirection
                 ),
                 true,
                 null

@@ -25,7 +25,14 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.AlterTableContextException;
+import io.questdb.cairo.BitmapIndexUtils;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.RecordCursor;
@@ -38,13 +45,18 @@ import io.questdb.cairo.wal.MetadataService;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.Misc;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -59,7 +71,6 @@ import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 
 import static io.questdb.cairo.ErrorTag.*;
@@ -186,7 +197,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
     public void testAlterTableSetTypeSqlSyntaxErrors() throws Exception {
         assertMemoryLeak(ff, () -> {
             TableToken tableToken = createStandardWalTable(testName.getMethodName());
-            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set", "'param' or 'type' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set", "'param', 'ttl' or 'type' expected");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set typ", "'param' or 'type' expected");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set type", "'bypass' or 'wal' expected");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set type byoass", "'bypass' or 'wal' expected");
@@ -1109,62 +1120,34 @@ public class WalTableFailureTest extends AbstractCairoTest {
             }
         };
         assertMemoryLeak(ff, () -> {
-            AtomicBoolean done = new AtomicBoolean(false);
-            AtomicReference<Throwable> exception = new AtomicReference<>();
 
-            Thread applyThread = new Thread(() -> {
-                try {
-                    while (!done.get()) {
-                        drainWalQueue();
-                    }
-                } catch (Throwable e) {
-                    exception.set(e);
-                } finally {
-                    Path.clearThreadLocals();
-                }
-            });
-            applyThread.start();
+            execute("create table tab (b boolean, ts timestamp, sym symbol) timestamp(ts) partition by DAY WAL");
+            TableToken tt = engine.verifyTableName("tab");
 
-            try {
-                execute("create table tab (b boolean, ts timestamp, sym symbol) timestamp(ts) partition by DAY WAL");
-                TableToken tt = engine.verifyTableName("tab");
+            execute("insert into tab select true, (1)::timestamp, null from long_sequence(1)");
+            execute("insert into tab select true, (2)::timestamp, null from long_sequence(1)");
+            execute("insert into tab select true, (3)::timestamp, null from long_sequence(1)");
+            execute("insert into tab select true, (4)::timestamp, null from long_sequence(1)");
+            update("update tab set b=false");
+            execute("insert into tab select true, (5)::timestamp, null from long_sequence(1)");
+            drainWalQueue();
 
-                execute("insert into tab select true, (1)::timestamp, null from long_sequence(1)");
-                execute("insert into tab select true, (2)::timestamp, null from long_sequence(1)");
-                execute("insert into tab select true, (3)::timestamp, null from long_sequence(1)");
-                execute("insert into tab select true, (4)::timestamp, null from long_sequence(1)");
-                update("update tab set b=false");
+            assertEventually(() -> Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tt)));
 
-                assertEventually(() -> Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tt)));
+            execute("alter table tab resume wal");
+            execute("insert into tab select true, (6)::timestamp, null from long_sequence(1)");
+            drainWalQueue();
 
-                execute("alter table tab resume wal");
-                execute("insert into tab select true, (5)::timestamp, null from long_sequence(1)");
-                execute("insert into tab select true, (6)::timestamp, null from long_sequence(1)");
-
-                assertEventually(() -> {
-                    try {
-                        assertSql(
-                                "b\tts\tsym\n" +
-                                        "false\t1970-01-01T00:00:00.000001Z\t\n" +
-                                        "false\t1970-01-01T00:00:00.000002Z\t\n" +
-                                        "false\t1970-01-01T00:00:00.000003Z\t\n" +
-                                        "false\t1970-01-01T00:00:00.000004Z\t\n" +
-                                        "true\t1970-01-01T00:00:00.000005Z\t\n" +
-                                        "true\t1970-01-01T00:00:00.000006Z\t\n",
-                                "tab"
-                        );
-                    } catch (SqlException e) {
-                        throw new RuntimeException(e);
-                    }
-                });
-            } finally {
-                done.set(true);
-                applyThread.join();
-            }
-
-            if (exception.get() != null) {
-                throw new RuntimeException(exception.get());
-            }
+            assertSql(
+                    "b\tts\tsym\n" +
+                            "false\t1970-01-01T00:00:00.000001Z\t\n" +
+                            "false\t1970-01-01T00:00:00.000002Z\t\n" +
+                            "false\t1970-01-01T00:00:00.000003Z\t\n" +
+                            "false\t1970-01-01T00:00:00.000004Z\t\n" +
+                            "true\t1970-01-01T00:00:00.000005Z\t\n" +
+                            "true\t1970-01-01T00:00:00.000006Z\t\n",
+                    "tab"
+            );
         });
     }
 
@@ -1231,7 +1214,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final TableToken tableToken = createStandardWalTable(testName.getMethodName());
 
-            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspen wal", AlterTableUtils.ALTER_TABLE_EXPECTED_TOKEN_DESCR);
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspen wal", SqlCompilerImpl.ALTER_TABLE_EXPECTED_TOKEN_DESCR);
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wall", "'wal' expected");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wal witj", "'with' expected");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wal with", "error code/tag expected");
@@ -1601,7 +1584,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             createStandardNonWalTable(nonWalTable);
 
             assertAlterTableTypeFail("alter table " + nonWalTable + " resume wal", nonWalTable + " is not a WAL table");
-            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resum wal", AlterTableUtils.ALTER_TABLE_EXPECTED_TOKEN_DESCR);
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resum wal", SqlCompilerImpl.ALTER_TABLE_EXPECTED_TOKEN_DESCR);
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wall", "'wal' expected");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wal frol", "'from' expected");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wal from", "'transaction' or 'txn' expected");
@@ -1640,6 +1623,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
         String query = "update " + tableName + " set x = 1111";
         Overrides overrides = node1.getConfigurationOverrides();
         overrides.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
+        spinLockTimeout = 1;
         runCheckTableSuspended(tableName, query, new TestFilesFacadeImpl() {
             private int attempt = 0;
 

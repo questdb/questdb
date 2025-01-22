@@ -70,7 +70,6 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
         } else {
             mapValue.putLong(valueIndex, 0);
             mapValue.putLong(valueIndex + 1, 0);
-            ;
         }
     }
 
@@ -105,6 +104,11 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
     @Override
     public String getName() {
         return "count_distinct";
+    }
+
+    @Override
+    public int getSampleByFlags() {
+        return GroupByFunction.SAMPLE_BY_FILL_ALL;
     }
 
     @Override

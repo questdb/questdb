@@ -30,12 +30,20 @@ import io.questdb.HttpClientConfiguration;
 import io.questdb.cairo.TableUtils;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.http.HttpConstants;
-import io.questdb.cutlass.http.client.*;
+import io.questdb.cutlass.http.client.Fragment;
+import io.questdb.cutlass.http.client.HttpClient;
+import io.questdb.cutlass.http.client.HttpClientException;
+import io.questdb.cutlass.http.client.HttpClientFactory;
+import io.questdb.cutlass.http.client.Response;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.json.JsonParser;
 import io.questdb.cutlass.line.LineSenderException;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Misc;
+import io.questdb.std.NanosecondClockImpl;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -44,7 +52,6 @@ import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 
@@ -62,6 +69,7 @@ public final class LineHttpSender implements Sender {
     private final long maxRetriesNanos;
     private final long minRequestThroughput;
     private final String password;
+    private final String path;
     private final int port;
     private final CharSequence questdbVersion;
     private final Rnd rnd = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
@@ -77,22 +85,54 @@ public final class LineHttpSender implements Sender {
     private int rowBookmark;
     private RequestState state = RequestState.EMPTY;
 
-    public LineHttpSender(String host,
-                          int port,
-                          HttpClientConfiguration clientConfiguration,
-                          ClientTlsConfiguration tlsConfig,
-                          int autoFlushRows,
-                          String authToken,
-                          String username,
-                          String password,
-                          long maxRetriesNanos,
-                          long minRequestThroughput,
-                          long flushIntervalNanos
+    public LineHttpSender(
+            String host,
+            int port,
+            HttpClientConfiguration clientConfiguration,
+            ClientTlsConfiguration tlsConfig,
+            int autoFlushRows,
+            String authToken,
+            String username,
+            String password,
+            long maxRetriesNanos,
+            long minRequestThroughput,
+            long flushIntervalNanos
+    ) {
+        this(
+                host,
+                port,
+                PATH,
+                clientConfiguration,
+                tlsConfig,
+                autoFlushRows,
+                authToken,
+                username,
+                password,
+                maxRetriesNanos,
+                minRequestThroughput,
+                flushIntervalNanos
+        );
+    }
+
+    public LineHttpSender(
+            String host,
+            int port,
+            String path,
+            HttpClientConfiguration clientConfiguration,
+            ClientTlsConfiguration tlsConfig,
+            int autoFlushRows,
+            String authToken,
+            String username,
+            String password,
+            long maxRetriesNanos,
+            long minRequestThroughput,
+            long flushIntervalNanos
     ) {
         assert authToken == null || (username == null && password == null);
         this.maxRetriesNanos = maxRetriesNanos;
         this.host = host;
         this.port = port;
+        this.path = path != null ? path : PATH;
         this.autoFlushRows = autoFlushRows;
         this.authToken = authToken;
         this.username = username;
@@ -102,10 +142,10 @@ public final class LineHttpSender implements Sender {
         this.baseTimeoutMillis = clientConfiguration.getTimeout();
         if (tlsConfig != null) {
             this.client = HttpClientFactory.newTlsInstance(clientConfiguration, tlsConfig);
-            this.url = "https://" + host + ":" + port + PATH;
+            this.url = "https://" + host + ":" + port + this.path;
         } else {
             this.client = HttpClientFactory.newPlainTextInstance(clientConfiguration);
-            this.url = "http://" + host + ":" + port + PATH;
+            this.url = "http://" + host + ":" + port + this.path;
         }
         this.questdbVersion = new BuildInformationHolder().getSwVersion();
         this.request = newRequest();
@@ -442,7 +482,7 @@ public final class LineHttpSender implements Sender {
     private HttpClient.Request newRequest() {
         HttpClient.Request r = client.newRequest(host, port)
                 .POST()
-                .url(PATH)
+                .url(path)
                 .header("User-Agent", "QuestDB/java/" + questdbVersion);
         if (username != null) {
             r.authBasic(username, password);

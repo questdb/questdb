@@ -26,13 +26,43 @@ package io.questdb.test.log;
 
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.log.*;
-import io.questdb.mp.*;
-import io.questdb.std.*;
+import io.questdb.log.GuaranteedLogger;
+import io.questdb.log.Log;
+import io.questdb.log.LogConsoleWriter;
+import io.questdb.log.LogError;
+import io.questdb.log.LogFactory;
+import io.questdb.log.LogFileWriter;
+import io.questdb.log.LogLevel;
+import io.questdb.log.LogRecord;
+import io.questdb.log.LogRecordUtf8Sink;
+import io.questdb.log.LogRollingFileWriter;
+import io.questdb.log.LogWriter;
+import io.questdb.log.LogWriterConfig;
+import io.questdb.log.Logger;
+import io.questdb.mp.QueueConsumer;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SCSequence;
+import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.SOUnboundedCountDownLatch;
+import io.questdb.mp.SPSequence;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.*;
+import io.questdb.std.str.GcUtf8String;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -45,7 +75,6 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.lang.reflect.Field;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Paths;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -109,7 +138,7 @@ public class LogFactoryTest {
 
             Os.sleep(100);
             final String expected = orig + "\r\n";
-            final String actual = new String(java.nio.file.Files.readAllBytes(x.toPath()), StandardCharsets.UTF_8);
+            final String actual = java.nio.file.Files.readString(x.toPath());
             Assert.assertEquals(expected, actual);
         }
     }
@@ -934,6 +963,58 @@ public class LogFactoryTest {
             assertDisabled(logger1.info());
             assertDisabled(logger1.error());
             assertDisabled(logger1.advisory());
+        }
+    }
+
+    @Test
+    public void testSpaceInRollEvery() throws Exception {
+        final String logFile = temp.getRoot().getAbsolutePath() + Files.SEPARATOR + "mylog-${date:yyyy-MM-dd}.log";
+
+        final MicrosecondClock clock = new TestMicrosecondClock(
+                TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"),
+                1,
+                IntervalUtils.parseFloorPartialTimestamp("2019-12-31")
+        );
+
+        final RingQueue<LogRecordUtf8Sink> queue = new RingQueue<>(
+                LogRecordUtf8Sink::new,
+                1024,
+                1024,
+                MemoryTag.NATIVE_DEFAULT
+        );
+
+        final SPSequence pubSeq = new SPSequence(queue.getCycle());
+        final SCSequence subSeq = new SCSequence();
+        pubSeq.then(subSeq).then(pubSeq);
+
+        try (final LogRollingFileWriter writer = new LogRollingFileWriter(
+                TestFilesFacadeImpl.INSTANCE,
+                clock,
+                queue,
+                subSeq,
+                LogLevel.INFO
+        )) {
+            writer.setLocation(logFile);
+            writer.setRollEvery("day  ");
+            writer.bindProperties(LogFactory.getInstance());
+
+            Assert.assertNotEquals(writer.getRollDeadlineFunction().getDeadline(), Long.MAX_VALUE);
+            Assert.assertEquals(writer.getRollDeadlineFunction().getDeadline(), 1430697600000000L);
+        }
+
+        try (final LogRollingFileWriter writer = new LogRollingFileWriter(
+                TestFilesFacadeImpl.INSTANCE,
+                clock,
+                queue,
+                subSeq,
+                LogLevel.INFO
+        )) {
+            writer.setLocation(logFile);
+            writer.setRollEvery(" minute ");
+            writer.bindProperties(LogFactory.getInstance());
+
+            Assert.assertNotEquals(writer.getRollDeadlineFunction().getDeadline(), Long.MAX_VALUE);
+            Assert.assertEquals(writer.getRollDeadlineFunction().getDeadline(), 1430649360000000L);
         }
     }
 

@@ -65,6 +65,11 @@ public class FirstTimestampGroupByFunction extends TimestampFunction implements 
     }
 
     @Override
+    public int getSampleByFlags() {
+        return GroupByFunction.SAMPLE_BY_FILL_ALL;
+    }
+
+    @Override
     public long getTimestamp(Record rec) {
         return rec.getTimestamp(valueIndex + 1);
     }

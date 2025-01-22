@@ -37,6 +37,108 @@ import java.util.Arrays;
 
 public class LongListTest {
     @Test
+    public void testAddAll_CapacityExpansion() {
+        LongList dst = new LongList(2);
+        dst.add(1L);
+        dst.add(2L);
+
+        // Add 3 more elements through addAll, forcing capacity expansion
+        LongList src = new LongList();
+        src.add(3L);
+        src.add(4L);
+        src.add(5L);
+
+        dst.addAll(src);
+
+        Assert.assertEquals(5, dst.size());
+        Assert.assertEquals(1L, dst.getQuick(0));
+        Assert.assertEquals(2L, dst.getQuick(1));
+        Assert.assertEquals(3L, dst.getQuick(2));
+        Assert.assertEquals(4L, dst.getQuick(3));
+        Assert.assertEquals(5L, dst.getQuick(4));
+    }
+
+    @Test
+    public void testAddAll_EmptyToEmpty() {
+        LongList dst = new LongList();
+        LongList src = new LongList();
+        dst.addAll(src);
+
+        Assert.assertEquals(0, dst.size());
+    }
+
+    @Test
+    public void testAddAll_EmptyToNonEmpty() {
+        LongList dst = new LongList();
+        dst.add(1L);
+        dst.add(2L);
+
+        LongList src = new LongList();
+        dst.addAll(src);
+
+        Assert.assertEquals(2, dst.size());
+        Assert.assertEquals(1L, dst.getQuick(0));
+        Assert.assertEquals(2L, dst.getQuick(1));
+    }
+
+    @Test
+    public void testAddAll_NonEmptyToEmpty() {
+        LongList dst = new LongList();
+        LongList src = new LongList();
+        src.add(1L);
+        src.add(2L);
+        src.add(3L);
+
+        dst.addAll(src);
+
+        Assert.assertEquals(3, dst.size());
+        Assert.assertEquals(1L, dst.getQuick(0));
+        Assert.assertEquals(2L, dst.getQuick(1));
+        Assert.assertEquals(3L, dst.getQuick(2));
+    }
+
+    @Test
+    public void testAddAll_NonEmptyToNonEmpty() {
+        LongList dst = new LongList();
+        dst.add(1L);
+        dst.add(2L);
+
+        LongList src = new LongList();
+        src.add(3L);
+        src.add(4L);
+
+        dst.addAll(src);
+
+        Assert.assertEquals(4, dst.size());
+        Assert.assertEquals(1L, dst.getQuick(0));
+        Assert.assertEquals(2L, dst.getQuick(1));
+        Assert.assertEquals(3L, dst.getQuick(2));
+        Assert.assertEquals(4L, dst.getQuick(3));
+    }
+
+    @Test
+    public void testAddAll_PreservesSourceList() {
+        LongList dst = new LongList();
+        LongList src = new LongList();
+        src.add(1L);
+        src.add(2L);
+
+        dst.addAll(src);
+        src.add(3L); // Modify source after addAll
+
+        // Verify destination list wasn't affected by source modification
+        Assert.assertEquals(2, dst.size());
+        Assert.assertEquals(1L, dst.getQuick(0));
+        Assert.assertEquals(2L, dst.getQuick(1));
+
+        // Verify source list is intact
+        Assert.assertEquals(3, src.size());
+        Assert.assertEquals(1L, src.getQuick(0));
+        Assert.assertEquals(2L, src.getQuick(1));
+        Assert.assertEquals(3L, src.getQuick(2));
+    }
+
+    @Test
     public void testBinarySearchBlockFuzz() {
         final int N = 997; // prime
         final int skipRate = 4;
@@ -107,7 +209,7 @@ public class LongListTest {
         Assert.assertNotEquals(list1, list5);
 
         // null
-        Assert.assertNotEquals(list1, null);
+        Assert.assertNotEquals(null, list1);
 
         // different noEntryValue
         final LongList list6 = new LongList(4, Long.MIN_VALUE);

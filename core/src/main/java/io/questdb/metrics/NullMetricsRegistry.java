@@ -30,7 +30,12 @@ import org.jetbrains.annotations.NotNull;
 public class NullMetricsRegistry implements MetricsRegistry {
 
     @Override
-    public void addScrapable(Scrapable scrapable) {
+    public void addTarget(Target target) {
+    }
+
+    @Override
+    public AtomicLongGauge newAtomicLongGauge(CharSequence name) {
+        return NullLongGauge.INSTANCE;
     }
 
     @Override

@@ -53,33 +53,53 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
-import io.questdb.test.cairo.TestTableReaderRecordCursor;
+import io.questdb.test.fuzz.FuzzDropCreateTableOperation;
+import io.questdb.test.fuzz.FuzzDropPartitionOperation;
 import io.questdb.test.fuzz.FuzzInsertOperation;
 import io.questdb.test.fuzz.FuzzStableInsertOperation;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.fuzz.FuzzTransactionOperation;
+import io.questdb.test.fuzz.FuzzTruncateTableOperation;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
 import java.util.stream.Collectors;
 
 import static io.questdb.test.tools.TestUtils.assertEquals;
 
+@RunWith(Parameterized.class)
 public class DedupInsertFuzzTest extends AbstractFuzzTest {
+    private final boolean convertToParquet;
+
+    public DedupInsertFuzzTest(boolean convertToParquet) {
+        this.convertToParquet = convertToParquet;
+    }
+
+    @Parameterized.Parameters(name = "parquet={0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {true},
+                {false},
+        });
+    }
 
     @Test
     public void testDedupWithRandomShiftAndStep() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getTestName();
             createEmptyTable(tableName, "DEDUP upsert keys(ts, commit)");
             execute("alter table " + tableName + " dedup disable");
             execute("alter table " + tableName + " dedup enable upsert keys(ts)");
 
             ObjList<FuzzTransaction> transactions = new ObjList<>();
-            Rnd rnd = generateRandomAndProps(LOG);
+            Rnd rnd = generateRandomAndProps();
             long initialDelta = Timestamps.MINUTE_MICROS * 15;
             int initialCount = 4 * 24 * 5;
             generateInsertsTransactions(
@@ -93,7 +113,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                     rnd
             );
             applyWal(transactions, tableName, 1, rnd);
-
+            maybeConvertToParquet(tableName);
             transactions.clear();
 
             double deltaMultiplier = rnd.nextBoolean() ? (1 << rnd.nextInt(4)) : 1.0 / (1 << rnd.nextInt(4));
@@ -122,9 +142,9 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     @Test
     public void testDedupWithRandomShiftAndStepAndSymbolKey() throws Exception {
         assertMemoryLeak(() -> {
-            Rnd rnd = generateRandomAndProps(LOG);
+            Rnd rnd = generateRandomAndProps();
 
-            String tableName = testName.getMethodName();
+            String tableName = getTestName();
             execute(
                     "create table " + tableName +
                             " (ts timestamp, commit int, s symbol) " +
@@ -138,10 +158,12 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testDedupWithRandomShiftAndStepAndSymbolKeyAndColumnTops() throws Exception {
+        // TODO(eugene): Enable this test when adding columns after Parquet conversion is supported
+        Assume.assumeFalse(convertToParquet);
         assertMemoryLeak(() -> {
-            Rnd rnd = generateRandomAndProps(LOG);
+            Rnd rnd = generateRandomAndProps();
 
-            String tableName = testName.getMethodName();
+            String tableName = getTestName();
             execute(
                     "create table " + tableName +
                             " (ts timestamp, commit int) " +
@@ -155,9 +177,9 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     @Test
     public void testDedupWithRandomShiftAndStepAndVarcharKey() throws Exception {
         assertMemoryLeak(() -> {
-            Rnd rnd = generateRandomAndProps(LOG);
+            Rnd rnd = generateRandomAndProps();
 
-            String tableName = testName.getMethodName();
+            String tableName = getTestName();
             execute(
                     "create table " + tableName +
                             " (ts timestamp, commit int, s varchar) " +
@@ -171,10 +193,12 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testDedupWithRandomShiftAndStepAndVarcharKeyAndColumnTops() throws Exception {
+        // TODO(eugene): Enable this test when adding columns after Parquet conversion is supported
+        Assume.assumeFalse(convertToParquet);
         assertMemoryLeak(() -> {
-            Rnd rnd = generateRandomAndProps(LOG);
+            Rnd rnd = generateRandomAndProps();
 
-            String tableName = testName.getMethodName();
+            String tableName = getTestName();
             execute(
                     "create table " + tableName +
                             " (ts timestamp, commit int) " +
@@ -188,11 +212,11 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     @Test
     public void testDedupWithRandomShiftAndStepWithExistingDups() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getTestName();
             createEmptyTable(tableName, "");
 
             ObjList<FuzzTransaction> transactions = new ObjList<>();
-            Rnd rnd = generateRandomAndProps(LOG);
+            Rnd rnd = generateRandomAndProps();
             long initialDelta = Timestamps.MINUTE_MICROS * 15;
             int initialCount = 4 * 24 * 5;
             int initialDuplicates = 2 + rnd.nextInt(5);
@@ -207,6 +231,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                     rnd
             );
             applyWal(transactions, tableName, 1, rnd);
+            maybeConvertToParquet(tableName);
             execute("alter table " + tableName + " dedup upsert keys(ts)");
 
             transactions.clear();
@@ -236,12 +261,15 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testDedupWithRandomShiftWithColumnTop() throws Exception {
+        // TODO(eugene): Enable this test when adding columns after Parquet conversion is supported
+        Assume.assumeFalse(convertToParquet);
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getTestName();
+
             createEmptyTable(tableName, "DEDUP upsert keys(ts)");
 
             ObjList<FuzzTransaction> transactions = new ObjList<>();
-            Rnd rnd = generateRandomAndProps(LOG);
+            Rnd rnd = generateRandomAndProps();
             long initialDelta = Timestamps.MINUTE_MICROS * 15;
             int initialCount = 2 * 24 * 5;
             generateInsertsTransactions(
@@ -281,6 +309,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                     rnd
             );
 
+            maybeConvertToParquet(tableName);
             applyWal(transactions, tableName, 1, rnd);
             validateNoTimestampDuplicates(tableName, from, delta, count, null, 1, ColumnType.NULL);
         });
@@ -288,21 +317,23 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testRandomColumnsDedupMultipleKeyCol() throws Exception {
-        Rnd rnd = generateRandomAndProps(LOG);
+        Rnd rnd = generateRandomAndProps();
         setFuzzProbabilities(
                 rnd.nextDouble() / 100,
                 rnd.nextDouble(),
                 rnd.nextDouble(),
                 0.1 * rnd.nextDouble(),
-                0.1 * rnd.nextDouble(),
+                // TODO(eugene): table column manipulation is not yet supported for Parquet
+                convertToParquet ? 0 : 0.1 * rnd.nextDouble(),
                 0,
-                rnd.nextDouble(),
+                convertToParquet ? 0 : rnd.nextDouble(),
                 0.0,
-                rnd.nextDouble(),
+                convertToParquet ? 0 : rnd.nextDouble(),
                 0.5,
                 0.0,
                 0.1 * rnd.nextDouble(),
-                0.0
+                0.0,
+                0.5
         );
 
         setFuzzCounts(
@@ -321,20 +352,24 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testRandomColumnsDedupOneKeyCol() throws Exception {
-        Rnd rnd = generateRandomAndProps(LOG);
+        Rnd rnd = generateRandomAndProps();
         setFuzzProbabilities(
                 rnd.nextDouble() / 100,
                 rnd.nextDouble(),
                 rnd.nextDouble(),
                 0.1 * rnd.nextDouble(),
-                0.1 * rnd.nextDouble(),
+
+                // TODO(eugene): table column manipulation is not yet supported for Parquet
+                convertToParquet ? 0 : 0.1 * rnd.nextDouble(),
                 0,
-                rnd.nextDouble(),
-                0.0, rnd.nextDouble(),
+                convertToParquet ? 0 : rnd.nextDouble(),
+                0.0,
+                convertToParquet ? 0 : rnd.nextDouble(),
                 0.5,
                 0.0,
                 0.1 * rnd.nextDouble(),
-                0.0
+                0.0,
+                0.5
         );
 
         setFuzzCounts(
@@ -353,7 +388,9 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testRandomDedupRepeat() throws Exception {
-        Rnd rnd = generateRandomAndProps(LOG);
+        // TODO(eugene): update the parquet partition with a missed column (e.g. column top) is not yet implemented
+        Assume.assumeFalse(convertToParquet);
+        Rnd rnd = generateRandomAndProps();
         setFuzzProbabilities(
                 0,
                 rnd.nextDouble(),
@@ -367,14 +404,17 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 0.0,
                 0.0,
                 0.1 * rnd.nextDouble(),
-                0.0
+                // This test does not support Drop Partition operations,
+                // it is not trivial to build the result set of data to assert against with drop partitions
+                0,
+                0.4
         );
 
         setFuzzCounts(
                 rnd.nextBoolean(),
                 rnd.nextInt(1000),
                 rnd.nextInt(1000),
-                rnd.nextInt(1000),
+                fuzzer.randomiseStringLengths(rnd, 1000),
                 rnd.nextInt(1000),
                 rnd.nextInt(1000),
                 rnd.nextInt(1_000_000),
@@ -512,9 +552,17 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                     duplicateTrans.operationList.add(operation);
                 }
 
+                duplicateTrans.reopenTable = transaction.reopenTable;
                 result.add(duplicateTrans);
                 prevInsertTrans = duplicateTrans;
             } else {
+                if (transaction.operationList.size() > 0) {
+                    var operation = transaction.operationList.getQuick(0);
+                    if (operation instanceof FuzzDropCreateTableOperation || operation instanceof FuzzTruncateTableOperation
+                            || operation instanceof FuzzDropPartitionOperation) {
+                        prevInsertTrans = null;
+                    }
+                }
                 result.add(transaction);
             }
         }
@@ -575,11 +623,30 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         }
     }
 
-    private Rnd generateRandomAndProps(Log log) {
-        Rnd rnd = fuzzer.generateRandom(log);
+    private Rnd generateRandomAndProps() {
+        Rnd rnd = fuzzer.generateRandom(io.questdb.test.AbstractCairoTest.LOG);
         setFuzzProperties(rnd);
         setRandomAppendPageSize(rnd);
         return rnd;
+    }
+
+    private Rnd generateRandomAndProps(long seed1, long seed2) {
+        Rnd rnd = fuzzer.generateRandom(io.questdb.test.AbstractCairoTest.LOG, seed1, seed2);
+        setFuzzProperties(rnd);
+        setRandomAppendPageSize(rnd);
+        return rnd;
+    }
+
+    private void maybeConvertToParquet(String tableName) {
+        if (convertToParquet) {
+            // convert to parquet, so we can test dedup with parquet
+            try {
+                execute("alter table " + tableName + " convert partition to parquet where ts >= 0");
+                drainWalQueue();
+            } catch (SqlException e) {
+                Assert.fail("Failed to convert to parquet: " + e.getMessage());
+            }
+        }
     }
 
     private long parseFloorPartialTimestamp(String from) {
@@ -631,6 +698,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         int transactionCount = 1 + rnd.nextInt(3);
         splitTransactionInserts(transactions, transactionCount, rnd);
         applyWal(transactions, tableName, 1, rnd);
+        maybeConvertToParquet(tableName);
 
         transactions.clear();
         long shift = rnd.nextLong(4 * 24 * 5) * Timestamps.MINUTE_MICROS * 15 +
@@ -666,6 +734,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
             fuzzer.createInitialTable(tableNameWalNoDedup, true);
             fuzzer.createInitialTable(tableNameDedup, true);
+            maybeConvertToParquet(tableNameDedup);
 
             // Add long256 type to have to be a chance of a dedup key
             execute("alter table " + tableNameDedup + " add column col256 long256");
@@ -734,6 +803,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             String tableNameNoWal = tableNameBase + "_nonwal";
 
             TableToken dedupTt = fuzzer.createInitialTable(tableNameDedup, true);
+            maybeConvertToParquet(tableNameDedup);
             fuzzer.createInitialTable(tableNameNoWal, false);
 
             String timestampColumnName;
@@ -922,7 +992,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     }
 
     private ObjList<FuzzTransaction> uniqueInserts(ObjList<FuzzTransaction> transactions) {
-        ObjList<FuzzTransaction> result = new ObjList<>();
+        ObjList<FuzzTransaction> uniqueTransactions = new ObjList<>();
         LongHashSet uniqueTimestamps = new LongHashSet();
 
         for (int i = 0; i < transactions.size(); i++) {
@@ -936,15 +1006,19 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                             unique.operationList.add(operation);
                         }
                     } else {
+                        if (operation instanceof FuzzDropCreateTableOperation) {
+                            ((FuzzDropCreateTableOperation) operation).setDedupEnable(true);
+                        }
                         unique.operationList.add(operation);
                     }
                 }
-                result.add(unique);
+                unique.reopenTable = transaction.reopenTable;
+                uniqueTransactions.add(unique);
             } else {
-                result.add(transaction);
+                uniqueTransactions.add(transaction);
             }
         }
-        return result;
+        return uniqueTransactions;
     }
 
     private void validateNoTimestampDuplicates(
@@ -956,7 +1030,6 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             int existingDups,
             int colType
     ) {
-
         LOG.info().$("Validating no timestamp duplicates [from=").$ts(fromTimestamp)
                 .$(", delta=").$(delta)
                 .$(", commit2Count=").$(commit2Count)
@@ -981,8 +1054,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         }
 
         try (
-                TableReader reader = getReader(tableName);
-                TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+                RecordCursorFactory factory = select(tableName);
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
         ) {
             Record rec = cursor.getRecord();
             AssertionError fail = null;
@@ -1063,6 +1136,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 System.out.println(sink);
                 throw fail;
             }
+        } catch (SqlException e) {
+            Assert.fail(e.getMessage());
         }
     }
 

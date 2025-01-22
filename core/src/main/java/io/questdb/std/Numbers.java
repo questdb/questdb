@@ -24,7 +24,6 @@
 
 package io.questdb.std;
 
-// @formatter:off
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -35,12 +34,8 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
-import org.jetbrains.annotations.NotNull;
-//#if jdk.version==8
-//$import sun.misc.FDBigInteger;
-//#else
 import jdk.internal.math.FDBigInteger;
-//#endif
+import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 
@@ -50,6 +45,7 @@ public final class Numbers {
     public static final double DOUBLE_TOLERANCE = 0.0000000001;
     public static final int INT_NULL = Integer.MIN_VALUE;
     public static final int IPv4_NULL = 0;
+    public static final long JULIAN_EPOCH_OFFSET_MILLIS = 946684800000L;
     public static final long JULIAN_EPOCH_OFFSET_USEC = 946684800000000L;
     public static final long LONG_NULL = Long.MIN_VALUE;
     public static final int MAX_DOUBLE_SCALE = 19;
@@ -471,6 +467,16 @@ public final class Numbers {
         }
     }
 
+    public static void appendLong256(Long256 long256, CharSink<?> sink) {
+        appendLong256(
+                long256.getLong0(),
+                long256.getLong1(),
+                long256.getLong2(),
+                long256.getLong3(),
+                sink
+        );
+    }
+
     public static void appendLong256(long a, long b, long c, long d, CharSink<?> sink) {
         if (a == Numbers.LONG_NULL && b == Numbers.LONG_NULL && c == Numbers.LONG_NULL && d == Numbers.LONG_NULL) {
             return;
@@ -578,7 +584,7 @@ public final class Numbers {
     }
 
     public static int compare(float a, float b) {
-        if (equals(a,b)) {
+        if (equals(a, b)) {
             return 0;
         }
 
@@ -712,13 +718,13 @@ public final class Numbers {
     }
 
     public static int hexDigitNumber(long value) {
-        int mag = 64 - Long.numberOfLeadingZeros(value|1);
+        int mag = 64 - Long.numberOfLeadingZeros(value | 1);
         int v = (mag + 3) / 4;
         return v + (v & 1); // round up to even number of digits 0x123 -> 0x0123
     }
 
     public static int hexDigitsLong256(Long256 long256) {
-       return hexDigitsLong256(long256.getLong0(), long256.getLong1(), long256.getLong2(), long256.getLong3());
+        return hexDigitsLong256(long256.getLong0(), long256.getLong1(), long256.getLong2(), long256.getLong3());
     }
 
     public static int hexDigitsLong256(long a, long b, long c, long d) {
@@ -822,7 +828,7 @@ public final class Numbers {
      * infinities that arise from division by 0.
      */
     public static boolean isNull(double value) {
-        return (Double.doubleToRawLongBits(value) & EXP_BIT_MASK)==EXP_BIT_MASK;
+        return (Double.doubleToRawLongBits(value) & EXP_BIT_MASK) == EXP_BIT_MASK;
     }
 
     public static boolean isNull(float value) {
@@ -1019,7 +1025,7 @@ public final class Numbers {
             if (sign == '.') {
                 do {
                     lo++;
-                }while(sequence.charAt(lo) == '.');
+                } while (sequence.charAt(lo) == '.');
             } else {
                 throw NumericException.INSTANCE;
             }
@@ -1593,7 +1599,7 @@ public final class Numbers {
             }
         }
 
-        if ((val == Long.MIN_VALUE && !negative) || digitCount == 0 ) {
+        if ((val == Long.MIN_VALUE && !negative) || digitCount == 0) {
             throw NumericException.INSTANCE;
         }
         return negative ? val : -val;
@@ -1634,7 +1640,7 @@ public final class Numbers {
                     }
                     if (i + 1 < lim) {
                         // could be 'ms' or an error
-                        if ((sequence.charAt(i + 1) | 32)!='s' || i + 2!=lim) {
+                        if ((sequence.charAt(i + 1) | 32) != 's' || i + 2 != lim) {
                             throw NumericException.INSTANCE;
                         }
                         // 'ms' at the end of the string
@@ -1694,7 +1700,7 @@ public final class Numbers {
             }
         }
 
-        if ((val == Long.MIN_VALUE && !negative) || digitCount == 0 ) {
+        if ((val == Long.MIN_VALUE && !negative) || digitCount == 0) {
             throw NumericException.INSTANCE;
         }
         return negative ? val : -val;
@@ -1743,7 +1749,7 @@ public final class Numbers {
                         }
                     } else {
                         // 'm' at the end of the string
-                        val *= Timestamps.MINUTE_MICROS*1000;
+                        val *= Timestamps.MINUTE_MICROS * 1000;
                     }
                     break OUT;
                 case 's':
@@ -1796,7 +1802,7 @@ public final class Numbers {
             }
         }
 
-        if ((val == Long.MIN_VALUE && !negative) || digitCount == 0 ) {
+        if ((val == Long.MIN_VALUE && !negative) || digitCount == 0) {
             throw NumericException.INSTANCE;
         }
         return negative ? val : -val;
@@ -1908,7 +1914,7 @@ public final class Numbers {
     }
 
     public static int reverseBits(int i) {
-        return i<<24 | i>>8 & 0xff00 | i<<8 & 0xff0000 | i>>>24;
+        return i << 24 | i >> 8 & 0xff00 | i << 8 & 0xff0000 | i >>> 24;
     }
 
     public static double roundDown(double value, int scale) throws NumericException {
@@ -3225,12 +3231,10 @@ public final class Numbers {
         void append(CharSink<?> sink, long value);
     }
 
-    //#if jdk.version!=8
     static {
         Module currentModule = Numbers.class.getModule();
         Unsafe.addExports(Unsafe.JAVA_BASE_MODULE, currentModule, "jdk.internal.math");
     }
-    //#endif
 
     static {
         pow10 = new long[20];

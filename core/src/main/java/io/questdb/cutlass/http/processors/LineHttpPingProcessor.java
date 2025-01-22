@@ -26,13 +26,12 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.HttpConnectionContext;
-import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.network.QueryPausedException;
-import io.questdb.network.ServerDisconnectException;
 
-public class LineHttpPingProcessor implements HttpRequestProcessor {
+// Inherits the same connection limit gauges as the ILP HTTP processor
+// This processor handles compatibility with InfluxDB line drivers that ping the server.
+public class LineHttpPingProcessor implements LineHttpProcessor {
     private final String header;
 
     public LineHttpPingProcessor(CharSequence version) {
@@ -47,7 +46,7 @@ public class LineHttpPingProcessor implements HttpRequestProcessor {
     @Override
     public void onRequestComplete(
             HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         context.simpleResponse().sendStatusNoContent(204, header);
     }
 

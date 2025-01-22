@@ -45,7 +45,7 @@ import static io.questdb.cairo.wal.WalUtils.*;
 
 class WalEventWriter implements Closeable {
     private final CairoConfiguration configuration;
-    private final MemoryMARW eventMem = Vm.getMARWInstance();
+    private final MemoryMARW eventMem = Vm.getCMARWInstance();
     private final FilesFacade ff;
     private final StringSink sink = new StringSink();
     private long indexFd;

@@ -952,6 +952,13 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIsNotFalse() throws SqlException {
+        x("a False !=", "a IS not False");
+        x("tab.a False !=", "tab.a IS NOT False");
+        x("'False' False !=", "'False' IS not False");
+    }
+
+    @Test
     public void testIsNotNull() throws SqlException {
         x("a NULL !=", "a IS NOT NULL");
         x("tab.a NULL !=", "tab.a IS NOT NULL");
@@ -960,10 +967,17 @@ public class ExpressionParserTest extends AbstractCairoTest {
         x("NULL NULL !=", "NULL IS NOT NULL");
         x("'null' NULL !=", "'null' IS NOT NULL");
         x("'' null || NULL !=", "('' || null) IS NOT NULL");
-        assertFail("column is not 3", 7, "IS NOT must be followed by NULL");
+        assertFail("column is not 3", 7, "IS NOT must be followed by NULL, TRUE or FALSE");
         assertFail(". is not great", 2, "IS [NOT] not allowed here");
-        assertFail("column is not $1", 7, "IS NOT must be followed by NULL");
-        assertFail("column is not", 7, "IS NOT must be followed by NULL");
+        assertFail("column is not $1", 7, "IS NOT must be followed by NULL, TRUE or FALSE");
+        assertFail("column is not", 7, "IS NOT must be followed by NULL, TRUE or FALSE");
+    }
+
+    @Test
+    public void testIsNotTrue() throws SqlException {
+        x("a True !=", "a IS not True");
+        x("tab.a True !=", "tab.a IS NOT True");
+        x("'true' true !=", "'true' IS not true");
     }
 
     @Test
@@ -975,10 +989,18 @@ public class ExpressionParserTest extends AbstractCairoTest {
         x("NULL NULL =", "NULL IS NULL");
         x("'null' NULL =", "'null' IS NULL");
         x("'' null | NULL =", "('' | null) IS NULL");
-        assertFail("column is 3", 7, "IS must be followed by NULL");
+        assertFail("column is 3", 7, "IS must be followed by NULL, TRUE or FALSE");
         assertFail(". is great", 2, "IS [NOT] not allowed here");
-        assertFail("column is $1", 7, "IS must be followed by NULL");
+        assertFail("column is $1", 7, "IS must be followed by NULL, TRUE or FALSE");
         assertFail("column is", 7, "IS must be followed by [NOT] NULL");
+    }
+
+    @Test
+    public void testIsTrue() throws SqlException {
+        x("a True =", "a IS True");
+        x("tab.a True =", "tab.a IS True");
+        x("'true' true =", "'true' IS true");
+        x("'' null | NULL =", "('' | null) IS NULL");
     }
 
     @Test
@@ -1202,7 +1224,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testStringAggDistinct_orderByNotSupported() throws SqlException {
+    public void testStringAggDistinct_orderByNotSupported() {
         assertFail("string_agg(distinct foo, ',' order by bar)", 29, "ORDER BY not supported for string_distinct_agg");
     }
 

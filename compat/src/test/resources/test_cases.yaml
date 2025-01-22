@@ -2,11 +2,11 @@ variables:
   table_name: "sensor_data"
 
 tests:
-  - name: Insert and Select Test
-    description: Test inserting and selecting data.
+  - name: Binding in projection
+    description: Test binding variable in projection, without any function
     prepare:
       - action: execute
-        query: "CREATE TABLE ${table_name} (id INT, temperature DOUBLE, timestamp timestamp);"
+        query: "CREATE TABLE ${table_name} (timestamp timestamp, vch varchar);"
     steps:
       - loop:
           range:
@@ -15,12 +15,94 @@ tests:
           as: id
           steps:
             - action: execute
-              query: "INSERT INTO ${table_name} (id, temperature, timestamp) VALUES ($[1], $[2], $[3]);"
+              query: "INSERT INTO ${table_name} (timestamp, vch) VALUES ($[1], $[2]);"
+              parameters:
+                - value: "2023-10-01T10:00:00.000000Z"
+                  type: "TIMESTAMP"
+                - value: "${id}"
+                  type: "VARCHAR"
+              expect:
+                result:
+                  - [ 1 ]
+      - action: query
+        query: "SELECT $[1], * FROM ${table_name} WHERE vch IN ($[2], $[3]);"
+        parameters:
+          - value: "42"
+            type: "VARCHAR"
+          - value: "2"
+            type: "VARCHAR"
+          - value: "3"
+            type: "VARCHAR"
+        expect:
+          result:
+            - [ '42', '2023-10-01T10:00:00.000000Z', '2' ]
+            - [ '42', '2023-10-01T10:00:00.000000Z', '3' ]
+    teardown:
+      - action: execute
+        query: "DROP TABLE IF EXISTS ${table_name};"
+  - name: In Varchar Test
+    description: Test inserting and selecting data with a varchar using the IN clause.
+    prepare:
+      - action: execute
+        query: "CREATE TABLE ${table_name} (timestamp timestamp, vch varchar);"
+    steps:
+      - loop:
+          range:
+            start: 1
+            end: 10
+          as: id
+          steps:
+            - action: execute
+              query: "INSERT INTO ${table_name} (timestamp, vch) VALUES ($[1], $[2]);"
+              parameters:
+                - value: "2023-10-01T10:00:00.000000Z"
+                  type: "TIMESTAMP"
+                - value: "${id}"
+                  type: "VARCHAR"
+              expect:
+                result:
+                  - [ 1 ]
+      - action: query
+        query: "SELECT * FROM ${table_name} WHERE vch IN ($[1], $[2], $[3]);"
+        parameters:
+          - value: "1"
+            type: "VARCHAR"
+          - value: "2"
+            type: "VARCHAR"
+          - value: "11"
+            type: "VARCHAR"
+        expect:
+          result:
+            - [ '2023-10-01T10:00:00.000000Z', '1' ]
+            - [ '2023-10-01T10:00:00.000000Z', '2' ]
+    teardown:
+      - action: execute
+        query: "DROP TABLE IF EXISTS ${table_name};"
+  - name: Insert and Select Test
+    description: Test inserting and selecting data.
+    prepare:
+      - action: execute
+        query: "CREATE TABLE ${table_name} (id INT, temperature DOUBLE, b boolean, d date, ch char, timestamp timestamp);"
+    steps:
+      - loop:
+          range:
+            start: 1
+            end: 10
+          as: id
+          steps:
+            - action: execute
+              query: "INSERT INTO ${table_name} (id, temperature, b, d, ch, timestamp) VALUES ($[1], $[2], $[3], $[4], $[5], $[6]);"
               parameters:
                 - value: "${id}"
                   type: "INT4"
                 - value: "${id}.5"
                   type: "FLOAT8"
+                - value: "true"
+                  type: "BOOLEAN"
+                - value: "2023-10-01"
+                  type: "DATE"
+                - value: "*"
+                  type: "CHAR"
                 - value: "2023-10-01T10:00:00.000000Z"
                   type: "TIMESTAMP"
               expect:
@@ -33,12 +115,18 @@ tests:
             - [ 1, 10 ]
       - action: execute
         description: Insert a row with a unique timestamp so we can query it later
-        query: "INSERT INTO ${table_name} (id, temperature, timestamp) VALUES ($[1], $[2], $[3]);"
+        query: "INSERT INTO ${table_name} (id, temperature, b, d, ch, timestamp) VALUES ($[1], $[2], $[3], $[4], $[5], $[6]);"
         parameters:
           - value: "11"
             type: "INT4"
           - value: "11.5"
             type: "FLOAT8"
+          - value: "false"
+            type: "BOOLEAN"
+          - value: "2024-10-02"
+            type: "DATE"
+          - value: "-"
+            type: "CHAR"
           - value: "2024-10-01T10:00:00.000000Z"
             type: "TIMESTAMP"
         expect:
@@ -53,7 +141,7 @@ tests:
         # let's use the exact match here since it only returns one row
         expect:
           result:
-            - [ 11, 11.5, "2024-10-01T10:00:00.000000Z" ]
+            - [ 11, 11.5, False, "2024-10-02T00:00:00.000000Z", '-', "2024-10-01T10:00:00.000000Z" ]
       - action: query
         query: "SELECT id, temperature, timestamp FROM ${table_name};"
         expect:

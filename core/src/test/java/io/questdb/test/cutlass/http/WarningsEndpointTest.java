@@ -24,7 +24,14 @@
 
 package io.questdb.test.cutlass.http;
 
-import io.questdb.*;
+import io.questdb.Bootstrap;
+import io.questdb.DefaultHttpClientConfiguration;
+import io.questdb.FactoryProviderImpl;
+import io.questdb.PropBootstrapConfiguration;
+import io.questdb.PropServerConfiguration;
+import io.questdb.PropertyKey;
+import io.questdb.ServerConfiguration;
+import io.questdb.ServerMain;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
@@ -129,9 +136,64 @@ public class WarningsEndpointTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testWarningsWithContextPath() throws Exception {
+        final String contextPath = "/context";
+        TestUtils.assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
+                put(PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true");
+                put(PropertyKey.HTTP_CONTEXT_WEB_CONSOLE.getEnvVarName(), contextPath);
+            }})
+            ) {
+                serverMain.start();
+
+                final CairoEngine engine = serverMain.getEngine();
+
+                // clear warnings
+                final String tag1 = "";
+                final String warning1 = "";
+                setWarning(engine, tag1, warning1);
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    assertWarningsRequest(httpClient, contextPath, "[]");
+                }
+
+                // add 1st warning
+                final String tag2 = "UNSUPPORTED FILE SYSTEM";
+                final String warning2 = "Unsupported file system [dir=/questdb/path/dbRoot, magic=0x6400A468]";
+                setWarning(engine, tag2, warning2);
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    assertWarningsRequest(httpClient, contextPath, "[{\"tag\":\"" + tag2 + "\",\"warning\":\"" + warning2 + "\"}]");
+                }
+
+                // add 2nd warning
+                final String tag3 = "OUT OF MMAP AREAS";
+                final String warning3 = "vm.max_map_count limit is too low [current=4096, recommended=1048576]";
+                setWarning(engine, tag3, warning3);
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    assertWarningsRequest(httpClient, contextPath, "[{\"tag\":\"" + tag2 + "\",\"warning\":\"" + warning2 + "\"}," +
+                            "{\"tag\":\"" + tag3 + "\",\"warning\":\"" + warning3 + "\"}]");
+                }
+
+                // clear warnings
+                setWarning(engine, tag1, warning1);
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    assertWarningsRequest(httpClient, contextPath, "[]");
+                }
+
+                // add a new warning
+                final String tag4 = "TOO MANY OPEN FILES";
+                final String warning4 = "fs.file-max limit is too low [current=1024, recommended=1048576]";
+                setWarning(engine, tag4, warning4);
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    assertWarningsRequest(httpClient, contextPath, "[{\"tag\":\"" + tag4 + "\",\"warning\":\"" + warning4 + "\"}]");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testWarningsWithSimulation() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
                 put(PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true");
             }})
             ) {
@@ -203,8 +265,12 @@ public class WarningsEndpointTest extends AbstractBootstrapTest {
     }
 
     private void assertWarningsRequest(HttpClient httpClient, String expectedHttpResponse) {
+        assertWarningsRequest(httpClient, "", expectedHttpResponse);
+    }
+
+    private void assertWarningsRequest(HttpClient httpClient, String httpContext, String expectedHttpResponse) {
         final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
-        request.GET().url("/warnings");
+        request.GET().url(httpContext + "/warnings");
         try (HttpClient.ResponseHeaders responseHeaders = request.send()) {
             responseHeaders.await();
 

@@ -1908,6 +1908,35 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testOrderByNotChooseByParent() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (f1 float, f2 float, ts timestamp) timestamp(ts)");
+            execute("insert into tab VALUES(1, 10, '2024-12-24T00:11:00.000Z'), (2, 20, '2024-12-24T00:11:00.000Z')");
+            String q1 = "select f2 - f1 as p1, f1, f2 from tab order by ts desc";
+            assertPlanNoLeakCheck(q1, "SelectedRecord\n" +
+                    "    VirtualRecord\n" +
+                    "      functions: [f2-f1,f1,f2,ts]\n" +
+                    "        PageFrame\n" +
+                    "            Row backward scan\n" +
+                    "            Frame backward scan on: tab\n");
+            assertQueryNoLeakCheck("p1\tf1\tf2\n" +
+                    "18.0\t2.0000\t20.0000\n" +
+                    "9.0\t1.0000\t10.0000\n", q1);
+
+            String q2 = "select f2 - f1, f1, f2 from tab order by ts desc";
+            assertPlanNoLeakCheck(q2, "SelectedRecord\n" +
+                    "    VirtualRecord\n" +
+                    "      functions: [f2-f1,f1,f2,ts]\n" +
+                    "        PageFrame\n" +
+                    "            Row backward scan\n" +
+                    "            Frame backward scan on: tab\n");
+            assertQueryNoLeakCheck("column\tf1\tf2\n" +
+                    "18.0\t2.0000\t20.0000\n" +
+                    "9.0\t1.0000\t10.0000\n", q2);
+        });
+    }
+
+    @Test
     public void testPushDownLimitFromChooseToNone() throws Exception {
         assertMemoryLeak(() -> {
             execute(tripsDdl);
@@ -3712,6 +3741,127 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSampleByFromToParallelDeduceTimeStampColumn() throws Exception {
+        execute("CREATE TABLE 't' (\n" +
+                "  name SYMBOL capacity 256 CACHE,\n" +
+                "  timestamp TIMESTAMP\n" +
+                ") timestamp (timestamp) PARTITION BY DAY;");
+        execute("INSERT INTO t (name, timestamp) VALUES" +
+                " ('a', '2023-09-01T00:00:00.000Z')," +
+                " ('a', '2023-09-01T00:10:00.000Z')");
+
+        assertMemoryLeak(() -> {
+            final String query = "SELECT timestamp+60000000 as 'timestamp', 0 AS extra_column, 0 AS extra_column2 \n" +
+                    "FROM t\n" +
+                    "WHERE name = 'a'\n" +
+                    "SAMPLE BY (1m);\n";
+
+            final String result = "timestamp\textra_column\textra_column2\n" +
+                    "2023-09-01T00:01:00.000000Z\t0\t0\n" +
+                    "2023-09-01T00:11:00.000000Z\t0\t0\n";
+
+            assertSql(result, query);
+        });
+
+        assertMemoryLeak(() -> {
+            final String query = "select dateadd('d', 1, timestamp) timestamp, name from t sample by 10m";
+
+            final String result = "timestamp\tname\n" +
+                    "2023-09-02T00:00:00.000000Z\ta\n" +
+                    "2023-09-02T00:10:00.000000Z\ta\n";
+
+            assertSql(result, query);
+        });
+
+        assertMemoryLeak(() -> {
+            final String query = "select dateadd('d', 1, timestamp) timestamp, dateadd('d', 2, timestamp) timestamp2, name from t sample by 10m";
+
+            final String result = "timestamp\ttimestamp2\tname\n" +
+                    "2023-09-02T00:00:00.000000Z\t2023-09-03T00:00:00.000000Z\ta\n" +
+                    "2023-09-02T00:10:00.000000Z\t2023-09-03T00:10:00.000000Z\ta\n";
+
+            assertSql(result, query);
+        });
+
+        assertMemoryLeak(() -> {
+            final String query = "select timestamp + 60000000 as 'timestamp', timestamp  from t where name = 'a' sample by (1m)";
+
+            final String result = "timestamp\ttimestamp1\n" +
+                    "2023-09-01T00:01:00.000000Z\t2023-09-01T00:00:00.000000Z\n" +
+                    "2023-09-01T00:11:00.000000Z\t2023-09-01T00:10:00.000000Z\n";
+
+            assertSql(result, query);
+        });
+
+        assertMemoryLeak(() -> {
+            final String query = "select timestamp + 60000000 as 'timestamp1', timestamp  from t where name = 'a' sample by (1m)";
+
+            final String result = "timestamp1\ttimestamp\n" +
+                    "2023-09-01T00:01:00.000000Z\t2023-09-01T00:00:00.000000Z\n" +
+                    "2023-09-01T00:11:00.000000Z\t2023-09-01T00:10:00.000000Z\n";
+
+            assertSql(result, query);
+        });
+
+        assertMemoryLeak(() -> {
+            final String query = "select timestamp + 60000000 as 'timestamp', timestamp as 'timestamp1'  from t where name = 'a' sample by (1m)";
+
+            final String result = "timestamp\ttimestamp1\n" +
+                    "2023-09-01T00:01:00.000000Z\t2023-09-01T00:00:00.000000Z\n" +
+                    "2023-09-01T00:11:00.000000Z\t2023-09-01T00:10:00.000000Z\n";
+
+            assertSql(result, query);
+        });
+    }
+
+    @Test
+    public void testSampleByExpressionDependOtherColumn() throws Exception {
+        execute("create table t (\n" +
+                "  timestamp TIMESTAMP,\n" +
+                "  symbol SYMBOL capacity 256 CACHE,\n" +
+                "  side SYMBOL CAPACITY 256 CACHE,\n" +
+                "  price double\n" +
+                ") timestamp(timestamp) partition by day;");
+
+        execute("INSERT INTO t (timestamp, symbol, side, price) VALUES" +
+                " ('2023-09-01T00:00:00.000Z', 'ETH-USD', 'buyer', 3240.0)," +
+                " ('2023-09-01T01:00:00.000Z', 'ETH-USD', 'buyer', 3241.0)," +
+                " ('2023-09-01T02:00:00.000Z', 'ETH-USD', 'buyer', 3242.0)," +
+                " ('2023-09-01T03:00:00.000Z', 'ETH-USD', 'buyer', 3243.0)," +
+                " ('2023-09-01T04:00:00.000Z', 'ETH-USD', 'buyer', 3244.0)," +
+                " ('2023-09-01T05:00:00.000Z', 'ETH-USD', 'seller', 5.0)");
+        assertMemoryLeak(() -> {
+            final String query = "select timestamp, symbol, side, CASE WHEN price > 3240  THEN avg(price) END as price_today, CASE WHEN price < 3240  THEN avg(price) END as price_yesterday " +
+                    "from t where timestamp >= '2023-09-01T00:00:00.000Z' and symbol = 'ETH-USD' sample by 1h";
+
+            final String result = "timestamp\tsymbol\tside\tprice_today\tprice_yesterday\n" +
+                    "2023-09-01T00:00:00.000000Z\tETH-USD\tbuyer\tnull\tnull\n" +
+                    "2023-09-01T01:00:00.000000Z\tETH-USD\tbuyer\t3241.0\tnull\n" +
+                    "2023-09-01T02:00:00.000000Z\tETH-USD\tbuyer\t3242.0\tnull\n" +
+                    "2023-09-01T03:00:00.000000Z\tETH-USD\tbuyer\t3243.0\tnull\n" +
+                    "2023-09-01T04:00:00.000000Z\tETH-USD\tbuyer\t3244.0\tnull\n" +
+                    "2023-09-01T05:00:00.000000Z\tETH-USD\tseller\tnull\t5.0\n";
+
+            assertSql(result, query);
+        });
+
+        assertMemoryLeak(() -> {
+            final String query = "select timestamp, symbol, side, CASE WHEN extract('day', timestamp) =14  THEN avg(price) END as price_today, CASE WHEN true  THEN avg(price) END as price_yesterday " +
+                    "from t where timestamp >= '2023-09-01T00:00:00.000Z' and symbol = 'ETH-USD' sample by 1h";
+
+            final String result = "timestamp\tsymbol\tside\tprice_today\tprice_yesterday\n" +
+                    "2023-09-01T00:00:00.000000Z\tETH-USD\tbuyer\tnull\t3240.0\n" +
+                    "2023-09-01T01:00:00.000000Z\tETH-USD\tbuyer\tnull\t3241.0\n" +
+                    "2023-09-01T02:00:00.000000Z\tETH-USD\tbuyer\tnull\t3242.0\n" +
+                    "2023-09-01T03:00:00.000000Z\tETH-USD\tbuyer\tnull\t3243.0\n" +
+                    "2023-09-01T04:00:00.000000Z\tETH-USD\tbuyer\tnull\t3244.0\n" +
+                    "2023-09-01T05:00:00.000000Z\tETH-USD\tseller\tnull\t5.0\n";
+
+            assertSql(result, query);
+        });
+    }
+
+    @Test
     public void testSampleByFromToPlansWithRewrite() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl (\n" +
@@ -4228,6 +4378,239 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "            Frame forward scan on: y\n"
             );
         });
+    }
+
+    @Test
+    public void testWindowRangeFrameDependOnSubqueryOrderBy() throws SqlException {
+        execute("create table cpu_ts ( hostname symbol, usage_system double, ts1 timestamp, ts2 timestamp) timestamp(ts1);");
+        execute("insert into cpu_ts select rnd_symbol('A', 'B', 'C'), x, x::timestamp, x::timestamp + 6000000 from long_sequence(10)");
+        String q1 = "SELECT * from " +
+                "( " +
+                "SELECT ts2, hostname, usage_system, " +
+                "max(usage_system) OVER ( partition by hostname ORDER BY ts2 ASC RANGE BETWEEN 3 seconds preceding and current row ) AS max_usage_system " +
+                "from ( " +
+                "select * FROM cpu_ts WHERE ts2 >= '1970-01-01T00:00:00.000001Z' ORDER BY ts2)" +
+                ") order by hostname, ts2 LIMIT 40;";
+
+        assertPlanNoLeakCheck(
+                q1,
+                "Limit lo: 40\n" +
+                        "    Sort\n" +
+                        "      keys: [hostname, ts2]\n" +
+                        "        Window\n" +
+                        "          functions: [max(usage_system) over (partition by [hostname] range between 3000000 preceding and current row)]\n" +
+                        "            Radix sort light\n" +
+                        "              keys: [ts2]\n" +
+                        "                Async JIT Filter workers: 1\n" +
+                        "                  filter: ts2>=1\n" +
+                        "                    PageFrame\n" +
+                        "                        Row forward scan\n" +
+                        "                        Frame forward scan on: cpu_ts\n"
+        );
+        assertSql("ts2\thostname\tusage_system\tmax_usage_system\n" +
+                "1970-01-01T00:00:06.000001Z\tA\t1.0\t1.0\n" +
+                "1970-01-01T00:00:06.000002Z\tA\t2.0\t2.0\n" +
+                "1970-01-01T00:00:06.000009Z\tA\t9.0\t9.0\n" +
+                "1970-01-01T00:00:06.000003Z\tB\t3.0\t3.0\n" +
+                "1970-01-01T00:00:06.000008Z\tB\t8.0\t8.0\n" +
+                "1970-01-01T00:00:06.000010Z\tB\t10.0\t10.0\n" +
+                "1970-01-01T00:00:06.000004Z\tC\t4.0\t4.0\n" +
+                "1970-01-01T00:00:06.000005Z\tC\t5.0\t5.0\n" +
+                "1970-01-01T00:00:06.000006Z\tC\t6.0\t6.0\n" +
+                "1970-01-01T00:00:06.000007Z\tC\t7.0\t7.0\n", q1);
+
+        String q2 = "SELECT ts2, hostname, usage_system, " +
+                "max(usage_system) OVER ( partition by hostname ORDER BY ts2 ASC RANGE BETWEEN 3 seconds preceding and current row ) AS max_usage_system " +
+                "from ( " +
+                "select * FROM cpu_ts WHERE ts2 >= '1970-01-01T00:00:00.000001Z' ORDER BY ts2)";
+        assertPlanNoLeakCheck(
+                q2,
+                "Window\n" +
+                        "  functions: [max(usage_system) over (partition by [hostname] range between 3000000 preceding and current row)]\n" +
+                        "    Radix sort light\n" +
+                        "      keys: [ts2]\n" +
+                        "        Async JIT Filter workers: 1\n" +
+                        "          filter: ts2>=1\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: cpu_ts\n"
+        );
+        assertSql("ts2\thostname\tusage_system\tmax_usage_system\n" +
+                "1970-01-01T00:00:06.000001Z\tA\t1.0\t1.0\n" +
+                "1970-01-01T00:00:06.000002Z\tA\t2.0\t2.0\n" +
+                "1970-01-01T00:00:06.000003Z\tB\t3.0\t3.0\n" +
+                "1970-01-01T00:00:06.000004Z\tC\t4.0\t4.0\n" +
+                "1970-01-01T00:00:06.000005Z\tC\t5.0\t5.0\n" +
+                "1970-01-01T00:00:06.000006Z\tC\t6.0\t6.0\n" +
+                "1970-01-01T00:00:06.000007Z\tC\t7.0\t7.0\n" +
+                "1970-01-01T00:00:06.000008Z\tB\t8.0\t8.0\n" +
+                "1970-01-01T00:00:06.000009Z\tA\t9.0\t9.0\n" +
+                "1970-01-01T00:00:06.000010Z\tB\t10.0\t10.0\n", q2);
+
+        String q3 = "SELECT * FROM (" +
+                "SELECT ts1, hostname, usage_system, " +
+                "max(usage_system) OVER ( partition by hostname ORDER BY ts1 ASC RANGE BETWEEN 3 seconds preceding and current row ) AS max_usage_system " +
+                "from cpu_ts order by ts1)" +
+                "order by ts1 desc";
+        assertPlanNoLeakCheck(
+                q3,
+                "Sort\n" +
+                        "  keys: [ts1 desc]\n" +
+                        "    Limit lo: 9223372036854775807L\n" +
+                        "        Window\n" +
+                        "          functions: [max(usage_system) over (partition by [hostname] range between 3000000 preceding and current row)]\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: cpu_ts\n"
+        );
+        assertSql("ts1\thostname\tusage_system\tmax_usage_system\n" +
+                "1970-01-01T00:00:00.000010Z\tB\t10.0\t10.0\n" +
+                "1970-01-01T00:00:00.000009Z\tA\t9.0\t9.0\n" +
+                "1970-01-01T00:00:00.000008Z\tB\t8.0\t8.0\n" +
+                "1970-01-01T00:00:00.000007Z\tC\t7.0\t7.0\n" +
+                "1970-01-01T00:00:00.000006Z\tC\t6.0\t6.0\n" +
+                "1970-01-01T00:00:00.000005Z\tC\t5.0\t5.0\n" +
+                "1970-01-01T00:00:00.000004Z\tC\t4.0\t4.0\n" +
+                "1970-01-01T00:00:00.000003Z\tB\t3.0\t3.0\n" +
+                "1970-01-01T00:00:00.000002Z\tA\t2.0\t2.0\n" +
+                "1970-01-01T00:00:00.000001Z\tA\t1.0\t1.0\n", q3);
+
+        String q4 = "SELECT * FROM (" +
+                "SELECT ts1, hostname, usage_system, " +
+                "first_value(usage_system) OVER ( partition by hostname) AS first_usage_system " +
+                "from cpu_ts order by ts2)" +
+                "order by ts1 desc";
+        assertPlanNoLeakCheck(
+                q4,
+                "Radix sort light\n" +
+                        "  keys: [ts1 desc]\n" +
+                        "    SelectedRecord\n" +
+                        "        Limit lo: 9223372036854775807L\n" +
+                        "            Sort\n" +
+                        "              keys: [ts2]\n" +
+                        "                Window\n" +
+                        "                  functions: [first_value(usage_system) over (partition by [hostname])]\n" +
+                        "                    PageFrame\n" +
+                        "                        Row forward scan\n" +
+                        "                        Frame forward scan on: cpu_ts\n"
+        );
+        assertSql("ts1\thostname\tusage_system\tfirst_usage_system\n" +
+                "1970-01-01T00:00:00.000010Z\tB\t10.0\t3.0\n" +
+                "1970-01-01T00:00:00.000009Z\tA\t9.0\t1.0\n" +
+                "1970-01-01T00:00:00.000008Z\tB\t8.0\t3.0\n" +
+                "1970-01-01T00:00:00.000007Z\tC\t7.0\t4.0\n" +
+                "1970-01-01T00:00:00.000006Z\tC\t6.0\t4.0\n" +
+                "1970-01-01T00:00:00.000005Z\tC\t5.0\t4.0\n" +
+                "1970-01-01T00:00:00.000004Z\tC\t4.0\t4.0\n" +
+                "1970-01-01T00:00:00.000003Z\tB\t3.0\t3.0\n" +
+                "1970-01-01T00:00:00.000002Z\tA\t2.0\t1.0\n" +
+                "1970-01-01T00:00:00.000001Z\tA\t1.0\t1.0\n", q4);
+
+        String q5 = "SELECT * from " +
+                "( " +
+                "SELECT ts2, hostname, usage_system, " +
+                "max(usage_system) OVER ( partition by hostname ORDER BY ts2 ASC RANGE BETWEEN 3 seconds preceding and current row ) AS max_usage_system " +
+                "from ( " +
+                "select * FROM cpu_ts WHERE ts2 >= '1970-01-01T00:00:00.000001Z' ORDER BY ts2)" +
+                ") order by ts2, hostname LIMIT 40;";
+
+        assertPlanNoLeakCheck(
+                q5,
+                "Limit lo: 40\n" +
+                        "    Sort\n" +
+                        "      keys: [ts2, hostname]\n" +
+                        "        Window\n" +
+                        "          functions: [max(usage_system) over (partition by [hostname] range between 3000000 preceding and current row)]\n" +
+                        "            Radix sort light\n" +
+                        "              keys: [ts2]\n" +
+                        "                Async JIT Filter workers: 1\n" +
+                        "                  filter: ts2>=1\n" +
+                        "                    PageFrame\n" +
+                        "                        Row forward scan\n" +
+                        "                        Frame forward scan on: cpu_ts\n"
+        );
+        assertSql("ts2\thostname\tusage_system\tmax_usage_system\n" +
+                "1970-01-01T00:00:06.000001Z\tA\t1.0\t1.0\n" +
+                "1970-01-01T00:00:06.000002Z\tA\t2.0\t2.0\n" +
+                "1970-01-01T00:00:06.000003Z\tB\t3.0\t3.0\n" +
+                "1970-01-01T00:00:06.000004Z\tC\t4.0\t4.0\n" +
+                "1970-01-01T00:00:06.000005Z\tC\t5.0\t5.0\n" +
+                "1970-01-01T00:00:06.000006Z\tC\t6.0\t6.0\n" +
+                "1970-01-01T00:00:06.000007Z\tC\t7.0\t7.0\n" +
+                "1970-01-01T00:00:06.000008Z\tB\t8.0\t8.0\n" +
+                "1970-01-01T00:00:06.000009Z\tA\t9.0\t9.0\n" +
+                "1970-01-01T00:00:06.000010Z\tB\t10.0\t10.0\n", q5);
+    }
+
+    @Test
+    public void testDuplicateColumnsInWindowModel() throws SqlException {
+        execute("create table cpu_ts ( hostname symbol, usage_system double, ts timestamp) timestamp(ts);");
+        execute("insert into cpu_ts select rnd_symbol('A', 'B', 'C'), x, x::timestamp from long_sequence(3)");
+        String q1 = "select rank() over(), t1.usage_system, t1.usage_system from cpu_ts t1 join cpu_ts t2 on t1.ts > t2.ts";
+
+        assertPlanNoLeakCheck(
+                q1,
+                "CachedWindow\n" +
+                        "  unorderedFunctions: [rank()]\n" +
+                        "    SelectedRecord\n" +
+                        "        Filter filter: t2.ts<t1.ts\n" +
+                        "            Cross Join\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: cpu_ts\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: cpu_ts\n"
+        );
+        assertSql("rank\tusage_system\tusage_system1\n" +
+                "1\t2.0\t2.0\n" +
+                "1\t3.0\t3.0\n" +
+                "1\t3.0\t3.0\n", q1);
+
+        String q2 = "select rank() over(partition by t1.hostname order by t1.ts), t2.usage_system, t2.usage_system from cpu_ts t1 join cpu_ts t2 on t1.ts > t2.ts";
+
+        assertPlanNoLeakCheck(
+                q2,
+                "Window\n" +
+                        "  functions: [rank() over (partition by [hostname])]\n" +
+                        "    SelectedRecord\n" +
+                        "        Filter filter: t2.ts<t1.ts\n" +
+                        "            Cross Join\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: cpu_ts\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: cpu_ts\n"
+        );
+        assertSql("rank\tusage_system\tusage_system1\n" +
+                "1\t1.0\t1.0\n" +
+                "1\t1.0\t1.0\n" +
+                "2\t2.0\t2.0\n", q2);
+
+        // useInnerModel
+        String q3 = "select rank() over(partition by t1.hostname order by t1.ts), t2.usage_system, t2.usage_system, t1.usage_system + 10 from cpu_ts t1 join cpu_ts t2 on t1.ts > t2.ts";
+
+        assertPlanNoLeakCheck(
+                q3,
+                "Window\n" +
+                        "  functions: [rank() over (partition by [hostname])]\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [hostname,ts,usage_system,usage_system1+10]\n" +
+                        "        SelectedRecord\n" +
+                        "            Filter filter: t2.ts<t1.ts\n" +
+                        "                Cross Join\n" +
+                        "                    PageFrame\n" +
+                        "                        Row forward scan\n" +
+                        "                        Frame forward scan on: cpu_ts\n" +
+                        "                    PageFrame\n" +
+                        "                        Row forward scan\n" +
+                        "                        Frame forward scan on: cpu_ts\n"
+        );
+        assertSql("rank\tusage_system\tusage_system1\tcolumn\n" +
+                "1\t1.0\t1.0\t12.0\n" +
+                "1\t1.0\t1.0\t13.0\n" +
+                "2\t2.0\t2.0\t13.0\n", q3);
     }
 
     protected QueryModel compileModel(String query) throws SqlException {

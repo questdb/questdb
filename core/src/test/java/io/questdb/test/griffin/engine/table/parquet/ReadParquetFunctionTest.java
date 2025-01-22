@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.table.parquet;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.RecordCursor;
@@ -41,15 +42,63 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+
+import java.util.Arrays;
+import java.util.Collection;
 
 import static io.questdb.cairo.TableUtils.PARQUET_PARTITION_NAME;
 
+@RunWith(Parameterized.class)
 public class ReadParquetFunctionTest extends AbstractCairoTest {
+    private final boolean parallel;
+
+    public ReadParquetFunctionTest(boolean parallel) {
+        this.parallel = parallel;
+    }
+
+    @Parameterized.Parameters(name = "parallel={0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {true},
+                {false},
+        });
+    }
 
     @Before
     public void setUp() {
         super.setUp();
         inputRoot = root;
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED, parallel);
+    }
+
+    @Test
+    public void testColumnMapping() throws Exception {
+        assertMemoryLeak(() -> {
+            final long rows = 10;
+            execute("create table x as (select" +
+                    " case when x % 2 = 0 then rnd_str(4,4,4,2) end as a_str," +
+                    " case when x % 2 = 0 then rnd_long() end as a_long," +
+                    " case when x % 2 = 0 then rnd_int() end as an_int," +
+                    " rnd_timestamp('2015','2016',2) as a_ts" +
+                    " from long_sequence(" + rows + "))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("select a_ts, a_long from read_parquet('x.parquet')");
+                assertSqlCursors("select a_ts, a_long from x", sink);
+            }
+        });
     }
 
     @Test
@@ -98,7 +147,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                         sink,
                         null,
                         null,
-                        false,
+                        parallel,
                         true
                 );
             }
@@ -288,10 +337,40 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                 sink.clear();
                 sink.put("select * from read_parquet('x.parquet')");
 
-                assertPlanNoLeakCheck(sink, "parquet file sequential scan\n");
+                if (parallel) {
+                    assertPlanNoLeakCheck(sink, "parquet page frame scan\n");
+                } else {
+                    assertPlanNoLeakCheck(sink, "parquet file sequential scan\n");
+                }
 
                 sink.put(" where 1 = 2");
                 assertSqlCursors("x where 1 = 2", sink);
+            }
+        });
+    }
+
+    @Test
+    public void testOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            final long rows = 10;
+            execute("create table x as (select" +
+                    " rnd_varchar('foo1', 'foo2', 'foo3') as a_varchar1," +
+                    " rnd_varchar('bar1', 'bar2', 'bar3') as a_varchar2" +
+                    " from long_sequence(" + rows + "))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("select * from read_parquet('x.parquet') order by a_varchar1, a_varchar2");
+                assertSqlCursors("select * from x order by a_varchar1, a_varchar2", sink);
             }
         });
     }

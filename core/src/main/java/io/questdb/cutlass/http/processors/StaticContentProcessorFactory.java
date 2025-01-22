@@ -22,13 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.bool;
+package io.questdb.cutlass.http.processors;
 
-public final class InTimestampVarcharFunctionFactory extends InTimestampStrFunctionFactory {
+import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
+import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.cutlass.http.HttpRequestProcessorFactory;
+import io.questdb.std.ObjList;
+
+public class StaticContentProcessorFactory implements HttpRequestProcessorFactory {
+    private final HttpFullFatServerConfiguration httpConfiguration;
+
+    public StaticContentProcessorFactory(HttpFullFatServerConfiguration httpConfiguration) {
+        this.httpConfiguration = httpConfiguration;
+    }
 
     @Override
-    public String getSignature() {
-        // we have explicit in(NØ) otherwise the function parser would match in(NV) instead
-        return "in(NØ)";
+    public ObjList<String> getUrls() {
+        return httpConfiguration.getContextPathDefault();
     }
+
+    @Override
+    public HttpRequestProcessor newInstance() {
+        return new StaticContentProcessor(httpConfiguration);
+    }
+
 }

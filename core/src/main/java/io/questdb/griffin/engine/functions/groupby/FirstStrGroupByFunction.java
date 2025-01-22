@@ -81,6 +81,11 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
     }
 
     @Override
+    public int getSampleByFlags() {
+        return GroupByFunction.SAMPLE_BY_FILL_ALL;
+    }
+
+    @Override
     public CharSequence getStrA(Record rec) {
         final boolean nullValue = rec.getBool(valueIndex + 2);
         if (nullValue) {
@@ -119,12 +124,12 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
     }
 
     @Override
-    public boolean isThreadSafe() {
+    public boolean isScalar() {
         return false;
     }
 
     @Override
-    public boolean isScalar() {
+    public boolean isThreadSafe() {
         return false;
     }
 

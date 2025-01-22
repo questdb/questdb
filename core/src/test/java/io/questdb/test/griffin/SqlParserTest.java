@@ -56,6 +56,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static io.questdb.test.tools.TestUtils.getSystemTablesCount;
 
 public class SqlParserTest extends AbstractSqlParserTest {
+
     private static final List<String> frameTypes = Arrays.asList("rows  ", "groups", "range ");
 
     @Test
@@ -6281,7 +6282,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
 
         assertQuery(
-                "select-choose day, isin, last from (select-virtual [day(ts) day, isin, last] day(ts) day, isin, last, ts from (select-group-by [timestamp_floor('1d',ts) ts, isin, last(start_price) last] isin, last(start_price) last, timestamp_floor('1d',ts) ts from (select [ts, isin, start_price] from xetra timestamp (ts) where isin = 'DE000A0KRJS4' stride 1d) order by ts))",
+                "select-virtual day(ts) day, isin, last from (select-group-by [timestamp_floor('1d',ts) ts, isin, last(start_price) last] isin, last(start_price) last, timestamp_floor('1d',ts) ts from (select [ts, isin, start_price] from xetra timestamp (ts) where isin = 'DE000A0KRJS4' stride 1d) order by ts)",
                 "select day(ts), isin, last(start_price) from xetra where isin='DE000A0KRJS4' sample by 1d",
                 modelOf("xetra")
                         .timestamp("ts")
@@ -6290,7 +6291,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
 
         assertQuery(
-                "select-choose day, isin, last from (select-virtual [day(ts) day, isin, last] day(ts) day, isin, last, ts from (select-group-by [timestamp_floor('1d',ts) ts, isin, last(start_price) last] isin, last(start_price) last, timestamp_floor('1d',ts) ts from (select [ts, isin, start_price] from xetra timestamp (ts) where isin = 'DE000A0KRJS4' stride 1d) order by ts))",
+                "select-virtual day(ts) day, isin, last from (select-group-by [timestamp_floor('1d',ts) ts, isin, last(start_price) last] isin, last(start_price) last, timestamp_floor('1d',ts) ts from (select [ts, isin, start_price] from xetra timestamp (ts) where isin = 'DE000A0KRJS4' stride 1d) order by ts)",
                 "select day(ts), isin, last(start_price) from xetra where isin='DE000A0KRJS4' sample by 1d align to calendar",
                 modelOf("xetra")
                         .timestamp("ts")
@@ -9575,7 +9576,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         " ts timestamp" +
                         ") timestamp(ts) partition by day",
                 7,
-                "too many arguments"
+                "wrong number of arguments for function `row_number`"
         );
     }
 
@@ -9732,6 +9733,17 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 modelOf("a").col("x", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
                 modelOf("b").col("y", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
                 modelOf("c").col("z", ColumnType.INT).col("t", ColumnType.TIMESTAMP)
+        );
+    }
+
+    @Test
+    public void testUnionDistinct() throws SqlException {
+        assertQuery(
+                "select-choose [x] x from (select [x] from a) union select-choose [y] y from (select [y] from b) union select-choose [z] z from (select [z] from c)",
+                "select * from a union distinct select * from b union select * from c",
+                modelOf("a").col("x", ColumnType.INT),
+                modelOf("b").col("y", ColumnType.INT),
+                modelOf("c").col("z", ColumnType.INT)
         );
     }
 
