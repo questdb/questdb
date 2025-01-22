@@ -1636,7 +1636,7 @@ public class VectTest {
                         }
                         segmentCopyInfo.addTxn((long) c * rowsPerCommit, c * segmentCount + s, rowsPerCommit, s, startTs, ts - tsIncrement);
                     }
-                    segmentCopyInfo.addSegment(1, s, 0, commits * rowsPerCommit);
+                    segmentCopyInfo.addSegment(1, s, 0, commits * rowsPerCommit, false);
                 }
 
                 for (int lr = 0; lr < lagRows; lr++) {

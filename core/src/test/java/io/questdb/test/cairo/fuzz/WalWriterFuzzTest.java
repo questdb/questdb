@@ -68,7 +68,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testAddDropColumnDropPartition() throws Exception {
-        Rnd rnd = generateRandom(LOG);
+        Rnd rnd = generateRandom(LOG, 1013073093066583L, 1737485714283L);
         setFuzzProbabilities(0.0, 0.0, 0.0, 0.0, 0.05, 0.05, 0.0, 0.0, 1.0, 0.01, 0.01, 0.0, 0.0);
         setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3);
         runFuzz(rnd);

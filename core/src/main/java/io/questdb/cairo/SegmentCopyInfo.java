@@ -36,24 +36,14 @@ public class SegmentCopyInfo implements QuietCloseable {
     private long minTimestamp = Long.MAX_VALUE;
     private DirectLongList segments = new DirectLongList(4, MemoryTag.NATIVE_TABLE_WRITER);
     private long startSeqTxn;
-    private DirectLongList txns = new DirectLongList(4, MemoryTag.NATIVE_TABLE_WRITER);
     private long totalRows;
+    private DirectLongList txns = new DirectLongList(4, MemoryTag.NATIVE_TABLE_WRITER);
 
-    public void clear() {
-        segments.clear();
-        txns.clear();
-        totalRows = 0;
-        maxTxnRowCount = 0;
-        startSeqTxn = 0;
-        minTimestamp = Long.MAX_VALUE;
-        maxTimestamp = Long.MIN_VALUE;
-    }
-
-    public void addSegment(int walId, int segmentId, long segmentLo, long segmentHi) {
+    public void addSegment(int walId, int segmentId, long segmentLo, long segmentHi, boolean isLastSegmentUse) {
         segments.add(walId);
         segments.add(segmentId);
         segments.add(segmentLo);
-        segments.add(segmentHi);
+        segments.add(isLastSegmentUse ? segmentHi : -segmentHi);
     }
 
     public void addTxn(long segmentRowOffset, int seqTxn, long committedRowsCount, int copyTaskCount, long minTimestamp, long maxTimestamp) {
@@ -67,8 +57,14 @@ public class SegmentCopyInfo implements QuietCloseable {
         this.maxTimestamp = Math.max(this.maxTimestamp, maxTimestamp);
     }
 
-    public long getSeqTxn(long txnIndex) {
-        return startSeqTxn + txns.get(txnIndex * 4L + 1);
+    public void clear() {
+        segments.clear();
+        txns.clear();
+        totalRows = 0;
+        maxTxnRowCount = 0;
+        startSeqTxn = 0;
+        minTimestamp = Long.MAX_VALUE;
+        maxTimestamp = Long.MIN_VALUE;
     }
 
     @Override
@@ -77,40 +73,36 @@ public class SegmentCopyInfo implements QuietCloseable {
         txns = Misc.free(txns);
     }
 
-    public long getRowHi(int i) {
-        return segments.get(i * 4L + 3);
-    }
-
-    public long getRowLo(int i) {
-        return segments.get(i * 4L + 2);
+    public long getMaxTimestamp() {
+        return maxTimestamp;
     }
 
     public long getMaxTxRowCount() {
         return maxTxnRowCount;
     }
 
-    public long getMaxTimestamp() {
-        return maxTimestamp;
-    }
-
     public long getMinTimestamp() {
         return minTimestamp;
+    }
+
+    public long getRowHi(int i) {
+        return Math.abs(segments.get(i * 4L + 3));
+    }
+
+    public long getRowLo(int i) {
+        return Math.abs(segments.get(i * 4L + 2));
     }
 
     public int getSegmentId(int i) {
         return (int) segments.get(i * 4L + 1);
     }
 
-    public long getSegmentInfoAddress() {
-        return segments.getAddress();
+    public long getSeqTxn(long txnIndex) {
+        return startSeqTxn + txns.get(txnIndex * 4L + 1);
     }
 
     public long getStartTxn() {
         return startSeqTxn;
-    }
-
-    public void setStartSeqTxn(long seqTxn) {
-        startSeqTxn = seqTxn;
     }
 
     public long getTotalRows() {
@@ -127,6 +119,14 @@ public class SegmentCopyInfo implements QuietCloseable {
 
     public int getWalId(int i) {
         return (int) segments.get(i * 4L);
+    }
+
+    public boolean isLastSegmentUse(int i) {
+        return segments.get(i * 4L + 3) > 0;
+    }
+
+    public void setStartSeqTxn(long seqTxn) {
+        startSeqTxn = seqTxn;
     }
 
     public int size() {

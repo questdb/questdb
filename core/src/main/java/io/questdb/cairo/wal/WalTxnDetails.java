@@ -155,7 +155,9 @@ public class WalTxnDetails {
                 return symbolMapDiff;
             }
         }
-        throw CairoException.nonCritical().put("Cannot find symbol map diff for column index ").put(columnIndex);
+        // Column added to the existing transaction
+        // all values are null
+        return null;
     }
 
     public SymbolMapDiffCursor getWalSymbolDiffCursor(long seqTxn) {
@@ -186,8 +188,7 @@ public class WalTxnDetails {
 
             int copyTaskCount = 0;
             long totalRowsToCopy = 0;
-
-
+            boolean isLastSegmentUse = false;
             long roHi = 0;
 
             for (int i = 0; i < blockTransactionCount; i++) {
@@ -199,7 +200,7 @@ public class WalTxnDetails {
                 if (i > 0) {
                     if (lastWalId != walId || lastSegmentId != segmentId) {
                         // Prev min, max timestamps, roHi
-                        copyTasks.addSegment(lastWalId, lastSegmentId, segmentLo, roHi);
+                        copyTasks.addSegment(lastWalId, lastSegmentId, segmentLo, roHi, isLastSegmentUse);
                         copyTaskCount++;
                         segmentLo = roLo;
 
@@ -214,6 +215,7 @@ public class WalTxnDetails {
 
                 long minTimestamp = sortedBySegmentTxnSlice.getMinTimestamp(i);
                 long maxTimestamp = sortedBySegmentTxnSlice.getMaxTimestamp(i);
+                isLastSegmentUse = isLastSegmentUse | sortedBySegmentTxnSlice.isLastSegmentUse(i);
                 roHi = sortedBySegmentTxnSlice.getRoHi(i);
                 long committedRowsCount = roHi - roLo;
                 copyTasks.addTxn(roLo, seqTxn, committedRowsCount, copyTaskCount, minTimestamp, maxTimestamp);
@@ -223,7 +225,7 @@ public class WalTxnDetails {
             int segmentId = sortedBySegmentTxnSlice.getSegmentId(lastIndex);
             int walId = sortedBySegmentTxnSlice.getWalId(lastIndex);
 
-            copyTasks.addSegment(walId, segmentId, segmentLo, roHi);
+            copyTasks.addSegment(walId, segmentId, segmentLo, roHi, isLastSegmentUse);
         }
     }
 
@@ -484,7 +486,6 @@ public class WalTxnDetails {
         // Set the count of symbols
         symbolIndexes.set(startOffset + 1, symbolCount);
 
-
         return symbolIndexStartOffset + startOffset;
     }
 
@@ -644,6 +645,10 @@ public class WalTxnDetails {
 
         public int getWalId(int txn) {
             return WalTxnDetails.this.getWalId(lo + txn);
+        }
+
+        public boolean isLastSegmentUse(int txn) {
+            return WalTxnDetails.this.isLastSegmentUsage(lo + txn);
         }
 
         public WalTxnDetailsSlice of(long lo, long count) {
