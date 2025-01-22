@@ -377,7 +377,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openCleanRW
     jint fd = open((const char *) lpszName, O_CREAT | O_RDWR, 0644);
     if (fd < 0) {
         // error opening / creating file
-        return fd;
+        return -10;
     }
 
     jlong fileSize = Java_io_questdb_std_Files_length(e, cl, fd);
@@ -400,10 +400,20 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openCleanRW
                             if (flock((int) fd, LOCK_SH) == 0) {
                                 // success
                                 return fd;
+                            } else {
+                                printf("flock failed\n");
                             }
+                        } else {
+                            printf("msync failed\n");
                         }
+                    } else {
+                        printf("mmap failed\n");
                     }
+                } else {
+                    printf("allocate failed\n");
                 }
+            } else {
+                printf("truncate failed\n");
             }
         } else {
             if (fileSize >= size || Java_io_questdb_std_Files_allocate(e, cl, fd, size) == JNI_TRUE) {
@@ -411,7 +421,11 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openCleanRW
                 if (flock((int) fd, LOCK_SH) == 0) {
                     // success
                     return fd;
+                } else {
+                    printf("flock failed 2\n");
                 }
+            } else {
+                printf("allocate failed 2\n");
             }
         }
     } else {
@@ -419,6 +433,8 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openCleanRW
         if (Java_io_questdb_std_Files_allocate(e, cl, fd, size) == JNI_TRUE && flock((int) fd, LOCK_SH) == 0) {
             // success
             return fd;
+        } else {
+            printf("allocate failed 3\n");
         }
     }
 
@@ -428,7 +444,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openCleanRW
     close(fd);
     // Restore real errno
     errno = errnoTmp;
-    return -1;
+    return -11;
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_rename

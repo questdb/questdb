@@ -923,6 +923,24 @@ Java_io_questdb_std_Vect_mergeShuffleVarcharColumnFromManyAddresses(
         case 1:
             merge_shuffle_varchar_column_from_many_addresses<8u>(src_primary, src_secondary, dst_primary, dst_secondary, merge_index_address, row_count, dst_var_offset);
             break;
+        case 2:
+            merge_shuffle_varchar_column_from_many_addresses<16u>(src_primary, src_secondary, dst_primary, dst_secondary, merge_index_address, row_count, dst_var_offset);
+            break;
+        case 3:
+            merge_shuffle_varchar_column_from_many_addresses<24u>(src_primary, src_secondary, dst_primary, dst_secondary, merge_index_address, row_count, dst_var_offset);
+            break;
+        case 4:
+            merge_shuffle_varchar_column_from_many_addresses<32u>(src_primary, src_secondary, dst_primary, dst_secondary, merge_index_address, row_count, dst_var_offset);
+            break;
+        case 5:
+            merge_shuffle_varchar_column_from_many_addresses<40u>(src_primary, src_secondary, dst_primary, dst_secondary, merge_index_address, row_count, dst_var_offset);
+            break;
+        case 6:
+            merge_shuffle_varchar_column_from_many_addresses<48u>(src_primary, src_secondary, dst_primary, dst_secondary, merge_index_address, row_count, dst_var_offset);
+            break;
+        case 7:
+            merge_shuffle_varchar_column_from_many_addresses<56u>(src_primary, src_secondary, dst_primary, dst_secondary, merge_index_address, row_count, dst_var_offset);
+            break;
         default:
             return -1;
     }

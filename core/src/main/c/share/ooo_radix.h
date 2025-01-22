@@ -638,8 +638,15 @@ void merge_shuffle_symbol_column_from_many_addresses(
         for (uint64_t seg_row = segment_txns[txn_index].segment_row_offset; seg_row < hi; seg_row++, out_index++) {
             int32_t value = segment_addr[seg_row];
             if (value >= clean_symbol_count) {
-                dst[reverse_index[out_index]] = symbol_map[map_offset + value - clean_symbol_count];
+                auto value2 = symbol_map[map_offset + value - clean_symbol_count];
+                if (value2 == std::numeric_limits<int32_t>::max()) {
+                    printf("value2 is 2147483647\n");
+                }
+                dst[reverse_index[out_index]] = value2;
             } else {
+                if (value == std::numeric_limits<int32_t>::max()) {
+                    printf("value is 2147483647\n");
+                }
                 dst[reverse_index[out_index]] = value;
             }
         }

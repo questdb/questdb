@@ -503,7 +503,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
                 destDataOffset
         );
         if (res != 0) {
-            throw new IllegalStateException("unsupported column type");
+            throw new IllegalStateException("unsupported column type shuffle result, res=" + res);
         }
     }
 

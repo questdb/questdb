@@ -67,6 +67,7 @@ public class FailureFileFacade implements FilesFacade {
     }
 
     public void clearFailures() {
+        System.out.println("Clearing failures");
         osCallsCount.set(0);
         failureGenerated.set(0);
     }
@@ -536,6 +537,7 @@ public class FailureFileFacade implements FilesFacade {
     private boolean checkForFailure() {
         boolean fail = osCallsCount.decrementAndGet() == 0;
         if (fail) {
+            System.out.println("Generating failure");
             failureGenerated.incrementAndGet();
         }
         return fail;

@@ -7369,6 +7369,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     mapWriter.updateNullFlag(true);
                                     updatedNullFlag = true;
                                 }
+                            } else {
+                                //TODO: remove
+                                LOG.info().$("no symbol map in the transaction [table=").$(tableToken.getDirName())
+                                        .$(", seqTxn=").$(seqTxn)
+                                        .$(", columnIndex=").$(columnIndex).I$();
                             }
 
                             if (!identical) {
