@@ -115,13 +115,6 @@ public class FirstGeoHashGroupByFunctionShort extends GeoByteFunction implements
     }
 
     @Override
-    public void setShort(MapValue mapValue, short value) {
-        // This method is used to define interpolated points so it's ok to reset the row id field here.
-        mapValue.putLong(valueIndex, Numbers.LONG_NULL);
-        mapValue.putShort(valueIndex + 1, value);
-    }
-
-    @Override
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
     }
