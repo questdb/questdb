@@ -405,6 +405,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlRenameTableModelPoolCapacity;
     private final boolean sqlSampleByDefaultAlignment;
     private final int sqlSampleByIndexSearchPageSize;
+    private final boolean sqlSampleByValidateFillType;
     private final int sqlSmallMapKeyCapacity;
     private final long sqlSmallMapPageSize;
     private final int sqlSortKeyMaxPages;
@@ -1640,6 +1641,9 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.partitionEncoderParquetCompressionLevel = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL, 0);
         this.partitionEncoderParquetRowGroupSize = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100_000);
         this.partitionEncoderParquetDataPageSize = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE, Numbers.SIZE_1MB);
+
+        // compatibility switch, to be removed in future
+        this.sqlSampleByValidateFillType = getBoolean(properties, env, PropertyKey.CAIRO_SQL_SAMPLEBY_VALIDATE_FILL_TYPE, true);
     }
 
     public static String rootSubdir(CharSequence dbRoot, CharSequence subdir) {
@@ -3646,6 +3650,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isTableTypeConversionEnabled() {
             return tableTypeConversionEnabled;
+        }
+
+        @Override
+        public boolean isValidateSampleByFillType() {
+            return sqlSampleByValidateFillType;
         }
 
         @Override

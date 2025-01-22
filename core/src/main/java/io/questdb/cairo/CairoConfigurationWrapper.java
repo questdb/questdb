@@ -1222,6 +1222,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isValidateSampleByFillType() {
+        return getDelegate().isValidateSampleByFillType();
+    }
+
+    @Override
     public boolean isWalApplyEnabled() {
         return getDelegate().isWalApplyEnabled();
     }
