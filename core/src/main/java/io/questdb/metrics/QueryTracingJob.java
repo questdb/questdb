@@ -44,6 +44,7 @@ import java.io.IOException;
 
 public class QueryTracingJob extends SynchronizedJob implements Closeable {
     public static final String COLUMN_EXECUTION_MICROS = "execution_micros";
+    public static final String COLUMN_PRINCIPAL = "principal";
     public static final String COLUMN_QUERY_TEXT = "query_text";
     public static final String COLUMN_TS = "ts";
     public static final String TABLE_NAME = "_query_trace";
@@ -86,7 +87,8 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
                         .$("CREATE TABLE IF NOT EXISTS '").$(TABLE_NAME).$("' (")
                         .$(COLUMN_TS).$(" TIMESTAMP, ")
                         .$(COLUMN_QUERY_TEXT).$(" VARCHAR, ")
-                        .$(COLUMN_EXECUTION_MICROS).$(" LONG")
+                        .$(COLUMN_EXECUTION_MICROS).$(" LONG, ")
+                        .$(COLUMN_PRINCIPAL).$(" VARCHAR")
                         .$(") TIMESTAMP(").$(COLUMN_TS).$(") PARTITION BY HOUR TTL 1 DAY BYPASS WAL")
                         .compile(sqlExecutionContext);
                 query.getOperation().execute(sqlExecutionContext, null);
@@ -94,6 +96,12 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
             }
         }
         return engine.getWriter(tableToken, "query_tracing");
+    }
+
+    private void putVarchar(TableWriter.Row row, int column, String value) {
+        utf8sink.clear();
+        utf8sink.put(value);
+        row.putVarchar(column, utf8sink);
     }
 
     @Override
@@ -109,10 +117,9 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
             for (int n = buffer.size(), i = 0; i < n; i++) {
                 buffer.moveQuick(i, trace);
                 final TableWriter.Row row = tableWriter.newRow(trace.timestamp);
-                utf8sink.clear();
-                utf8sink.put(trace.queryText);
-                row.putVarchar(1, utf8sink);
+                putVarchar(row, 1, trace.queryText);
                 row.putLong(2, trace.executionNanos / Timestamps.MICRO_NANOS);
+                putVarchar(row, 3, trace.principal);
                 row.append();
             }
             tableWriter.commit();

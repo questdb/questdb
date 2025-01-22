@@ -102,6 +102,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         long durationNanos = config.getNanosecondClock().getTicks() - beginNanos;
         boolean isJit = executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED;
 
+        CharSequence principal = executionContext.getSecurityContext().getPrincipal();
         LogRecord log = null;
         try {
             final int leakedReadersCount = leakedReaders != null ? leakedReaders.size() : 0;
@@ -116,7 +117,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             }
             log.$(" [id=").$(sqlId)
                     .$(", sql=`").utf8(sqlText).$('`')
-                    .$(", principal=").$(executionContext.getSecurityContext().getPrincipal())
+                    .$(", principal=").$(principal)
                     .$(", cache=").$(executionContext.isCacheHit())
                     .$(", jit=").$(isJit)
                     .$(", time=").$(durationNanos);
@@ -135,9 +136,10 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         // as well as already converted to an immutable String, as needed to queue it up for handling
         // at a later time. For this reason, do not assign queryTrace.queryText = sqlText here.
         if (queryTrace != null && engine.getConfiguration().isQueryTracingEnabled()) {
+            queryTrace.executionNanos = durationNanos;
             queryTrace.isJit = isJit;
             queryTrace.timestamp = config.getMicrosecondClock().getTicks();
-            queryTrace.executionNanos = durationNanos;
+            queryTrace.principal = principal.toString();
             engine.getMessageBus().getQueryTraceQueue().enqueue(queryTrace);
         }
     }

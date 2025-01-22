@@ -33,16 +33,18 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Before;
 import org.junit.Test;
 
+import static io.questdb.metrics.QueryTracingJob.*;
+
 public class QueryTracingTest extends AbstractCairoTest {
 
     @Before
     public void setup() throws SqlException {
         node1.getConfigurationOverrides().setProperty(PropertyKey.QUERY_TRACING_ENABLED, true);
-        engine.execute("DROP TABLE IF EXISTS '" + QueryTracingJob.TABLE_NAME + "'");
+        engine.execute("DROP TABLE IF EXISTS '" + TABLE_NAME + "'");
     }
 
     @Test
-    public void testQueryTracingTable() throws Exception {
+    public void testQueryTracing() throws Exception {
         try (WorkerPool workerPool = new WorkerPool(() -> 1);
              QueryTracingJob job = new QueryTracingJob(engine)
         ) {
@@ -55,11 +57,12 @@ public class QueryTracingTest extends AbstractCairoTest {
                 Thread.sleep(sleepMillis);
                 try {
                     assertSql(
-                            String.format("%s\n%s\n", QueryTracingJob.COLUMN_QUERY_TEXT, exampleQuery),
-                            String.format("SELECT %s from %s WHERE %s='%s' LIMIT 1",
-                                    QueryTracingJob.COLUMN_QUERY_TEXT,
-                                    QueryTracingJob.TABLE_NAME,
-                                    QueryTracingJob.COLUMN_QUERY_TEXT,
+                            String.format("%s\t%s\n%s\tadmin\n", COLUMN_QUERY_TEXT, COLUMN_PRINCIPAL, exampleQuery),
+                            String.format("SELECT %s, %s from %s WHERE %s='%s' LIMIT 1",
+                                    COLUMN_QUERY_TEXT,
+                                    COLUMN_PRINCIPAL,
+                                    TABLE_NAME,
+                                    COLUMN_QUERY_TEXT,
                                     exampleQuery
                             ));
                     break;
