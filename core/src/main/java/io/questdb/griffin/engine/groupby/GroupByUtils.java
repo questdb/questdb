@@ -130,6 +130,11 @@ public class GroupByUtils {
                         // some functions may need more than one column in values,
                         // so we have them do all the work
                         GroupByFunction func = (GroupByFunction) function;
+
+                        // insert the function into our function list even before we validate it support a given
+                        // fill type. it's to close the function properly when the validation fails
+                        outGroupByFunctions.add(func);
+                        outGroupByFunctionPositions.add(node.position);
                         if (fillCount > 0) {
                             // index of the function relative to the list of fill values
                             // we might have the same fill value for all functions
@@ -161,8 +166,6 @@ public class GroupByUtils {
                             }
                         }
                         func.initValueTypes(outValueTypes);
-                        outGroupByFunctions.add(func);
-                        outGroupByFunctionPositions.add(node.position);
                     } else {
                         // it's a key function
                         assert outKeyFunctions != null && outKeyFunctionNodes != null : "key functions are supported in group by only";
