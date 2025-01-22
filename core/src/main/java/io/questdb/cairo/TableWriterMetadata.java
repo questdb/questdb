@@ -138,7 +138,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         this.columnMetadata.clear();
         this.metadataVersion = metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION);
         this.walEnabled = metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
-        this.ttlHoursOrMonths = metaMem.getInt(TableUtils.META_OFFSET_TTL_HOURS_OR_MONTHS);
+        this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(metaMem);
 
         long offset = TableUtils.getColumnNameOffset(columnCount);
         this.symbolMapCount = 0;

@@ -535,13 +535,12 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private void compileAndExecuteQuery(
             JsonQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
-        boolean recompileStale = true;
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            for (int retries = 0; recompileStale; retries++) {
-                final long nanos = nanosecondClock.getTicks();
+            for (int retries = 0; ; retries++) {
+                final long compilationStart = nanosecondClock.getTicks();
                 final CompiledQuery cc = compiler.compile(state.getQuery(), sqlExecutionContext);
                 sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_JSON);
-                state.setCompilerNanos(nanosecondClock.getTicks() - nanos);
+                state.setCompilerNanos(nanosecondClock.getTicks() - compilationStart);
                 state.setQueryType(cc.getType());
                 // todo: reconsider whether we need to keep the SqlCompiler instance open while executing the query
                 // the problem is the each instance of the compiler has just a single instance of the CompilerQuery object.
@@ -553,7 +552,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                             cc,
                             configuration.getKeepAliveHeader()
                     );
-                    recompileStale = false;
+                    break;
                 } catch (TableReferenceOutOfDateException e) {
                     if (retries == maxSqlRecompileAttempts) {
                         throw SqlException.$(0, e.getFlyweightMessage());

@@ -22,8 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.mp;
+package io.questdb.cutlass.http.processors;
 
-public interface QueueValueHolder<T> {
-    void copyTo(T anotherHolder);
+import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
+import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.cutlass.http.HttpRequestProcessorFactory;
+import io.questdb.std.ObjList;
+
+public class StaticContentProcessorFactory implements HttpRequestProcessorFactory {
+    private final HttpFullFatServerConfiguration httpConfiguration;
+
+    public StaticContentProcessorFactory(HttpFullFatServerConfiguration httpConfiguration) {
+        this.httpConfiguration = httpConfiguration;
+    }
+
+    @Override
+    public ObjList<String> getUrls() {
+        return httpConfiguration.getContextPathDefault();
+    }
+
+    @Override
+    public HttpRequestProcessor newInstance() {
+        return new StaticContentProcessor(httpConfiguration);
+    }
+
 }

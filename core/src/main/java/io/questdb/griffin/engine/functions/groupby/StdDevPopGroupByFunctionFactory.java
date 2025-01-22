@@ -104,5 +104,4 @@ public class StdDevPopGroupByFunctionFactory implements FunctionFactory {
             return true;
         }
     }
-
 }

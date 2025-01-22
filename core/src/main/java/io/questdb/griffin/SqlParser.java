@@ -100,12 +100,12 @@ public class SqlParser {
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
     private final ObjectPool<RenameTableModel> renameTableModelPool;
-    private final PostOrderTreeTraversalAlgo.Visitor rewriteConcat0Ref = this::rewriteConcat0;
-    private final PostOrderTreeTraversalAlgo.Visitor rewriteCount0Ref = this::rewriteCount0;
-    private final PostOrderTreeTraversalAlgo.Visitor rewriteJsonExtractCast0Ref = this::rewriteJsonExtractCast0;
-    private final PostOrderTreeTraversalAlgo.Visitor rewritePgCast0Ref = this::rewritePgCast0;
+    private final PostOrderTreeTraversalAlgo.Visitor rewriteConcatRef = this::rewriteConcat;
+    private final PostOrderTreeTraversalAlgo.Visitor rewriteCountRef = this::rewriteCount;
+    private final PostOrderTreeTraversalAlgo.Visitor rewriteJsonExtractCastRef = this::rewriteJsonExtractCast;
+    private final PostOrderTreeTraversalAlgo.Visitor rewritePgCastRef = this::rewritePgCast;
     private final ObjList<ExpressionNode> tempExprNodes = new ObjList<>();
-    private final PostOrderTreeTraversalAlgo.Visitor rewriteCase0Ref = this::rewriteCase0;
+    private final PostOrderTreeTraversalAlgo.Visitor rewriteCaseRef = this::rewriteCase;
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> topLevelWithModel = new LowerCaseCharSequenceObjHashMap<>();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
     private final ObjectPool<WindowColumn> windowColumnPool;
@@ -1607,8 +1607,13 @@ public class SqlParser {
                     modelPosition = lexer.getPosition();
                 } else {
                     prevModel.setSetOperationType(QueryModel.SET_OPERATION_UNION);
-                    lexer.unparseLast();
-                    modelPosition = lexer.lastTokenPosition();
+                    if (isDistinctKeyword(tok)) {
+                        // union distinct is equal to just union, we only consume to 'distinct' token and we are good
+                        modelPosition = lexer.getPosition();
+                    } else {
+                        lexer.unparseLast();
+                        modelPosition = lexer.lastTokenPosition();
+                    }
                 }
             }
 
@@ -3233,12 +3238,7 @@ public class SqlParser {
         return tok;
     }
 
-    private ExpressionNode rewriteCase(ExpressionNode parent) throws SqlException {
-        traversalAlgo.traverse(parent, rewriteCase0Ref);
-        return parent;
-    }
-
-    private void rewriteCase0(ExpressionNode node) {
+    private void rewriteCase(ExpressionNode node) {
         if (node.type == ExpressionNode.FUNCTION && isCaseKeyword(node.token)) {
             tempExprNodes.clear();
             ExpressionNode literal = null;
@@ -3335,12 +3335,7 @@ public class SqlParser {
         }
     }
 
-    private ExpressionNode rewriteConcat(ExpressionNode parent) throws SqlException {
-        traversalAlgo.traverse(parent, rewriteConcat0Ref);
-        return parent;
-    }
-
-    private void rewriteConcat0(ExpressionNode node) {
+    private void rewriteConcat(ExpressionNode node) {
         if (node.type == ExpressionNode.OPERATION && isConcatOperator(node.token)) {
             node.type = ExpressionNode.FUNCTION;
             node.token = CONCAT_FUNC_NAME;
@@ -3354,17 +3349,12 @@ public class SqlParser {
         }
     }
 
-    private ExpressionNode rewriteCount(ExpressionNode parent) throws SqlException {
-        traversalAlgo.traverse(parent, rewriteCount0Ref);
-        return parent;
-    }
-
     /**
      * Rewrites count(*) expressions to count().
      *
      * @param node expression node, provided by tree walking algo
      */
-    private void rewriteCount0(ExpressionNode node) {
+    private void rewriteCount(ExpressionNode node) {
         if (node.type == ExpressionNode.FUNCTION && isCountKeyword(node.token)) {
             if (node.paramCount == 1) {
                 // special case, typically something like
@@ -3397,12 +3387,19 @@ public class SqlParser {
         );
     }
 
-    private ExpressionNode rewriteJsonExtractCast(ExpressionNode parent) throws SqlException {
-        traversalAlgo.traverse(parent, rewriteJsonExtractCast0Ref);
-        return parent;
-    }
-
-    private void rewriteJsonExtractCast0(ExpressionNode node) {
+    /**
+     * Rewrites the following:
+     * <p>
+     * select json_extract(json,path)::varchar -> select json_extract(json,path)
+     * select json_extract(json,path)::double -> select json_extract(json,path,double)
+     * select json_extract(json,path)::uuid -> select json_extract(json,path)::uuid
+     * <p>
+     * Notes:
+     * - varchar cast it rewritten in a special way, e.g. removed
+     * - subset of types is handled more efficiently in the 3-arg function
+     * - the remaining type casts are not rewritten, e.g. left as is
+     */
+    private void rewriteJsonExtractCast(ExpressionNode node) {
         if (node.type == ExpressionNode.FUNCTION && SqlKeywords.isCastKeyword(node.token)) {
             if (node.lhs != null && SqlKeywords.isJsonExtract(node.lhs.token) && node.lhs.paramCount == 2) {
                 // rewrite cast such as
@@ -3457,44 +3454,20 @@ public class SqlParser {
         }
     }
 
-    /**
-     * Rewrites the following:
-     * <p>
-     * select json_extract(json,path)::varchar -> select json_extract(json,path)
-     * select json_extract(json,path)::double -> select json_extract(json,path,double)
-     * select json_extract(json,path)::uuid -> select json_extract(json,path)::uuid
-     * <p>
-     * Notes:
-     * - varchar cast it rewritten in a special way, e.g. removed
-     * - subset of types is handled more efficiently in the 3-arg function
-     * - the remaining type casts are not rewritten, e.g. left as is
-     */
     private ExpressionNode rewriteKnownStatements(
             ExpressionNode parent,
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
             @Nullable CharSequence exprTargetVariableName
     ) throws SqlException {
-        return
-                rewriteDeclaredVariables(
-                        rewriteJsonExtractCast(
-                                rewritePgCast(
-                                        rewriteConcat(
-                                                rewriteCase(
-                                                        rewriteCount(
-                                                                parent
-                                                        )
-                                                )
-                                        )
-                                )
-                        ), decls, exprTargetVariableName);
+        traversalAlgo.traverse(parent, rewriteCountRef);
+        traversalAlgo.traverse(parent, rewriteCaseRef);
+        traversalAlgo.traverse(parent, rewriteConcatRef);
+        traversalAlgo.traverse(parent, rewritePgCastRef);
+        traversalAlgo.traverse(parent, rewriteJsonExtractCastRef);
+        return rewriteDeclaredVariables(parent, decls, exprTargetVariableName);
     }
 
-    private ExpressionNode rewritePgCast(ExpressionNode parent) throws SqlException {
-        traversalAlgo.traverse(parent, rewritePgCast0Ref);
-        return parent;
-    }
-
-    private void rewritePgCast0(ExpressionNode node) {
+    private void rewritePgCast(ExpressionNode node) {
         if (node.type == ExpressionNode.OPERATION && SqlKeywords.isColonColon(node.token)) {
             node.token = "cast";
             node.type = ExpressionNode.FUNCTION;

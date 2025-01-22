@@ -300,6 +300,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.rename.table.model.pool.capacity\tQDB_CAIRO_SQL_RENAME_TABLE_MODEL_POOL_CAPACITY\t16\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.sampleby.page.size\tQDB_CAIRO_SQL_SAMPLEBY_PAGE_SIZE\t0\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.sampleby.default.alignment.calendar\tQDB_CAIRO_SQL_SAMPLEBY_DEFAULT_ALIGNMENT_CALENDAR\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.unsupported.sampleby.validate.fill.type\tQDB_CAIRO_SQL_UNSUPPORTED_SAMPLEBY_VALIDATE_FILL_TYPE\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.small.map.key.capacity\tQDB_CAIRO_SQL_SMALL_MAP_KEY_CAPACITY\t32\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.small.map.page.size\tQDB_CAIRO_SQL_SMALL_MAP_PAGE_SIZE\t32768\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.sort.key.max.pages\tQDB_CAIRO_SQL_SORT_KEY_MAX_PAGES\t2147483647\tdefault\tfalse\tfalse\n" +
@@ -430,7 +431,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.security.max.response.rows\tQDB_HTTP_SECURITY_MAX_RESPONSE_ROWS\t9223372036854775807\tdefault\tfalse\tfalse\n" +
                                     "http.security.readonly\tQDB_HTTP_SECURITY_READONLY\tfalse\tdefault\tfalse\tfalse\n" +
                                     "http.server.keep.alive\tQDB_HTTP_SERVER_KEEP_ALIVE\ttrue\tdefault\tfalse\tfalse\n" +
-                                    "http.static.index.file.name\tQDB_HTTP_STATIC_INDEX_FILE_NAME\tindex.html\tdefault\tfalse\tfalse\n" +
                                     "http.static.public.directory\tQDB_HTTP_STATIC_PUBLIC_DIRECTORY\tpublic\tdefault\tfalse\tfalse\n" +
                                     "http.text.analysis.max.lines\tQDB_HTTP_TEXT_ANALYSIS_MAX_LINES\t1000\tdefault\tfalse\tfalse\n" +
                                     "http.text.date.adapter.pool.capacity\tQDB_HTTP_TEXT_DATE_ADAPTER_POOL_CAPACITY\t16\tdefault\tfalse\tfalse\n" +
@@ -612,9 +612,20 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "log.timestamp.format\tQDB_LOG_TIMESTAMP_FORMAT\tyyyy-MM-ddTHH:mm:ss.SSSUUUz\tdefault\tfalse\tfalse\n" +
                                     "log.timestamp.locale\tQDB_LOG_TIMESTAMP_LOCALE\ten\tdefault\tfalse\tfalse\n" +
                                     "log.timestamp.timezone\tQDB_LOG_TIMESTAMP_TIMEZONE\tZ\tdefault\tfalse\tfalse\n" +
+                                    "query.tracing.enabled\tQDB_QUERY_TRACING_ENABLED\tfalse\tdefault\tfalse\ttrue\n" +
                                     "http.json.query.connection.limit\tQDB_HTTP_JSON_QUERY_CONNECTION_LIMIT\t-1\tdefault\tfalse\tfalse\n" +
                                     "http.ilp.connection.limit\tQDB_HTTP_ILP_CONNECTION_LIMIT\t-1\tdefault\tfalse\tfalse\n" +
-                                    "query.timeout\tQDB_QUERY_TIMEOUT\t60000\tdefault\tfalse\tfalse\n"
+                                    "query.timeout\tQDB_QUERY_TIMEOUT\t60000\tdefault\tfalse\tfalse\n" +
+                                    "http.context.table.status\tQDB_HTTP_CONTEXT_TABLE_STATUS\t\tdefault\tfalse\tfalse\n" +
+                                    "http.context.execute\tQDB_HTTP_CONTEXT_EXECUTE\t\tdefault\tfalse\tfalse\n" +
+                                    "http.context.ilp\tQDB_HTTP_CONTEXT_ILP\t\tdefault\tfalse\tfalse\n" +
+                                    "http.redirect.count\tQDB_HTTP_REDIRECT_COUNT\t0\tdefault\tfalse\tfalse\n" +
+                                    "http.context.import\tQDB_HTTP_CONTEXT_IMPORT\t\tdefault\tfalse\tfalse\n" +
+                                    "http.context.web.console\tQDB_HTTP_CONTEXT_WEB_CONSOLE\t/\tdefault\tfalse\tfalse\n" +
+                                    "http.context.export\tQDB_HTTP_CONTEXT_EXPORT\t\tdefault\tfalse\tfalse\n" +
+                                    "http.context.ilp.ping\tQDB_HTTP_CONTEXT_ILP_PING\t\tdefault\tfalse\tfalse\n" +
+                                    "http.context.settings\tQDB_HTTP_CONTEXT_SETTINGS\t\tdefault\tfalse\tfalse\n" +
+                                    "http.context.warnings\tQDB_HTTP_CONTEXT_WARNINGS\t\tdefault\tfalse\tfalse\n"
                             )
                                     .split("\n");
 

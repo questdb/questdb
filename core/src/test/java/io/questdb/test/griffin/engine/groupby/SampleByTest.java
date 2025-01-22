@@ -6493,7 +6493,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
                 10,
-                "Unsupported interpolation type"
+                "support for LINEAR fill is not yet implemented"
         );
     }
 
