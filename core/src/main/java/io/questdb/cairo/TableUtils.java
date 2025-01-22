@@ -1885,6 +1885,10 @@ public final class TableUtils {
         return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4 + 8);
     }
 
+    static int getTtlHoursOrMonths(MemoryR metaMem) {
+        return isMetaFormatUpToDate(metaMem) ? metaMem.getInt(TableUtils.META_OFFSET_TTL_HOURS_OR_MONTHS) : 0;
+    }
+
     static boolean isColumnDedupKey(MemoryMR metaMem, int columnIndex) {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_DEDUP_KEY) != 0;
     }
@@ -1901,15 +1905,19 @@ public final class TableUtils {
      * - Low short is a checksum that changes with every update to the metadata record
      * - High short is set to TableUtils.META_FORMAT_MINOR_VERSION_LATEST
      *
-     * The Metadata Format Minor Version field was not present in the initial version the metadata format. This is
+     * The Metadata Format Minor Version field was not present in the initial version of the metadata format. This is
      * why we need the checksum: when it doesn't match, we can't trust the version stored in it, and should assume
      * the QuestDB version that wrote the metadata predates its introduction.
      *
      * Table storage itself is forward- and backward-compatible, so it's safe to read regardless of this version.
      */
-    static boolean isMetaFormatUpToDate(int metaFormatMinorVersionField, long metadataVersion, int columnCount) {
+    static boolean isMetaFormatUpToDate(MemoryR metaMem) {
+        int metaFormatMinorVersionField = metaMem.getInt(META_OFFSET_META_FORMAT_MINOR_VERSION);
         short savedChecksum = Numbers.decodeLowShort(metaFormatMinorVersionField);
-        short actualChecksum = checksumForMetaFormatMinorVersionField(metadataVersion, columnCount);
+        short actualChecksum = checksumForMetaFormatMinorVersionField(
+                metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION),
+                metaMem.getInt(TableUtils.META_OFFSET_COUNT)
+        );
         short savedMetaFormatMinorVersion = Numbers.decodeHighShort(metaFormatMinorVersionField);
         return savedChecksum == actualChecksum && savedMetaFormatMinorVersion >= META_FORMAT_MINOR_VERSION_LATEST;
     }

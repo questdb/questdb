@@ -104,13 +104,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
         this.o3MaxLag = metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG);
         this.walEnabled = metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
-        if (TableUtils.isMetaFormatUpToDate(
-                metaMem.getInt(TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION),
-                metadataVersion,
-                columnCount
-        )) {
-            this.ttlHoursOrMonths = metaMem.getInt(TableUtils.META_OFFSET_TTL_HOURS_OR_MONTHS);
-        }
+        this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(metaMem);
 
         int shiftLeft = 0, existingIndex = 0;
         buildWriterOrderMap(metaMem, columnCount);
@@ -337,13 +331,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             this.o3MaxLag = metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG);
             this.metadataVersion = metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION);
             this.walEnabled = metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
-            if (TableUtils.isMetaFormatUpToDate(
-                    metaMem.getInt(TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION),
-                    metadataVersion,
-                    columnCount
-            )) {
-                this.ttlHoursOrMonths = metaMem.getInt(TableUtils.META_OFFSET_TTL_HOURS_OR_MONTHS);
-            }
+            this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(metaMem);
             this.columnMetadata.clear();
             this.timestampIndex = -1;
 

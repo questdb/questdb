@@ -50,8 +50,6 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.Comparator;
 
-import static io.questdb.cairo.TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION;
-
 /**
  * A metadata cache for serving SQL requests for basic table info.
  */
@@ -194,23 +192,16 @@ public class MetadataCache implements QuietCloseable {
                     .$(", version=").$(metadataVersion)
                     .I$();
 
-            boolean isMetaFormatUpToDate = TableUtils.isMetaFormatUpToDate(
-                    metaMem.getInt(META_OFFSET_META_FORMAT_MINOR_VERSION),
-                    metadataVersion,
-                    columnCount
-            );
 
             table.setPartitionBy(metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY));
             table.setMaxUncommittedRows(metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS));
             table.setO3MaxLag(metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG));
             table.setTimestampIndex(metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX));
-            if (isMetaFormatUpToDate) {
-                table.setTtlHoursOrMonths(metaMem.getInt(TableUtils.META_OFFSET_TTL_HOURS_OR_MONTHS));
-            }
+            table.setTtlHoursOrMonths(TableUtils.getTtlHoursOrMonths(metaMem));
             table.setIsSoftLink(isSoftLink);
 
             TableUtils.buildWriterOrderMap(metaMem, table.columnOrderMap, metaMem, columnCount);
-
+            boolean isMetaFormatUpToDate = TableUtils.isMetaFormatUpToDate(metaMem);
             // populate columns
             for (int i = 0, n = table.columnOrderMap.size(); i < n; i += 3) {
 
