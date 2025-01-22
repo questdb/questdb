@@ -91,11 +91,6 @@ public class MinStrGroupByFunction extends StrFunction implements GroupByFunctio
     }
 
     @Override
-    public int getSampleByFlags() {
-        return GroupByFunction.SAMPLE_BY_FILL_ALL;
-    }
-
-    @Override
     public CharSequence getStrA(Record rec) {
         final long ptr = rec.getLong(valueIndex);
         return ptr == 0 ? null : sinkA.of(ptr);
