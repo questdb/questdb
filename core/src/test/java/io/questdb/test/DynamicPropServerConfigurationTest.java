@@ -38,6 +38,7 @@ import io.questdb.ServerMain;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
+import io.questdb.metrics.QueryTracingJob;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.StringSink;
@@ -532,15 +533,16 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
             try (ServerMain serverMain = new ServerMain(getBootstrap())) {
                 serverMain.start();
 
+                String tableName = QueryTracingJob.TABLE_NAME;
                 try (Connection conn = getConnection("admin", "quest");
-                     PreparedStatement queryTraceStmt = conn.prepareStatement("query_trace()")
+                     PreparedStatement queryTraceStmt = conn.prepareStatement(tableName)
                 ) {
                     Runnable assertTableDoesntExist = () -> {
                         try (ResultSet ignored = queryTraceStmt.executeQuery()) {
                             Assert.fail("Query Trace table exists, but query tracing is disabled");
                         } catch (SQLException e) {
                             Assert.assertEquals(
-                                    "ERROR: table does not exist [table=sys.query_trace]\n  Position: 1",
+                                    String.format("ERROR: table does not exist [table=%s]\n  Position: 1", tableName),
                                     e.getMessage());
                         }
                     };
