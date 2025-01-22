@@ -949,7 +949,7 @@ Java_io_questdb_std_Vect_mergeShuffleVarcharColumnFromManyAddresses(
 }
 
 
-JNIEXPORT jint JNICALL
+JNIEXPORT jlong JNICALL
 Java_io_questdb_std_Vect_mergeShuffleSymbolColumnFromManyAddresses(
         JNIEnv *env,
         jclass cl,
@@ -975,21 +975,15 @@ Java_io_questdb_std_Vect_mergeShuffleSymbolColumnFromManyAddresses(
 
     switch (row_index_bytes) {
         case 1:
-            merge_shuffle_symbol_column_from_many_addresses<uint8_t>(src, dst, merge_index_address, row_count, txn_info_addr, txn_count, symbol_map, symbol_map_size);
-            break;
+            return merge_shuffle_symbol_column_from_many_addresses<uint8_t>(src, dst, merge_index_address, row_count, txn_info_addr, txn_count, symbol_map, symbol_map_size);
         case 2:
-            merge_shuffle_symbol_column_from_many_addresses<uint16_t>(src, dst, merge_index_address, row_count, txn_info_addr, txn_count, symbol_map, symbol_map_size);
-            break;
+            return merge_shuffle_symbol_column_from_many_addresses<uint16_t>(src, dst, merge_index_address, row_count, txn_info_addr, txn_count, symbol_map, symbol_map_size);
         case 3:
         case 4:
-            merge_shuffle_symbol_column_from_many_addresses<uint32_t>(src, dst, merge_index_address, row_count, txn_info_addr, txn_count, symbol_map, symbol_map_size);
-            break;
+            return merge_shuffle_symbol_column_from_many_addresses<uint32_t>(src, dst, merge_index_address, row_count, txn_info_addr, txn_count, symbol_map, symbol_map_size);
         default:
-            merge_shuffle_symbol_column_from_many_addresses<uint64_t>(src, dst, merge_index_address, row_count, txn_info_addr, txn_count, symbol_map, symbol_map_size);
-            break;
+            return merge_shuffle_symbol_column_from_many_addresses<uint64_t>(src, dst, merge_index_address, row_count, txn_info_addr, txn_count, symbol_map, symbol_map_size);
     }
-
-    return 0;
 }
 
 JNIEXPORT void JNICALL

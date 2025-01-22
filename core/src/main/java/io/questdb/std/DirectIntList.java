@@ -121,6 +121,7 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
     }
 
     public void set(long p, int v) {
+        assert p > -1 && p < ((pos - address) >>> 2);
         Unsafe.getUnsafe().putInt(address + (p << 2), v);
     }
 

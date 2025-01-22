@@ -594,12 +594,12 @@ public class WalTxnDetails {
             }
 
             public void switchToColumnRecord(int lo) {
-                this.savedSymbolRecordCount = symbolIndexes.get(lo);
-                this.columnIndex = symbolIndexes.get(lo + 1);
-                this.containsNull = symbolIndexes.get(lo + 2) > 0;
-                this.cleanSymbolCount = symbolIndexes.get(lo + 3);
-                this.nextSymbolOffset = lo + 4 - 2;
-                this.offsetHi = lo + 4 + savedSymbolRecordCount * 2;
+                this.savedSymbolRecordCount = symbolIndexes.get(lo++);
+                this.columnIndex = symbolIndexes.get(lo++);
+                this.containsNull = symbolIndexes.get(lo++) > 0;
+                this.cleanSymbolCount = symbolIndexes.get(lo++);
+                this.nextSymbolOffset = lo - 2;
+                this.offsetHi = lo + savedSymbolRecordCount * 2;
             }
         }
     }

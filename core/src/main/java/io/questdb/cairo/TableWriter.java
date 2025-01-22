@@ -7200,6 +7200,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private boolean assertSymbolValues(long address, long totalRows) {
+        for (long i = 0; i < totalRows; i++) {
+            long symbolKey = Unsafe.getUnsafe().getInt(address + i * 4);
+            if (symbolKey > Integer.MAX_VALUE / 2) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private void processWalCommitBlockSortWalSegmentTimestampsDispatchColumnSortTasks(
             long timestampAddr,
             long totalRows,
@@ -7221,7 +7231,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (columnIndex != timestampColumnIndex) {
                 int columnType = metadata.getColumnType(columnIndex);
                 if (columnType > 0) {
-                    long cursor = -1;// pubSeq.next();
+                    long cursor = -1;//pubSeq.next();
                     long mappedAddrBuffPrimary = columnAddressesBuffer;
                     columnAddressesBuffer += totalSegmentAddressesBytes;
                     if (ColumnType.isVarSize(columnType)) {
@@ -7326,12 +7336,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     var mapWriter = symbolMapWriters.get(columnIndex);
                     int denseSymbolCount = denseSymbolMapWriters.size();
                     long txnCount = this.segmentCopyInfo.getTxnCount();
-                    try (DirectIntList symbolMap = new DirectIntList(txnCount * 2, MemoryTag.NATIVE_O3)) {
-                        // Header, 2 ints per symbol,
-                        // - clear symbol count
-                        // - offset of the map start for the transactions
-                        int mapOffsetStart = (int) (txnCount * 2);
 
+                    // Header, 2 ints per symbol,
+                    // - clear symbol count
+                    // - offset of the map start for the transactions
+                    int mapOffsetStart = (int) (txnCount * 2);
+                    try (DirectIntList symbolMap = new DirectIntList(mapOffsetStart, MemoryTag.NATIVE_O3)) {
+
+                        symbolMap.setPos(mapOffsetStart);
                         boolean updatedNullFlag = false;
 
                         // TODO: add symbols in the seqTxn order,
@@ -7346,11 +7358,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                             boolean identical = true;
                             int cleanSymbolCount = 0;
+                            int entries = 0;
 
                             // Null is valid, means column is just added to WAL and has all values set as NULL
                             // from mapping point of view it's the same as identical
                             if (symbolMapDiff != null) {
-                                int capacity = mapOffsetStart + symbolMapDiff.getRecordCount();
+                                identical = false;
+                                entries = symbolMapDiff.getRecordCount();
+                                int capacity = mapOffsetStart + entries;
                                 symbolMap.setCapacity(capacity);
                                 symbolMap.setPos(capacity);
 
@@ -7362,7 +7377,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     final int newKey = mapWriter.put(symbolValue);
                                     assert newKey >= cleanSymbolCount;
                                     identical &= newKey == entry.getKey();
-                                    symbolMap.set(mapOffsetStart + entry.getKey() - cleanSymbolCount, newKey);
+                                    int mapIndex = mapOffsetStart + entry.getKey() - cleanSymbolCount;
+                                    symbolMap.set(mapIndex, newKey);
                                 }
 
                                 if (!updatedNullFlag && symbolMapDiff.hasNullValue()) {
@@ -7381,14 +7397,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 symbolMap.set(txnIndex * 2 + 1, mapOffsetStart);
                             } else {
                                 // Nothing to remap
-                                symbolMap.set(txnIndex * 2, Integer.MAX_VALUE);
+                                symbolMap.set(txnIndex * 2, Integer.MAX_VALUE - 1);
+                                symbolMap.set(txnIndex * 2 + 1, mapOffsetStart);
                             }
-                            mapOffsetStart = (int) symbolMap.size();
+                            mapOffsetStart += entries;
                         }
 
                         var destinationColumn = o3MemColumns1.get(getPrimaryColumnIndex(columnIndex));
                         destinationColumn.jumpTo(totalRows << shl);
-                        Vect.mergeShuffleSymbolColumnFromManyAddresses(
+                        long rowCount = Vect.mergeShuffleSymbolColumnFromManyAddresses(
                                 (int) mergeIndexEncodingSegmentBytes,
                                 mappedAddrBuffPrimary,
                                 destinationColumn.getAddress(),
@@ -7399,6 +7416,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 symbolMap.getAddress(),
                                 symbolMap.size()
                         );
+
+                        assert rowCount == totalRows;
+                        assert assertSymbolValues(destinationColumn.getAddress(), totalRows);
                     }
                 }
 
