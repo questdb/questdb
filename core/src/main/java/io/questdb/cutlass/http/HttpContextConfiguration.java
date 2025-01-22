@@ -50,6 +50,12 @@ public interface HttpContextConfiguration {
 
     String getHttpVersion();
 
+    int getIlpConnectionLimit();
+
+    int getJsonQueryConnectionLimit();
+
+    Metrics getMetrics();
+
     MillisecondClock getMillisecondClock();
 
     int getMultipartHeaderBufferSize();
@@ -65,6 +71,4 @@ public interface HttpContextConfiguration {
     boolean getServerKeepAlive();
 
     boolean readOnlySecurityContext();
-
-    Metrics getMetrics();
 }

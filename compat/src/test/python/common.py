@@ -57,12 +57,24 @@ def convert_and_append_parameters(value, type, resolved_parameters):
     elif type == 'float4' or type == 'float8':
         resolved_parameters.append(float(value))
     elif type == 'boolean':
-        resolved_parameters.append(bool(value))
+        value = value.lower().strip()
+        if value == 'true':
+            resolved_parameters.append(True)
+        elif value == 'false':
+            resolved_parameters.append(False)
+        else:
+            raise ValueError(f"Invalid boolean value: {value}")
     elif type == 'varchar':
         resolved_parameters.append(str(value))
     elif type == 'timestamp':
         parsed_value = datetime.datetime.strptime(value, '%Y-%m-%dT%H:%M:%S.%fZ')
         resolved_parameters.append(parsed_value)
+    elif type == 'date':
+        parsed_value = datetime.date.fromisoformat(value)
+        resolved_parameters.append(parsed_value)
+    elif type == 'char':
+        str_val = str(value)
+        resolved_parameters.append(str_val)
     else:
         resolved_parameters.append(value)
 
@@ -77,11 +89,21 @@ def convert_query_result(result):
     else:
         result_converted = [list(record) for record in result]
 
-    # Convert timestamps to strings for comparison, format: '2021-09-01T12:34:56.123456Z'
     for row in result_converted:
         for i, value in enumerate(row):
+            # convert timestamps to strings for comparison, format: '2021-09-01T12:34:56.123456Z'
             if isinstance(value, datetime.datetime):
                 row[i] = value.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+            # convert bytes to char. why? asyncpg client uses binary codec for char type
+            # This means char columns are returned as bytes, but we want to compare them as chars
+            elif isinstance(value, bytes):
+                row[i] = value.decode()
+
+
+    for row in result_converted:
+        for i, value in enumerate(row):
+            if isinstance(value, bytes):
+                row[i] = value.decode()
 
     return result_converted
 

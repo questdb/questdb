@@ -298,6 +298,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     HTTP_TEXT_ANALYSIS_MAX_LINES("http.text.analysis.max.lines"),
     HTTP_TEXT_LEXER_STRING_POOL_CAPACITY("http.text.lexer.string.pool.capacity"),
     HTTP_TEXT_TIMESTAMP_ADAPTER_POOL_CAPACITY("http.text.timestamp.adapter.pool.capacity"),
+    HTTP_JSON_QUERY_CONNECTION_LIMIT("http.json.query.connection.limit"),
     HTTP_JSON_QUERY_CONNECTION_CHECK_FREQUENCY("http.json.query.connection.check.frequency"),
     HTTP_JSON_QUERY_FLOAT_SCALE("http.json.query.float.scale"),
     HTTP_JSON_QUERY_DOUBLE_SCALE("http.json.query.double.scale"),
@@ -305,6 +306,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     HTTP_QUERY_CACHE_ENABLED("http.query.cache.enabled"),
     HTTP_QUERY_CACHE_BLOCK_COUNT("http.query.cache.block.count"),
     HTTP_QUERY_CACHE_ROW_COUNT("http.query.cache.row.count"),
+    HTTP_ILP_CONNECTION_LIMIT("http.ilp.connection.limit"),
     LINE_UDP_BIND_TO("line.udp.bind.to"),
     LINE_UDP_HALT_ON_ERROR("line.udp.haltOnError"),
     LINE_UDP_JOIN("line.udp.join"),
@@ -515,7 +517,18 @@ public enum PropertyKey implements ConfigPropertyKey {
     HTTP_MIN_MULTIPART_IDLE_SPIN_COUNT("http.min.multipart.idle.spin.count"),
     HTTP_MIN_ALLOW_DEFLATE_BEFORE_SEND("http.min.allow.deflate.before.send"),
     HTTP_MIN_SERVER_KEEP_ALIVE("http.min.server.keep.alive"),
-    HTTP_MIN_REQUEST_HEADER_BUFFER_SIZE("http.min.request.header.buffer.size");
+    HTTP_MIN_REQUEST_HEADER_BUFFER_SIZE("http.min.request.header.buffer.size"),
+    HTTP_REDIRECT_COUNT("http.redirect.count"),
+    HTTP_REDIRECT_PREFIX("http.redirect."),
+    HTTP_CONTEXT_WEB_CONSOLE("http.context.web.console"),
+    HTTP_CONTEXT_IMPORT("http.context.import"),
+    HTTP_CONTEXT_EXPORT("http.context.export"),
+    HTTP_CONTEXT_ILP("http.context.ilp"),
+    HTTP_CONTEXT_ILP_PING("http.context.ilp.ping"),
+    HTTP_CONTEXT_SETTINGS("http.context.settings"),
+    HTTP_CONTEXT_WARNINGS("http.context.warnings"),
+    HTTP_CONTEXT_TABLE_STATUS("http.context.table.status"),
+    HTTP_CONTEXT_EXECUTE("http.context.execute");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;

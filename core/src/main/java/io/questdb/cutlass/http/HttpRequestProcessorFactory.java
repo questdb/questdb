@@ -24,8 +24,10 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.std.ObjList;
+
 public interface HttpRequestProcessorFactory {
-    String getUrl();
+    ObjList<String> getUrls();
 
     HttpRequestProcessor newInstance();
 }
