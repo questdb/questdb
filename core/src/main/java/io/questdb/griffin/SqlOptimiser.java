@@ -1457,10 +1457,10 @@ public class SqlOptimiser implements Mutable {
             innerModel.addBottomUpColumn(columnAst.position, translatedColumn, true);
             groupByModel.addBottomUpColumn(translatedColumn);
 
-            // window model is used together with inner model
-            final CharSequence windowAlias = createColumnAlias(innerAlias, windowModel);
-            final QueryColumn windowColumn = nextColumn(windowAlias, innerAlias);
-            windowModel.addBottomUpColumn(windowColumn);
+            // case 1: inner model is redundant and will be eliminated, should add translatedColumn directly
+            // case 2: inner model will be sandwiched between the windowModel and the translateModel, while translatedColumn.token already exists as a column in the innerModel,
+            // adding translatedColumn to windowModel is safe.
+            windowModel.addBottomUpColumn(translatedColumn);
             outerModel.addBottomUpColumn(translatedColumn);
             if (distinctModel != null) {
                 distinctModel.addBottomUpColumn(translatedColumn);
@@ -3586,16 +3586,6 @@ public class SqlOptimiser implements Mutable {
         if (model == null) {
             return;
         }
-        // don't propagate though group by, sample by or distinct
-        if (model.getGroupBy().size() != 0
-                || model.getSampleBy() != null
-                || model.getSelectModelType() == QueryModel.SELECT_MODEL_DISTINCT) {
-            return;
-        }
-        // placeholder for prefix-stripped advice
-        ObjList<ExpressionNode> advice;
-        // Check if the orderByAdvice has names qualified by table names i.e 't1.ts' versus 'ts'
-        final boolean orderByAdviceHasDot = checkForDot(orderByAdvice);
         // loop over the join models
         // get primary model
         QueryModel jm1 = jm.getQuiet(0);
@@ -3603,12 +3593,27 @@ public class SqlOptimiser implements Mutable {
         if (jm1 == null) {
             return;
         }
+
         // get secondary model
         QueryModel jm2 = jm1.getJoinModels().getQuiet(1);
+        // don't propagate though group by, sample by, distinct or some window functions
+        if (model.getGroupBy().size() != 0
+                || model.getSampleBy() != null
+                || model.getSelectModelType() == QueryModel.SELECT_MODEL_DISTINCT
+                || model.windowStopPropagate()) {
+            jm1.setAllowPropagationOfOrderByAdvice(false);
+            if (jm2 != null) {
+                jm2.setAllowPropagationOfOrderByAdvice(false);
+            }
+        }
+        // placeholder for prefix-stripped advice
+        ObjList<ExpressionNode> advice;
+        // Check if the orderByAdvice has names qualified by table names i.e 't1.ts' versus 'ts'
+        final boolean orderByAdviceHasDot = checkForDot(orderByAdvice);
         // if order by advice has no table prefixes, we preserve original behaviour and pass it on.
         if (!orderByAdviceHasDot) {
             if (allAdviceIsForThisTable(jm1, orderByAdvice)) {
-                setAndCopyAdvice(jm1, orderByAdvice, orderByMnemonic, orderByDirectionAdvice);
+                orderByMnemonic = setAndCopyAdvice(jm1, orderByAdvice, orderByMnemonic, orderByDirectionAdvice);
             }
             optimiseOrderBy(jm1, orderByMnemonic);
             return;
@@ -3637,14 +3642,14 @@ public class SqlOptimiser implements Mutable {
                 if (qc != null
                         && qc.getColumnType() == ColumnType.TIMESTAMP
                         && Chars.equalsIgnoreCase(jm1.getTimestamp().token, qc.getAst().token)) {
-                    setAndCopyAdvice(jm1, advice, orderByMnemonic, orderByDirectionAdvice);
+                    orderByMnemonic = setAndCopyAdvice(jm1, advice, orderByMnemonic, orderByDirectionAdvice);
                 }
             } else {
-                setAndCopyAdvice(jm1, advice, orderByMnemonic, orderByDirectionAdvice);
+                orderByMnemonic = setAndCopyAdvice(jm1, advice, orderByMnemonic, orderByDirectionAdvice);
             }
         } else {
             // fallback to copy the advice to primary
-            setAndCopyAdvice(jm1, advice, orderByMnemonic, orderByDirectionAdvice);
+            orderByMnemonic = setAndCopyAdvice(jm1, advice, orderByMnemonic, orderByDirectionAdvice);
         }
         // recursive call
         optimiseOrderBy(jm1, orderByMnemonic);
@@ -4743,6 +4748,11 @@ public class SqlOptimiser implements Mutable {
         next = model.getNestedModel();
         if (next != null) {
             rewriteOrderByPositionForUnionModels(next);
+        }
+
+        ObjList<QueryModel> joinModels = model.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            rewriteOrderByPositionForUnionModels(joinModels.getQuick(i));
         }
     }
 
@@ -6052,13 +6062,16 @@ public class SqlOptimiser implements Mutable {
      * @param advice                 The order by advice to copy
      * @param orderByMnemonic        The advice 'strength'
      * @param orderByDirectionAdvice The advice direction
+     * @return boolean Don't pass through orderByMnemonic if `allowPropagationOfOrderByAdvice = false`
      */
-    private void setAndCopyAdvice(QueryModel model, ObjList<ExpressionNode> advice, int orderByMnemonic, IntList orderByDirectionAdvice) {
+    private int setAndCopyAdvice(QueryModel model, ObjList<ExpressionNode> advice, int orderByMnemonic, IntList orderByDirectionAdvice) {
         if (model.getAllowPropagationOfOrderByAdvice()) {
             model.setOrderByAdviceMnemonic(orderByMnemonic);
             model.copyOrderByAdvice(advice);
             model.copyOrderByDirectionAdvice(orderByDirectionAdvice);
+            return orderByMnemonic;
         }
+        return OrderByMnemonic.ORDER_BY_UNKNOWN;
     }
 
     private CharSequence setAndGetModelAlias(QueryModel model) {
@@ -6364,6 +6377,7 @@ public class SqlOptimiser implements Mutable {
             rewriteCountDistinct(rewrittenModel);
             rewriteNegativeLimit(rewrittenModel, sqlExecutionContext);
             pushLimitFromChooseToNone(rewrittenModel, sqlExecutionContext);
+            validateWindowFunctions(rewrittenModel, sqlExecutionContext, 0);
             rewriteOrderByPosition(rewrittenModel);
             rewriteOrderByPositionForUnionModels(rewrittenModel);
             rewrittenModel = rewriteOrderBy(rewrittenModel);
@@ -6373,7 +6387,6 @@ public class SqlOptimiser implements Mutable {
             eraseColumnPrefixInWhereClauses(rewrittenModel);
             moveTimestampToChooseModel(rewrittenModel);
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
-            validateWindowFunctions(rewrittenModel, sqlExecutionContext, 0);
             authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
             return rewrittenModel;
         } catch (Throwable th) {

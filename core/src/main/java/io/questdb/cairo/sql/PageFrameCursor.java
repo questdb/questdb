@@ -24,7 +24,6 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.cairo.TableReader;
 import io.questdb.std.IntList;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
@@ -43,22 +42,8 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
     @Override
     StaticSymbolTable getSymbolTable(int columnIndex);
 
-    // same TableReader is available on each page frame
-    TableReader getTableReader();
-
-    /**
-     * Returns the REAL row id of given row on current page.
-     * This is used for e.g. updating rows.
-     *
-     * @param rowIndex - page index of row
-     * @return real row id
-     */
-    long getUpdateRowId(long rowIndex);
-
     @Nullable
     PageFrame next();
-
-    PageFrameCursor of(PartitionFrameCursor partitionFrameCursor);
 
     /**
      * @return number of rows in all page frames

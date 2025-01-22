@@ -266,6 +266,8 @@ public interface CairoConfiguration {
 
     int getMetadataPoolCapacity();
 
+    Metrics getMetrics();
+
     @NotNull
     default MicrosecondClock getMicrosecondClock() {
         return MicrosecondClockImpl.INSTANCE;
@@ -641,6 +643,8 @@ public interface CairoConfiguration {
 
     boolean isPartitionO3OverwriteControlEnabled();
 
+    boolean isQueryTracingEnabled();
+
     boolean isReadOnlyInstance();
 
     boolean isSqlJitDebugEnabled();
@@ -653,7 +657,33 @@ public interface CairoConfiguration {
 
     boolean isSqlParallelGroupByEnabled();
 
+    boolean isSqlParallelReadParquetEnabled();
+
     boolean isTableTypeConversionEnabled();
+
+    /**
+     * A compatibility switch that controls validation of sample-by fill type.
+     * <p>
+     * This temporary switch maintains backward compatibility following changes introduced in
+     * <a href="https://github.com/questdb/questdb/pull/5324">this PR</a>.
+     * The pull request implemented stricter validation of sample validity, where:
+     * <p>
+     * 1. LINEAR interpolation is disabled by default
+     * 2. Group-by functions must explicitly declare support for interpolation
+     * <p>
+     * Currently, LINEAR interpolation is enabled only for functions with verified test coverage.
+     * However, there may be other functions that support interpolation but lack proper testing.
+     * The introduction of strict validation could break these untested functions.
+     * <p>
+     * This switch allows users to disable the validation check and maintain the previous behavior.
+     * Note: This configuration option is temporary and will be removed in a future release, at
+     * which point sample-by-fill type validation will become mandatory.
+     *
+     * @return true if sample-by-fill type validation is enabled (default), false otherwise
+     */
+    default boolean isValidateSampleByFillType() {
+        return true;
+    }
 
     boolean isWalApplyEnabled();
 
@@ -675,6 +705,4 @@ public interface CairoConfiguration {
     }
 
     boolean useFastAsOfJoin();
-
-    Metrics getMetrics();
 }

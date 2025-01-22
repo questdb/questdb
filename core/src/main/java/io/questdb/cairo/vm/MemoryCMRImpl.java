@@ -59,7 +59,7 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
 
     @Override
     public void changeSize(long dataSize) {
-        assert dataSize >= 0;
+        assert dataSize > 0 : "invalid size: " + dataSize;
         setSize0(dataSize);
     }
 
@@ -70,7 +70,7 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
             ff.munmap(pageAddress, size, memoryTag);
             LOG.debug().$("unmapped [pageAddress=").$(pageAddress)
                     .$(", size=").$(size)
-                    .$(", tag=").$(memoryTag)
+                    .$(", memoryTag=").$(memoryTag)
                     .I$();
             size = 0;
             pageAddress = 0;

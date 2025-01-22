@@ -90,12 +90,14 @@ import io.questdb.std.NanosecondClock;
 import io.questdb.std.NanosecondClockImpl;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.StationaryMillisClock;
 import io.questdb.std.StationaryNanosClock;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Utf8SequenceObjHashMap;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
@@ -111,6 +113,8 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -190,11 +194,21 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int defaultSymbolCapacity;
     private final int detachedMkdirMode;
     private final boolean devModeEnabled;
+    private final Set<? extends ConfigPropertyKey> dynamicProperties;
     private final boolean enableTestFactories;
     private final int fileOperationRetryCount;
     private final FilesFacade filesFacade;
     private final FactoryProviderFactory fpf;
     private final PropHttpContextConfiguration httpContextConfiguration;
+    private final ObjList<String> httpContextPathExec = new ObjList<>();
+    private final ObjList<String> httpContextPathExport = new ObjList<>();
+    private final ObjList<String> httpContextPathILP = new ObjList<>();
+    private final ObjList<String> httpContextPathILPPing = new ObjList<>();
+    private final ObjList<String> httpContextPathImport = new ObjList<>();
+    private final ObjList<String> httpContextPathSettings = new ObjList<>();
+    private final ObjList<String> httpContextPathTableStatus = new ObjList<>();
+    private final ObjList<String> httpContextPathWarnings = new ObjList<>();
+    private final String httpContextWebConsole;
     private final boolean httpFrozenClock;
     private final PropHttpConcurrentCacheConfiguration httpMinConcurrentCacheConfiguration = new PropHttpConcurrentCacheConfiguration();
     private final PropHttpContextConfiguration httpMinContextConfiguration;
@@ -223,13 +237,13 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long inactiveReaderTTL;
     private final long inactiveWalWriterTTL;
     private final long inactiveWriterTTL;
-    private final CharSequence indexFileName;
     private final int indexValueBlockSize;
     private final InputFormatConfiguration inputFormatConfiguration;
     private final long instanceHashHi;
     private final long instanceHashLo;
     private final boolean interruptOnClosedConnection;
     private final boolean ioURingEnabled;
+    private final boolean isQueryTracingEnabled;
     private final boolean isReadOnlyInstance;
     private final int jsonCacheLimit;
     private final int jsonCacheSize;
@@ -310,6 +324,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final PublicPassthroughConfiguration publicPassthroughConfiguration = new PropPublicPassthroughConfiguration();
     private final int queryCacheEventQueueCapacity;
     private final int readerPoolMaxSegments;
+    private final Utf8SequenceObjHashMap<Utf8Sequence> redirectMap;
     private final int repeatMigrationFromVersion;
     private final double rerunExponentialWaitMultiplier;
     private final int rerunInitialWaitQueueSize;
@@ -383,12 +398,14 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlParallelFilterEnabled;
     private final boolean sqlParallelFilterPreTouchEnabled;
     private final boolean sqlParallelGroupByEnabled;
+    private final boolean sqlParallelReadParquetEnabled;
     private final int sqlParallelWorkStealingThreshold;
     private final int sqlParquetFrameCacheCapacity;
     private final int sqlQueryRegistryPoolSize;
     private final int sqlRenameTableModelPoolCapacity;
     private final boolean sqlSampleByDefaultAlignment;
     private final int sqlSampleByIndexSearchPageSize;
+    private final boolean sqlSampleByValidateFillType;
     private final int sqlSmallMapKeyCapacity;
     private final long sqlSmallMapPageSize;
     private final int sqlSortKeyMaxPages;
@@ -598,11 +615,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             Properties properties,
             @Nullable Map<String, String> env,
             Log log,
-            final BuildInformation buildInformation
+            BuildInformation buildInformation
     ) throws ServerConfigurationException, JsonException {
         this(
                 root,
                 properties,
+                null,
                 env,
                 log,
                 buildInformation,
@@ -616,9 +634,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     public PropServerConfiguration(
             String root,
             Properties properties,
+            @Nullable Set<? extends ConfigPropertyKey> dynamicProperties,
             @Nullable Map<String, String> env,
             Log log,
-            final BuildInformation buildInformation,
+            BuildInformation buildInformation,
             FilesFacade filesFacade,
             MicrosecondClock microsecondClock,
             FactoryProviderFactory fpf
@@ -626,6 +645,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this(
                 root,
                 properties,
+                dynamicProperties,
                 env,
                 log,
                 buildInformation,
@@ -641,7 +661,32 @@ public class PropServerConfiguration implements ServerConfiguration {
             Properties properties,
             @Nullable Map<String, String> env,
             Log log,
-            final BuildInformation buildInformation,
+            BuildInformation buildInformation,
+            FilesFacade filesFacade,
+            MicrosecondClock microsecondClock,
+            FactoryProviderFactory fpf
+    ) throws ServerConfigurationException, JsonException {
+        this(
+                root,
+                properties,
+                null,
+                env,
+                log,
+                buildInformation,
+                filesFacade,
+                microsecondClock,
+                fpf,
+                true
+        );
+    }
+
+    public PropServerConfiguration(
+            String root,
+            Properties properties,
+            @Nullable Set<? extends ConfigPropertyKey> dynamicProperties,
+            @Nullable Map<String, String> env,
+            Log log,
+            BuildInformation buildInformation,
             FilesFacade filesFacade,
             MicrosecondClock microsecondClock,
             FactoryProviderFactory fpf,
@@ -656,13 +701,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         final String logTimestampFormatStr = getString(properties, env, PropertyKey.LOG_TIMESTAMP_FORMAT, "yyyy-MM-ddTHH:mm:ss.SSSUUUz");
         final String logTimestampLocaleStr = getString(properties, env, PropertyKey.LOG_TIMESTAMP_LOCALE, "en");
         this.logTimestampLocale = DateLocaleFactory.INSTANCE.getLocale(logTimestampLocaleStr);
-        if (this.logTimestampLocale == null) {
+        if (logTimestampLocale == null) {
             throw new ServerConfigurationException("Invalid log locale: '" + logTimestampLocaleStr + "'");
         }
         TimestampFormatCompiler formatCompiler = new TimestampFormatCompiler();
         this.logTimestampFormat = formatCompiler.compile(logTimestampFormatStr);
         try {
-            this.logTimestampTimezoneRules = Timestamps.getTimezoneRules(this.logTimestampLocale, logTimestampTimezone);
+            this.logTimestampTimezoneRules = Timestamps.getTimezoneRules(logTimestampLocale, logTimestampTimezone);
         } catch (NumericException e) {
             throw new ServerConfigurationException("Invalid log timezone: '" + logTimestampTimezone + "'");
         }
@@ -671,6 +716,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.microsecondClock = microsecondClock;
         this.validator = newValidator();
         this.staticContentProcessorConfiguration = new PropStaticContentProcessorConfiguration();
+        this.dynamicProperties = dynamicProperties;
         boolean configValidationStrict = getBoolean(properties, env, PropertyKey.CONFIG_VALIDATION_STRICT, false);
         validateProperties(properties, configValidationStrict);
 
@@ -679,6 +725,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 getIntPercentage(properties, env, PropertyKey.RAM_USAGE_LIMIT_PERCENT, 90)
         );
         this.isReadOnlyInstance = getBoolean(properties, env, PropertyKey.READ_ONLY_INSTANCE, false);
+        this.isQueryTracingEnabled = getBoolean(properties, env, PropertyKey.QUERY_TRACING_ENABLED, false);
         this.cairoTableRegistryAutoReloadFrequency = getMillis(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY, 500);
         this.cairoTableRegistryCompactionThreshold = getInt(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD, 30);
         this.repeatMigrationFromVersion = getInt(properties, env, PropertyKey.CAIRO_REPEAT_MIGRATION_FROM_VERSION, 426);
@@ -887,7 +934,68 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpWorkerNapThreshold = getLong(properties, env, PropertyKey.HTTP_WORKER_NAP_THRESHOLD, 7_000);
             this.httpWorkerSleepThreshold = getLong(properties, env, PropertyKey.HTTP_WORKER_SLEEP_THRESHOLD, 10_000);
             this.httpWorkerSleepTimeout = getMillis(properties, env, PropertyKey.HTTP_WORKER_SLEEP_TIMEOUT, 10);
-            this.indexFileName = getString(properties, env, PropertyKey.HTTP_STATIC_INDEX_FILE_NAME, "index.html");
+
+            // context paths
+            this.httpContextWebConsole = stripTrailingSlash(getString(properties, env, PropertyKey.HTTP_CONTEXT_WEB_CONSOLE, "/"));
+            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_ILP, this.httpContextPathILP, "/write", "/api/v2/write");
+            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_ILP_PING, this.httpContextPathILPPing, "/ping");
+            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_IMPORT, this.httpContextPathImport, httpContextWebConsole + "/imp");
+            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_EXPORT, this.httpContextPathExport, httpContextWebConsole + "/exp");
+            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_SETTINGS, this.httpContextPathSettings, httpContextWebConsole + "/settings");
+            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_TABLE_STATUS, this.httpContextPathTableStatus, httpContextWebConsole + "/chk");
+            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_EXECUTE, this.httpContextPathExec, httpContextWebConsole + "/exec");
+            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_WARNINGS, this.httpContextPathWarnings, httpContextWebConsole + "/warnings");
+
+            // If any of the REST services the Web Console depends on are overridden, we need to make sure
+            // the context paths the Web Console requires are also present, so customization does not break the Web Console.
+
+            // The following paths need to be added for the Web Console to work properly. This
+            // deals with the cases where context path was overridden by the user. Adding duplicate
+            // paths is ok, because duplicates are squashed by the HTTP server.
+            // 1. import, to support CSV import UI
+            // 2. export, to support CSV export UI
+            // 3. settings, that is what the Web Console loads on startup
+            // 4. table status, to support CSV import UI
+            // 5. JSON query execution, e.g. exec
+            // 6. warnings, that displays warnings in the table view
+
+            // we use defaults, because this is what the Web Console expects
+            httpContextPathImport.add(httpContextWebConsole + "/imp");
+            httpContextPathExport.add(httpContextWebConsole + "/exp");
+            httpContextPathSettings.add(httpContextWebConsole + "/settings");
+            httpContextPathTableStatus.add(httpContextWebConsole + "/chk");
+            httpContextPathExec.add(httpContextWebConsole + "/exec");
+            httpContextPathWarnings.add(httpContextWebConsole + "/warnings");
+
+            // read the redirect map
+            this.redirectMap = new Utf8SequenceObjHashMap<>();
+            int redirectCount = getInt(properties, env, PropertyKey.HTTP_REDIRECT_COUNT, 0);
+            if (redirectCount > 0) {
+                // read the redirect map
+                for (int i = 0; i < redirectCount; i++) {
+                    // all redirect values must be read to reconcile with the count
+                    final RedirectPropertyKey key = new RedirectPropertyKey(i + 1);
+                    String redirectConfig = getString(properties, env, key, null);
+                    if (redirectConfig != null) {
+                        String[] parts = redirectConfig.split("->");
+                        if (parts.length == 2) {
+                            String from = parts[0].trim();
+                            String to = parts[1].trim();
+                            if (!from.isEmpty() && !to.isEmpty()) {
+                                redirectMap.put(new Utf8String(from), new Utf8String(to));
+                            }
+                        } else {
+                            throw new ServerConfigurationException("could not parse redirect value [key=" + key.getPropertyPath() + ", value=" + redirectConfig + ']');
+                        }
+                    } else {
+                        throw new ServerConfigurationException("undefined redirect value [" + key.getPropertyPath() + "]");
+                    }
+                }
+            }
+            // also add web console redirect for custom context
+            Utf8String redirectTarget = new Utf8String(httpContextWebConsole + "/index.html");
+            redirectMap.put(new Utf8String(httpContextWebConsole), redirectTarget);
+            redirectMap.put(new Utf8String(httpContextWebConsole + "/"), redirectTarget);
 
             String httpVersion = getString(properties, env, PropertyKey.HTTP_VERSION, "HTTP/1.1");
             if (!httpVersion.endsWith(" ")) {
@@ -906,6 +1014,14 @@ public class PropServerConfiguration implements ServerConfiguration {
             boolean httpServerCookiesEnabled = getBoolean(properties, env, PropertyKey.HTTP_SERVER_KEEP_ALIVE, true);
             boolean httpReadOnlySecurityContext = getBoolean(properties, env, PropertyKey.HTTP_SECURITY_READONLY, false);
 
+            // maintain deprecated property name for the time being
+            this.httpNetConnectionLimit = getInt(properties, env, PropertyKey.HTTP_NET_ACTIVE_CONNECTION_LIMIT, 256);
+            this.httpNetConnectionLimit = getInt(properties, env, PropertyKey.HTTP_NET_CONNECTION_LIMIT, httpNetConnectionLimit);
+
+            int httpJsonQueryConnectionLimit = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT, -1);
+            int httpIlpConnectionLimit = getInt(properties, env, PropertyKey.HTTP_ILP_CONNECTION_LIMIT, -1);
+            validateHttpConnectionLimits(httpJsonQueryConnectionLimit, httpIlpConnectionLimit, httpNetConnectionLimit);
+
             httpContextConfiguration = new PropHttpContextConfiguration(
                     connectionPoolInitialCapacity,
                     connectionStringPoolCapacity,
@@ -921,12 +1037,14 @@ public class PropServerConfiguration implements ServerConfiguration {
                     isReadOnlyInstance,
                     multipartHeaderBufferSize,
                     multipartIdleSpinCount,
-                    requestHeaderBufferSize
+                    requestHeaderBufferSize,
+                    httpJsonQueryConnectionLimit,
+                    httpIlpConnectionLimit
             );
 
             // Use a separate configuration for min server. It does not make sense for the min server to grow the buffer sizes together with the main http server
             int minHttpConnectionStringPoolCapacity = getInt(properties, env, PropertyKey.HTTP_MIN_CONNECTION_STRING_POOL_CAPACITY, 2);
-            int minHttpconnectionPoolInitialCapacity = getInt(properties, env, PropertyKey.HTTP_MIN_CONNECTION_POOL_INITIAL_CAPACITY, 2);
+            int minHttpConnectionPoolInitialCapacity = getInt(properties, env, PropertyKey.HTTP_MIN_CONNECTION_POOL_INITIAL_CAPACITY, 2);
             int minHttpMultipartHeaderBufferSize = getIntSize(properties, env, PropertyKey.HTTP_MIN_MULTIPART_HEADER_BUFFER_SIZE, 512);
             long minHttpMultipartIdleSpinCount = getLong(properties, env, PropertyKey.HTTP_MIN_MULTIPART_IDLE_SPIN_COUNT, 0);
             boolean minHttpAllowDeflateBeforeSend = getBoolean(properties, env, PropertyKey.HTTP_MIN_ALLOW_DEFLATE_BEFORE_SEND, false);
@@ -936,7 +1054,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             httpMinContextConfiguration = new PropHttpContextConfiguration(
                     minHttpConnectionStringPoolCapacity,
-                    minHttpconnectionPoolInitialCapacity,
+                    minHttpConnectionPoolInitialCapacity,
                     this,
                     minHttpAllowDeflateBeforeSend,
                     httpForceRecvFragmentationChunkSize,
@@ -971,9 +1089,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
 
             this.defaultSeqPartTxnCount = getInt(properties, env, PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 0);
-            // maintain deprecated property name for the time being
-            this.httpNetConnectionLimit = getInt(properties, env, PropertyKey.HTTP_NET_ACTIVE_CONNECTION_LIMIT, 256);
-            this.httpNetConnectionLimit = getInt(properties, env, PropertyKey.HTTP_NET_CONNECTION_LIMIT, this.httpNetConnectionLimit);
             this.httpNetConnectionHint = getBoolean(properties, env, PropertyKey.HTTP_NET_CONNECTION_HINT, false);
             // deprecated
             this.httpNetConnectionTimeout = getMillis(properties, env, PropertyKey.HTTP_NET_IDLE_CONNECTION_TIMEOUT, 5 * 60 * 1000L);
@@ -1495,9 +1610,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlParallelFilterPreTouchEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED, true);
             this.sqlCopyModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_MODEL_POOL_CAPACITY, 32);
 
-            boolean defaultParallelSqlEnabled = sharedWorkerCount >= 4;
+            final boolean defaultParallelSqlEnabled = sharedWorkerCount >= 4;
             this.sqlParallelFilterEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelGroupByEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, defaultParallelSqlEnabled);
+            this.sqlParallelReadParquetEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelWorkStealingThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 16);
             // TODO(puzpuzpuz): consider increasing default Parquet cache capacity
             this.sqlParquetFrameCacheCapacity = Math.max(getInt(properties, env, PropertyKey.CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY, 3), 3);
@@ -1525,6 +1641,9 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.partitionEncoderParquetCompressionLevel = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL, 0);
         this.partitionEncoderParquetRowGroupSize = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100_000);
         this.partitionEncoderParquetDataPageSize = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE, Numbers.SIZE_1MB);
+
+        // compatibility switch, to be removed in future
+        this.sqlSampleByValidateFillType = getBoolean(properties, env, PropertyKey.CAIRO_SQL_SAMPLEBY_VALIDATE_FILL_TYPE, true);
     }
 
     public static String rootSubdir(CharSequence dbRoot, CharSequence subdir) {
@@ -1638,6 +1757,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.factoryProvider = factoryProvider;
     }
 
+    private static @NotNull String stripTrailingSlash(@NotNull String httpContextWebConsole) {
+        int n = 0;
+        for (int j = httpContextWebConsole.length() - 1; j > -1; j--) {
+            if (httpContextWebConsole.charAt(j) == '/') {
+                n++;
+            } else {
+                break;
+            }
+        }
+        if (n > 0) {
+            httpContextWebConsole = httpContextWebConsole.substring(0, httpContextWebConsole.length() - n);
+        }
+        return httpContextWebConsole;
+    }
+
     private int[] getAffinity(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, int workerCount) throws ServerConfigurationException {
         final int[] result = new int[workerCount];
         String value = getString(properties, env, key, null);
@@ -1737,6 +1871,33 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
+    private void validateHttpConnectionLimits(
+            int httpJsonQueryConnectionLimit, int httpIlpConnectionLimit, int httpNetConnectionLimit
+    ) throws ServerConfigurationException {
+        if (httpJsonQueryConnectionLimit > httpNetConnectionLimit) {
+            throw new ServerConfigurationException(
+                    "Json query connection limit cannot be greater than the overall HTTP connection limit ["
+                            + PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT.getPropertyPath() + "=" + httpJsonQueryConnectionLimit + ", "
+                            + PropertyKey.HTTP_NET_CONNECTION_LIMIT.getPropertyPath() + "=" + httpNetConnectionLimit + ']');
+        }
+
+        if (httpIlpConnectionLimit > httpNetConnectionLimit) {
+            throw new ServerConfigurationException(
+                    "HTTP over ILP connection limit cannot be greater than the overall HTTP connection limit ["
+                            + PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath() + "=" + httpIlpConnectionLimit + ", "
+                            + PropertyKey.HTTP_NET_CONNECTION_LIMIT.getPropertyPath() + "=" + httpNetConnectionLimit + ']');
+        }
+
+        if (httpJsonQueryConnectionLimit > -1 && httpIlpConnectionLimit > -1
+                && (httpJsonQueryConnectionLimit + httpIlpConnectionLimit) > httpNetConnectionLimit) {
+            throw new ServerConfigurationException(
+                    "The sum of the json query and HTTP over ILP connection limits cannot be greater than the overall HTTP connection limit ["
+                            + PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT.getPropertyPath() + "=" + httpJsonQueryConnectionLimit + ", "
+                            + PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath() + "=" + httpIlpConnectionLimit + ", "
+                            + PropertyKey.HTTP_NET_CONNECTION_LIMIT.getPropertyPath() + "=" + httpNetConnectionLimit + ']');
+        }
+    }
+
     private void validateProperties(Properties properties, boolean configValidationStrict) throws ServerConfigurationException {
         ValidationResult validation = validator.validate(properties);
         if (validation != null) {
@@ -1759,6 +1920,13 @@ public class PropServerConfiguration implements ServerConfiguration {
             throw new ServerConfigurationException("Cannot calculate canonical path for configuration property [key=" + PropertyKey.CAIRO_SQL_COPY_WORK_ROOT.getPropertyPath() + ",value=" + path + "]");
         }
     }
+
+/*
+    protected String getContextPath(Properties properties, @Nullable Map<String, String> env) {
+        final String contextPath = getString(properties, env, PropertyKey.HTTP_CONTEXT_PATH, "");
+        return !contextPath.isEmpty() && !contextPath.startsWith("/") ? "/" + contextPath : contextPath;
+    }
+*/
 
     protected double getDouble(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, String defaultValue) throws ServerConfigurationException {
         final String value = getString(properties, env, key, defaultValue);
@@ -1894,9 +2062,54 @@ public class PropServerConfiguration implements ServerConfiguration {
         // Sometimes there can be spaces coming from environment variables, cut them off
         result = (result != null) ? result.trim() : null;
         if (!key.isDebug()) {
-            allPairs.put(key, new ConfigPropertyValueImpl(result, valueSource, false));
+            boolean dynamic = dynamicProperties != null && dynamicProperties.contains(key);
+            allPairs.put(key, new ConfigPropertyValueImpl(result, valueSource, dynamic));
         }
         return result;
+    }
+
+    protected void getUrls(
+            Properties properties,
+            @Nullable Map<String, String> env,
+            ConfigPropertyKey key,
+            ObjList<String> target,
+            String... defaultValue
+    ) throws ServerConfigurationException {
+        String envCandidate = key.getEnvVarName();
+        String unparsedResult = env != null ? env.get(envCandidate) : null;
+        final int valueSource;
+        if (unparsedResult != null) {
+            log.info().$("env config [key=").$(envCandidate).I$();
+            valueSource = ConfigPropertyValue.VALUE_SOURCE_ENV;
+        } else {
+            unparsedResult = properties.getProperty(key.getPropertyPath());
+            if (unparsedResult == null) {
+                valueSource = ConfigPropertyValue.VALUE_SOURCE_DEFAULT;
+            } else {
+                valueSource = ConfigPropertyValue.VALUE_SOURCE_CONF;
+            }
+        }
+
+        String[] parts;
+        if (valueSource == ConfigPropertyValue.VALUE_SOURCE_DEFAULT) {
+            parts = defaultValue;
+        } else {
+            parts = unparsedResult.split(",");
+        }
+        for (int i = 0, n = defaultValue.length; i < n; i++) {
+            String url = parts[i].trim();
+            if (url.isEmpty()) {
+                throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), "empty URL in the list");
+            }
+            target.add(stripTrailingSlash(url));
+        }
+
+        // Sometimes there can be spaces coming from environment variables, cut them off
+        unparsedResult = (unparsedResult != null) ? unparsedResult.trim() : null;
+        if (!key.isDebug()) {
+            boolean dynamic = dynamicProperties != null && dynamicProperties.contains(key);
+            allPairs.put(key, new ConfigPropertyValueImpl(unparsedResult, valueSource, dynamic));
+        }
     }
 
     protected PropertyValidator newValidator() {
@@ -2223,6 +2436,36 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         protected void registerObsolete(String old, ConfigPropertyKey... replacements) {
             registerReplacements(obsoleteSettings, old, replacements);
+        }
+    }
+
+    private static class RedirectPropertyKey implements ConfigPropertyKey {
+        final String envVarName;
+        final String propertyPath;
+
+        public RedirectPropertyKey(int index) {
+            this.propertyPath = PropertyKey.HTTP_REDIRECT_PREFIX.getPropertyPath() + index;
+            this.envVarName = ServerMain.propertyPathToEnvVarName(propertyPath);
+        }
+
+        @Override
+        public String getEnvVarName() {
+            return envVarName;
+        }
+
+        @Override
+        public String getPropertyPath() {
+            return propertyPath;
+        }
+
+        @Override
+        public boolean isDebug() {
+            return false;
+        }
+
+        @Override
+        public boolean isSensitive() {
+            return false;
         }
     }
 
@@ -3365,6 +3608,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isQueryTracingEnabled() {
+            return isQueryTracingEnabled;
+        }
+
+        @Override
         public boolean isReadOnlyInstance() {
             return isReadOnlyInstance;
         }
@@ -3395,8 +3643,18 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isSqlParallelReadParquetEnabled() {
+            return sqlParallelReadParquetEnabled;
+        }
+
+        @Override
         public boolean isTableTypeConversionEnabled() {
             return tableTypeConversionEnabled;
+        }
+
+        @Override
+        public boolean isValidateSampleByFillType() {
+            return sqlSampleByValidateFillType;
         }
 
         @Override
@@ -3670,6 +3928,51 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public LongGauge getConnectionCountGauge() {
             return metrics.httpMetrics().connectionCountGauge();
+        }
+
+        @Override
+        public ObjList<String> getContextPathExec() {
+            return httpContextPathExec;
+        }
+
+        @Override
+        public ObjList<String> getContextPathExport() {
+            return httpContextPathExport;
+        }
+
+        @Override
+        public ObjList<String> getContextPathILP() {
+            return httpContextPathILP;
+        }
+
+        @Override
+        public ObjList<String> getContextPathILPPing() {
+            return httpContextPathILPPing;
+        }
+
+        @Override
+        public ObjList<String> getContextPathImport() {
+            return httpContextPathImport;
+        }
+
+        @Override
+        public ObjList<String> getContextPathSettings() {
+            return httpContextPathSettings;
+        }
+
+        @Override
+        public ObjList<String> getContextPathTableStatus() {
+            return httpContextPathTableStatus;
+        }
+
+        @Override
+        public ObjList<String> getContextPathWarnings() {
+            return httpContextPathWarnings;
+        }
+
+        @Override
+        public String getContextPathWebConsole() {
+            return httpContextWebConsole;
         }
 
         @Override
@@ -4073,7 +4376,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public LongGauge getConnectionCountGauge() {
-            return metrics.lineMetrics().connectionCountGauge();
+            return metrics.lineMetrics().tcpConnectionCountGauge();
         }
 
         @Override
@@ -4824,11 +5127,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public CharSequence getIndexFileName() {
-            return indexFileName;
-        }
-
-        @Override
         public String getKeepAliveHeader() {
             return keepAliveHeader;
         }
@@ -4846,6 +5144,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public CharSequence getPublicDirectory() {
             return publicDirectory;
+        }
+
+        @Override
+        public Utf8SequenceObjHashMap<Utf8Sequence> getRedirectMap() {
+            return redirectMap;
         }
 
         @Override

@@ -99,7 +99,7 @@ public final class TableUtils {
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
     public static final long META_COLUMN_DATA_SIZE = 32;
     public static final String META_FILE_NAME = "_meta";
-    public static final short META_MINOR_VERSION_LATEST = 1;
+    public static final short META_FORMAT_MINOR_VERSION_LATEST = 1;
     public static final long META_OFFSET_COLUMN_TYPES = 128;
     public static final long META_OFFSET_COUNT = 0;
     public static final long META_OFFSET_MAX_UNCOMMITTED_ROWS = 20; // INT
@@ -224,14 +224,15 @@ public final class TableUtils {
         allocateDiskSpace(ff, fd, size);
     }
 
-    public static int calculateMetadataMinorFormatVersion(int metadataVersion) {
-        // Metadata Minor Version is 2 shorts
-        // Low short is metadataVersion + column count and it is effectively a signature that changes with every update to _meta.
-        // If Low short mismatches it means we cannot rely on High short value.
-        // High short is TableUtils.META_MINOR_VERSION_LATEST.
-        // Metadata minor version mismatch still allows to read the table, the table storage is forward and backward compatible.
-        // However, it indicates some minor flags may be stored incorrectly and have to be re-calculated.
-        return Numbers.encodeLowHighShorts(Numbers.decodeLowShort(metadataVersion), META_MINOR_VERSION_LATEST);
+    public static int calculateMetaFormatMinorVersionField(long metadataVersion, int columnCount) {
+        // Metadata Format Minor Version field is 2 shorts:
+        // - Low short is a checksum that changes with every update to _meta
+        // - High short is TableUtils.META_FORMAT_MINOR_VERSION_LATEST
+        // When reading the Metadata Format Minor Version field from the metadata record, use the checksum
+        // to decide whether to trust the version stored in this field.
+        return Numbers.encodeLowHighShorts(
+                checksumForMetaFormatMinorVersionField(metadataVersion, columnCount),
+                META_FORMAT_MINOR_VERSION_LATEST);
     }
 
     public static int calculateTxRecordSize(int bytesSymbols, int bytesPartitions) {
@@ -299,6 +300,16 @@ public final class TableUtils {
             throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(minSize);
         }
         return memSize;
+    }
+
+    public static short checksumForMetaFormatMinorVersionField(long metadataVersion, int columnCount) {
+        int metaVersionInt = Numbers.decodeLowInt(metadataVersion) ^ Numbers.decodeHighInt(metadataVersion);
+        int checksumInt = 13 * metaVersionInt + 37 * columnCount;
+        short checksum = (short) (Numbers.decodeLowShort(checksumInt) ^ Numbers.decodeHighShort(checksumInt));
+        if (checksum == 0) {
+            checksum = -1337;
+        }
+        return checksum;
     }
 
     public static int compressColumnCount(RecordMetadata metadata) {
@@ -422,11 +433,18 @@ public final class TableUtils {
             throw CairoException.critical(ff.errno()).put("table directory already exists [path=").put(path).put(']');
         }
         int rootLen = path.size();
+        boolean dirCreated = false;
         try {
             if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
                 throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path.trimTo(rootLen).$()).put(']');
             }
+            dirCreated = true;
             createTableFiles(ff, memory, path, rootLen, tableDir, structure, tableVersion, tableId);
+        } catch (Throwable e) {
+            if (dirCreated) {
+                ff.rmdir(path.trimTo(rootLen).slash());
+            }
+            throw e;
         } finally {
             path.trimTo(rootLen);
         }
@@ -835,6 +853,31 @@ public final class TableUtils {
      */
     public static boolean isFinalTableName(String tableName, CharSequence tempTablePrefix) {
         return !Chars.startsWith(tableName, tempTablePrefix);
+    }
+
+    /*
+     * Checks that the minor version of the metadata format is up to date, i.e., at least the value
+     * of the TableUtils.META_FORMAT_MINOR_VERSION_LATEST constant.
+     *
+     * Metadata Format Minor Version field encodes 2 shorts:
+     * - Low short is a checksum that changes with every update to the metadata record
+     * - High short is set to TableUtils.META_FORMAT_MINOR_VERSION_LATEST
+     *
+     * The Metadata Format Minor Version field was not present in the initial version of the metadata format. This is
+     * why we need the checksum: when it doesn't match, we can't trust the version stored in it, and should assume
+     * the QuestDB version that wrote the metadata predates its introduction.
+     *
+     * Table storage itself is forward- and backward-compatible, so it's safe to read regardless of this version.
+     */
+    public static boolean isMetaFormatUpToDate(MemoryR metaMem) {
+        int metaFormatMinorVersionField = metaMem.getInt(META_OFFSET_META_FORMAT_MINOR_VERSION);
+        short savedChecksum = Numbers.decodeLowShort(metaFormatMinorVersionField);
+        short actualChecksum = checksumForMetaFormatMinorVersionField(
+                metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION),
+                metaMem.getInt(TableUtils.META_OFFSET_COUNT)
+        );
+        short savedMetaFormatMinorVersion = Numbers.decodeHighShort(metaFormatMinorVersionField);
+        return savedChecksum == actualChecksum && savedMetaFormatMinorVersion >= META_FORMAT_MINOR_VERSION_LATEST;
     }
 
     public static boolean isSymbolCached(MemoryMR metaMem, int columnIndex) {
@@ -1740,9 +1783,9 @@ public final class TableUtils {
         mem.putInt(tableId);
         mem.putInt(tableStruct.getMaxUncommittedRows());
         mem.putLong(tableStruct.getO3MaxLag());
-        mem.putLong(0); // Structure version.
+        mem.putLong(0); // Metadata version.
         mem.putBool(tableStruct.isWalEnabled());
-        mem.putInt(TableUtils.calculateMetadataMinorFormatVersion(count));
+        mem.putInt(TableUtils.calculateMetaFormatMinorVersionField(0, count));
         mem.putInt(tableStruct.getTtlHoursOrMonths());
         mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
@@ -1865,6 +1908,10 @@ public final class TableUtils {
 
     static int getIndexBlockCapacity(MemoryR metaMem, int columnIndex) {
         return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4 + 8);
+    }
+
+    static int getTtlHoursOrMonths(MemoryR metaMem) {
+        return isMetaFormatUpToDate(metaMem) ? metaMem.getInt(TableUtils.META_OFFSET_TTL_HOURS_OR_MONTHS) : 0;
     }
 
     static boolean isColumnDedupKey(MemoryMR metaMem, int columnIndex) {

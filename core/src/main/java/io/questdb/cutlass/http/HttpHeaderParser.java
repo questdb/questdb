@@ -37,6 +37,7 @@ import io.questdb.std.ObjectPool;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Utf8SequenceObjHashMap;
+import io.questdb.std.Vect;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
@@ -44,6 +45,7 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.Comparator;
 
@@ -61,7 +63,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
     private final DirectUtf8String temp = new DirectUtf8String();
     private final Utf8SequenceObjHashMap<DirectUtf8String> urlParams = new Utf8SequenceObjHashMap<>();
     protected boolean incomplete;
-    protected Utf8Sequence url;
+    protected DirectUtf8String url;
     private long _lo;
     private long _wptr;
     private DirectUtf8String boundary;
@@ -87,6 +89,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
     private boolean needProtocol = true;
     private DirectUtf8String protocol;
     private DirectUtf8String protocolLine;
+    private DirectUtf8String query;
     private long statementTimeout = -1L;
     private DirectUtf8String statusCode;
     private DirectUtf8String statusText;
@@ -106,7 +109,9 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         this.incomplete = true;
         this.headers.clear();
         this.method = null;
+        this.methodLine = null;
         this.url = null;
+        this.query = null;
         this.headerName = null;
         this.contentType = null;
         this.boundary = null;
@@ -214,6 +219,11 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
     }
 
     @Override
+    public @Nullable DirectUtf8String getQuery() {
+        return query;
+    }
+
+    @Override
     public long getStatementTimeout() {
         return statementTimeout;
     }
@@ -227,7 +237,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
     }
 
     @Override
-    public Utf8Sequence getUrl() {
+    public DirectUtf8String getUrl() {
         return url;
     }
 
@@ -745,10 +755,10 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                         isUrl = false;
                         _lo = _wptr + 1;
                     } else if (isQueryParams) {
-                        int o = urlDecode(_lo, _wptr, urlParams);
+                        query = csPool.next().of(_lo, _wptr);
+                        _lo = _wptr + 1;
                         isQueryParams = false;
-                        _lo = _wptr;
-                        _wptr -= o;
+                        break;
                     }
                     break;
                 case '?':
@@ -763,6 +773,19 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                     }
                     methodLine = csPool.next().of(method.lo(), _wptr);
                     needMethod = false;
+
+                    // parse and decode query string
+                    if (query != null) {
+                        final int querySize = query.size();
+                        final long newBoundary = _wptr + querySize;
+                        if (querySize > 0 && newBoundary < this.hi) {
+                            Vect.memcpy(_wptr, query.ptr(), querySize);
+                            int o = urlDecode(_wptr, newBoundary, urlParams);
+                            _wptr = newBoundary - o;
+                        } else {
+                            throw HttpException.instance("URL query string is too long");
+                        }
+                    }
                     this._lo = _wptr;
                     return (int) (p - lo);
                 default:

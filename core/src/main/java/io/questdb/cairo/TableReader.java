@@ -126,7 +126,8 @@ public class TableReader implements Closeable, SymbolTableSource {
             metadata = openMetaFile();
             partitionBy = metadata.getPartitionBy();
             columnVersionReader = new ColumnVersionReader().ofRO(ff, path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$());
-            txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));
+            txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount());
+            txnScoreboard.ofRW(path.trimTo(rootLen));
             LOG.debug()
                     .$("open [id=").$(metadata.getTableId())
                     .$(", table=").utf8(tableToken.getTableName())
@@ -780,6 +781,11 @@ public class TableReader implements Closeable, SymbolTableSource {
                         }
                     }
                 }
+            } catch (Throwable th) {
+                closePartitionColumns(fromBase);
+                openPartitionInfo.setQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE, -1);
+                Misc.freeObjListIfCloseable(toColumns);
+                throw th;
             } finally {
                 path.trimTo(rootLen);
             }

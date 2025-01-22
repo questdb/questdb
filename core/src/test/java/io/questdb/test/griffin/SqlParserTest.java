@@ -9798,7 +9798,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         " ts timestamp" +
                         ") timestamp(ts) partition by day",
                 7,
-                "too many arguments"
+                "wrong number of arguments for function `row_number`"
         );
     }
 
@@ -9955,6 +9955,17 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 modelOf("a").col("x", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
                 modelOf("b").col("y", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
                 modelOf("c").col("z", ColumnType.INT).col("t", ColumnType.TIMESTAMP)
+        );
+    }
+
+    @Test
+    public void testUnionDistinct() throws SqlException {
+        assertQuery(
+                "select-choose [x] x from (select [x] from a) union select-choose [y] y from (select [y] from b) union select-choose [z] z from (select [z] from c)",
+                "select * from a union distinct select * from b union select * from c",
+                modelOf("a").col("x", ColumnType.INT),
+                modelOf("b").col("y", ColumnType.INT),
+                modelOf("c").col("z", ColumnType.INT)
         );
     }
 

@@ -270,18 +270,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     public void clear() {
-        sqlNodePool.clear();
-        characterStore.clear();
-        queryColumnPool.clear();
-        queryModelPool.clear();
-        optimiser.clear();
-        parser.clear();
-        backupAgent.clear();
-        alterOperationBuilder.clear();
-        functionParser.clear();
-        compiledQuery.clear();
+        clearExceptSqlText();
         sqlText = null;
-        columnNames.clear();
     }
 
     @Override
@@ -423,7 +413,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     throw SqlException.position(0).put("too many ").put(e.getFlyweightMessage());
                 }
                 LOG.info().$("retrying plan [q=`").$(queryModel).$("`, fd=").$(executionContext.getRequestFd()).$(']').$();
-                clear();
+                clearExceptSqlText();
                 lexer.restart();
                 queryModel = (QueryModel) compileExecutionModel(executionContext);
             }
@@ -1262,6 +1252,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             securityContext.authorizeInsert(tt);
         }
         return tableName;
+    }
+
+    private void clearExceptSqlText() {
+        sqlNodePool.clear();
+        characterStore.clear();
+        queryColumnPool.clear();
+        queryModelPool.clear();
+        optimiser.clear();
+        parser.clear();
+        backupAgent.clear();
+        alterOperationBuilder.clear();
+        functionParser.clear();
+        compiledQuery.clear();
+        columnNames.clear();
     }
 
     private void compileAlter(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
@@ -2460,6 +2464,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         long beginNanos = configuration.getMicrosecondClock().getTicks();
         QueryProgress.logStart(sqlId, createTableOp.getSqlText(), executionContext, false);
         try {
+            executionContext.setUseSimpleCircuitBreaker(true);
 
             // Fast path for CREATE TABLE IF NOT EXISTS in scenario when the table already exists
             final int status = executionContext.getTableStatus(path, createTableOp.getTableName());
@@ -2487,7 +2492,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (createTableOp.getRecordCursorFactory() != null) {
                     this.insertCount = -1;
                     int position = createTableOp.getTableNamePosition();
-                    executionContext.setUseSimpleCircuitBreaker(true);
                     RecordCursorFactory factory = createTableOp.getRecordCursorFactory();
                     RecordCursor newCursor;
                     for (int retryCount = 0; ; retryCount++) {
@@ -2499,7 +2503,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 throw SqlException.$(0, e.getFlyweightMessage());
                             }
                             lexer.of(createTableOp.getSelectText());
-                            clear();
+                            clearExceptSqlText();
                             compileInner(executionContext, createTableOp.getSelectText());
                             factory.close();
                             factory = this.compiledQuery.getRecordCursorFactory();
@@ -2546,8 +2550,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             engine.unlockTableName(tableToken);
                             throw e;
                         }
-                    } finally {
-                        executionContext.setUseSimpleCircuitBreaker(false);
                     }
                     createTableOp.updateOperationFutureTableToken(tableToken);
                     createTableOp.updateOperationFutureAffectedRowsCount(insertCount);
@@ -2610,6 +2612,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             QueryProgress.logError(e, sqlId, createTableOp.getSqlText(), executionContext, beginNanos);
             throw e;
         } finally {
+            executionContext.setUseSimpleCircuitBreaker(false);
             queryRegistry.unregister(sqlId, executionContext);
         }
     }
@@ -2694,7 +2697,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 return;
             } catch (TableReferenceOutOfDateException e) {
                 attemptsLeft--;
-                clear();
+                clearExceptSqlText();
                 lexer.restart();
                 executionModel = compileExecutionModel(executionContext);
                 if (attemptsLeft < 0) {
@@ -3008,10 +3011,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         TableToken tableToken = tableExistsOrFail(tableNameExpr.position, tableNameExpr.token, executionContext);
         long insertCount;
 
-        executionContext.setUseSimpleCircuitBreaker(true);
-        try (
-                TableWriterAPI writer = engine.getTableWriterAPI(tableToken, "insertAsSelect")
-        ) {
+        try (TableWriterAPI writer = engine.getTableWriterAPI(tableToken, "insertAsSelect")) {
+            executionContext.setUseSimpleCircuitBreaker(true);
+
             QueryModel queryModel = model.getQueryModel();
             try (
                     RecordCursorFactory factory = generateSelectOneShot(queryModel, executionContext, false);

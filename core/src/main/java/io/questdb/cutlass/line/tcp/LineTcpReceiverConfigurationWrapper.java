@@ -96,7 +96,7 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
 
     @Override
     public LongGauge getConnectionCountGauge() {
-        return metrics.lineMetrics().connectionCountGauge();
+        return metrics.lineMetrics().tcpConnectionCountGauge();
     }
 
     @Override

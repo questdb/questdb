@@ -66,11 +66,7 @@ import java.util.function.Function;
 
 public class DynamicPropServerConfiguration implements ServerConfiguration, ConfigReloader {
     private static final Log LOG = LogFactory.getLog(DynamicPropServerConfiguration.class);
-    private static final Function<String, ? extends ConfigPropertyKey> keyResolver = (k) -> {
-        Optional<PropertyKey> prop = PropertyKey.getByString(k);
-        return prop.orElse(null);
-    };
-    private static final Set<PropertyKey> reloadableProps = new HashSet<>(Arrays.asList(
+    private static final Set<? extends ConfigPropertyKey> dynamicProps = new HashSet<>(Arrays.asList(
             PropertyKey.PG_USER,
             PropertyKey.PG_PASSWORD,
             PropertyKey.PG_RO_USER_ENABLED,
@@ -85,8 +81,13 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             PropertyKey.HTTP_RECV_BUFFER_SIZE,
             PropertyKey.HTTP_SEND_BUFFER_SIZE,
             PropertyKey.HTTP_NET_CONNECTION_LIMIT,
-            PropertyKey.LINE_TCP_NET_CONNECTION_LIMIT
+            PropertyKey.LINE_TCP_NET_CONNECTION_LIMIT,
+            PropertyKey.QUERY_TRACING_ENABLED
     ));
+    private static final Function<String, ? extends ConfigPropertyKey> keyResolver = (k) -> {
+        Optional<PropertyKey> prop = PropertyKey.getByString(k);
+        return prop.orElse(null);
+    };
     private final BuildInformation buildInformation;
     private final CairoConfigurationWrapper cairoConfig;
     private final java.nio.file.Path confPath;
@@ -130,9 +131,10 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
         this.microsecondClock = microsecondClock;
         this.fpf = fpf;
         this.loadAdditionalConfigurations = loadAdditionalConfigurations;
-        PropServerConfiguration serverConfig = new PropServerConfiguration(
+        final PropServerConfiguration serverConfig = new PropServerConfiguration(
                 root,
                 properties,
+                dynamicProps,
                 env,
                 log,
                 buildInformation,
@@ -377,7 +379,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
                         return false;
                     }
 
-                    if (updateSupportedProperties(properties, newProperties, reloadableProps, keyResolver, LOG)) {
+                    if (updateSupportedProperties(properties, newProperties, dynamicProps, keyResolver, LOG)) {
                         reload0();
                         LOG.info().$("reloaded, [file=").$(confPath).$(", modifiedAt=").$ts(newLastModified * 1000).I$();
                         return true;
@@ -397,6 +399,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             newConfig = new PropServerConfiguration(
                     root,
                     properties,
+                    dynamicProps,
                     env,
                     log,
                     buildInformation,
