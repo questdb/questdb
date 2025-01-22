@@ -171,7 +171,7 @@ public class MetadataCache implements QuietCloseable {
 
             table.setMetadataVersion(Long.MIN_VALUE);
 
-            int metadataVersion = metaMem.getInt(TableUtils.META_OFFSET_METADATA_VERSION);
+            long metadataVersion = metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION);
 
             // make sure we aren't duplicating work
             CairoTable potentiallyExistingTable = tableMap.get(token.getTableName());

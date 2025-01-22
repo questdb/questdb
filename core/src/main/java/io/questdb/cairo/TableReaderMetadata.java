@@ -50,7 +50,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     private boolean isSoftLink;
     private int maxUncommittedRows;
     private MemoryMR metaMem;
-    private int metadataVersion;
+    private long metadataVersion;
     private long o3MaxLag;
     private int partitionBy;
     private Path path;
@@ -100,7 +100,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         columnMetadata.setPos(columnCount);
         int timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
         this.tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
-        this.metadataVersion = metaMem.getInt(TableUtils.META_OFFSET_METADATA_VERSION);
+        this.metadataVersion = metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION);
         this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
         this.o3MaxLag = metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG);
         this.walEnabled = metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
@@ -335,7 +335,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             this.tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
             this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
             this.o3MaxLag = metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG);
-            this.metadataVersion = metaMem.getInt(TableUtils.META_OFFSET_METADATA_VERSION);
+            this.metadataVersion = metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION);
             this.walEnabled = metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
             if (TableUtils.isMetaFormatUpToDate(
                     metaMem.getInt(TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION),
