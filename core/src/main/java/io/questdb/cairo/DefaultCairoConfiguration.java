@@ -1196,6 +1196,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isQueryTracingEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isReadOnlyInstance() {
         return false;
     }

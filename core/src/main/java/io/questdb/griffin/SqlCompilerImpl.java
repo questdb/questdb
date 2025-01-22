@@ -270,18 +270,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     public void clear() {
-        sqlNodePool.clear();
-        characterStore.clear();
-        queryColumnPool.clear();
-        queryModelPool.clear();
-        optimiser.clear();
-        parser.clear();
-        backupAgent.clear();
-        alterOperationBuilder.clear();
-        functionParser.clear();
-        compiledQuery.clear();
+        clearExceptSqlText();
         sqlText = null;
-        columnNames.clear();
     }
 
     @Override
@@ -423,7 +413,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     throw SqlException.position(0).put("too many ").put(e.getFlyweightMessage());
                 }
                 LOG.info().$("retrying plan [q=`").$(queryModel).$("`, fd=").$(executionContext.getRequestFd()).$(']').$();
-                clear();
+                clearExceptSqlText();
                 lexer.restart();
                 queryModel = (QueryModel) compileExecutionModel(executionContext);
             }
@@ -1262,6 +1252,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             securityContext.authorizeInsert(tt);
         }
         return tableName;
+    }
+
+    private void clearExceptSqlText() {
+        sqlNodePool.clear();
+        characterStore.clear();
+        queryColumnPool.clear();
+        queryModelPool.clear();
+        optimiser.clear();
+        parser.clear();
+        backupAgent.clear();
+        alterOperationBuilder.clear();
+        functionParser.clear();
+        compiledQuery.clear();
+        columnNames.clear();
     }
 
     private void compileAlter(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
@@ -2499,7 +2503,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 throw SqlException.$(0, e.getFlyweightMessage());
                             }
                             lexer.of(createTableOp.getSelectText());
-                            clear();
+                            clearExceptSqlText();
                             compileInner(executionContext, createTableOp.getSelectText());
                             factory.close();
                             factory = this.compiledQuery.getRecordCursorFactory();
@@ -2693,7 +2697,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 return;
             } catch (TableReferenceOutOfDateException e) {
                 attemptsLeft--;
-                clear();
+                clearExceptSqlText();
                 lexer.restart();
                 executionModel = compileExecutionModel(executionContext);
                 if (attemptsLeft < 0) {

@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.SqlJitMode;
@@ -47,11 +49,13 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
+import io.questdb.metrics.QueryTrace;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 // Factory that adds query to registry on getCursor() and removes on cursor close().
@@ -60,9 +64,9 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     private final RecordCursorFactory base;
     private final RegisteredRecordCursor cursor;
     private final boolean jit;
+    private final QueryTrace queryTrace = new QueryTrace();
     private final ObjList<TableReader> readers = new ObjList<>();
     private final QueryRegistry registry;
-    private final String sqlText;
     private long beginNanos;
     private SqlExecutionContext executionContext;
     private long sqlId;
@@ -71,33 +75,41 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         super(base.getMetadata());
         this.base = base;
         this.registry = registry;
-        this.sqlText = Chars.toString(sqlText);
         this.cursor = new RegisteredRecordCursor();
         this.jit = base.usesCompiledFilter();
+        queryTrace.queryText = Chars.toString(sqlText);
     }
 
     public static void logEnd(
             long sqlId,
-            CharSequence sqlText,
-            SqlExecutionContext executionContext,
+            @NotNull CharSequence sqlText,
+            @NotNull SqlExecutionContext executionContext,
             long beginNanos
     ) {
-        logEnd(sqlId, sqlText, executionContext, beginNanos, null);
+        logEnd(sqlId, sqlText, executionContext, beginNanos, null, null);
     }
 
     public static void logEnd(
             long sqlId,
-            CharSequence sqlText,
-            SqlExecutionContext executionContext,
+            @NotNull CharSequence sqlText,
+            @NotNull SqlExecutionContext executionContext,
             long beginNanos,
-            @Nullable ObjList<TableReader> leakedReaders
+            @Nullable ObjList<TableReader> leakedReaders,
+            @Nullable QueryTrace queryTrace
     ) {
+        CairoEngine engine = executionContext.getCairoEngine();
+        CairoConfiguration config = engine.getConfiguration();
+        long durationNanos = config.getNanosecondClock().getTicks() - beginNanos;
+        boolean isJit = executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED;
+
+        CharSequence principal = executionContext.getSecurityContext().getPrincipal();
         LogRecord log = null;
         try {
             final int leakedReadersCount = leakedReaders != null ? leakedReaders.size() : 0;
             if (leakedReadersCount > 0) {
                 log = LOG.errorW();
-                executionContext.getCairoEngine().getMetrics().healthMetrics().incrementReaderLeakCounter(leakedReadersCount);
+                executionContext.getCairoEngine().getMetrics().healthMetrics()
+                        .incrementReaderLeakCounter(leakedReadersCount);
                 log.$("brk");
             } else {
                 log = LOG.info();
@@ -105,10 +117,10 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             }
             log.$(" [id=").$(sqlId)
                     .$(", sql=`").utf8(sqlText).$('`')
-                    .$(", principal=").$(executionContext.getSecurityContext().getPrincipal())
+                    .$(", principal=").$(principal)
                     .$(", cache=").$(executionContext.isCacheHit())
-                    .$(", jit=").$(executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED)
-                    .$(", time=").$(executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos);
+                    .$(", jit=").$(isJit)
+                    .$(", time=").$(durationNanos);
 
             appendLeakedReaderNames(leakedReaders, leakedReadersCount, log);
         } catch (Throwable e) {
@@ -120,23 +132,33 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                 log.I$();
             }
         }
+        // When queryTrace is not null, queryTrace.queryText is already set and equal to sqlText,
+        // as well as already converted to an immutable String, as needed to queue it up for handling
+        // at a later time. For this reason, do not assign queryTrace.queryText = sqlText here.
+        if (queryTrace != null && engine.getConfiguration().isQueryTracingEnabled()) {
+            queryTrace.executionNanos = durationNanos;
+            queryTrace.isJit = isJit;
+            queryTrace.timestamp = config.getMicrosecondClock().getTicks();
+            queryTrace.principal = principal.toString();
+            engine.getMessageBus().getQueryTraceQueue().enqueue(queryTrace);
+        }
     }
 
     public static void logError(
-            Throwable e,
+            @Nullable Throwable e,
             long sqlId,
-            CharSequence sqlText,
-            SqlExecutionContext executionContext,
+            @NotNull CharSequence sqlText,
+            @NotNull SqlExecutionContext executionContext,
             long beginNanos
     ) {
         logError(e, sqlId, sqlText, executionContext, beginNanos, null);
     }
 
     public static void logError(
-            Throwable e,
+            @Nullable Throwable e,
             long sqlId,
-            CharSequence sqlText,
-            SqlExecutionContext executionContext,
+            @NotNull CharSequence sqlText,
+            @NotNull SqlExecutionContext executionContext,
             long beginNanos,
             @Nullable ObjList<TableReader> leakedReaders
     ) {
@@ -146,7 +168,8 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             executionContext.getCairoEngine().getMetrics().healthMetrics().incrementQueryErrorCounter();
             // Extract all the variables before the call to call LOG.errorW() to avoid exception
             // causing log sequence leaks.
-            long queryTime = executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos;
+            long durationNanos =
+                    executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos;
             CharSequence principal = executionContext.getSecurityContext().getPrincipal();
             boolean cacheHit = executionContext.isCacheHit();
             log = LOG.errorW();
@@ -167,7 +190,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                         .$(", principal=").$(principal)
                         .$(", cache=").$(cacheHit)
                         .$(", jit=").$(executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED)
-                        .$(", time=").$(queryTime)
+                        .$(", time=").$(durationNanos)
                         .$(", msg=").$(message)
                         .$(", errno=").$(errno)
                         .$(", pos=").$(pos);
@@ -178,13 +201,13 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                         .$(", principal=").$(principal)
                         .$(", cache=").$(cacheHit)
                         .$(", jit=").$(executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED)
-                        .$(", time=").$(queryTime)
+                        .$(", time=").$(durationNanos)
                         .$(", exception=").$(e);
             }
             appendLeakedReaderNames(leakedReaders, leakedReadersCount, log);
         } catch (Throwable th) {
             // Game over, we can't log anything
-            System.err.print("could not log exception message");
+            System.err.print("Could not log exception message! ");
             th.printStackTrace(System.err);
         } finally {
             // Make sure logging sequence is always released.
@@ -196,8 +219,8 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
 
     public static void logStart(
             long sqlId,
-            CharSequence sqlText,
-            SqlExecutionContext executionContext,
+            @NotNull CharSequence sqlText,
+            @NotNull SqlExecutionContext executionContext,
             boolean jit
     ) {
         if (executionContext.getCairoEngine().getConfiguration().getLogSqlQueryProgressExe()) {
@@ -246,6 +269,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         if (!cursor.isOpen) {
             this.executionContext = executionContext;
+            CharSequence sqlText = queryTrace.queryText;
             sqlId = registry.register(sqlText, executionContext);
             beginNanos = executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks();
             logStart(sqlId, sqlText, executionContext, jit);
@@ -309,12 +333,13 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         int index = readers.remove(resource);
         // do not freak out if reader is not in the list after our cursor has been closed
         if (index < 0 && cursor.isOpen) {
-            // when this happens it could be down to a race condition where
-            // readers list is cleared before borrowed resources are returned.
-            // Last time this occurred when pool entry was released before readers is cleared. In
-            // this scenario the returned pool entry got used by another query and
+            // when this happens, it could be down to a race condition
+            // where readers list is cleared before borrowed resources are returned.
+            // Last time, this occurred when pool entry was released before readers were cleared.
+            // In this scenario, the returned pool entry got used by another query and
             // readers.clear() came in tangentially to this query.
-            LOG.critical().$("returned reader is not in supervisor's list [tableName=").$(resource.getTableToken().getTableName()).I$();
+            LOG.critical().$("returned reader is not in supervisor's list [tableName=")
+                    .$(resource.getTableToken().getTableName()).I$();
         }
     }
 
@@ -446,13 +471,14 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                     base = Misc.free(base);
                 }
             } finally {
-                // when execution context is null, the cursor has never been opened
-                // otherwise cursor open attempt has been made, but may not have fully succeeded. In this case
-                // we must be certain that we track the reader leak still
+                // When execution context is null, the cursor has never been opened.
+                // Otherwise, cursor open attempt has been made, but may not have fully succeeded.
+                // In this case we must be certain that we still track the reader leak
                 if (executionContext != null) {
                     try {
+                        String sqlText = queryTrace.queryText;
                         if (th == null) {
-                            logEnd(sqlId, sqlText, executionContext, beginNanos, readers);
+                            logEnd(sqlId, sqlText, executionContext, beginNanos, readers, queryTrace);
                         } else {
                             logError(th, sqlId, sqlText, executionContext, beginNanos, readers);
                         }
