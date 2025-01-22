@@ -304,7 +304,8 @@ public final class TableUtils {
 
     public static short checksumForMetaFormatMinorVersionField(long metadataVersion, int columnCount) {
         int metaVersionInt = Numbers.decodeLowInt(metadataVersion) ^ Numbers.decodeHighInt(metadataVersion);
-        short checksum = Numbers.decodeLowShort(13 * metaVersionInt + 37 * columnCount);
+        int checksumInt = 13 * metaVersionInt + 37 * columnCount;
+        short checksum = (short) (Numbers.decodeLowShort(checksumInt) ^ Numbers.decodeHighShort(checksumInt));
         if (checksum == 0) {
             checksum = -1337;
         }
