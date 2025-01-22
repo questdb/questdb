@@ -219,4 +219,9 @@ public class ReadOnlySecurityContext implements SecurityContext {
     public boolean isQueryCancellationAllowed() {
         return false;
     }
+
+    @Override
+    public boolean isSystemAdmin() {
+        return true;
+    }
 }

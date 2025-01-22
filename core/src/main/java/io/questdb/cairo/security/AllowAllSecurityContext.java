@@ -185,4 +185,9 @@ public class AllowAllSecurityContext implements SecurityContext {
     public String getPrincipal() {
         return Constants.USER_NAME;
     }
+
+    @Override
+    public boolean isSystemAdmin() {
+        return true;
+    }
 }

@@ -24,45 +24,38 @@
 
 package io.questdb.metrics;
 
-/**
- * Read-only gauge used to expose various stats.
- */
-public class VirtualLongGauge extends AbstractLongGauge implements LongGauge {
+import io.questdb.std.str.BorrowableUtf8Sink;
+import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.NotNull;
 
-    private final StatProvider provider;
+abstract class AbstractLongGauge implements LongGauge {
+    private final CharSequence name;
 
-    public VirtualLongGauge(CharSequence name, StatProvider statProvider) {
-        super(name);
-        provider = statProvider;
+    AbstractLongGauge(CharSequence name) {
+        this.name = name;
     }
 
     @Override
-    public void add(long value) {
-        // do nothing as this gauge is RO view of some stat
+    public CharSequence getName() {
+        return name;
     }
 
     @Override
-    public void dec() {
-        // do nothing as this gauge is RO view of some stat
+    public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
+        appendType(sink);
+        appendMetricName(sink);
+        PrometheusFormatUtils.appendSampleLineSuffix(sink, getValue());
+        PrometheusFormatUtils.appendNewLine(sink);
     }
 
-    @Override
-    public long getValue() {
-        return provider.getValue();
+    private void appendMetricName(CharSink<?> sink) {
+        sink.putAscii(PrometheusFormatUtils.METRIC_NAME_PREFIX);
+        sink.put(name);
     }
 
-    @Override
-    public void inc() {
-        // do nothing as this gauge is RO view of some stat
-    }
-
-    @Override
-    public void setValue(long value) {
-        // do nothing as this gauge is RO view of some stat
-    }
-
-    @FunctionalInterface
-    public interface StatProvider {
-        long getValue();
+    private void appendType(CharSink<?> sink) {
+        sink.putAscii(PrometheusFormatUtils.TYPE_PREFIX);
+        sink.put(name);
+        sink.putAscii(" gauge\n");
     }
 }

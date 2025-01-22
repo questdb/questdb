@@ -83,6 +83,21 @@ public class DefaultHttpContextConfiguration implements HttpContextConfiguration
     }
 
     @Override
+    public int getIlpConnectionLimit() {
+        return -1;
+    }
+
+    @Override
+    public int getJsonQueryConnectionLimit() {
+        return -1;
+    }
+
+    @Override
+    public Metrics getMetrics() {
+        return Metrics.ENABLED;
+    }
+
+    @Override
     public MillisecondClock getMillisecondClock() {
         return MillisecondClockImpl.INSTANCE;
     }
@@ -120,10 +135,5 @@ public class DefaultHttpContextConfiguration implements HttpContextConfiguration
     @Override
     public boolean readOnlySecurityContext() {
         return false;
-    }
-
-    @Override
-    public Metrics getMetrics() {
-        return Metrics.ENABLED;
     }
 }
