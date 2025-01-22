@@ -54,9 +54,9 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
     private final CairoEngine engine;
     private final ConcurrentQueue<QueryTrace> queue;
     private final SqlExecutionContextImpl sqlExecutionContext;
-    private final TableWriter tableWriter;
     private final QueryTrace trace = new QueryTrace();
     private final Utf8StringSink utf8sink = new Utf8StringSink();
+    private TableWriter tableWriter;
 
 
     public QueryTracingJob(CairoEngine engine) throws SqlException {
@@ -68,19 +68,26 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
                 null,
                 null
         );
-        this.tableWriter = acquireTableWriter();
+        this.tableWriter = acquireTableWriter(false);
     }
 
     @Override
     public void close() throws IOException {
-        tableWriter.close();
+        if (tableWriter != null) {
+            tableWriter.close();
+            tableWriter = null;
+        }
     }
 
-    private TableWriter acquireTableWriter() throws SqlException {
+    private TableWriter acquireTableWriter(boolean forceCreate) throws SqlException {
         TableToken tableToken;
         try {
             tableToken = engine.verifyTableName(TABLE_NAME);
         } catch (Exception recoverable) {
+            boolean shouldCreateTable = forceCreate || engine.getConfiguration().isQueryTracingEnabled();
+            if (!shouldCreateTable) {
+                return null;
+            }
             try (SqlCompiler sqlCompiler = engine.getSqlCompiler()) {
                 CompiledQuery query = sqlCompiler.query()
                         .$("CREATE TABLE IF NOT EXISTS '").$(TABLE_NAME).$("' (")
@@ -106,6 +113,9 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
             return false;
         }
         try {
+            if (tableWriter == null) {
+                this.tableWriter = acquireTableWriter(true);
+            }
             for (int n = buffer.size(), i = 0; i < n; i++) {
                 buffer.moveQuick(i, trace);
                 final TableWriter.Row row = tableWriter.newRow(trace.timestamp);
