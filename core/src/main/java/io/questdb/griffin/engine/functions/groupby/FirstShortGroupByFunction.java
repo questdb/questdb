@@ -65,6 +65,11 @@ public class FirstShortGroupByFunction extends ShortFunction implements GroupByF
     }
 
     @Override
+    public int getSampleByFlags() {
+        return GroupByFunction.SAMPLE_BY_FILL_ALL;
+    }
+
+    @Override
     public short getShort(Record rec) {
         return rec.getShort(valueIndex + 1);
     }

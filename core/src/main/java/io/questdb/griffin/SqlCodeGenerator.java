@@ -413,6 +413,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final BitSet writeSymbolAsString = new BitSet();
     private boolean enableJitNullChecks = true;
     private boolean fullFatJoins = false;
+    private boolean validateSampleByFillType;
 
     public SqlCodeGenerator(
             CairoEngine engine,
@@ -437,6 +438,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             this.expressionNodePool = expressionNodePool;
             this.reduceTaskFactory = () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_SQL_COMPILER);
             this.fastAsOfJoins = configuration.useFastAsOfJoin();
+            this.validateSampleByFillType = configuration.isValidateSampleByFillType();
         } catch (Throwable th) {
             close();
             throw th;
@@ -3395,7 +3397,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         null,
                         valueTypes,
                         keyTypes,
-                        listColumnFilterA
+                        listColumnFilterA,
+                        sampleByFill,
+                        validateSampleByFillType
                 );
 
                 return new SampleByInterpolateRecordCursorFactory(
@@ -3443,7 +3447,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     null,
                     valueTypes,
                     keyTypes,
-                    listColumnFilterA
+                    listColumnFilterA,
+                    sampleByFill,
+                    validateSampleByFillType
             );
 
             boolean isFillNone = fillCount == 0 || fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "none");
@@ -4210,7 +4216,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     keyFunctionNodes,
                     valueTypes,
                     keyTypes,
-                    listColumnFilterA
+                    listColumnFilterA,
+                    null,
+                    validateSampleByFillType
             );
 
             // Check if we have a non-keyed query with all early exit aggregate functions (e.g. count_distinct(symbol))
