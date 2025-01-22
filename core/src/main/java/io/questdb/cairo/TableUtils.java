@@ -302,10 +302,11 @@ public final class TableUtils {
         return memSize;
     }
 
-    public static short checksumForMetaFormatMinorVersionField(int metadataVersion, int columnCount) {
-        short checksum = Numbers.decodeLowShort(17 * metadataVersion + 73 * columnCount);
+    public static short checksumForMetaFormatMinorVersionField(long metadataVersion, int columnCount) {
+        int metaVersionInt = Numbers.decodeLowInt(metadataVersion) ^ Numbers.decodeHighInt(metadataVersion);
+        short checksum = Numbers.decodeLowShort(13 * metaVersionInt + 37 * columnCount);
         if (checksum == 0) {
-            checksum = -1773;
+            checksum = -1337;
         }
         return checksum;
     }
@@ -851,6 +852,27 @@ public final class TableUtils {
      */
     public static boolean isFinalTableName(String tableName, CharSequence tempTablePrefix) {
         return !Chars.startsWith(tableName, tempTablePrefix);
+    }
+
+    /*
+     * Checks that the minor version of the metadata format is up to date, i.e., at least the value
+     * of the TableUtils.META_FORMAT_MINOR_VERSION_LATEST constant.
+     *
+     * Metadata Format Minor Version field encodes 2 shorts:
+     * - Low short is a checksum that changes with every update to the metadata record
+     * - High short is set to TableUtils.META_FORMAT_MINOR_VERSION_LATEST
+     *
+     * The Metadata Format Minor Version field was not present in the initial version the metadata format. This is
+     * why we need the checksum: when it doesn't match, we can't trust the version stored in it, and should assume
+     * the QuestDB version that wrote the metadata predates its introduction.
+     *
+     * Table storage itself is forward- and backward-compatible, so it's safe to read regardless of this version.
+     */
+    public static boolean isMetaFormatUpToDate(int metaFormatMinorVersionField, long metadataVersion, int columnCount) {
+        short savedChecksum = Numbers.decodeLowShort(metaFormatMinorVersionField);
+        short actualChecksum = checksumForMetaFormatMinorVersionField(metadataVersion, columnCount);
+        short savedMetaFormatMinorVersion = Numbers.decodeHighShort(metaFormatMinorVersionField);
+        return savedChecksum == actualChecksum && savedMetaFormatMinorVersion >= META_FORMAT_MINOR_VERSION_LATEST;
     }
 
     public static boolean isSymbolCached(MemoryMR metaMem, int columnIndex) {

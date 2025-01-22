@@ -38,7 +38,6 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
@@ -50,6 +49,8 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Comparator;
+
+import static io.questdb.cairo.TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION;
 
 /**
  * A metadata cache for serving SQL requests for basic table info.
@@ -193,7 +194,12 @@ public class MetadataCache implements QuietCloseable {
                     .$(", version=").$(metadataVersion)
                     .I$();
 
-            boolean isMetaFormatUpToDate = isMetaFormatUpToDate(metadataVersion, columnCount);
+            boolean isMetaFormatUpToDate = TableUtils.isMetaFormatUpToDate(
+                    metaMem.getInt(META_OFFSET_META_FORMAT_MINOR_VERSION),
+                    metadataVersion,
+                    columnCount
+            );
+
             table.setPartitionBy(metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY));
             table.setMaxUncommittedRows(metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS));
             table.setO3MaxLag(metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG));
@@ -285,29 +291,6 @@ public class MetadataCache implements QuietCloseable {
         } finally {
             Misc.free(metaMem);
         }
-    }
-
-    /*
-     * Checks that the minor version of the metadata format is up to date, i.e., at least the value
-     * of the TableUtils.META_FORMAT_MINOR_VERSION_LATEST constant.
-     *
-     * Metadata Format Minor Version field encodes 2 shorts:
-     * - Low short is a checksum that changes with every update to the metadata record
-     * - High short is set to TableUtils.META_FORMAT_MINOR_VERSION_LATEST
-     *
-     * The Metadata Format Minor Version field was not present in the initial version the metadata format. This is
-     * why we need the checksum: when it doesn't match, we can't trust the version stored in it, and should assume
-     * the QuestDB version that wrote the metadata predates its introduction.
-     *
-     * Table storage itself is forward- and backward-compatible, so it's safe to read regardless of this version.
-     */
-    private boolean isMetaFormatUpToDate(int metadataVersion, int columnCount) {
-        int metaFormatMinorVersionField = metaMem.getInt(TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION);
-        short savedChecksum = Numbers.decodeLowShort(metaFormatMinorVersionField);
-        short actualChecksum = TableUtils.checksumForMetaFormatMinorVersionField(metadataVersion, columnCount);
-        short savedMetaFormatMinorVersion = Numbers.decodeHighShort(metaFormatMinorVersionField);
-        return savedChecksum == actualChecksum
-                && savedMetaFormatMinorVersion >= TableUtils.META_FORMAT_MINOR_VERSION_LATEST;
     }
 
     private void loadCapacities(CairoColumn column, TableToken token, Path path, CairoConfiguration configuration, ColumnVersionReader columnVersionReader) {
