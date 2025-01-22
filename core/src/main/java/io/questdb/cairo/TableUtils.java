@@ -224,7 +224,7 @@ public final class TableUtils {
         allocateDiskSpace(ff, fd, size);
     }
 
-    public static int calculateMetaFormatMinorVersionField(int metadataVersion, int columnCount) {
+    public static int calculateMetaFormatMinorVersionField(long metadataVersion, int columnCount) {
         // Metadata Format Minor Version field is 2 shorts:
         // - Low short is a checksum that changes with every update to _meta
         // - High short is TableUtils.META_FORMAT_MINOR_VERSION_LATEST
