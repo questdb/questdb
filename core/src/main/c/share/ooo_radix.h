@@ -628,9 +628,6 @@ jlong merge_shuffle_symbol_column_from_many_addresses(
     // Reverse index is saved at the end of the merge_index
     const TIdx *reverse_index = reinterpret_cast<const TIdx *>(&merge_index[row_count]);
 
-    puts("shuffle remap symbols");
-    fflush(stdout);
-
     int64_t out_index = 0;
     jlong rows_processed = 0;
     for (uint64_t txn_index = 0; txn_index < txn_count; txn_index++) {
@@ -643,18 +640,8 @@ jlong merge_shuffle_symbol_column_from_many_addresses(
             int32_t value = segment_addr[seg_row];
             if (value >= clean_symbol_count) {
                 auto value2 = symbol_map[map_offset + value - clean_symbol_count];
-                if (value2 > std::numeric_limits<int32_t>::max() / 2) {
-                    puts("value2 is 2147483647");
-                    printf("value2 is 2147483647, value=%d, clean_symbol_count=%d, txn_index=%llu, map_offset=%d, segment_row_offset=%llu, seg_row=%llu\n",
-                           value, clean_symbol_count, txn_index, map_offset, segment_txns[txn_index].segment_row_offset, seg_row);
-                    fflush(stdout);
-                }
                 dst[reverse_index[out_index]] = value2;
             } else {
-                if (value > std::numeric_limits<int32_t>::max() / 2) {
-                    puts("value is 2147483647");
-                    fflush(stdout);
-                }
                 dst[reverse_index[out_index]] = value;
             }
             rows_processed++;

@@ -79,7 +79,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testAddDropColumnDropPartition() throws Exception {
-        Rnd rnd = generateRandom(LOG, 1013073093066583L, 1737485714283L);
+        Rnd rnd = generateRandom(LOG);
         setFuzzProbabilities(
                 0.01,
                 0.0,
@@ -256,7 +256,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testWalMetadataAddDeleteColumnHeavy() throws Exception {
-        Rnd rnd = generateRandom(LOG, 1059595022025083L, 1737637912358L);
+        Rnd rnd = generateRandom(LOG);
         setFuzzProbabilities(
                 0.05,
                 0.2,

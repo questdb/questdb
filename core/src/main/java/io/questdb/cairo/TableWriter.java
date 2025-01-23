@@ -1116,7 +1116,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         physicallyWrittenRowsSinceLastCommit.set(0);
         txWriter.beginPartitionSizeUpdate();
         long commitToTimestamp = walTxnDetails.getCommitToTimestamp(seqTxn);
-
         int transactionBlock = walTxnDetails.calculateInsertTransactionBlock(seqTxn, 1_000_000L);
 
         boolean committed;
@@ -3126,6 +3125,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private boolean assertColumnPositionIncludeWalLag() {
         return txWriter.getLagRowCount() == 0
                 || columns.get(getPrimaryColumnIndex(metadata.getTimestampIndex())).getAppendOffset() == (txWriter.getTransientRowCount() + txWriter.getLagRowCount()) * Long.BYTES;
+    }
+
+    private boolean assertSymbolValues(long address, long totalRows) {
+        for (long i = 0; i < totalRows; i++) {
+            long symbolKey = Unsafe.getUnsafe().getInt(address + i * 4);
+            if (symbolKey > Integer.MAX_VALUE / 2) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private boolean assertTsIndex(long timestampAddr, long min, long max, long totalRows) {
@@ -7202,16 +7211,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private boolean assertSymbolValues(long address, long totalRows) {
-        for (long i = 0; i < totalRows; i++) {
-            long symbolKey = Unsafe.getUnsafe().getInt(address + i * 4);
-            if (symbolKey > Integer.MAX_VALUE / 2) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     private void processWalCommitBlockSortWalSegmentTimestampsDispatchColumnSortTasks(
             long timestampAddr,
             long totalRows,
@@ -7233,7 +7232,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (columnIndex != timestampColumnIndex) {
                 int columnType = metadata.getColumnType(columnIndex);
                 if (columnType > 0) {
-                    long cursor = -1;//pubSeq.next();
+                    long cursor = pubSeq.next();
                     long mappedAddrBuffPrimary = columnAddressesBuffer;
                     columnAddressesBuffer += totalSegmentAddressesBytes;
                     if (ColumnType.isVarSize(columnType)) {
@@ -7339,74 +7338,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     int denseSymbolCount = denseSymbolMapWriters.size();
                     long txnCount = this.segmentCopyInfo.getTxnCount();
 
-                    // Header, 2 ints per symbol,
-                    // - clear symbol count
-                    // - offset of the map start for the transactions
-                    int mapOffsetStart = (int) (txnCount * 2);
-                    try (DirectIntList symbolMap = new DirectIntList(mapOffsetStart, MemoryTag.NATIVE_O3)) {
+                    var destinationColumn = o3MemColumns1.get(getPrimaryColumnIndex(columnIndex));
+                    destinationColumn.jumpTo(totalRows << shl);
 
-                        symbolMap.setPos(mapOffsetStart);
-                        boolean updatedNullFlag = false;
+                    var symbolMapMem = o3MemColumns2.get(getPrimaryColumnIndex(columnIndex));
+                    symbolMapMem.jumpTo(0);
+                    destinationColumn.jumpTo(totalRows << shl);
+                    boolean needsRemapping = walTxnDetails.buildTxnSymbolMap(segmentCopyInfo, columnIndex, mapWriter, symbolMapMem);
 
-                        // TODO: add symbols in the seqTxn order,
-                        //  not the order the transactions are recorded in segmentCopyInfo
-
-                        // For each transaction there will be an area in the symbolMap
-                        // where (transaction symbol key - clearCount) index contains the new symbol key
-                        for (long txnIndex = 0; txnIndex < txnCount; txnIndex++) {
-
-                            long seqTxn = segmentCopyInfo.getSeqTxn(txnIndex);
-                            SymbolMapDiff symbolMapDiff = walTxnDetails.getWalSymbolColMap(seqTxn, columnIndex);
-
-                            boolean identical = true;
-                            int cleanSymbolCount = 0;
-                            int entries = 0;
-
-                            // Null is valid, means column is just added to WAL and has all values set as NULL
-                            // from mapping point of view it's the same as identical
-                            if (symbolMapDiff != null) {
-                                identical = false;
-                                entries = symbolMapDiff.getRecordCount();
-                                int capacity = mapOffsetStart + entries;
-                                symbolMap.setCapacity(capacity);
-                                symbolMap.setPos(capacity);
-
-                                SymbolMapDiffEntry entry;
-                                cleanSymbolCount = symbolMapDiff.getCleanSymbolCount();
-
-                                while ((entry = symbolMapDiff.nextEntry()) != null) {
-                                    final CharSequence symbolValue = entry.getSymbol();
-                                    final int newKey = mapWriter.put(symbolValue);
-                                    assert newKey >= cleanSymbolCount;
-                                    identical &= newKey == entry.getKey();
-                                    int mapIndex = mapOffsetStart + entry.getKey() - cleanSymbolCount;
-                                    symbolMap.set(mapIndex, newKey);
-                                }
-
-                                if (!updatedNullFlag && symbolMapDiff.hasNullValue()) {
-                                    mapWriter.updateNullFlag(true);
-                                    updatedNullFlag = true;
-                                }
-                            } else {
-                                //TODO: remove
-                                LOG.info().$("no symbol map in the transaction [table=").$(tableToken.getDirName())
-                                        .$(", seqTxn=").$(seqTxn)
-                                        .$(", columnIndex=").$(columnIndex).I$();
-                            }
-
-                            if (!identical) {
-                                symbolMap.set(txnIndex * 2, cleanSymbolCount);
-                                symbolMap.set(txnIndex * 2 + 1, mapOffsetStart);
-                            } else {
-                                // Nothing to remap
-                                symbolMap.set(txnIndex * 2, Integer.MAX_VALUE - 1);
-                                symbolMap.set(txnIndex * 2 + 1, mapOffsetStart);
-                            }
-                            mapOffsetStart += entries;
-                        }
-
-                        var destinationColumn = o3MemColumns1.get(getPrimaryColumnIndex(columnIndex));
-                        destinationColumn.jumpTo(totalRows << shl);
+                    if (needsRemapping) {
                         long rowCount = Vect.mergeShuffleSymbolColumnFromManyAddresses(
                                 (int) mergeIndexEncodingSegmentBytes,
                                 mappedAddrBuffPrimary,
@@ -7415,15 +7355,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 totalRows,
                                 segmentCopyInfo.getTxnInfoAddress(),
                                 txnCount,
-                                symbolMap.getAddress(),
-                                symbolMap.size()
+                                symbolMapMem.getAddress(),
+                                symbolMapMem.getAppendOffset()
                         );
 
                         assert rowCount == totalRows;
-                        assert assertSymbolValues(destinationColumn.getAddress(), totalRows);
+                    } else {
+                        // Shuffle as int32, no new symbols to add
+                        Vect.mergeShuffleColumnFromManyAddresses(
+                                (1 << shl),
+                                (int) mergeIndexEncodingSegmentBytes,
+                                mappedAddrBuffPrimary,
+                                destinationColumn.getAddress(),
+                                mergeIndex,
+                                totalRows
+                        );
                     }
-                }
 
+                    assert assertSymbolValues(destinationColumn.getAddress(), totalRows);
+                }
             } else {
                 long mappedAddrBuffSecondary = varSize ? mappedAddrBuffPrimary + totalSegmentAddressesBytes : 0;
                 ColumnTypeDriver driver = ColumnType.getDriver(columnType);

@@ -25,6 +25,7 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.MapWriter;
 import io.questdb.cairo.SegmentCopyInfo;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryA;
@@ -38,7 +39,9 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.ThreadLocal;
 import io.questdb.std.Vect;
+import io.questdb.std.str.DirectString;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 
@@ -49,6 +52,7 @@ import static io.questdb.cairo.wal.WalUtils.*;
 public class WalTxnDetails implements QuietCloseable {
     public static final long FORCE_FULL_COMMIT = Long.MAX_VALUE;
     public static final long LAST_ROW_COMMIT = Long.MAX_VALUE - 1;
+    private static final ThreadLocal<DirectString> DIRECT_STRING = new ThreadLocal<>(DirectString::new);
     private static final int FLAG_IS_LAST_SEGMENT_USAGE = 0x2;
     private static final int FLAG_IS_OOO = 0x1;
     private static final int SEQ_TXN_OFFSET = 0;
@@ -72,15 +76,15 @@ public class WalTxnDetails implements QuietCloseable {
     private long currentSymbolStringMemStartOffset = 0;
     private long startSeqTxn = 0;
     // Stores all symbol metadata for the stored transactions.
-    // The format is
+    // The format is 4 int header
     // 4 bytes - record length
-    // 4 bytes - symbol column index
+    // 4 bytes - symbol map count
     // 4 byte - low 32bits of seqTxn
     // 4 byte - high 32bits of seqTxn
-    // Then for every symbol column
-    // 4 bytes - records count
-    // 4 bytes - null flag
+    // Then for every symbol column 6 int record
+    // 4 bytes - map records count
     // 4 bytes - symbol column index
+    // 4 bytes - null flag
     // 4 bytes - clean symbol count
     // 4 bytes - low 32bits of offset into stored symbol strings in symbolStringsMem
     // 4 bytes - high 32bits of offset into stored symbol strings in symbolStringsMem
@@ -92,6 +96,78 @@ public class WalTxnDetails implements QuietCloseable {
     public WalTxnDetails(FilesFacade ff, int maxLookahead) {
         walEventReader = new WalEventReader(ff);
         this.maxLookahead = maxLookahead * 10;
+    }
+
+    public boolean buildTxnSymbolMap(SegmentCopyInfo transactions, int columnIndex, MapWriter mapWriter, MemoryCARW outMem) {
+        // Header, 2 ints per txn,
+        // - clear symbol count
+        // - offset of the map start for the transactions
+        long txnCount = transactions.getTxnCount();
+        outMem.jumpTo(txnCount * 2 * Integer.BYTES);
+        DirectString directSymbolString = DIRECT_STRING.get();
+
+        for (long txnIndex = 0; txnIndex < txnCount; txnIndex++) {
+            long seqTxn = transactions.getSeqTxn(txnIndex);
+            long txnSymbolOffset = getWalSymbolDiffCursorOffset(seqTxn) - currentSymbolIndexesStartOffset;
+
+            boolean identical = true;
+            long mapAppendOffset = outMem.getAppendOffset();
+            int cleanSymbolCount = 0;
+
+            if (txnSymbolOffset > -1) {
+                long txnSymbolOffsetHi = txnSymbolOffset + symbolIndexes.get(txnSymbolOffset);
+                int mapCount = symbolIndexes.get(txnSymbolOffset + 1);
+                txnSymbolOffset += 4;
+
+                // Find column map of the given column index
+                while (mapCount-- > 0 && symbolIndexes.get(txnSymbolOffset + 1) != columnIndex) {
+                    txnSymbolOffset += 6;
+                }
+
+                if (symbolIndexes.get(txnSymbolOffset + 1) == columnIndex) {
+                    // Symbol map exists in the transaction
+                    int recordCount = symbolIndexes.get(txnSymbolOffset);
+                    int hasNulls = symbolIndexes.get(txnSymbolOffset + 2);
+                    cleanSymbolCount = symbolIndexes.get(txnSymbolOffset + 3);
+                    int symbolStringsOffsetLo = symbolIndexes.get(txnSymbolOffset + 4);
+                    int symbolStringsOffsetHi = symbolIndexes.get(txnSymbolOffset + 5);
+                    long symbolStringsOffset = Numbers.encodeLowHighInts(symbolStringsOffsetLo, symbolStringsOffsetHi)
+                            - currentSymbolStringMemStartOffset;
+
+                    if (hasNulls != 0) {
+                        mapWriter.updateNullFlag(true);
+                    }
+
+                    for (int i = 0; i < recordCount; i++) {
+                        int symbolLen = symbolStringsMem.getInt(symbolStringsOffset);
+                        assert symbolLen >= 0 && symbolLen * 2L + symbolStringsOffset < symbolStringsMem.getAppendOffset();
+                        long addressLo = symbolStringsMem.addressOf(symbolStringsOffset + Integer.BYTES);
+                        directSymbolString.of(addressLo, addressLo + symbolLen * 2L);
+
+                        int newKey = mapWriter.put(directSymbolString);
+                        assert newKey >= cleanSymbolCount;
+                        identical &= newKey == i + cleanSymbolCount;
+                        outMem.putInt(mapAppendOffset + ((long) i << 2), newKey);
+                        symbolStringsOffset += Vm.getStorageLength(symbolLen);
+                    }
+                    outMem.jumpTo(mapAppendOffset + ((long) recordCount << 2));
+                }
+            }
+
+            if (identical) {
+                // If the symbol map is identical to the previous transaction, we don't need to save the map.
+                // Instead, we save the clean symbol count is maximum possible int value.
+                outMem.jumpTo(mapAppendOffset);
+                outMem.putInt(txnIndex * Integer.BYTES * 2, Integer.MAX_VALUE);
+                outMem.putInt(txnIndex * Integer.BYTES * 2 + Integer.BYTES, (int) (mapAppendOffset >> 2));
+            } else {
+                outMem.putInt(txnIndex * Integer.BYTES * 2, cleanSymbolCount);
+                outMem.putInt(txnIndex * Integer.BYTES * 2 + Integer.BYTES, (int) (mapAppendOffset >> 2));
+            }
+        }
+
+        // Return true if there are any sumbol maps created, e.g. mapping is not identical transformation
+        return outMem.getAppendOffset() > (txnCount << 3);
     }
 
     public int calculateInsertTransactionBlock(long seqTxn, long maxBlockRecordCount) {
@@ -108,8 +184,8 @@ public class WalTxnDetails implements QuietCloseable {
         }
 
 //         TODO: support blocked transactions
-        return 1;
-//        return blockSize;
+//        return 1;
+        return blockSize;
     }
 
     @Override
@@ -531,6 +607,7 @@ public class WalTxnDetails implements QuietCloseable {
         symbolIndexes.add(Numbers.decodeHighInt(seqTxn));
 
         int totalSymbolsSaved = 0;
+        boolean hasNull = false;
         while ((symbolMapDiff = commitInfo.nextSymbolMapDiff()) != null) {
             int cleanSymbolCount = symbolMapDiff.getCleanSymbolCount();
 
@@ -541,6 +618,7 @@ public class WalTxnDetails implements QuietCloseable {
             symbolIndexes.add(-1);
             symbolIndexes.add(symbolMapDiff.getColumnIndex());
             symbolIndexes.add(symbolMapDiff.hasNullValue() ? 1 : 0);
+            hasNull = hasNull || symbolMapDiff.hasNullValue();
             symbolIndexes.add(cleanSymbolCount);
 
             int symbolIndex = 0;
@@ -564,7 +642,7 @@ public class WalTxnDetails implements QuietCloseable {
         }
 
         // Empty record, return -1, save space, don't serialize empty records.
-        if (symbolCount == 0 || totalSymbolsSaved == 0) {
+        if ((symbolCount == 0 || totalSymbolsSaved == 0) && !hasNull) {
             symbolIndexes.setPos(startOffset);
             return -1 - (currentSymbolIndexesStartOffset + startOffset);
         }
