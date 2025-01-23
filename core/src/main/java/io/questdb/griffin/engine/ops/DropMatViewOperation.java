@@ -29,7 +29,7 @@ public class DropMatViewOperation implements Operation {
 
     @Override
     public void close() {
-        // nothing to fee
+        // no-op
     }
 
     public OperationFuture execute(SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {

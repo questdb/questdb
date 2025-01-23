@@ -3684,7 +3684,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "drop materialized view if exists",
                 32,
-                "mat-view-name expected"
+                "view name expected"
         );
     }
 
@@ -7678,6 +7678,55 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "query is not expected, did you mean column?",
                 modelOf("a").col("x", ColumnType.INT).col("y", ColumnType.INT)
         );
+    }
+
+    @Test
+    public void testRefreshMatView0() throws Exception {
+        assertSyntaxError(
+                "refresh",
+                7,
+                "'materialized' expected"
+        );
+    }
+
+    @Test
+    public void testRefreshMatView1() throws Exception {
+        assertSyntaxError(
+                "refresh materialized foobar",
+                21,
+                "'view' expected"
+        );
+    }
+
+    @Test
+    public void testRefreshMatView2() throws Exception {
+        assertSyntaxError(
+                "REFRESH MATERIALIZED VIEW;",
+                25,
+                "view name expected"
+        );
+    }
+
+    @Test
+    public void testRefreshMatView3() throws Exception {
+        assertSyntaxError(
+                "REFRESH MATERIALIZED VIEW 'myview';",
+                26,
+                "existing materialized view name expected"
+        );
+    }
+
+    @Test
+    public void testRefreshMatView4() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
+            execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
+            assertException(
+                    "REFRESH MATERIALIZED VIEW 'x_view' foobar",
+                    35,
+                    "unexpected token"
+            );
+        });
     }
 
     @Test

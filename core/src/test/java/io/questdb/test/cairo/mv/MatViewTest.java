@@ -92,8 +92,7 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             execute("rename table base_price to base_price2");
-            assertSql("refresh_mat_view\n" +
-                    "true\n", "select refresh_mat_view('price_1h')");
+            execute("refresh materialized view 'price_1h';");
             currentMicros = parseFloorPartialTimestamp("2024-10-24T18");
             refreshJob.run(0);
             drainWalQueue();
@@ -109,8 +108,7 @@ public class MatViewTest extends AbstractCairoTest {
                     "sym varchar, price double, ts timestamp" +
                     ") timestamp(ts) partition by DAY BYPASS WAL"
             );
-            assertSql("refresh_mat_view\n" +
-                    "true\n", "select refresh_mat_view('price_1h')");
+            execute("refresh materialized view 'price_1h';");
             currentMicros = parseFloorPartialTimestamp("2024-10-24T19");
             refreshJob.run(0);
             drainWalQueue();

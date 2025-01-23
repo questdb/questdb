@@ -287,6 +287,11 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.isExecutedAtParseTime = false;
     }
 
+    public void ofRefreshMatView() {
+        type = REFRESH_MAT_VIEW;
+        this.isExecutedAtParseTime = true;
+    }
+
     public void ofRenameTable() {
         of(RENAME_TABLE);
         this.isExecutedAtParseTime = true;
