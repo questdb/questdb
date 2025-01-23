@@ -422,7 +422,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 }
 
                 if (initialSeqTxn < writer.getAppliedSeqTxn()) {
-                    mvRefreshTask.baseTable = writer.getTableToken();
+                    mvRefreshTask.operation = MatViewRefreshTask.INCREMENTAL_REFRESH;
+                    mvRefreshTask.baseTableToken = writer.getTableToken();
                     engine.notifyMaterializedViewBaseCommit(mvRefreshTask, writer.getSeqTxn());
                 }
             } catch (Throwable th) {

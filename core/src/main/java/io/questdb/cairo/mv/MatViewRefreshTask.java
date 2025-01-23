@@ -28,17 +28,24 @@ import io.questdb.cairo.TableToken;
 import io.questdb.mp.ValueHolder;
 
 public class MatViewRefreshTask implements ValueHolder<MatViewRefreshTask> {
-    public TableToken baseTable;
+    public static final int FULL_REFRESH = 1;
+    public static final int INCREMENTAL_REFRESH = 0;
+    public static final int INVALIDATE = 2;
+    public TableToken baseTableToken;
+    public int operation = -1;
     public TableToken viewToken;
 
     @Override
     public void clear() {
-        // no-op
+        operation = -1;
+        baseTableToken = null;
+        viewToken = null;
     }
 
     @Override
     public void copyTo(MatViewRefreshTask anotherHolder) {
-        anotherHolder.baseTable = baseTable;
+        anotherHolder.operation = operation;
+        anotherHolder.baseTableToken = baseTableToken;
         anotherHolder.viewToken = viewToken;
     }
 }

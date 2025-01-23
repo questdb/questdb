@@ -91,7 +91,8 @@ public class MatViewGraph implements QuietCloseable {
     public void createView(TableToken baseTableToken, MatViewDefinition viewDefinition) {
         assert baseTableToken.getTableName().equals(viewDefinition.getBaseTableName());
         createView(viewDefinition);
-        addToRefreshQueue(baseTableToken, viewDefinition.getMatViewToken());
+        // when the view is new and empty, incremental refresh is same as full
+        addToRefreshQueue(baseTableToken, viewDefinition.getMatViewToken(), MatViewRefreshTask.INCREMENTAL_REFRESH);
     }
 
     public void dropViewIfExists(TableToken viewToken) {
@@ -154,7 +155,7 @@ public class MatViewGraph implements QuietCloseable {
     }
 
     public void notifyBaseRefreshed(MatViewRefreshTask task, long seqTxn) {
-        final TableToken tableToken = task.baseTable;
+        final TableToken tableToken = task.baseTableToken;
         final MatViewRefreshList state = dependentViewsByTableName.get(tableToken.getTableName());
         if (state != null) {
             if (state.notifyOnBaseTableRefreshedNoLock(seqTxn)) {
@@ -165,13 +166,13 @@ public class MatViewGraph implements QuietCloseable {
     }
 
     public void notifyTxnApplied(MatViewRefreshTask task, long seqTxn) {
-        final MatViewRefreshList state = dependentViewsByTableName.get(task.baseTable.getTableName());
+        final MatViewRefreshList state = dependentViewsByTableName.get(task.baseTableToken.getTableName());
         if (state != null) {
             if (state.notifyOnBaseTableCommitNoLock(seqTxn)) {
                 refreshTaskQueue.enqueue(task);
-                LOG.info().$("refresh notified table=").$(task.baseTable.getTableName()).$();
+                LOG.info().$("refresh notified table=").$(task.baseTableToken.getTableName()).$();
             } else {
-                LOG.info().$("no need to notify to refresh table=").$(task.baseTable.getTableName()).$();
+                LOG.info().$("no need to notify to refresh table=").$(task.baseTableToken.getTableName()).$();
             }
         }
     }
@@ -180,7 +181,7 @@ public class MatViewGraph implements QuietCloseable {
         final MatViewRefreshState state = refreshStateByTableDirName.get(viewTableToken.getDirName());
         if (state != null && !state.isDropped()) {
             final MatViewRefreshTask task = taskHolder.get();
-            task.baseTable = state.getViewDefinition().getMatViewToken();
+            task.baseTableToken = state.getViewDefinition().getMatViewToken();
             task.viewToken = viewTableToken;
             refreshTaskQueue.enqueue(task);
         }
@@ -190,10 +191,11 @@ public class MatViewGraph implements QuietCloseable {
         return refreshTaskQueue.tryDequeue(task);
     }
 
-    private void addToRefreshQueue(TableToken baseToken, @Nullable TableToken viewToken) {
+    private void addToRefreshQueue(TableToken baseToken, @Nullable TableToken viewToken, int operation) {
         final MatViewRefreshTask task = taskHolder.get();
-        task.baseTable = baseToken;
+        task.baseTableToken = baseToken;
         task.viewToken = viewToken;
+        task.operation = operation;
         refreshTaskQueue.enqueue(task);
     }
 

@@ -78,6 +78,7 @@ public class ViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_TABLE_DIR_NAME = COLUMN_VIEW_SQL + 1;
         private static final int COLUMN_LAST_ERROR = COLUMN_TABLE_DIR_NAME + 1;
         private static final int COLUMN_LAST_ERROR_CODE = COLUMN_LAST_ERROR + 1;
+        private static final int COLUMN_INVALID = COLUMN_LAST_ERROR_CODE + 1;
         private static final RecordMetadata METADATA;
         private final ViewsListCursor cursor = new ViewsListCursor();
 
@@ -137,7 +138,8 @@ public class ViewsFunctionFactory implements FunctionFactory {
                                 viewState.getViewDefinition(),
                                 viewState.getLastRefreshTimestamp(),
                                 errorHolder.getErrorMsg(),
-                                errorHolder.getErrorCode()
+                                errorHolder.getErrorCode(),
+                                viewState.isInvalid()
                         );
                         viewIndex++;
                         return true;
@@ -165,10 +167,16 @@ public class ViewsFunctionFactory implements FunctionFactory {
             }
 
             private static class ViewsListRecord implements Record {
+                private boolean invalid;
                 private CharSequence lastError;
                 private int lastErrorCode;
                 private long lastRefreshTimestamp;
                 private MatViewDefinition viewDefinition;
+
+                @Override
+                public boolean getBool(int col) {
+                    return col == COLUMN_INVALID && invalid;
+                }
 
                 @Override
                 public int getInt(int col) {
@@ -210,12 +218,14 @@ public class ViewsFunctionFactory implements FunctionFactory {
                         MatViewDefinition viewDefinition,
                         long lastRefreshTimestamp,
                         CharSequence lastError,
-                        int lastErrorCode
+                        int lastErrorCode,
+                        boolean invalid
                 ) {
                     this.viewDefinition = viewDefinition;
                     this.lastRefreshTimestamp = lastRefreshTimestamp;
                     this.lastError = lastError != null && lastError.length() != 0 ? lastError : null;
                     this.lastErrorCode = this.lastError != null ? lastErrorCode : Integer.MIN_VALUE;
+                    this.invalid = invalid;
                 }
             }
         }
@@ -229,6 +239,7 @@ public class ViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("view_table_dir_name", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("last_error", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("last_error_code", ColumnType.INT));
+            metadata.add(new TableColumnMetadata("invalid", ColumnType.BOOLEAN));
             METADATA = metadata;
         }
     }

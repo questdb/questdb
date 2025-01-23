@@ -86,8 +86,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertSql(
-                    "name\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tlast_error\tlast_error_code\n" +
-                            "price_1h\tbase_price\t2024-10-24T17:22:09.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tnull\n",
+                    "name\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tlast_error\tlast_error_code\tinvalid\n" +
+                            "price_1h\tbase_price\t2024-10-24T17:22:09.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tnull\tfalse\n",
                     "views"
             );
 
@@ -98,8 +98,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertSql(
-                    "name\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tlast_error\tlast_error_code\n" +
-                            "price_1h\tbase_price\t2024-10-24T18:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\ttable does not exist [table=base_price]\t-105\n",
+                    "name\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tlast_error\tlast_error_code\tinvalid\n" +
+                            "price_1h\tbase_price\t2024-10-24T18:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\ttable does not exist [table=base_price]\t-105\ttrue\n",
                     "views"
             );
 
@@ -114,8 +114,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertSql(
-                    "name\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tlast_error\tlast_error_code\n" +
-                            "price_1h\tbase_price\t2024-10-24T19:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\tBase table is not WAL table\tnull\n",
+                    "name\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tlast_error\tlast_error_code\tinvalid\n" +
+                            "price_1h\tbase_price\t2024-10-24T18:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\ttable does not exist [table=base_price]\t-105\ttrue\n",
                     "views"
             );
         });

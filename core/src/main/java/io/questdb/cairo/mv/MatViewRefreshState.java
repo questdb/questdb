@@ -46,6 +46,7 @@ public class MatViewRefreshState implements QuietCloseable {
     private volatile boolean dropped;
     private int errorCode;
     private StringSink errorSink;
+    private volatile boolean invalid;
     private volatile long lastRefreshTimestamp = Numbers.LONG_NULL;
     private long recordRowCopierMetadataVersion;
     private RecordToRowCopier recordToRowCopier;
@@ -109,6 +110,10 @@ public class MatViewRefreshState implements QuietCloseable {
         return dropped;
     }
 
+    public boolean isInvalid() {
+        return invalid;
+    }
+
     public boolean isLocked() {
         return latch.get();
     }
@@ -117,9 +122,14 @@ public class MatViewRefreshState implements QuietCloseable {
         dropped = true;
     }
 
+    public void markAsInvalid() {
+        invalid = true;
+    }
+
     public void refreshFail(Throwable th, long refreshTimestamp) {
         assert latch.get();
-        this.lastRefreshTimestamp = refreshTimestamp;
+        lastRefreshTimestamp = refreshTimestamp;
+        invalid = true;
         errorLock.writeLock().lock();
         try {
             if (th instanceof CairoException) {
@@ -141,7 +151,8 @@ public class MatViewRefreshState implements QuietCloseable {
 
     public void refreshFail(CharSequence errorMessage, long refreshTimestamp) {
         assert latch.get();
-        this.lastRefreshTimestamp = refreshTimestamp;
+        lastRefreshTimestamp = refreshTimestamp;
+        invalid = true;
         errorLock.writeLock().lock();
         try {
             errorCode = Integer.MIN_VALUE;
