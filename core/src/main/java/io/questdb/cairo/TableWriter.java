@@ -126,6 +126,7 @@ import io.questdb.tasks.O3OpenColumnTask;
 import io.questdb.tasks.O3PartitionTask;
 import io.questdb.tasks.TableWriterTask;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -4864,6 +4865,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(parquetStatBuffers);
         Misc.free(parquetColumnIdsAndTypes);
         Misc.free(segmentCopyInfo);
+        Misc.free(walTxnDetails);
         closeWalFiles();
         updateOperatorImpl = Misc.free(updateOperatorImpl);
         convertOperatorImpl = Misc.free(convertOperatorImpl);
@@ -6824,7 +6826,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long rowHi,
             final long o3TimestampMin,
             final long o3TimestampMax,
-            SymbolMapDiffCursor mapDiffCursor,
+            @Nullable SymbolMapDiffCursor mapDiffCursor,
             long commitToTimestamp,
             long walIdSegmentId,
             boolean isLastSegmentUsage,
@@ -7880,7 +7882,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private ReadOnlyObjList<? extends MemoryCR> remapWalSymbols(
-            SymbolMapDiffCursor symbolMapDiffCursor,
+            @Nullable SymbolMapDiffCursor symbolMapDiffCursor,
             long rowLo,
             long rowHi,
             Path walPath

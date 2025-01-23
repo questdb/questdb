@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.BinarySequence;
@@ -43,7 +44,7 @@ public class WalEventCursor {
     public static final long END_OF_EVENTS = -1L;
 
     private final DataInfo dataInfo = new DataInfo();
-    private final MemoryMR eventMem;
+    private final MemoryCMR eventMem;
     private final SqlInfo sqlInfo = new SqlInfo();
     private long memSize;
     private long nextOffset = Integer.BYTES;
@@ -51,7 +52,7 @@ public class WalEventCursor {
     private long txn = END_OF_EVENTS;
     private byte type = NONE;
 
-    public WalEventCursor(MemoryMR eventMem) {
+    public WalEventCursor(MemoryCMR eventMem) {
         this.eventMem = eventMem;
     }
 
@@ -226,6 +227,16 @@ public class WalEventCursor {
         return value;
     }
 
+    private long readStrOffset() {
+        checkMemSize(Integer.BYTES);
+        final int strLength = eventMem.getStrLen(offset);
+        final long storageLength = strLength > 0 ? Vm.getStorageLength(strLength) : Integer.BYTES;
+
+        checkMemSize(storageLength);
+        offset += storageLength;
+        return offset - storageLength;
+    }
+
     private Utf8Sequence readVarchar() {
         Utf8Sequence seq = VarcharTypeDriver.getPlainValue(eventMem, offset, 1);
         if (seq == null) {
@@ -270,8 +281,8 @@ public class WalEventCursor {
             entry.clear();
             return null;
         }
-        final CharSequence symbol = readStr();
-        entry.of(key, symbol);
+        final long symbolOffset = readStrOffset();
+        entry.of(key, symbolOffset, eventMem);
         return entry;
     }
 

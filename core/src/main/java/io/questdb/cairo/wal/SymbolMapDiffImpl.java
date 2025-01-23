@@ -24,6 +24,13 @@
 
 package io.questdb.cairo.wal;
 
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryCMR;
+import io.questdb.cairo.vm.api.MemoryCR;
+import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.cairo.vm.api.NullMemory;
+
 public class SymbolMapDiffImpl implements SymbolMapDiff {
     public static final int END_OF_SYMBOL_DIFFS = -1;
     public static final int END_OF_SYMBOL_ENTRIES = -1;
@@ -79,7 +86,8 @@ public class SymbolMapDiffImpl implements SymbolMapDiff {
 
     public static class Entry implements SymbolMapDiffEntry {
         private int key;
-        private CharSequence symbol;
+        private MemoryCR memoryR;
+        private long symbolOffset;
 
         @Override
         public int getKey() {
@@ -87,17 +95,24 @@ public class SymbolMapDiffImpl implements SymbolMapDiff {
         }
 
         @Override
+        public void appendSymbolTo(MemoryA symbolMem) {
+            int len = memoryR.getInt(symbolOffset);
+            symbolMem.put(memoryR.addressOf(symbolOffset), len < 0 ? Integer.BYTES : Vm.getStorageLength(len));
+        }
+
+        @Override
         public CharSequence getSymbol() {
-            return symbol;
+            return memoryR.getStrA(symbolOffset);
         }
 
         void clear() {
-            of(-1, null);
+            of(-1, 0, NullMemory.INSTANCE);
         }
 
-        void of(int key, CharSequence symbol) {
+        void of(int key, long symbolOffset, MemoryCR symbolMem) {
             this.key = key;
-            this.symbol = symbol;
+            this.symbolOffset = symbolOffset;
+            this.memoryR = symbolMem;
         }
     }
 }
