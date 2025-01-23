@@ -785,7 +785,7 @@ Java_io_questdb_std_Vect_radixSortManySegmentsIndexAsc(
     auto total_row_count = __JLONG_REINTERPRET_CAST__(uint64_t, totalRowCount);
     auto total_row_count_bytes = range_bytes(total_row_count);
 
-    auto ts_range_bytes = range_bytes(max_ts - min_ts);
+    auto ts_range_bytes = range_bytes(max_ts - min_ts + 1);
     auto txn_bytes = range_bytes(txn_count);
 
     // Check that ts + seq_txn fits 64 bits

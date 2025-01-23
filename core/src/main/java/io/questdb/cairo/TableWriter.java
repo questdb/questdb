@@ -7146,7 +7146,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 long totalRows = segmentCopyInfo.getTotalRows() + walLagRowCount;
                 // This sort apart from creating normal merge index with 2 longs
                 // creates reverse long index at the end, e.g. it needs one more long per row
-                // It does not need all 64 bits, most of the cases it can do with 32bit but here we overallocate
+                // It does not need all 64 bits, most of the cases it can do with 32bit but here we over allocate
                 // and let native code to use what's needed
                 o3TimestampMem.jumpTo(totalRows * Long.BYTES * 3);
                 o3TimestampMemCpy.jumpTo(totalRows * Long.BYTES * 3);

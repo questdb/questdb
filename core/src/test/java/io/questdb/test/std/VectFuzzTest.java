@@ -62,7 +62,7 @@ import org.junit.rules.TemporaryFolder;
 import static io.questdb.std.Vect.BIN_SEARCH_SCAN_DOWN;
 import static io.questdb.std.Vect.BIN_SEARCH_SCAN_UP;
 
-public class VectTest {
+public class VectFuzzTest {
 
     @ClassRule
     public static final TemporaryFolder temp = new TemporaryFolder();
@@ -1297,6 +1297,26 @@ public class VectTest {
     }
 
     @Test
+    public void testSort1Segment1Commit() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(null);
+        TestUtils.assertMemoryLeak(() -> {
+            int segmentCount = 1;
+            int rowsPerCommit = 1 + rnd.nextInt(10000);
+            int commits = 1;
+            long increment = Math.min((long) (Timestamps.DAY_MICROS * rnd.nextDouble()), (1L << 50) / rowsPerCommit / segmentCount);
+
+            testSortManySegments(
+                    rnd.nextLong(123124512354523L),
+                    increment,
+                    rowsPerCommit,
+                    commits,
+                    segmentCount,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testSortAB10M() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             rnd = TestUtils.generateRandom(null);
@@ -1325,12 +1345,12 @@ public class VectTest {
     }
 
     @Test
-    public void testSort1Segment1Commit() throws Exception {
+    public void testSortManySegments() throws Exception {
         Rnd rnd = TestUtils.generateRandom(null);
         TestUtils.assertMemoryLeak(() -> {
-            int segmentCount = 1;
+            int segmentCount = 1 + rnd.nextInt(200);
             int rowsPerCommit = 1 + rnd.nextInt(10000);
-            int commits = 1;
+            int commits = Math.min(rnd.nextInt(1000), 1_000_000 / rowsPerCommit / segmentCount);
             long increment = Math.min((long) (Timestamps.DAY_MICROS * rnd.nextDouble()), (1L << 50) / rowsPerCommit / segmentCount);
 
             testSortManySegments(
@@ -1345,13 +1365,13 @@ public class VectTest {
     }
 
     @Test
-    public void testSortManySegments() throws Exception {
-        Rnd rnd = TestUtils.generateRandom(null);
+    public void testSortManySegmentsLowNumbers() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(null, 1078792441925583L, 1737657643692L);
         TestUtils.assertMemoryLeak(() -> {
-            int segmentCount = 1 + rnd.nextInt(200);
-            int rowsPerCommit = 1 + rnd.nextInt(10000);
-            int commits = Math.min(rnd.nextInt(1000), 1_000_000 / rowsPerCommit / segmentCount);
-            long increment = Math.min((long) (Timestamps.DAY_MICROS * rnd.nextDouble()), (1L << 50) / rowsPerCommit / segmentCount);
+            int segmentCount = 1 + rnd.nextInt(30);
+            int rowsPerCommit = 1 + rnd.nextInt(10);
+            int commits = 1 + rnd.nextInt(10);
+            long increment = Math.min((long) (1 + rnd.nextDouble()), (1L << 50) / rowsPerCommit / segmentCount);
 
             testSortManySegments(
                     rnd.nextLong(123124512354523L),

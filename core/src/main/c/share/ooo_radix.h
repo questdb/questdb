@@ -111,6 +111,7 @@ radix_copy_segments_index_asc(const int64_t *lag_ts, const uint64_t lag_size,
     // Some combinations of template pre-generated code is not valid, do nothing in that case
     if constexpr (n <= 8 && n > 0) {
 
+        printf("soring n: %d, ts_bits: %d, txn_bits: %d\n", n, ts_bits, txn_bits);
         uint64_t counts[n][256] = {{0}};
         uint64_t o[n] = {0};
         uint64_t x;
@@ -147,6 +148,7 @@ radix_copy_segments_index_asc(const int64_t *lag_ts, const uint64_t lag_size,
 
             const uint64_t hi = segment_txns[txn_index].segment_row_offset + segment_txns[txn_index].row_count;
             for (uint64_t seg_row = segment_txns[txn_index].segment_row_offset; seg_row < hi; seg_row++, x++) {
+//                printf("%lld\n", segment_ts_maps[segment_index][seg_row].ts);
                 buff1[x].ts =
                         (((uint64_t) (segment_ts_maps[segment_index][seg_row].ts - min_value)) << txn_bits) | seq_txn;
                 buff1[x].i = (seg_row << segment_bits) | segment_index;
@@ -214,6 +216,8 @@ radix_copy_segments_index_asc(const int64_t *lag_ts, const uint64_t lag_size,
                     radix_shuffle_clean<16u, txn_bits, TRevIdx>(
                             counts[n - 3], buff1, out, size, min_value);
                 }
+            } else {
+                radix_shuffle_clean<8u, txn_bits, TRevIdx>(counts[n - 2], buff2, out, size, min_value);
             }
         } else {
             radix_shuffle_clean<0u, txn_bits, TRevIdx>(
@@ -239,6 +243,7 @@ radix_copy_segments_index_asc_rev(
         int32_t total_row_count_bytes
 ) {
     switch (total_row_count_bytes) {
+        case 0u:
         case 1u:
             return radix_copy_segments_index_asc<ts_bits, txn_bits, segment_bits, uint8_t>(
                     lag_ts, lag_size, segment_ts_maps, segment_txns, txn_count, out, cpy, segment_count, min_value);
@@ -387,7 +392,6 @@ inline uint64_t radix_copy_segments_index_asc_precompiled(uint16_t ts_bits, uint
                     txn_bits, segment_bits, lag_ts, lag_size,
                     segment_ts, segment_txns, txn_count, out, cpy,
                     segment_count, min_value, total_row_count_bytes);
-            break;
         case 16:
             return radix_copy_segments_index_asc_dispatch_txn_segment_bits<16u>(
                     txn_bits, segment_bits, lag_ts, lag_size,
