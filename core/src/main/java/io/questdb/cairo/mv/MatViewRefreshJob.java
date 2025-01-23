@@ -53,7 +53,9 @@ import io.questdb.mp.Job;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
@@ -110,23 +112,32 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             long minTs = txnRangeLoader.getMinTimestamp();
             long maxTs = txnRangeLoader.getMaxTimestamp();
 
+            //TODO(eugene): probably we should not support from-to range for materialized views
             if (minTs <= maxTs && minTs >= viewDefinition.getFromMicros()) {
                 // TODO(glasstiger): reuse the sampler instance
                 // TODO(glasstiger): Handle sample by with timezones
+
                 final TimestampSampler sampler = TimestampSamplerFactory.getInstance(
                         viewDefinition.getSamplingInterval(),
                         viewDefinition.getSamplingIntervalUnit(),
                         0
                 );
 
-                final long sampleByFromEpoch = viewDefinition.getFromMicros();
-                sampler.setStart(sampleByFromEpoch);
+                sampler.setStart(viewDefinition.getFixedOffset());
+                TimeZoneRules rules = viewDefinition.getTzRules();
+                // convert UTC timestamp into Time Zone timestamp
+                // round to the nearest sampling interval
+                // then convert back to UTC
+                long tzMinOffset = rules != null ? rules.getOffset(minTs) : 0;
+                long tzMaxOffset = rules != null ? rules.getOffset(maxTs) : 0;
 
-                minTs = sampler.round(minTs);
-                maxTs = sampler.nextTimestamp(sampler.round(maxTs));
+                final long tzMinTs = sampler.round(minTs + tzMinOffset);
+                minTs = rules != null ? Timestamps.toUTC(tzMinTs, rules) : tzMinTs - tzMinOffset;
 
-                executionContext.setRange(minTs, maxTs - 1);
+                final long tzMaxTs = sampler.nextTimestamp(sampler.round(maxTs + tzMaxOffset));
+                maxTs = rules != null ? Timestamps.toUTC(tzMaxTs, rules) : tzMaxTs - tzMaxOffset;
 
+                executionContext.setRange(minTs, maxTs);
                 LOG.info().$("refreshing materialized view [view=").$(viewDefinition.getMatViewToken())
                         .$(", base=").$(baseTableReader.getTableToken())
                         .$(", fromTxn=").$(lastRefreshTxn)

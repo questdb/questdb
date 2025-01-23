@@ -33,8 +33,11 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
@@ -345,6 +348,549 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIndexSampleByAlignToCalendar() throws Exception {
+        assertMemoryLeak(() -> {
+            String viewName = "x_view";
+            String out = "select k, s, lat, lon";
+            String viewQuery = "select k, s, first(lat) lat, last(lon) lon " +
+                    "from x " +
+                    "where s in ('a') " +
+                    "sample by 1h align to calendar";
+
+            long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-27T23:30:00.000000Z");
+            long step = 100000000L;
+            final int N = 100;
+            final int K = 5;
+            String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a','b',null) s,";
+            updateViewIncrementally(viewName, viewQuery, columns, "s", startTs, step, N, K);
+
+            String expected = "k\ts\tlat\tlon\n" +
+                    "2021-03-27T23:00:00.000000Z\ta\t142.30215575416736\t165.69007104574442\n" +
+                    "2021-03-28T00:00:00.000000Z\ta\t106.0418967098362\tnull\n" +
+                    "2021-03-28T01:00:00.000000Z\ta\t79.9245166429184\t168.04971262491318\n" +
+                    "2021-03-28T02:00:00.000000Z\ta\t6.612327943200507\t128.42101395467057\n";
+
+            assertSql(expected, outSelect(out, viewQuery));
+            assertSql(expected, outSelect(out, viewName));
+        });
+    }
+
+    @Test
+    public void testIndexSampleByAlignToCalendarDSTForwardEdge() throws Exception {
+        assertMemoryLeak(() -> {
+            String viewName = "x_view";
+            String out = "select to_timezone(k, 'Europe/Berlin') k, s, lat, lon";
+            String viewQuery = "select k, s, first(lat) lat, last(lon) lon " +
+                    "from x " +
+                    "where s in ('a') " +
+                    "sample by 1h align to calendar time zone 'Europe/Berlin'";
+
+            long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-28T00:59:00.000000Z");
+            long step = 60 * 1000000L;
+            final int N = 100;
+            final int K = 5;
+            String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a') s,";
+            updateViewIncrementally(viewName, viewQuery, columns, "s", startTs, step, N, K);
+
+            String expected = "k\ts\tlat\tlon\n" +
+                    "2021-03-28T01:00:00.000000Z\ta\t144.77803379943109\t15.276535618609202\n" +
+                    "2021-03-28T03:00:00.000000Z\ta\tnull\t127.43011035722469\n" +
+                    "2021-03-28T04:00:00.000000Z\ta\t60.30746433578906\t128.42101395467057\n";
+
+            assertSql(expected, outSelect(out, viewQuery));
+            assertSql(expected, outSelect(out, viewName));
+        });
+    }
+
+    @Test
+    public void testIndexSampleByAlignToCalendarDSTForwardEdge2() throws Exception {
+        assertMemoryLeak(() -> {
+            String viewName = "x_view";
+            String out = "select to_timezone(k, 'Europe/Berlin') k, s, lat, lon";
+            String viewQuery = "select k, s, first(lat) lat, last(lon) lon " +
+                    "from x " +
+                    "where s in ('a') " +
+                    "sample by 1h align to calendar time zone 'Europe/Berlin'";
+
+            long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-28T01:00:00.000000Z");
+            long step = 60 * 1000000L;
+            final int N = 100;
+            final int K = 5;
+            String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a') s,";
+            updateViewIncrementally(viewName, viewQuery, columns, "s", startTs, step, N, K);
+
+            String expected = "k\ts\tlat\tlon\n" +
+                    "2021-03-28T03:00:00.000000Z\ta\t144.77803379943109\tnull\n" +
+                    "2021-03-28T04:00:00.000000Z\ta\t98.27279585461298\t128.42101395467057\n";
+
+            assertSql(expected, outSelect(out, viewQuery));
+            assertSql(expected, outSelect(out, viewName));
+        });
+    }
+
+    @Test
+    public void testIndexSampleByAlignToCalendarDSTForwardEdge3() throws Exception {
+        assertMemoryLeak(() -> {
+            String viewName = "x_view";
+            String out = "select to_timezone(k, 'Europe/Berlin') k, s, lat, lon";
+            String viewQuery = "select k, s, first(lat) lat, last(lon) lon " +
+                    "from x " +
+                    "where s in ('a') " +
+                    "sample by 1h align to calendar time zone 'Europe/Berlin'";
+
+            long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-28T01:59:00.000000Z");
+            long step = 60 * 1000000L;
+            final int N = 100;
+            final int K = 5;
+            String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a') s,";
+            updateViewIncrementally(viewName, viewQuery, columns, "s", startTs, step, N, K);
+
+            String expected = "k\ts\tlat\tlon\n" +
+                    "2021-03-28T03:00:00.000000Z\ta\t144.77803379943109\t15.276535618609202\n" +
+                    "2021-03-28T04:00:00.000000Z\ta\tnull\t127.43011035722469\n" +
+                    "2021-03-28T05:00:00.000000Z\ta\t60.30746433578906\t128.42101395467057\n";
+
+            assertSql(expected, outSelect(out, viewQuery));
+            assertSql(expected, outSelect(out, viewName));
+        });
+    }
+
+    @Test
+    public void testIndexSampleByAlignToCalendarDSTForwardLocalMidnight() throws Exception {
+        assertMemoryLeak(() -> {
+            String viewName = "x_view";
+            String out = "select to_timezone(k, 'Europe/Berlin') k, s, lat, lon";
+            String viewQuery = "select k, s, first(lat) lat, last(lon) lon " +
+                    "from x " +
+                    "where s in ('a') " +
+                    "sample by 1h align to calendar time zone 'Europe/Berlin'";
+
+            long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-27T23:01:00.000000Z");
+            long step = 60 * 1000000L;
+            final int N = 100;
+            final int K = 5;
+            String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a','b',null) s,";
+            updateViewIncrementally(viewName, viewQuery, columns, "s", startTs, step, N, K);
+            String expected = "k\ts\tlat\tlon\n" +
+                    "2021-03-28T00:00:00.000000Z\ta\t142.30215575416736\t167.4566019970139\n" +
+                    "2021-03-28T01:00:00.000000Z\ta\t33.45558404694713\t128.42101395467057\n";
+
+            assertSql(expected, outSelect(out, viewQuery));
+            assertSql(expected, outSelect(out, viewName));
+        });
+    }
+
+    @Test
+    public void testIndexSampleByAlignToCalendarWithTimezoneBerlinShiftBack() throws Exception {
+        assertMemoryLeak(() -> {
+            String viewName = "x_view";
+            String out = "select to_timezone(k, 'Europe/Berlin'), k, s, lat, lon";
+            String viewQuery = "select k, s, first(lat) lat, last(k) lon " + //TODO(eugene): last(k) or last(lon) ?
+                    "from x " +
+                    "where s in ('a') " +
+                    "sample by 1d align to calendar time zone 'Europe/Berlin'";
+
+            long startTs = TimestampFormatUtils.parseUTCTimestamp("2020-10-23T20:30:00.000000Z");
+            long step = 50 * 60 * 1000000L;
+            final int N = 120;
+            final int K = 5;
+            String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a','b',null) s,";
+            updateViewIncrementally(viewName, viewQuery, columns, "s", startTs, step, N, K);
+
+            String expected = "to_timezone\tk\ts\tlat\tlon\n" +
+                    "2020-10-24T00:00:00.000000Z\t2020-10-23T22:00:00.000000Z\ta\t142.30215575416736\t2020-10-24T19:50:00.000000Z\n" +
+                    "2020-10-25T00:00:00.000000Z\t2020-10-24T22:00:00.000000Z\ta\tnull\t2020-10-25T20:00:00.000000Z\n" +
+                    "2020-10-26T00:00:00.000000Z\t2020-10-25T23:00:00.000000Z\ta\t33.45558404694713\t2020-10-26T21:50:00.000000Z\n" +
+                    "2020-10-27T00:00:00.000000Z\t2020-10-26T23:00:00.000000Z\ta\t6.612327943200507\t2020-10-27T22:00:00.000000Z\n" +
+                    "2020-10-28T00:00:00.000000Z\t2020-10-27T23:00:00.000000Z\ta\tnull\t2020-10-27T23:40:00.000000Z\n";
+
+            assertSql(expected, outSelect(out, viewQuery));
+            assertSql(expected, outSelect(out, viewName));
+        });
+    }
+
+    @Test
+    public void testIndexSampleByAlignToCalendarWithTimezoneBerlinShiftBackHourlyWithOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            String viewName = "x_view";
+            String out = "select to_timezone(k, 'Europe/Berlin'), k, s, lat, lon";
+            String viewQuery = "select k, s, first(lat) lat, last(k) lon " + //TODO(eugene): last(k) or last(lon) ?
+                    "from x " +
+                    "where s in ('a') and k between '2021-03-27 21:00' and  '2021-03-28 04:00'" +
+                    "sample by 1h align to calendar time zone 'Europe/Berlin' with offset '00:15'";
+
+            long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-26T20:30:00.000000Z");
+            long step = 13 * 60 * 1000000L;
+            final int N = 1000;
+            final int K = 25;
+            String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a','b') s,";
+            updateViewIncrementally(viewName, viewQuery, columns, "s", startTs, step, N, K);
+            String expected = "to_timezone\tk\ts\tlat\tlon\n" +
+                    "2021-03-27T21:15:00.000000Z\t2021-03-27T20:15:00.000000Z\ta\t132.09083798490755\t2021-03-27T21:12:00.000000Z\n" +
+                    "2021-03-27T22:15:00.000000Z\t2021-03-27T21:15:00.000000Z\ta\t179.5841357536068\t2021-03-27T21:51:00.000000Z\n" +
+                    "2021-03-27T23:15:00.000000Z\t2021-03-27T22:15:00.000000Z\ta\t77.68770182183965\t2021-03-27T22:56:00.000000Z\n" +
+                    "2021-03-28T00:15:00.000000Z\t2021-03-27T23:15:00.000000Z\ta\tnull\t2021-03-27T23:48:00.000000Z\n" +
+                    "2021-03-28T01:15:00.000000Z\t2021-03-28T00:15:00.000000Z\ta\t3.6703591550328163\t2021-03-28T01:06:00.000000Z\n" +
+                    "2021-03-28T03:15:00.000000Z\t2021-03-28T01:15:00.000000Z\ta\tnull\t2021-03-28T02:11:00.000000Z\n" +
+                    "2021-03-28T04:15:00.000000Z\t2021-03-28T02:15:00.000000Z\ta\tnull\t2021-03-28T02:37:00.000000Z\n" +
+                    "2021-03-28T05:15:00.000000Z\t2021-03-28T03:15:00.000000Z\ta\t38.20430552091481\t2021-03-28T03:16:00.000000Z\n";
+
+            assertSql(expected, outSelect(out, viewQuery));
+            assertSql(expected, outSelect(out, viewName));
+        });
+    }
+
+    @Test
+    public void testIndexSampleByAlignToCalendarWithTimezoneBerlinShiftForward() throws Exception {
+        assertMemoryLeak(() -> {
+            String viewName = "x_view";
+            String out = "select to_timezone(k, 'Europe/Berlin'), k, s, lat, lon";
+            String viewQuery = "select k, s, first(lat) lat, last(k) lon " + //TODO(eugene): last(k) or last(lon) ?
+                    "from x " +
+                    "where s in ('a') " +
+                    "sample by 1d align to calendar time zone 'Europe/Berlin'";
+
+            long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-25T23:30:00.000000Z");
+            long step = 50 * 60 * 1000000L;
+            final int N = 120;
+            final int K = 5;
+            String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a','b',null) s,";
+            updateViewIncrementally(viewName, viewQuery, columns, "s", startTs, step, N, K);
+            String expected = "to_timezone\tk\ts\tlat\tlon\n" +
+                    "2021-03-26T00:00:00.000000Z\t2021-03-25T23:00:00.000000Z\ta\t142.30215575416736\t2021-03-26T22:50:00.000000Z\n" +
+                    "2021-03-27T00:00:00.000000Z\t2021-03-26T23:00:00.000000Z\ta\tnull\t2021-03-27T22:10:00.000000Z\n" +
+                    "2021-03-28T00:00:00.000000Z\t2021-03-27T23:00:00.000000Z\ta\t109.94209864193589\t2021-03-28T20:40:00.000000Z\n" +
+                    "2021-03-29T00:00:00.000000Z\t2021-03-28T22:00:00.000000Z\ta\t70.00560222114518\t2021-03-29T16:40:00.000000Z\n" +
+                    "2021-03-30T00:00:00.000000Z\t2021-03-29T22:00:00.000000Z\ta\t13.290235514836048\t2021-03-30T02:40:00.000000Z\n";
+
+            assertSql(expected, outSelect(out, viewQuery));
+            assertSql(expected, outSelect(out, viewName));
+        });
+    }
+
+    @Test
+    @Ignore
+    public void testIndexSampleByAlignToCalendarWithTimezoneLondonShiftBack() throws Exception {
+        assertMemoryLeak(() -> {
+            String viewName = "x_view";
+            String out = "select to_timezone(k, 'Europe/London'), k, s, lat, lon";
+            String viewQuery = "select k, s, first(lat) lat, last(k) lon " + //TODO(eugene): last(k) or last(lon) ?
+                    "from x " +
+                    "where s in ('a') " +
+                    "sample by 1d align to calendar time zone 'Europe/London'";
+
+            long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-25T23:30:00.000000Z");
+            long step = 50 * 60 * 1000000L;
+            final int N = 120;
+            final int K = 5;
+            String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a','b',null) s,";
+            updateViewIncrementally(viewName, viewQuery, columns, "s", startTs, step, N, K);
+
+            String expected = "to_timezone\tk\ts\tlat\tlon\n" +
+                    "2021-03-26T00:00:00.000000Z\t2021-03-26T00:00:00.000000Z\ta\t142.30215575416736\t2021-03-26T22:50:00.000000Z\n" +
+                    "2021-03-27T00:00:00.000000Z\t2021-03-27T00:00:00.000000Z\ta\tnull\t2021-03-27T23:00:00.000000Z\n" +
+                    "2021-03-28T00:00:00.000000Z\t2021-03-28T00:00:00.000000Z\ta\t33.45558404694713\t2021-03-28T20:40:00.000000Z\n" +
+                    "2021-03-29T00:00:00.000000Z\t2021-03-28T23:00:00.000000Z\ta\t70.00560222114518\t2021-03-29T16:40:00.000000Z\n" +
+                    "2021-03-30T00:00:00.000000Z\t2021-03-29T23:00:00.000000Z\ta\t13.290235514836048\t2021-03-30T02:40:00.000000Z\n";
+
+            assertSql(expected, outSelect(out, viewQuery));
+            assertSql(expected, outSelect(out, viewName));
+        });
+    }
+
+    @Test
+    @Ignore
+    public void testIndexSampleByAlignToCalendarWithTimezoneLondonShiftForwardHourly() throws Exception {
+        assertMemoryLeak(() -> {
+            String viewName = "x_view";
+            String out = "select to_timezone(k, 'Europe/London'), k, s, lat, lastk";
+            String viewQuery = "select k, s, first(lat) lat, last(k) lastk " +
+                    "from x " +
+                    "where s in ('a') and k between '2020-10-24 21:00:00' and '2020-10-25 05:00:00'" +
+                    "sample by 1h align to calendar time zone 'Europe/London'";
+
+            long startTs = TimestampFormatUtils.parseUTCTimestamp("2020-10-23T20:30:00.000000Z");
+            long step = 259 * 1000000L;
+            final int N = 1000;
+            final int K = 25;
+            String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a','b') s,";
+            updateViewIncrementally(viewName, viewQuery, columns, "s", startTs, step, N, K);
+
+            String expected = "to_timezone\tk\ts\tlat\tlastk\n" +
+                    "2020-10-24T22:00:00.000000Z\t2020-10-24T21:00:00.000000Z\ta\t154.93777586404912\t2020-10-24T21:49:28.000000Z\n" +
+                    "2020-10-24T23:00:00.000000Z\t2020-10-24T22:00:00.000000Z\ta\t43.799859246867385\t2020-10-24T22:54:13.000000Z\n" +
+                    "2020-10-25T00:00:00.000000Z\t2020-10-24T23:00:00.000000Z\ta\t38.34194069380561\t2020-10-24T23:41:42.000000Z\n" +
+                    "2020-10-25T01:00:00.000000Z\t2020-10-25T00:00:00.000000Z\ta\t4.158342987512034\t2020-10-25T01:51:12.000000Z\n" +
+                    "2020-10-25T02:00:00.000000Z\t2020-10-25T02:00:00.000000Z\ta\t95.73868763606973\t2020-10-25T02:47:19.000000Z\n" +
+                    "2020-10-25T03:00:00.000000Z\t2020-10-25T03:00:00.000000Z\ta\tnull\t2020-10-25T03:43:26.000000Z\n" +
+                    "2020-10-25T04:00:00.000000Z\t2020-10-25T04:00:00.000000Z\ta\t34.49948946607576\t2020-10-25T04:56:49.000000Z\n";
+
+            assertSql(expected, outSelect(out, viewQuery));
+            assertSql(expected, outSelect(out, viewName));
+        });
+    }
+
+    @Test
+    @Ignore
+    public void testSampleByDST() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base_price (" +
+                    "sym varchar, price double, ts timestamp" +
+                    ") timestamp(ts) partition by DAY WAL"
+            );
+
+            execute("insert into base_price values" +
+                    " ('gbpusd', 1.320, '2024-10-26T00:00')" +
+                    ",('gbpusd', 1.321, '2024-10-26T01:00')" +
+
+                    ",('gbpusd', 1.324, '2024-10-27T00:00')" +
+                    ",('gbpusd', 1.325, '2024-10-27T01:00')" +
+                    ",('gbpusd', 1.326, '2024-10-27T02:00')" +
+
+                    ",('gbpusd', 1.327, '2024-10-28T00:00')" +
+                    ",('gbpusd', 1.328, '2024-10-28T01:00')"
+            );
+            drainWalQueue();
+            String exp2 = "sym\tfirst\tlast\tts\tberlin\n" +
+                    "gbpusd\t1.32\t1.321\t2024-10-25T22:00:00.000000Z\t2024-10-26T00:00:00.000000Z\n" +
+                    "gbpusd\t1.325\t1.326\t2024-10-27T00:00:00.000000Z\t2024-10-27T02:00:00.000000Z\n" +
+                    "gbpusd\t1.327\t1.328\t2024-10-27T23:00:00.000000Z\t2024-10-28T00:00:00.000000Z\n";
+
+            String exp = "sym\tfirst\tlast\tts\tberlin\n" +
+                    "gbpusd\t1.32\t1.321\t2024-10-25T22:00:00.000000Z\t2024-10-26T00:00:00.000000Z\n" +
+                    "gbpusd\t1.324\t1.326\t2024-10-26T22:00:00.000000Z\t2024-10-27T00:00:00.000000Z\n" +
+                    "gbpusd\t1.327\t1.328\t2024-10-27T23:00:00.000000Z\t2024-10-28T00:00:00.000000Z\n";
+
+            assertSql(exp2,
+                    "select sym, first(price) as first, last(price) as last, count() count, ts from base_price" +
+                            " sample by 1d ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' order by ts, sym"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByNoFillAlignToCalendarTimezoneOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            String viewName = "x_view";
+            String out = "select to_timezone(k, 'PST') k, c";
+            String viewQuery = "select k, count() c from x sample by 2h align to calendar time zone 'PST' with offset '00:42'";
+            long startTs = TimestampFormatUtils.parseUTCTimestamp("1970-01-03T00:20:00.000000Z");
+            long step = 300000000;
+            final int N = 100;
+            final int K = 5;
+            updateViewIncrementally(viewName, viewQuery, startTs, step, N, K);
+            String expected = "k\tc\n" +
+                    "1970-01-02T14:42:00.000000Z\t5\n" +
+                    "1970-01-02T16:42:00.000000Z\t24\n" +
+                    "1970-01-02T18:42:00.000000Z\t24\n" +
+                    "1970-01-02T20:42:00.000000Z\t24\n" +
+                    "1970-01-02T22:42:00.000000Z\t23\n";
+
+            assertSql(expected, outSelect(out, viewQuery));
+            assertSql(expected, outSelect(out, viewName));
+        });
+    }
+
+    @Test
+    public void testSampleByNoFillNotKeyedAlignToCalendarMisalignedTimezone() throws Exception {
+        // IRAN timezone is +4:30, which doesn't align well with 1hr sample
+        assertMemoryLeak(() -> {
+            String viewName = "x_view";
+            String viewQuery = "select k, count() c from x sample by 1h align to calendar time zone 'Iran'";
+            long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-28T00:15:00.000000Z");
+            long step = 6 * 60000000;
+            final int N = 100;
+            final int K = 5;
+            updateViewIncrementally(viewName, viewQuery, startTs, step, N, K);
+            String expected = "k\tc\n" +
+                    "2021-03-28T04:00:00.000000Z\t3\n" +
+                    "2021-03-28T05:00:00.000000Z\t10\n" +
+                    "2021-03-28T06:00:00.000000Z\t10\n" +
+                    "2021-03-28T07:00:00.000000Z\t10\n" +
+                    "2021-03-28T08:00:00.000000Z\t10\n" +
+                    "2021-03-28T09:00:00.000000Z\t10\n" +
+                    "2021-03-28T10:00:00.000000Z\t10\n" +
+                    "2021-03-28T11:00:00.000000Z\t10\n" +
+                    "2021-03-28T12:00:00.000000Z\t10\n" +
+                    "2021-03-28T13:00:00.000000Z\t10\n" +
+                    "2021-03-28T14:00:00.000000Z\t7\n";
+
+            String out = "select to_timezone(k, 'Iran') k, c";
+            assertSql(expected, outSelect(out, viewQuery));
+            assertSql(expected, outSelect(out, viewName));
+        });
+    }
+
+    @Test
+    public void testSampleByNoFillNotKeyedAlignToCalendarTimezone() throws Exception {
+        assertMemoryLeak(() -> {
+            String viewName = "x_view";
+            String viewQuery = "select k, count() c from x sample by 1h align to calendar time zone 'Europe/Berlin'";
+            long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-28T00:15:00.000000Z");
+            long step = 6 * 60000000;
+            final int N = 100;
+            final int K = 5;
+            updateViewIncrementally(viewName, viewQuery, startTs, step, N, K);
+            String expected = "k\tc\n" +
+                    "2021-03-28T01:00:00.000000Z\t8\n" +
+                    "2021-03-28T03:00:00.000000Z\t10\n" +
+                    "2021-03-28T04:00:00.000000Z\t10\n" +
+                    "2021-03-28T05:00:00.000000Z\t10\n" +
+                    "2021-03-28T06:00:00.000000Z\t10\n" +
+                    "2021-03-28T07:00:00.000000Z\t10\n" +
+                    "2021-03-28T08:00:00.000000Z\t10\n" +
+                    "2021-03-28T09:00:00.000000Z\t10\n" +
+                    "2021-03-28T10:00:00.000000Z\t10\n" +
+                    "2021-03-28T11:00:00.000000Z\t10\n" +
+                    "2021-03-28T12:00:00.000000Z\t2\n";
+            String out = "select to_timezone(k, 'Europe/Berlin') k, c";
+            assertSql(expected, outSelect(out, viewQuery));
+            assertSql(expected, outSelect(out, viewName));
+        });
+    }
+
+    @Test
+    @Ignore
+    public void testSampleByNoFillNotKeyedAlignToCalendarTimezoneOct() throws Exception {
+        // We are going over spring time change. Because time is "expanding" we dont have
+        // to do anything special. Our UTC timestamps will show "gap" and data doesn't
+        // have to change
+        assertMemoryLeak(() -> {
+            String viewName = "x_view";
+            String viewQuery = "select k, count() c from x sample by 1h align to calendar time zone 'Europe/Berlin'";
+            long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-10-31T00:15:00.000000Z");
+            long step = 6 * 60000000;
+            final int N = 100;
+            final int K = 5;
+            updateViewIncrementally(viewName, viewQuery, startTs, step, N, K);
+            String expected = "k\tc\n" +
+                    "2021-10-31T02:00:00.000000Z\t18\n" +
+                    "2021-10-31T03:00:00.000000Z\t10\n" +
+                    "2021-10-31T04:00:00.000000Z\t10\n" +
+                    "2021-10-31T05:00:00.000000Z\t10\n" +
+                    "2021-10-31T06:00:00.000000Z\t10\n" +
+                    "2021-10-31T07:00:00.000000Z\t10\n" +
+                    "2021-10-31T08:00:00.000000Z\t10\n" +
+                    "2021-10-31T09:00:00.000000Z\t10\n" +
+                    "2021-10-31T10:00:00.000000Z\t10\n" +
+                    "2021-10-31T11:00:00.000000Z\t2\n";
+            String out = "select to_timezone(k, 'Europe/Berlin') k, c";
+            assertSql(expected, outSelect(out, viewQuery));
+            //TODO(eugene): Sample by bug around DST ?
+            assertSql(expected, outSelect(out, viewName));
+        });
+    }
+
+    @Test
+    @Ignore
+    public void testSampleByNoFillNotKeyedAlignToCalendarTimezoneOctMin() throws Exception {
+        // We are going over spring time change. Because time is "expanding" we dont have
+        // to do anything special. Our UTC timestamps will show "gap" and data doesn't
+        // have to change
+        assertMemoryLeak(() -> {
+            String viewName = "x_view";
+            String viewQuery = "select k, count() c from x sample by 30m align to calendar time zone 'Europe/Berlin'";
+            long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-10-31T00:15:00.000000Z");
+            long step = 6 * 60000000;
+            final int N = 100;
+            final int K = 5;
+            updateViewIncrementally(viewName, viewQuery, startTs, step, N, K);
+            String expected = "k\tc\n" +
+                    "2021-10-31T02:00:00.000000Z\t3\n" +
+                    "2021-10-31T02:30:00.000000Z\t15\n" +
+                    "2021-10-31T03:00:00.000000Z\t5\n" +
+                    "2021-10-31T03:30:00.000000Z\t5\n" +
+                    "2021-10-31T04:00:00.000000Z\t5\n" +
+                    "2021-10-31T04:30:00.000000Z\t5\n" +
+                    "2021-10-31T05:00:00.000000Z\t5\n" +
+                    "2021-10-31T05:30:00.000000Z\t5\n" +
+                    "2021-10-31T06:00:00.000000Z\t5\n" +
+                    "2021-10-31T06:30:00.000000Z\t5\n" +
+                    "2021-10-31T07:00:00.000000Z\t5\n" +
+                    "2021-10-31T07:30:00.000000Z\t5\n" +
+                    "2021-10-31T08:00:00.000000Z\t5\n" +
+                    "2021-10-31T08:30:00.000000Z\t5\n" +
+                    "2021-10-31T09:00:00.000000Z\t5\n" +
+                    "2021-10-31T09:30:00.000000Z\t5\n" +
+                    "2021-10-31T10:00:00.000000Z\t5\n" +
+                    "2021-10-31T10:30:00.000000Z\t5\n" +
+                    "2021-10-31T11:00:00.000000Z\t2\n";
+
+            String out = "select to_timezone(k, 'Europe/Berlin') k, c";
+            assertSql(expected, outSelect(out, viewQuery));
+            //TODO(eugene): Sample by bug around DST ?
+            assertSql(expected, outSelect(out, viewName));
+        });
+    }
+
+    @Test
+    public void testSampleByNoFillNotKeyedAlignToCalendarTimezoneOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            String viewName = "x_view";
+            String viewQuery = "select k, count() c from x sample by 90m align to calendar time zone 'PST' with offset '00:42'";
+            long startTs = 172800000000L;
+            long step = 300000000;
+            final int N = 100;
+            final int K = 5;
+            updateViewIncrementally(viewName, viewQuery, startTs, step, N, K);
+            String expected = "k\tc\n" +
+                    "1970-01-02T23:42:00.000000Z\t15\n" +
+                    "1970-01-03T01:12:00.000000Z\t18\n" +
+                    "1970-01-03T02:42:00.000000Z\t18\n" +
+                    "1970-01-03T04:12:00.000000Z\t18\n" +
+                    "1970-01-03T05:42:00.000000Z\t18\n" +
+                    "1970-01-03T07:12:00.000000Z\t13\n";
+            assertSql(expected, viewQuery);
+            assertSql(expected, viewName);
+        });
+    }
+
+    @Test
+    public void testSampleByNoFillNotKeyedAlignToCalendarUTC() throws Exception {
+        assertMemoryLeak(() -> {
+            String viewName = "x_view";
+            String viewQuery = "select k, count() c from x sample by 90m align to calendar";
+            long startTs = 172800000000L;
+            long step = 300000000;
+            final int N = 100;
+            final int K = 5;
+            updateViewIncrementally(viewName, viewQuery, startTs, step, N, K);
+            String expected = "k\tc\n" +
+                    "1970-01-03T00:00:00.000000Z\t18\n" +
+                    "1970-01-03T01:30:00.000000Z\t18\n" +
+                    "1970-01-03T03:00:00.000000Z\t18\n" +
+                    "1970-01-03T04:30:00.000000Z\t18\n" +
+                    "1970-01-03T06:00:00.000000Z\t18\n" +
+                    "1970-01-03T07:30:00.000000Z\t10\n";
+            assertSql(expected, viewQuery);
+            assertSql(expected, viewName);
+        });
+    }
+
+    @Test
+    public void testSampleByNoFillNotKeyedAlignToCalendarUTCOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            String viewName = "x_view";
+            String viewQuery = "select k, count() c from x sample by 90m align to calendar with offset '00:42'";
+            long startTs = 172800000000L;
+            long step = 300000000;
+            final int N = 100;
+            final int K = 5;
+            updateViewIncrementally(viewName, viewQuery, startTs, step, N, K);
+            String expected = "k\tc\n" +
+                    "1970-01-02T23:12:00.000000Z\t9\n" +
+                    "1970-01-03T00:42:00.000000Z\t18\n" +
+                    "1970-01-03T02:12:00.000000Z\t18\n" +
+                    "1970-01-03T03:42:00.000000Z\t18\n" +
+                    "1970-01-03T05:12:00.000000Z\t18\n" +
+                    "1970-01-03T06:42:00.000000Z\t18\n" +
+                    "1970-01-03T08:12:00.000000Z\t1\n";
+            assertSql(expected, viewQuery);
+            assertSql(expected, viewName);
+        });
+    }
+
+    @Test
     public void testSimpleCancelRefresh() throws Exception {
         assertMemoryLeak(() -> {
             SOCountDownLatch started = new SOCountDownLatch(1);
@@ -582,8 +1128,44 @@ public class MatViewTest extends AbstractCairoTest {
         execute("create materialized view price_1h as (" + viewSql + ") partition by DAY");
     }
 
+    private static void createMatView(String viewName, String viewSql) throws SqlException {
+        execute("create materialized view " + viewName + " as (" + viewSql + ") partition by DAY");
+    }
+
+    private String copyDataSql(String dst, String src, int from, int count) {
+        return "insert into " + dst + " " + copySql(src, from, count);
+    }
+
+    private String copySql(String src, int from, int count) {
+        return "select * from " + src + " where n >= " + from + " and n < " + (from + count);
+    }
+
+    private String createTableSql(String tableName, String columns, @Nullable String index, long startTs, long step, int count) {
+        String indexStr = index == null ? "" : ",index(" + index + ") ";
+        return "create table " + tableName + " as (" + generateSelectSql(columns, startTs, step, 0, count) + ")" +
+                indexStr +
+                " timestamp(k) partition by DAY WAL";
+    }
+
+    private String createTableSql(String tableName, String src, int from, int count) {
+        return "create table " + tableName + " as (" + copySql(src, from, count) + ") timestamp(k) partition by DAY WAL";
+    }
+
     private void dropMatView() throws SqlException {
         execute("drop materialized view price_1h;");
+    }
+
+    private String generateSelectSql(String columns, long startTs, long step, int init, int count) {
+        return "select" +
+                " x + " + init + " as n," +
+                columns +
+                " timestamp_sequence(" + startTs + ", " + step + ") k" +
+                " from" +
+                " long_sequence(" + count + ")";
+    }
+
+    private String outSelect(String out, String in) {
+        return out + " from (" + in + ")";
     }
 
     private void testIncrementalRefresh0(String viewSql) throws Exception {
@@ -627,5 +1209,46 @@ public class MatViewTest extends AbstractCairoTest {
 
             assertViewMatchesSqlOverBaseTable(viewSql);
         });
+    }
+
+    private void updateViewIncrementally(String viewName, String viewQuery, long startTs, long step, int N, int K) throws SqlException {
+        updateViewIncrementally(viewName, viewQuery, " rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b,", startTs, step, N, K);
+    }
+
+    private void updateViewIncrementally(String viewName, String viewQuery, String columns, long startTs, long step, int N, int K) throws SqlException {
+        updateViewIncrementally(viewName, viewQuery, columns, null, startTs, step, N, K);
+    }
+
+    private void updateViewIncrementally(String viewName, String viewQuery, String columns, @Nullable String index, long startTs, long step, int N, int K) throws SqlException {
+        Rnd rnd = new Rnd();
+        int initSize = rnd.nextInt(N / K) + 1;
+        int remainingSize = N - initSize;
+        int chunkSize = remainingSize / K;
+        int tail = remainingSize % K;
+
+        // create full tmp table in one go
+        execute(createTableSql("tmp", columns, index, startTs, step, N));
+        drainWalQueue();
+        execute(createTableSql("x", "tmp", 1, initSize));
+        drainWalQueue();
+        createMatView(viewName, viewQuery);
+        drainWalQueue();
+
+        MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
+        refreshJob.run(0);
+        drainWalQueue();
+
+        int prev = initSize + 1;
+        for (int i = 0; i < K; i++) {
+            int size = chunkSize + (i < tail ? 1 : 0);
+            execute(copyDataSql("x", "tmp", prev, size));
+            prev = prev + size;
+            drainWalQueue();
+            refreshJob.run(0);
+            drainWalQueue();
+            remainingSize -= size;
+        }
+
+        Assert.assertEquals(0, remainingSize);
     }
 }

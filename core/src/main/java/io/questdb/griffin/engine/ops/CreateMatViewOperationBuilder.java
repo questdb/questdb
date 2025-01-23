@@ -70,8 +70,8 @@ public class CreateMatViewOperationBuilder implements Mutable, ExecutionModel, S
         baseTableName = null;
         samplingInterval = -1;
         samplingIntervalUnit = '\0';
-        fromMicros = -1;
-        toMicros = -1;
+        fromMicros = Long.MIN_VALUE;
+        toMicros = Long.MIN_VALUE;
         timeZone = null;
         timeZoneOffset = null;
         viewSql = null;

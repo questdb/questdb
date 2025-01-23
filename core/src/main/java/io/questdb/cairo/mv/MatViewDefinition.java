@@ -24,7 +24,17 @@
 
 package io.questdb.cairo.mv;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.Timestamps;
+import org.jetbrains.annotations.Nullable;
+
+import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
+import static io.questdb.std.datetime.microtime.Timestamps.MINUTE_MICROS;
 
 public class MatViewDefinition {
     private final String baseTableName;
@@ -36,6 +46,10 @@ public class MatViewDefinition {
     private final String timeZone;
     private final String timeZoneOffset;
     private final long toMicros;
+    private long fixedOffset;
+    private @Nullable TimeZoneRules rules;
+    // non persistent fields
+    private long tzOffset;
 
     public MatViewDefinition(
             TableToken matViewToken,
@@ -57,6 +71,31 @@ public class MatViewDefinition {
         this.toMicros = toMicros;
         this.timeZone = timeZone;
         this.timeZoneOffset = timeZoneOffset;
+
+        if (timeZone != null) {
+            try {
+                long opt = Timestamps.parseOffset(timeZone);
+                if (opt == Long.MIN_VALUE) {
+                    this.rules = TimestampFormatUtils.EN_LOCALE.getZoneRules(
+                            Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(timeZone, 0, timeZone.length())),
+                            RESOLUTION_MICROS
+                    );
+                } else {
+                    // here timezone is in numeric offset format
+                    this.tzOffset = Numbers.decodeLowInt(opt) * MINUTE_MICROS;
+                }
+            } catch (NumericException e) {
+                throw CairoException.critical(0).put("invalid timezone: ").put(timeZone);
+            }
+        }
+
+        if (timeZoneOffset != null) {
+            final long val = Timestamps.parseOffset(timeZoneOffset);
+            if (val == Numbers.LONG_NULL) {
+                throw CairoException.critical(0).put("invalid offset: ").put(timeZoneOffset);
+            }
+            this.fixedOffset = Numbers.decodeLowInt(val) * MINUTE_MICROS;
+        }
     }
 
     public String getBaseTableName() {
@@ -93,5 +132,13 @@ public class MatViewDefinition {
 
     public long getToMicros() {
         return toMicros;
+    }
+
+    public long getFixedOffset() {
+        return fixedOffset;
+    }
+
+    public @Nullable TimeZoneRules getTzRules() {
+        return rules;
     }
 }
