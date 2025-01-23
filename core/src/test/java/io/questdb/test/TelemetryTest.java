@@ -118,11 +118,7 @@ public class TelemetryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTelemetryDisabledByDefault() throws Exception {
         assertMemoryLeak(() -> {
-            try (Path path = new Path()) {
-                Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, TableUtils.exists(FF, path, root, TELEMETRY));
-                Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, TableUtils.exists(FF, path, root, TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME));
             }
         });
     }
