@@ -1962,6 +1962,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void compileRefresh(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        executionContext.getSecurityContext().authorizeMatViewRefresh();
         CharSequence tok = expectToken(lexer, "'materialized'");
         if (!isMaterializedKeyword(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "'materialized' expected'");
