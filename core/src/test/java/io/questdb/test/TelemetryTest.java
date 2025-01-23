@@ -51,34 +51,6 @@ public class TelemetryTest extends AbstractCairoTest {
     private static final String TELEMETRY = TelemetryTask.TABLE_NAME;
 
     @Test
-    public void testTelemetryCanDeleteTableWhenDisabled() throws Exception {
-        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
-            @Override
-            public @NotNull TelemetryConfiguration getTelemetryConfiguration() {
-                return new DefaultTelemetryConfiguration() {
-                    @Override
-                    public boolean getEnabled() {
-                        return false;
-                    }
-                };
-            }
-        };
-
-        assertMemoryLeak(() -> {
-            try (
-                    CairoEngine engine = new CairoEngine(configuration);
-                    TelemetryJob ignored = new TelemetryJob(engine)
-            ) {
-                assertException(
-                        "drop table telemetry",
-                        11,
-                        "table does not exist [table=" + TELEMETRY + "]"
-                );
-            }
-        });
-    }
-
-    @Test
     public void testTelemetryConfigUpgrade() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + " (id long256, enabled boolean)");
@@ -118,7 +90,29 @@ public class TelemetryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTelemetryDoesntCreateTableWhenDisabled() throws Exception {
+        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+            @Override
+            public @NotNull TelemetryConfiguration getTelemetryConfiguration() {
+                return new DefaultTelemetryConfiguration() {
+                    @Override
+                    public boolean getEnabled() {
+                        return false;
+                    }
+                };
+            }
+        };
+
         assertMemoryLeak(() -> {
+            try (
+                    CairoEngine engine = new CairoEngine(configuration);
+                    TelemetryJob ignored = new TelemetryJob(engine)
+            ) {
+                assertException(
+                        "drop table telemetry",
+                        11,
+                        "table does not exist [table=" + TELEMETRY + "]"
+                );
             }
         });
     }
