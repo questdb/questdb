@@ -107,6 +107,10 @@ jobs:
           wget -nv https://github.com/Kitware/CMake/releases/download/v3.29.2/cmake-3.29.2-linux-x86_64.tar.gz
           tar -zxf cmake-3.29.2-linux-x86_64.tar.gz
           echo "PATH=`pwd`/cmake-3.29.2-linux-x86_64/bin/:$PATH" >> "$GITHUB_ENV"
+      - name: Install up-to-date nasm
+        run: |
+          wget -nv http://ftp.de.debian.org/debian/pool/main/n/nasm/nasm_2.14-1_amd64.deb
+          dpkg -i nasm_2.14-1_amd64.deb
       - name: Install JDK17 (for jni.h)
         run: |
           wget -nv https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.11%2B9/OpenJDK17U-jdk_x64_linux_hotspot_17.0.11_9.tar.gz
