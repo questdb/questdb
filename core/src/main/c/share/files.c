@@ -377,7 +377,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openCleanRW
     jint fd = open((const char *) lpszName, O_CREAT | O_RDWR, 0644);
     if (fd < 0) {
         // error opening / creating file
-        return -10;
+        return -1;
     }
 
     jlong fileSize = Java_io_questdb_std_Files_length(e, cl, fd);
@@ -391,7 +391,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openCleanRW
                 if (Java_io_questdb_std_Files_allocate(e, cl, fd, size) == JNI_TRUE) {
                     // Zero the file and msync, so that we have no unpleasant side effects like non-zero bytes read on ZFS.
                     // See https://github.com/questdb/questdb/issues/4756
-                    void *addr = mmap(addr, (size_t) size, PROT_READ | PROT_WRITE, MAP_SHARED, (int) fd, 0);
+                    void *addr = mmap(NULL, (size_t) size, PROT_READ | PROT_WRITE, MAP_SHARED, (int) fd, 0);
                     if (addr != MAP_FAILED) {
                         memset(addr, 0, size);
                         if (msync(addr, size, MS_SYNC) == 0) {
@@ -400,20 +400,10 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openCleanRW
                             if (flock((int) fd, LOCK_SH) == 0) {
                                 // success
                                 return fd;
-                            } else {
-                                printf("flock failed\n");
                             }
-                        } else {
-                            printf("msync failed\n");
                         }
-                    } else {
-                        printf("mmap failed\n");
                     }
-                } else {
-                    printf("allocate failed\n");
                 }
-            } else {
-                printf("truncate failed\n");
             }
         } else {
             if (fileSize >= size || Java_io_questdb_std_Files_allocate(e, cl, fd, size) == JNI_TRUE) {
@@ -421,11 +411,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openCleanRW
                 if (flock((int) fd, LOCK_SH) == 0) {
                     // success
                     return fd;
-                } else {
-                    printf("flock failed 2\n");
                 }
-            } else {
-                printf("allocate failed 2\n");
             }
         }
     } else {
@@ -433,8 +419,6 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openCleanRW
         if (Java_io_questdb_std_Files_allocate(e, cl, fd, size) == JNI_TRUE && flock((int) fd, LOCK_SH) == 0) {
             // success
             return fd;
-        } else {
-            printf("allocate failed 3\n");
         }
     }
 
@@ -444,8 +428,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openCleanRW
     close(fd);
     // Restore real errno
     errno = errnoTmp;
-    fflush(stdout);
-    return -11;
+    return -1;
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_rename

@@ -7087,21 +7087,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 .I$();
 
         mmapWalColumns(segmentCopyInfo);
-        long rowCount = processWalCommitBlockSortWalSegmentTimestamps(walMappedColumns);
-        if (rowCount > 0) {
-            long walLagCount = 0;
-            try {
-                lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
-                processWalCommitFinishApply(walLagCount, o3TimestampMem.getAddress(), 0, rowCount, regulator, true, partitionTimestampHi);
-            } catch (Throwable th) {
-                LOG.critical().$("failed to commit WAL block [table=").$(tableToken.getDirName()).$(", ex=").$(th).I$();
-                throw th;
-            } finally {
-                finishO3Append(0);
-                closeWalColumns();
-                o3Columns = o3MemColumns1;
+        try {
+            long rowCount = processWalCommitBlockSortWalSegmentTimestamps(walMappedColumns);
+            if (rowCount > 0) {
+                long walLagCount = 0;
+                try {
+                    lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
+                    processWalCommitFinishApply(walLagCount, o3TimestampMem.getAddress(), 0, rowCount, regulator, true, partitionTimestampHi);
+                } catch (Throwable th) {
+                    LOG.critical().$("failed to commit WAL block [table=").$(tableToken.getDirName()).$(", ex=").$(th).I$();
+                    throw th;
+                } finally {
+                    finishO3Append(0);
+                    o3Columns = o3MemColumns1;
+                }
+                return blockTransactionCount;
             }
-            return blockTransactionCount;
+        } finally {
+            closeWalColumns();
         }
         return -1;
     }
