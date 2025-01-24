@@ -74,6 +74,9 @@ jobs:
     container:
       image:
         debian:stretch
+      volumes:
+        - /node20217:/node20217
+        - /node20217:/__e/node20
     steps:
       - name: Install tools (CXX/NASM/Rust)
         run: |
