@@ -27,9 +27,13 @@ package io.questdb.griffin.engine.window;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.WindowSPI;
-import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
+import io.questdb.griffin.SqlCodeGenerator;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
 public interface WindowFunction extends Function {
     int ONE_PASS = 1;
@@ -47,7 +51,13 @@ public interface WindowFunction extends Function {
         return ONE_PASS;
     }
 
-    void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order);
+    default void initRecordComparator(SqlCodeGenerator sqlGenerator,
+                                      RecordMetadata metadata,
+                                      ArrayColumnTypes chainTypes,
+                                      IntList OrderIndices,
+                                      ObjList<ExpressionNode> orderby,
+                                      IntList orderbyDirections) throws SqlException {
+    }
 
     /**
      * @return pass1 scan direction.

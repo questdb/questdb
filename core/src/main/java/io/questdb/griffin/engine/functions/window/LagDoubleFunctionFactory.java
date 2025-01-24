@@ -106,7 +106,7 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         if (offset == 0) {
-            return new LeadLagValueCurrentRow(args.get(0), NAME, windowContext.isIgnoreNulls());
+            return new LeadLagValueCurrentRow(windowContext.getPartitionByRecord(), args.get(0), NAME, windowContext.isIgnoreNulls());
         }
 
         if (windowContext.getPartitionByRecord() != null) {
@@ -367,9 +367,11 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
         private double value;
         private final String name;
         private final boolean ignoreNulls;
+        private final VirtualRecord partitionByRecord;
 
-        public LeadLagValueCurrentRow(Function arg, String name, boolean ignoreNulls) {
+        public LeadLagValueCurrentRow(VirtualRecord partitionByRecord, Function arg, String name, boolean ignoreNulls) {
             super(arg);
+            this.partitionByRecord = partitionByRecord;
             this.name = name;
             this.ignoreNulls = ignoreNulls;
         }
@@ -408,6 +410,14 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
                 sink.val(" ignore nulls");
             }
             sink.val(" over ()");
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            if (partitionByRecord != null) {
+                Misc.freeObjList(partitionByRecord.getFunctions());
+            }
         }
     }
 
