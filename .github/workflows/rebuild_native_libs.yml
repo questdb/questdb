@@ -94,6 +94,11 @@ jobs:
           curl -LO https://unofficial-builds.nodejs.org/download/release/v20.9.0/node-v20.9.0-linux-x64-glibc-217.tar.xz
           tar -xf node-v20.9.0-linux-x64-glibc-217.tar.xz --strip-components 1 -C /node20217
           ldd /__e/node20/bin/node
+      - name: install git backport - checkout action requires git 2.18+ while debian stretch has 2.11
+        run: |
+          echo "deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/20190220T000000Z/ stretch-backports contrib main" >> /etc/apt/sources.list
+          apt-get update -y --allow-insecure-repositories
+          apt-get install -y -t stretch-backports git
       - uses: actions/checkout@v4
         with:
           submodules: true
