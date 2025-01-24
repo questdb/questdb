@@ -122,10 +122,6 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
         Unsafe.getUnsafe().putLong(appendAddressFor(offset, Long.BYTES), value);
     }
 
-    default void put(long addressPtr, long length) {
-        Vect.memmove(appendAddressFor(length), addressPtr, length);
-    }
-
     @Override
     default void putLong128(long lo, long hi) {
         long addr = appendAddressFor(2 * Long.BYTES);
