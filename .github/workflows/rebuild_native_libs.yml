@@ -83,7 +83,7 @@ jobs:
           sed -i s/stretch-updates/stretch/g /etc/apt/sources.list
           apt-get update -y
           apt install git nasm python3 wget ca-certificates build-essential zstd -y
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v3
         with:
           submodules: true
       - name: Install up-to-date CMake
