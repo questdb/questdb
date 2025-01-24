@@ -105,7 +105,6 @@ public class ViewsFunctionFactory implements FunctionFactory {
         }
 
         private static class ViewsListCursor implements NoRandomAccessRecordCursor {
-            private final MatViewRefreshState.ErrorHolder errorHolder = new MatViewRefreshState.ErrorHolder();
             private final ViewsListRecord record = new ViewsListRecord();
             private final ObjList<TableToken> viewTokens = new ObjList<>();
             private MatViewGraph matViewGraph;
@@ -132,13 +131,13 @@ public class ViewsFunctionFactory implements FunctionFactory {
                     final TableToken viewToken = viewTokens.get(viewIndex);
                     final MatViewRefreshState viewState = matViewGraph.getViewRefreshState(viewToken);
                     if (viewState != null && !viewState.isDropped()) {
-                        viewState.copyError(errorHolder);
                         // TODO(puzpuzpuz): include lastRefreshBaseTxn and base table txn
+                        // TODO(puzpuzpuz): include error code and message from telemetry table once we have it
                         record.of(
                                 viewState.getViewDefinition(),
                                 viewState.getLastRefreshTimestamp(),
-                                errorHolder.getErrorMsg(),
-                                errorHolder.getErrorCode(),
+                                null,
+                                0,
                                 viewState.isInvalid()
                         );
                         viewIndex++;

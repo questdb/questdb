@@ -69,17 +69,19 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testBaseTableRename() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table base_price (" +
-                    "sym varchar, price double, ts timestamp" +
-                    ") timestamp(ts) partition by DAY WAL"
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
             );
 
             createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
 
-            execute("insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
-                    ",('gbpusd', 1.323, '2024-09-10T12:02')" +
-                    ",('jpyusd', 103.21, '2024-09-10T12:02')" +
-                    ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            execute(
+                    "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
             );
             drainWalQueue();
 
@@ -102,14 +104,15 @@ public class MatViewTest extends AbstractCairoTest {
 
             assertSql(
                     "name\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tlast_error\tlast_error_code\tinvalid\n" +
-                            "price_1h\tbase_price\t2024-10-24T18:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\ttable does not exist [table=base_price]\t-105\ttrue\n",
+                            "price_1h\tbase_price\t2024-10-24T18:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tnull\ttrue\n",
                     "views"
             );
 
             // Create another base table instead of the one that was renamed
-            execute("create table base_price (" +
-                    "sym varchar, price double, ts timestamp" +
-                    ") timestamp(ts) partition by DAY BYPASS WAL"
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY BYPASS WAL"
             );
             execute("refresh materialized view 'price_1h';");
             currentMicros = parseFloorPartialTimestamp("2024-10-24T19");
@@ -118,7 +121,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             assertSql(
                     "name\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tlast_error\tlast_error_code\tinvalid\n" +
-                            "price_1h\tbase_price\t2024-10-24T18:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\ttable does not exist [table=base_price]\t-105\ttrue\n",
+                            "price_1h\tbase_price\t2024-10-24T18:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tnull\ttrue\n",
                     "views"
             );
         });
@@ -897,9 +900,10 @@ public class MatViewTest extends AbstractCairoTest {
             SOCountDownLatch stopped = new SOCountDownLatch(1);
             AtomicBoolean refreshed = new AtomicBoolean(true);
 
-            execute("create table base_price (" +
-                    "sym varchar, price double, ts timestamp" +
-                    ") timestamp(ts) partition by DAY WAL"
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
             );
 
             String viewSql = "select sym, last(price) as price, ts from base_price where sleep(120000) sample by 1h";
@@ -907,10 +911,11 @@ public class MatViewTest extends AbstractCairoTest {
             MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
             refreshJob.run(0);
 
-            execute("insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
-                    ",('gbpusd', 1.323, '2024-09-10T12:02')" +
-                    ",('jpyusd', 103.21, '2024-09-10T12:02')" +
-                    ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            execute(
+                    "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
             );
             drainWalQueue();
 
@@ -948,9 +953,9 @@ public class MatViewTest extends AbstractCairoTest {
             stopped.await();
             Assert.assertFalse(refreshed.get());
             assertSql(
-                    "name\tlast_error\tlast_error_code\n" +
-                            "price_1h\tcancelled by user\t-1\n",
-                    "select name, last_error, last_error_code from views"
+                    "name\tinvalid\n" +
+                            "price_1h\ttrue\n",
+                    "select name, invalid from views"
             );
         });
     }

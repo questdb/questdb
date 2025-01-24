@@ -222,7 +222,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             LOG.error().$("error refreshing materialized view, compilation error [view=").$(viewDef.getMatViewToken())
                                     .$(", error=").$(e.getFlyweightMessage())
                                     .I$();
-                            state.compilationFail(e, refreshTimestamp);
+                            state.refreshFail(refreshTimestamp);
+                            // TODO(puzpuzpuz): write error message to telemetry table
                             return false;
                         }
                     }
@@ -251,12 +252,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         LOG.error().$("error refreshing materialized view, base table is under heavy DDL changes [view=").$(viewDef.getMatViewToken())
                                 .$(", recompileAttempts=").$(maxRecompileAttempts)
                                 .I$();
-                        state.refreshFail(e, refreshTimestamp);
+                        state.refreshFail(refreshTimestamp);
+                        // TODO(puzpuzpuz): write error message to telemetry table
                         return false;
                     }
                 } catch (Throwable th) {
                     factory = Misc.free(factory);
-                    state.refreshFail(th, refreshTimestamp);
+                    state.refreshFail(refreshTimestamp);
+                    // TODO(puzpuzpuz): write error message to telemetry table
                     throw th;
                 }
             }
@@ -267,7 +270,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         } catch (Throwable th) {
             LOG.error().$("error refreshing materialized view [view=").$(viewDef.getMatViewToken()).$(", error=").$(th).I$();
             Misc.free(factory);
-            state.refreshFail(th, refreshTimestamp);
+            state.refreshFail(refreshTimestamp);
+            // TODO(puzpuzpuz): write error message to telemetry table
             throw th;
         }
 
@@ -319,7 +323,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     try {
                         refreshed = refreshView(state, baseTableToken, viewSeqTracker, viewToken, appliedToViewTxn, lastBaseQueryableTxn);
                     } catch (Throwable th) {
-                        state.refreshFail(th, microsecondClock.getTicks());
+                        state.refreshFail(microsecondClock.getTicks());
+                        // TODO(puzpuzpuz): write error message to telemetry table
                     } finally {
                         state.unlock();
                         // Try closing the factory if there was a concurrent drop mat view.
@@ -404,12 +409,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 LOG.error().$("error refreshing materialized view, cannot resolve base table [view=").$(viewToken)
                         .$(", error=").$(th.getFlyweightMessage())
                         .I$();
-                state.refreshFail(th, microsecondClock.getTicks());
+                state.refreshFail(microsecondClock.getTicks());
+                // TODO(puzpuzpuz): write error message to telemetry table
                 return false;
             }
 
             if (!baseTableToken.isWal()) {
-                state.refreshFail("Base table is not WAL table", microsecondClock.getTicks());
+                state.refreshFail(microsecondClock.getTicks());
+                // TODO(puzpuzpuz): write error message to telemetry table
                 return false;
             }
 
@@ -423,7 +430,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return false;
         } catch (Throwable th) {
             LOG.error().$("error refreshing materialized view [view=").$(viewToken).$(", error=").$(th).I$();
-            state.refreshFail(th, microsecondClock.getTicks());
+            state.refreshFail(microsecondClock.getTicks());
+            // TODO(puzpuzpuz): write error message to telemetry table
             return false;
         } finally {
             state.unlock();
@@ -499,6 +507,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             LOG.error().$("error refreshing materialized view [view=").$(viewToken)
                     .$(", error=").$(e.getFlyweightMessage())
                     .I$();
+            state.refreshFail(microsecondClock.getTicks());
+            // TODO(puzpuzpuz): write error message to telemetry table
         }
         return false;
     }
