@@ -25,11 +25,13 @@
 package io.questdb.cairo;
 
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
 
 public class SegmentCopyInfo implements QuietCloseable {
+    private final IntList seqTxnOrder = new IntList();
     private int distinctWalSegmentCount;
     private long maxTimestamp = Long.MIN_VALUE;
     private long maxTxnRowCount;
@@ -46,20 +48,37 @@ public class SegmentCopyInfo implements QuietCloseable {
         segments.add(isLastSegmentUse ? segmentHi : -segmentHi);
     }
 
-    public void addTxn(long segmentRowOffset, int seqTxn, long committedRowsCount, int copyTaskCount, long minTimestamp, long maxTimestamp) {
+    public void addTxn(long segmentRowOffset, int relativeSeqTxn, long committedRowsCount, int segmentIndex, long minTimestamp, long maxTimestamp) {
         txns.add(segmentRowOffset);
-        txns.add(seqTxn);
+        txns.add(relativeSeqTxn);
         txns.add(committedRowsCount);
-        txns.add(copyTaskCount);
+        txns.add(segmentIndex);
+
+        if (seqTxnOrder.size() > 0) {
+            seqTxnOrder.set(relativeSeqTxn, (int) (txns.size() / 4 - 1));
+        }
         maxTxnRowCount = Math.max(maxTxnRowCount, committedRowsCount);
         totalRows += committedRowsCount;
         this.minTimestamp = Math.min(this.minTimestamp, minTimestamp);
         this.maxTimestamp = Math.max(this.maxTimestamp, maxTimestamp);
     }
 
+    public boolean assertSeqTxnOrder() {
+        IntList copy = new IntList(seqTxnOrder.size());
+        copy.addAll(seqTxnOrder);
+        copy.sortGroups(1);
+        for (int i = 0, n = copy.size(); i < n; i++) {
+            if (copy.getQuick(i) != i) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public void clear() {
         segments.clear();
         txns.clear();
+        seqTxnOrder.clear();
         totalRows = 0;
         maxTxnRowCount = 0;
         startSeqTxn = 0;
@@ -71,6 +90,10 @@ public class SegmentCopyInfo implements QuietCloseable {
     public void close() {
         segments = Misc.free(segments);
         txns = Misc.free(txns);
+    }
+
+    public int getMappingOrder(long absoluteSeqTxn) {
+        return seqTxnOrder.get((int) (absoluteSeqTxn - startSeqTxn));
     }
 
     public long getMaxTimestamp() {
@@ -85,16 +108,16 @@ public class SegmentCopyInfo implements QuietCloseable {
         return minTimestamp;
     }
 
-    public long getRowHi(int i) {
-        return Math.abs(segments.get(i * 4L + 3));
+    public long getRowHi(int segmentIndex) {
+        return Math.abs(segments.get(segmentIndex * 4L + 3));
     }
 
-    public long getRowLo(int i) {
-        return Math.abs(segments.get(i * 4L + 2));
+    public long getRowLo(int segmentIndex) {
+        return Math.abs(segments.get(segmentIndex * 4L + 2));
     }
 
-    public int getSegmentId(int i) {
-        return (int) segments.get(i * 4L + 1);
+    public int getSegmentId(int segmentIndex) {
+        return (int) segments.get(segmentIndex * 4L + 1);
     }
 
     public long getSeqTxn(long txnIndex) {
@@ -117,19 +140,22 @@ public class SegmentCopyInfo implements QuietCloseable {
         return txns.getAddress();
     }
 
-    public int getWalId(int i) {
-        return (int) segments.get(i * 4L);
+    public int getWalId(int segmentIndex) {
+        return (int) segments.get(segmentIndex * 4L);
     }
 
-    public boolean isLastSegmentUse(int i) {
-        return segments.get(i * 4L + 3) > 0;
+    public void initBlock(long startSeqTxn, int txnCount, boolean hasSymbols) {
+        this.startSeqTxn = startSeqTxn;
+        if (hasSymbols) {
+            seqTxnOrder.setPos(txnCount);
+        }
     }
 
-    public void setStartSeqTxn(long seqTxn) {
-        startSeqTxn = seqTxn;
+    public boolean isLastSegmentUse(int segmentIndex) {
+        return segments.get(segmentIndex * 4L + 3) > 0;
     }
 
-    public int size() {
+    public int segmentCount() {
         return (int) (segments.size() / 4);
     }
 }

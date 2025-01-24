@@ -103,11 +103,15 @@ public class WalTxnDetails implements QuietCloseable {
         // - clear symbol count
         // - offset of the map start for the transactions
         long txnCount = transactions.getTxnCount();
-        outMem.jumpTo(txnCount * 2 * Integer.BYTES);
+        int headerInts = 2;
+        outMem.jumpTo(txnCount * headerInts * Integer.BYTES);
         DirectString directSymbolString = DIRECT_STRING.get();
 
-        for (long txnIndex = 0; txnIndex < txnCount; txnIndex++) {
-            long seqTxn = transactions.getSeqTxn(txnIndex);
+        assert transactions.assertSeqTxnOrder();
+
+        long startTxn = transactions.getStartTxn();
+        // Add symbols in the order of commits to make the int symbol values independent of WAL apply method
+        for (long seqTxn = startTxn, n = startTxn + txnCount; seqTxn < n; seqTxn++) {
             long txnSymbolOffset = getWalSymbolDiffCursorOffset(seqTxn) - currentSymbolIndexesStartOffset;
 
             boolean identical = true;
@@ -157,15 +161,20 @@ public class WalTxnDetails implements QuietCloseable {
                 }
             }
 
+            long txnIndex = transactions.getMappingOrder(seqTxn);
+            assert txnIndex > -1 && txnIndex < txnCount;
+
+            int newAppendOffset = (int) outMem.getAppendOffset();
             if (identical) {
                 // If the symbol map is identical to the previous transaction, we don't need to save the map.
                 // Instead, we save the clean symbol count is maximum possible int value.
+                outMem.putInt(txnIndex * Integer.BYTES * headerInts, Integer.MAX_VALUE);
+                outMem.putInt(txnIndex * Integer.BYTES * headerInts + Integer.BYTES, (int) (mapAppendOffset >> 2));
                 outMem.jumpTo(mapAppendOffset);
-                outMem.putInt(txnIndex * Integer.BYTES * 2, Integer.MAX_VALUE);
-                outMem.putInt(txnIndex * Integer.BYTES * 2 + Integer.BYTES, (int) (mapAppendOffset >> 2));
             } else {
-                outMem.putInt(txnIndex * Integer.BYTES * 2, cleanSymbolCount);
-                outMem.putInt(txnIndex * Integer.BYTES * 2 + Integer.BYTES, (int) (mapAppendOffset >> 2));
+                outMem.putInt(txnIndex * Integer.BYTES * headerInts, cleanSymbolCount);
+                outMem.putInt(txnIndex * Integer.BYTES * headerInts + Integer.BYTES, (int) (mapAppendOffset >> 2));
+                outMem.jumpTo(newAppendOffset);
             }
         }
 
@@ -295,8 +304,8 @@ public class WalTxnDetails implements QuietCloseable {
         return (isOutOfOrder & FLAG_IS_LAST_SEGMENT_USAGE) != 0;
     }
 
-    public void prepareCopySegments(long startSeqTxn, int blockTransactionCount, SegmentCopyInfo copyTasks) {
-        copyTasks.setStartSeqTxn(startSeqTxn);
+    public void prepareCopySegments(long startSeqTxn, int blockTransactionCount, SegmentCopyInfo copyTasks, boolean hasSymbols) {
+        copyTasks.initBlock(startSeqTxn, blockTransactionCount, hasSymbols);
         try (var sortedBySegmentTxnSlice = sortSliceByWalAndSegment(startSeqTxn, blockTransactionCount)) {
             int lastSegmentId = -1;
             int lastWalId = -1;
@@ -308,7 +317,7 @@ public class WalTxnDetails implements QuietCloseable {
             long roHi = 0;
 
             for (int i = 0; i < blockTransactionCount; i++) {
-                int seqTxn = (int) (sortedBySegmentTxnSlice.getSeqTxn(i) - startSeqTxn);
+                int relativeSeqTxn = (int) (sortedBySegmentTxnSlice.getSeqTxn(i) - startSeqTxn);
                 int segmentId = sortedBySegmentTxnSlice.getSegmentId(i);
                 int walId = sortedBySegmentTxnSlice.getWalId(i);
                 long roLo = sortedBySegmentTxnSlice.getRoLo(i);
@@ -334,7 +343,7 @@ public class WalTxnDetails implements QuietCloseable {
                 isLastSegmentUse = isLastSegmentUse | sortedBySegmentTxnSlice.isLastSegmentUse(i);
                 roHi = sortedBySegmentTxnSlice.getRoHi(i);
                 long committedRowsCount = roHi - roLo;
-                copyTasks.addTxn(roLo, seqTxn, committedRowsCount, copyTaskCount, minTimestamp, maxTimestamp);
+                copyTasks.addTxn(roLo, relativeSeqTxn, committedRowsCount, copyTaskCount, minTimestamp, maxTimestamp);
             }
 
             int lastIndex = blockTransactionCount - 1;
