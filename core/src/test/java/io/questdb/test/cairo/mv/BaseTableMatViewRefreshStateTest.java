@@ -49,7 +49,6 @@ public class BaseTableMatViewRefreshStateTest extends AbstractCairoTest {
         AtomicLong refreshNotificationProcessed = new AtomicLong();
         AtomicBoolean stop = new AtomicBoolean();
 
-
         MatViewRefreshList state = new MatViewRefreshList();
         int commits = rnd.nextInt(10_000_000);
         System.out.println("commits: " + commits);

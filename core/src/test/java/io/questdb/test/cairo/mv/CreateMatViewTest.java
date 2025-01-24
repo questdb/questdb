@@ -39,6 +39,7 @@ import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -493,8 +494,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
             execute("create materialized view test as (" + query + ") partition by day");
 
             assertQuery("ts\tavg\n", "test", "ts", true, true);
-            assertMatViewDefinition("test", query, TABLE1, 1, 'd', -1L, -1L, tz, null);
-            assertMatViewMetadata("test", query, TABLE1, 1, 'd', -1L, -1L, tz, null);
+            assertMatViewDefinition("test", query, TABLE1, 1, 'd', Numbers.LONG_NULL, Numbers.LONG_NULL, tz, null);
+            assertMatViewMetadata("test", query, TABLE1, 1, 'd', Numbers.LONG_NULL, Numbers.LONG_NULL, tz, null);
         });
     }
 
@@ -509,8 +510,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
             execute("create materialized view test as (" + query + ") partition by day");
 
             assertQuery("ts\tavg\n", "test", "ts", true, true);
-            assertMatViewDefinition("test", query, TABLE1, 1, 'd', -1L, -1L, tz, offset);
-            assertMatViewMetadata("test", query, TABLE1, 1, 'd', -1L, -1L, tz, offset);
+            assertMatViewDefinition("test", query, TABLE1, 1, 'd', Numbers.LONG_NULL, Numbers.LONG_NULL, tz, offset);
+            assertMatViewMetadata("test", query, TABLE1, 1, 'd', Numbers.LONG_NULL, Numbers.LONG_NULL, tz, offset);
         });
     }
 
@@ -524,8 +525,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
             execute("create materialized view test as (" + query + ") partition by day");
 
             assertQuery("ts\tavg\n", "test", "ts", true, true);
-            assertMatViewDefinition("test", query, TABLE1, 1, 'd', -1L, -1L, null, offset);
-            assertMatViewMetadata("test", query, TABLE1, 1, 'd', -1L, -1L, null, offset);
+            assertMatViewDefinition("test", query, TABLE1, 1, 'd', Numbers.LONG_NULL, Numbers.LONG_NULL, null, offset);
+            assertMatViewMetadata("test", query, TABLE1, 1, 'd', Numbers.LONG_NULL, Numbers.LONG_NULL, null, offset);
         });
     }
 
@@ -716,11 +717,11 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     private static void assertMatViewDefinition(String name, String query, String baseTableName, int samplingInterval, char samplingIntervalUnit) {
-        assertMatViewDefinition(name, query, baseTableName, samplingInterval, samplingIntervalUnit, -1L, -1L, null, null);
+        assertMatViewDefinition(name, query, baseTableName, samplingInterval, samplingIntervalUnit, Numbers.LONG_NULL, Numbers.LONG_NULL, null, null);
     }
 
     private static void assertMatViewMetadata(String name, String query, String baseTableName, int samplingInterval, char samplingIntervalUnit) {
-        assertMatViewMetadata(name, query, baseTableName, samplingInterval, samplingIntervalUnit, -1L, -1L, null, null);
+        assertMatViewMetadata(name, query, baseTableName, samplingInterval, samplingIntervalUnit, Numbers.LONG_NULL, Numbers.LONG_NULL, null, null);
     }
 
     private static void assertMatViewMetadata(
