@@ -120,11 +120,12 @@ public class WalTxnDetails implements QuietCloseable {
                 txnSymbolOffset += 4;
 
                 // Find column map of the given column index
-                while (mapCount-- > 0 && symbolIndexes.get(txnSymbolOffset + 1) != columnIndex) {
+                boolean notFound = true;
+                while (mapCount-- > 0 && (notFound = symbolIndexes.get(txnSymbolOffset + 1) != columnIndex)) {
                     txnSymbolOffset += 6;
                 }
 
-                if (symbolIndexes.get(txnSymbolOffset + 1) == columnIndex) {
+                if (!notFound) {
                     // Symbol map exists in the transaction
                     int recordCount = symbolIndexes.get(txnSymbolOffset);
                     int hasNulls = symbolIndexes.get(txnSymbolOffset + 2);
@@ -145,7 +146,9 @@ public class WalTxnDetails implements QuietCloseable {
                         directSymbolString.of(addressLo, addressLo + symbolLen * 2L);
 
                         int newKey = mapWriter.put(directSymbolString);
-                        assert newKey >= cleanSymbolCount;
+                        // Sometimes newKey can be greater than cleanSymbolCount
+                        // This is because cleanSymbolCount is read from _txn file after copying symbol files
+                        // and it can show more symbols stored at that point than what used during the symbol opening
                         identical &= newKey == i + cleanSymbolCount;
                         outMem.putInt(mapAppendOffset + ((long) i << 2), newKey);
                         symbolStringsOffset += Vm.getStorageLength(symbolLen);

@@ -444,6 +444,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openCleanRW
     close(fd);
     // Restore real errno
     errno = errnoTmp;
+    fflush(stdout);
     return -11;
 }
 
