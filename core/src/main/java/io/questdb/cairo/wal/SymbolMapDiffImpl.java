@@ -25,10 +25,8 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.cairo.vm.api.MemoryCMR;
+import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCR;
-import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.cairo.vm.api.NullMemory;
 
 public class SymbolMapDiffImpl implements SymbolMapDiff {
@@ -95,7 +93,7 @@ public class SymbolMapDiffImpl implements SymbolMapDiff {
         }
 
         @Override
-        public void appendSymbolTo(MemoryA symbolMem) {
+        public void appendSymbolTo(MemoryARW symbolMem) {
             int len = memoryR.getInt(symbolOffset);
             symbolMem.put(memoryR.addressOf(symbolOffset), len < 0 ? Integer.BYTES : Vm.getStorageLength(len));
         }

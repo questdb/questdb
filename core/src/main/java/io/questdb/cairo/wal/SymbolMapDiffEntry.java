@@ -24,12 +24,12 @@
 
 package io.questdb.cairo.wal;
 
-import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryARW;
 
 public interface SymbolMapDiffEntry {
     int getKey();
 
     CharSequence getSymbol();
 
-    void appendSymbolTo(MemoryA symbolMem);
+    void appendSymbolTo(MemoryARW symbolMem);
 }

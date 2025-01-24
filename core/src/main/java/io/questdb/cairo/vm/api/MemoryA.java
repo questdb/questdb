@@ -111,8 +111,4 @@ public interface MemoryA extends Closeable {
     void skip(long bytes);
 
     void truncate();
-
-    default void put(long addressPtr, long length) {
-        throw new UnsupportedOperationException();
-    }
 }

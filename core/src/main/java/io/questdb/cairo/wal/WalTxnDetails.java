@@ -28,7 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MapWriter;
 import io.questdb.cairo.SegmentCopyInfo;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.std.DirectIntList;
@@ -720,7 +720,7 @@ public class WalTxnDetails implements QuietCloseable {
             private int savedSymbolRecordCount;
 
             @Override
-            public void appendSymbolTo(MemoryA symbolMem) {
+            public void appendSymbolTo(MemoryARW symbolMem) {
                 throw new UnsupportedOperationException();
             }
 
