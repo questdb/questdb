@@ -219,7 +219,7 @@ public class SplitVirtualRecord implements Record {
         }
     }
 
-    public void setTarget(Record target) {
+    public void setInterpolationTarget(Record target) {
         for (int i = 0, n = interpolations.size(); i < n; i++) {
             interpolations.get(i).setTarget(target);
         }

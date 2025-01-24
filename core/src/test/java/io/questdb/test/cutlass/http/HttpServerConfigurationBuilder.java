@@ -120,11 +120,6 @@ public class HttpServerConfigurationBuilder {
                 }
 
                 @Override
-                public CharSequence getIndexFileName() {
-                    return null;
-                }
-
-                @Override
                 public String getKeepAliveHeader() {
                     return null;
                 }

@@ -179,8 +179,9 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
             record.intValues[N_ATTTYPID_COL] = type;
             record.name = column.getName();
             record.shortValues[N_ATTNUM_COL] = (short) (columnIdx + 1);
-            record.shortValues[N_ATTLEN_COL] = (short) PG_TYPE_TO_SIZE_MAP.get(type);
+            record.shortValues[N_ATTLEN_COL] = PG_TYPE_TO_SIZE_MAP.get(type);
             record.intValues[N_ATTRELID_COL] = tableId;
+            record.intValues[N_ATTTYPMOD_COL] = PGOids.getAttTypMod(type);
 
             return true;
         }

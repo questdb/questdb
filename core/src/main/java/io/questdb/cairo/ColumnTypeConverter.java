@@ -35,8 +35,14 @@ import io.questdb.griffin.SymbolMapWriterLite;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.*;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Uuid;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
@@ -205,7 +211,17 @@ public class ColumnTypeConverter {
         }
     }
 
-    private static boolean convertFixedToString(long skipRows, long rowCount, long srcFixFd, int srcColumnType, long dstFixFd, long dstVarFd, FilesFacade ff, long appendPageSize, ColumnConversionOffsetSink columnSizesSink) {
+    private static boolean convertFixedToString(
+            long skipRows,
+            long rowCount,
+            long srcFixFd,
+            int srcColumnType,
+            long dstFixFd,
+            long dstVarFd,
+            FilesFacade ff,
+            long appendPageSize,
+            ColumnConversionOffsetSink columnSizesSink
+    ) {
         final long srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
         assert srcColumnTypeSize > 0;
         long srcMapAddress;
@@ -236,7 +252,15 @@ public class ColumnTypeConverter {
         return true;
     }
 
-    private static void convertFixedToString0(long rowCount, long srcMapAddress, MemoryCMARW dstFixMem, MemoryCMARW dstVarMem, StringSink sink, int srcColumnType, Fixed2VarConverter converterInt2String) {
+    private static void convertFixedToString0(
+            long rowCount,
+            long srcMapAddress,
+            MemoryCMARW dstFixMem,
+            MemoryCMARW dstVarMem,
+            StringSink sink,
+            int srcColumnType,
+            Fixed2VarConverter converterInt2String
+    ) {
         int srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
         long hi = srcMapAddress + srcColumnTypeSize * rowCount;
         sink.clear();
@@ -250,23 +274,17 @@ public class ColumnTypeConverter {
         }
     }
 
-    private static void convertFixedToSymbo0(long rowCount, long srcMapAddress, MemoryCMARW dstFixMem, SymbolMapWriterLite symbolMapWriter, StringSink sink, int srcColumnType, Fixed2VarConverter converterInt2String) {
-        int srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
-        long hi = srcMapAddress + srcColumnTypeSize * rowCount;
-        sink.clear();
-        for (long addr = srcMapAddress; addr < hi; addr += srcColumnTypeSize) {
-            if (converterInt2String.convert(addr, sink)) {
-                int value = symbolMapWriter.resolveSymbol(sink);
-                dstFixMem.putInt(value);
-                sink.clear();
-            } else {
-                int value = symbolMapWriter.resolveSymbol(null);
-                dstFixMem.putInt(value);
-            }
-        }
-    }
-
-    private static boolean convertFixedToSymbol(long skipRows, long rowCount, long srcFixFd, int srcColumnType, long dstFixFd, SymbolMapWriterLite symbolMapWriter, FilesFacade ff, long appendPageSize, ColumnConversionOffsetSink columnSizesSink) {
+    private static boolean convertFixedToSymbol(
+            long skipRows,
+            long rowCount,
+            long srcFixFd,
+            int srcColumnType,
+            long dstFixFd,
+            SymbolMapWriterLite symbolMapWriter,
+            FilesFacade ff,
+            long appendPageSize,
+            ColumnConversionOffsetSink columnSizesSink
+    ) {
         final long srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
         assert srcColumnTypeSize > 0;
         long srcMapAddress;
@@ -283,7 +301,7 @@ public class ColumnTypeConverter {
             columnSizesSink.setSrcOffsets(skipBytes, -1);
 
             Fixed2VarConverter converter = getFixedToVarConverter(srcColumnType, ColumnType.SYMBOL);
-            convertFixedToSymbo0(rowCount, srcMapAddress, dstFixMem, symbolMapWriter, sink, srcColumnType, converter);
+            convertFixedToSymbol0(rowCount, srcMapAddress, dstFixMem, symbolMapWriter, sink, srcColumnType, converter);
             columnSizesSink.setDestSizes(dstFixMem.getAppendOffset(), -1);
         } finally {
             TableUtils.mapAppendColumnBufferRelease(ff, srcMapAddress, skipBytes, mapBytes, memoryTag);
@@ -292,7 +310,41 @@ public class ColumnTypeConverter {
         return true;
     }
 
-    private static boolean convertFixedToVarchar(long skipRows, long rowCount, long srcFixFd, int srcColumnType, long dstFixFd, long dstVarFd, FilesFacade ff, long appendPageSize, ColumnConversionOffsetSink columnSizesSink) {
+    private static void convertFixedToSymbol0(
+            long rowCount,
+            long srcMapAddress,
+            MemoryCMARW dstFixMem,
+            SymbolMapWriterLite symbolMapWriter,
+            StringSink sink,
+            int srcColumnType,
+            Fixed2VarConverter converterInt2String
+    ) {
+        int srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
+        long hi = srcMapAddress + srcColumnTypeSize * rowCount;
+        sink.clear();
+        for (long addr = srcMapAddress; addr < hi; addr += srcColumnTypeSize) {
+            if (converterInt2String.convert(addr, sink)) {
+                int value = symbolMapWriter.resolveSymbol(sink);
+                dstFixMem.putInt(value);
+                sink.clear();
+            } else {
+                int value = symbolMapWriter.resolveSymbol(null);
+                dstFixMem.putInt(value);
+            }
+        }
+    }
+
+    private static boolean convertFixedToVarchar(
+            long skipRows,
+            long rowCount,
+            long srcFixFd,
+            int srcColumnType,
+            long dstFixFd,
+            long dstVarFd,
+            FilesFacade ff,
+            long appendPageSize,
+            ColumnConversionOffsetSink columnSizesSink
+    ) {
         final long srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
         assert srcColumnTypeSize > 0;
         long srcMapAddress;
@@ -322,7 +374,15 @@ public class ColumnTypeConverter {
         return true;
     }
 
-    private static void convertFixedToVarchar0(long rowCount, long srcMapAddress, MemoryCMARW dstFixMem, MemoryCMARW dstVarMem, Utf8StringSink sink, int srcColumnType, Fixed2VarConverter converterInt2String) {
+    private static void convertFixedToVarchar0(
+            long rowCount,
+            long srcMapAddress,
+            MemoryCMARW dstFixMem,
+            MemoryCMARW dstVarMem,
+            Utf8StringSink sink,
+            int srcColumnType,
+            Fixed2VarConverter converterInt2String
+    ) {
         int srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
         long hi = srcMapAddress + srcColumnTypeSize * rowCount;
         sink.clear();
@@ -336,7 +396,19 @@ public class ColumnTypeConverter {
         }
     }
 
-    private static boolean convertFromString(long skipRows, long rowCount, long srcFixFd, long srcVarFd, long dstFixFd, long dstVarFd, int dstColumnType, FilesFacade ff, long appendPageSize, SymbolMapWriterLite symbolMapWriter, ColumnConversionOffsetSink columnSizesSink) {
+    private static boolean convertFromString(
+            long skipRows,
+            long rowCount,
+            long srcFixFd,
+            long srcVarFd,
+            long dstFixFd,
+            long dstVarFd,
+            int dstColumnType,
+            FilesFacade ff,
+            long appendPageSize,
+            SymbolMapWriterLite symbolMapWriter,
+            ColumnConversionOffsetSink columnSizesSink
+    ) {
         long skipDataSize;
         long dataSize;
         StringTypeDriver typeDriver = StringTypeDriver.INSTANCE;
@@ -407,7 +479,19 @@ public class ColumnTypeConverter {
         }
     }
 
-    private static boolean convertFromVarchar(long skipRows, long rowCount, long srcFixFd, long srcVarFd, long dstFixFd, long dstVarFd, int dstColumnType, FilesFacade ff, long appendPageSize, SymbolMapWriterLite symbolMapWriter, ColumnConversionOffsetSink columnSizesSink) {
+    private static boolean convertFromVarchar(
+            long skipRows,
+            long rowCount,
+            long srcFixFd,
+            long srcVarFd,
+            long dstFixFd,
+            long dstVarFd,
+            int dstColumnType,
+            FilesFacade ff,
+            long appendPageSize,
+            SymbolMapWriterLite symbolMapWriter,
+            ColumnConversionOffsetSink columnSizesSink
+    ) {
         long dataHi, skipDataSize;
         final VarcharTypeDriver driverInstance = VarcharTypeDriver.INSTANCE;
         try {
@@ -433,7 +517,17 @@ public class ColumnTypeConverter {
 
             switch (ColumnType.tagOf(dstColumnType)) {
                 case ColumnType.STRING:
-                    convertFromVarcharToString(skipRows, skipRows + rowCount, dstFixFd, dstVarFd, ff, appendPageSize, srcVarMem, srcFixMem, columnSizesSink);
+                    convertFromVarcharToString(
+                            skipRows,
+                            skipRows + rowCount,
+                            dstFixFd,
+                            dstVarFd,
+                            ff,
+                            appendPageSize,
+                            srcVarMem,
+                            srcFixMem,
+                            columnSizesSink
+                    );
                     return true;
                 case ColumnType.SYMBOL:
                     convertFromVarcharToSymbol(skipRows, skipRows + rowCount, dstFixFd, ff, symbolMapWriter, srcVarMem, srcFixMem, columnSizesSink);
@@ -450,13 +544,23 @@ public class ColumnTypeConverter {
         return true;
     }
 
-    private static void convertFromVarcharToFixed(long rowLo, long rowHi, long dstFixFd, FilesFacade ff, @Nullable MemoryCMORImpl srcVarMem, MemoryCMORImpl srcFixMem, ColumnConversionOffsetSink columnSizesSink, int dstColumnType, Var2FixedConverter<CharSequence> converter) {
+    private static void convertFromVarcharToFixed(
+            long rowLo,
+            long rowHi,
+            long dstFixFd,
+            FilesFacade ff,
+            @Nullable MemoryCMORImpl srcVarMem,
+            MemoryCMORImpl srcFixMem,
+            ColumnConversionOffsetSink columnSizesSink,
+            int dstColumnType,
+            Var2FixedConverter<CharSequence> converter
+    ) {
         MemoryCMARW dstFixMem = dstFixMemTL.get();
         int dstTypeSize = ColumnType.sizeOf(dstColumnType);
-        dstFixMem.of(ff, dstFixFd, true, null, Files.PAGE_SIZE, (rowHi - rowLo) * dstTypeSize, memoryTag);
-        dstFixMem.jumpTo(0);
 
         try {
+            dstFixMem.of(ff, dstFixFd, true, null, Files.PAGE_SIZE, (rowHi - rowLo) * dstTypeSize, memoryTag);
+            dstFixMem.jumpTo(0);
             for (long i = rowLo; i < rowHi; i++) {
                 Utf8Sequence utf8 = VarcharTypeDriver.getSplitValue(srcFixMem, srcVarMem, i, 1);
                 converter.convert(utf8 != null ? utf8.asAsciiCharSequence() : null, dstFixMem);
@@ -468,19 +572,28 @@ public class ColumnTypeConverter {
         }
     }
 
-    private static void convertFromVarcharToString(long rowLo, long rowHi, long dstFixFd, long dstVarFd, FilesFacade ff, long appendPageSize,
-                                                   @Nullable MemoryCMORImpl srcVarMem, MemoryCMORImpl srcFixMem, ColumnConversionOffsetSink columnSizesSink) {
+    private static void convertFromVarcharToString(
+            long rowLo,
+            long rowHi,
+            long dstFixFd,
+            long dstVarFd,
+            FilesFacade ff,
+            long appendPageSize,
+            @Nullable MemoryCMORImpl srcVarMem,
+            MemoryCMORImpl srcFixMem,
+            ColumnConversionOffsetSink columnSizesSink
+    ) {
         MemoryCMARW dstFixMem = dstFixMemTL.get();
         MemoryCMARW dstVarMem = dstVarMemTL.get();
-
-        dstVarMem.of(ff, dstVarFd, true, null, appendPageSize, appendPageSize, memoryTag);
-        dstVarMem.jumpTo(0);
-        dstFixMem.of(ff, dstFixFd, true, null, appendPageSize, StringTypeDriver.INSTANCE.getAuxVectorSize(rowHi - rowLo), memoryTag);
-        dstFixMem.jumpTo(0);
-        dstFixMem.putLong(0L);
         StringSink sink = sinkUtf16TL.get();
 
         try {
+            dstVarMem.of(ff, dstVarFd, true, null, appendPageSize, appendPageSize, memoryTag);
+            dstVarMem.jumpTo(0);
+            dstFixMem.of(ff, dstFixFd, true, null, appendPageSize, StringTypeDriver.INSTANCE.getAuxVectorSize(rowHi - rowLo), memoryTag);
+            dstFixMem.jumpTo(0);
+            dstFixMem.putLong(0L);
+
             for (long i = rowLo; i < rowHi; i++) {
                 Utf8Sequence utf8 = VarcharTypeDriver.getSplitValue(srcFixMem, srcVarMem, i, 1);
 
@@ -499,14 +612,22 @@ public class ColumnTypeConverter {
         }
     }
 
-    private static void convertFromVarcharToSymbol(long rowLo, long rowHi, long dstFixFd, FilesFacade ff, SymbolMapWriterLite symbolMapWriterLite, @Nullable MemoryCMORImpl srcVarMem, MemoryCMORImpl srcFixMem, ColumnConversionOffsetSink columnSizesSink) {
+    private static void convertFromVarcharToSymbol(
+            long rowLo,
+            long rowHi,
+            long dstFixFd,
+            FilesFacade ff,
+            SymbolMapWriterLite symbolMapWriterLite,
+            @Nullable MemoryCMORImpl srcVarMem,
+            MemoryCMORImpl srcFixMem,
+            ColumnConversionOffsetSink columnSizesSink
+    ) {
         MemoryCMARW dstFixMem = dstFixMemTL.get();
-
-        dstFixMem.of(ff, dstFixFd, true, null, Files.PAGE_SIZE, (rowHi - rowLo) * Integer.BYTES, memoryTag);
-        dstFixMem.jumpTo(0);
         StringSink sink = sinkUtf16TL.get();
 
         try {
+            dstFixMem.of(ff, dstFixFd, true, null, Files.PAGE_SIZE, (rowHi - rowLo) * Integer.BYTES, memoryTag);
+            dstFixMem.jumpTo(0);
             for (long i = rowLo; i < rowHi; i++) {
                 Utf8Sequence utf8 = VarcharTypeDriver.getSplitValue(srcFixMem, srcVarMem, i, 1);
 
@@ -526,13 +647,23 @@ public class ColumnTypeConverter {
         }
     }
 
-    private static void convertStringToFixed(long skipOffset, long rowCount, long dstFixFd, FilesFacade ff, MemoryCMORImpl srcVarMem, ColumnConversionOffsetSink columnSizesSink, int dstColumnType, Var2FixedConverter<CharSequence> converter) {
+    private static void convertStringToFixed(
+            long skipOffset,
+            long rowCount,
+            long dstFixFd,
+            FilesFacade ff,
+            MemoryCMORImpl srcVarMem,
+            ColumnConversionOffsetSink columnSizesSink,
+            int dstColumnType,
+            Var2FixedConverter<CharSequence> converter
+    ) {
         MemoryCMARW dstFixMem = dstFixMemTL.get();
         int dstTypeSize = ColumnType.sizeOf(dstColumnType);
         assert dstTypeSize > 0;
-        dstFixMem.of(ff, dstFixFd, true, null, Files.PAGE_SIZE, rowCount * dstTypeSize, memoryTag);
-        dstFixMem.jumpTo(0);
         try {
+            dstFixMem.of(ff, dstFixFd, true, null, Files.PAGE_SIZE, rowCount * dstTypeSize, memoryTag);
+            dstFixMem.jumpTo(0);
+
             long offset = skipOffset;
             for (long i = 0; i < rowCount; i++) {
                 CharSequence str = srcVarMem.getStrA(offset);
@@ -546,11 +677,19 @@ public class ColumnTypeConverter {
         }
     }
 
-    private static void convertStringToSymbol(long skipOffset, long rowCount, long dstFixFd, FilesFacade ff, SymbolMapWriterLite symbolMapWriter, MemoryCMORImpl srcVarMem, ColumnConversionOffsetSink columnSizesSink) {
+    private static void convertStringToSymbol(
+            long skipOffset,
+            long rowCount,
+            long dstFixFd,
+            FilesFacade ff,
+            SymbolMapWriterLite symbolMapWriter,
+            MemoryCMORImpl srcVarMem,
+            ColumnConversionOffsetSink columnSizesSink
+    ) {
         MemoryCMARW dstFixMem = dstFixMemTL.get();
-        dstFixMem.of(ff, dstFixFd, true, null, Files.PAGE_SIZE, rowCount * Integer.BYTES, memoryTag);
-        dstFixMem.jumpTo(0);
         try {
+            dstFixMem.of(ff, dstFixFd, true, null, Files.PAGE_SIZE, rowCount * Integer.BYTES, memoryTag);
+            dstFixMem.jumpTo(0);
             long offset = skipOffset;
             for (long i = 0; i < rowCount; i++) {
                 CharSequence str = srcVarMem.getStrA(offset);
@@ -564,7 +703,16 @@ public class ColumnTypeConverter {
         }
     }
 
-    private static void convertStringToVarchar(long skipOffset, long rowCount, long dstFixFd, long dstVarFd, FilesFacade ff, long appendPageSize, MemoryCMORImpl srcVarMem, ColumnConversionOffsetSink columnSizesSink) {
+    private static void convertStringToVarchar(
+            long skipOffset,
+            long rowCount,
+            long dstFixFd,
+            long dstVarFd,
+            FilesFacade ff,
+            long appendPageSize,
+            MemoryCMORImpl srcVarMem,
+            ColumnConversionOffsetSink columnSizesSink
+    ) {
         MemoryCMARW dstVarMem = dstVarMemTL.get();
         MemoryCMARW dstFixMem = dstFixMemTL.get();
         Utf8StringSink sink = sinkUtf8TL.get();
@@ -600,14 +748,24 @@ public class ColumnTypeConverter {
         }
     }
 
-    private static void convertSymbolToFixed(long rowCount, long symbolMapAddress, long dstFixFd, FilesFacade ff, long appendPageSize, SymbolTable symbolTable, ColumnConversionOffsetSink columnSizesSink, int dstColumnType, Var2FixedConverter<CharSequence> converter) {
+    private static void convertSymbolToFixed(
+            long rowCount,
+            long symbolMapAddress,
+            long dstFixFd,
+            FilesFacade ff,
+            long appendPageSize,
+            SymbolTable symbolTable,
+            ColumnConversionOffsetSink columnSizesSink,
+            int dstColumnType,
+            Var2FixedConverter<CharSequence> converter
+    ) {
         MemoryCMARW dstFixMem = dstFixMemTL.get();
         int dstSize = ColumnType.sizeOf(dstColumnType);
         assert dstSize > 0;
-        dstFixMem.of(ff, dstFixFd, true, null, appendPageSize, rowCount * dstSize, memoryTag);
-        dstFixMem.jumpTo(0);
 
         try {
+            dstFixMem.of(ff, dstFixFd, true, null, appendPageSize, rowCount * dstSize, memoryTag);
+            dstFixMem.jumpTo(0);
             for (long lo = symbolMapAddress, hi = symbolMapAddress + rowCount * Integer.BYTES; lo < hi; lo += Integer.BYTES) {
                 int symbol = Unsafe.getUnsafe().getInt(lo);
                 CharSequence str = symbolTable.valueOf(symbol);
@@ -620,20 +778,30 @@ public class ColumnTypeConverter {
         }
     }
 
-    private static void convertSymbolToString(long rowCount, long symbolMapAddress, long dstFixFd, long dstVarFd, FilesFacade ff, long appendPageSize, SymbolTable symbolTable, ColumnConversionOffsetSink columnSizesSink) {
+    private static void convertSymbolToString(
+            long rowCount,
+            long symbolMapAddress,
+            long dstFixFd,
+            long dstVarFd,
+            FilesFacade ff,
+            long appendPageSize,
+            SymbolTable symbolTable,
+            ColumnConversionOffsetSink columnSizesSink
+    ) {
         MemoryCMARW dstFixMem = dstFixMemTL.get();
         MemoryCMARW dstVarMem = dstVarMemTL.get();
 
         ColumnTypeDriver typeDriver = StringTypeDriver.INSTANCE;
         long dstFixSize = typeDriver.getAuxVectorSize(rowCount);
-        dstFixMem.of(ff, dstFixFd, true, null, appendPageSize, dstFixSize, memoryTag);
-        dstFixMem.jumpTo(0);
-        dstFixMem.putLong(0);
-
-        dstVarMem.of(ff, dstVarFd, true, null, appendPageSize, appendPageSize, memoryTag);
-        dstVarMem.jumpTo(0);
 
         try {
+            dstFixMem.of(ff, dstFixFd, true, null, appendPageSize, dstFixSize, memoryTag);
+            dstFixMem.jumpTo(0);
+            dstFixMem.putLong(0);
+
+            dstVarMem.of(ff, dstVarFd, true, null, appendPageSize, appendPageSize, memoryTag);
+            dstVarMem.jumpTo(0);
+
             for (long lo = symbolMapAddress, hi = symbolMapAddress + rowCount * Integer.BYTES; lo < hi; lo += Integer.BYTES) {
                 int symbol = Unsafe.getUnsafe().getInt(lo);
                 CharSequence str = symbolTable.valueOf(symbol);
@@ -650,19 +818,28 @@ public class ColumnTypeConverter {
         }
     }
 
-    private static void convertSymbolToVarchar(long rowCount, long symbolMapAddress, long dstFixFd, long dstVarFd, FilesFacade ff, long appendPageSize, SymbolTable symbolTable, ColumnConversionOffsetSink columnSizesSink) {
+    private static void convertSymbolToVarchar(
+            long rowCount,
+            long symbolMapAddress,
+            long dstFixFd,
+            long dstVarFd,
+            FilesFacade ff,
+            long appendPageSize,
+            SymbolTable symbolTable,
+            ColumnConversionOffsetSink columnSizesSink
+    ) {
         MemoryCMARW dstFixMem = dstFixMemTL.get();
         MemoryCMARW dstVarMem = dstVarMemTL.get();
-
-        ColumnTypeDriver typeDriver = VarcharTypeDriver.INSTANCE;
-        dstFixMem.of(ff, dstFixFd, true, null, appendPageSize, typeDriver.getAuxVectorSize(rowCount), memoryTag);
-        dstFixMem.jumpTo(0);
-
-        dstVarMem.of(ff, dstVarFd, true, null, appendPageSize, appendPageSize, memoryTag);
-        dstVarMem.jumpTo(0);
-
         Utf8StringSink sink = sinkUtf8TL.get();
+
         try {
+            ColumnTypeDriver typeDriver = VarcharTypeDriver.INSTANCE;
+            dstFixMem.of(ff, dstFixFd, true, null, appendPageSize, typeDriver.getAuxVectorSize(rowCount), memoryTag);
+            dstFixMem.jumpTo(0);
+
+            dstVarMem.of(ff, dstVarFd, true, null, appendPageSize, appendPageSize, memoryTag);
+            dstVarMem.jumpTo(0);
+
             for (long lo = symbolMapAddress, hi = symbolMapAddress + rowCount * Integer.BYTES; lo < hi; lo += Integer.BYTES) {
                 int symbol = Unsafe.getUnsafe().getInt(lo);
                 CharSequence str = symbolTable.valueOf(symbol);
@@ -947,7 +1124,7 @@ public class ColumnTypeConverter {
     }
 
     @FunctionalInterface
-    private interface Var2FixedConverter<T> {
+    public interface Var2FixedConverter<T> {
         void convert(T srcVar, MemoryCMARW dstFixMem);
     }
 }

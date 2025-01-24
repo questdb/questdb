@@ -109,15 +109,9 @@ public class FirstGeoHashGroupByFunctionShort extends GeoByteFunction implements
 
     @Override
     public void setNull(MapValue mapValue) {
-        setShort(mapValue, GeoHashes.SHORT_NULL);
-    }
-
-    @Override
-    public void setShort(MapValue mapValue, short value) {
-        // This method is used to define interpolated points and to init
-        // an empty value, so it's ok to reset the row id field here.
+        // This method is used to init an empty value, so it's ok to reset the row id field here.
         mapValue.putLong(valueIndex, Numbers.LONG_NULL);
-        mapValue.putShort(valueIndex + 1, value);
+        mapValue.putShort(valueIndex + 1, GeoHashes.SHORT_NULL);
     }
 
     @Override

@@ -1196,6 +1196,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isQueryTracingEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isReadOnlyInstance() {
         return false;
     }
@@ -1222,6 +1227,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isSqlParallelGroupByEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlParallelReadParquetEnabled() {
         return true;
     }
 

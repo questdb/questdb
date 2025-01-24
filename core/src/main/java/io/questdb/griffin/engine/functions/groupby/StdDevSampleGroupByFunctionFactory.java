@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
@@ -70,6 +71,11 @@ public class StdDevSampleGroupByFunctionFactory implements FunctionFactory {
         @Override
         public String getName() {
             return "stddev_samp";
+        }
+
+        @Override
+        public int getSampleByFlags() {
+            return GroupByFunction.SAMPLE_BY_FILL_ALL;
         }
 
         // Chan et al. [CGL82; CGL83]

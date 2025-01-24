@@ -22,8 +22,40 @@
  *
  ******************************************************************************/
 
-package io.questdb.mp;
+package io.questdb.metrics;
 
-public interface QueueValueHolder<T> {
-    void copyTo(T anotherHolder);
+import io.questdb.std.str.BorrowableUtf8Sink;
+import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.NotNull;
+
+abstract class AbstractLongGauge implements LongGauge {
+    private final CharSequence name;
+
+    AbstractLongGauge(CharSequence name) {
+        this.name = name;
+    }
+
+    @Override
+    public CharSequence getName() {
+        return name;
+    }
+
+    @Override
+    public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
+        appendType(sink);
+        appendMetricName(sink);
+        PrometheusFormatUtils.appendSampleLineSuffix(sink, getValue());
+        PrometheusFormatUtils.appendNewLine(sink);
+    }
+
+    private void appendMetricName(CharSink<?> sink) {
+        sink.putAscii(PrometheusFormatUtils.METRIC_NAME_PREFIX);
+        sink.put(name);
+    }
+
+    private void appendType(CharSink<?> sink) {
+        sink.putAscii(PrometheusFormatUtils.TYPE_PREFIX);
+        sink.put(name);
+        sink.putAscii(" gauge\n");
+    }
 }

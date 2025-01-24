@@ -26,7 +26,6 @@ package io.questdb.cutlass.text;
 
 import io.questdb.MessageBus;
 import io.questdb.mp.AbstractQueueConsumerJob;
-import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
@@ -71,9 +70,9 @@ public class CopyJob extends AbstractQueueConsumerJob<CopyTask> implements Close
 
     public static void assignToPool(MessageBus messageBus, WorkerPool pool) {
         for (int i = 0, n = pool.getWorkerCount(); i < n; i++) {
-            Job job = new CopyJob(messageBus);
+            CopyJob job = new CopyJob(messageBus);
             pool.assign(i, job);
-            pool.freeOnExit((Closeable) job);
+            pool.freeOnExit(job);
         }
     }
 

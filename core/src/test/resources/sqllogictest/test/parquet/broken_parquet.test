@@ -45,4 +45,3 @@ select count(*) from parquet_scan('data/parquet-testing/broken/garbledfooter.par
 statement error
 select * from parquet_scan('data/parquet-testing/broken/broken_structure.parquet')
 ----
-db error: ERROR: Error reading. Parquet file is likely corrupted

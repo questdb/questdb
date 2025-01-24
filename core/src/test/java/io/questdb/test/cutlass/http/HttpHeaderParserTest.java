@@ -741,6 +741,7 @@ public class HttpHeaderParserTest {
         try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
             hp.parse(p, p + v.length(), true, false);
             TestUtils.assertEquals("/xyz", hp.getUrl());
+            Assert.assertNull(hp.getQuery());
         } finally {
             Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
         }
@@ -748,12 +749,14 @@ public class HttpHeaderParserTest {
 
     @Test
     public void testUrlParamSingleQuote() {
-        String v = "GET /ip?x=%27a%27&y==b HTTP/1.1";
+        String v = "GET /ip?x=%27a%27&y==b HTTP/1.1\r\n";
         long p = TestUtils.toMemory(v);
         try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
             hp.parse(p, p + v.length(), true, false);
             TestUtils.assertEquals("'a'", hp.getUrlParam(new Utf8String("x")));
             TestUtils.assertEquals("b", hp.getUrlParam(new Utf8String("y")));
+            TestUtils.assertEquals("x=%27a%27&y==b", hp.getQuery());
+            TestUtils.assertEquals("GET /ip?x=%27a%27&y==b HTTP/1.1", hp.getMethodLine());
         } finally {
             Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
         }
@@ -761,7 +764,7 @@ public class HttpHeaderParserTest {
 
     @Test
     public void testUrlParamsDecode() {
-        String v = "GET /test?x=a&y=b+c%26&z=ab%20ba&w=2 HTTP/1.1";
+        String v = "GET /test?x=a&y=b+c%26&z=ab%20ba&w=2 HTTP/1.1\r\n";
         long p = TestUtils.toMemory(v);
         try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
             hp.parse(p, p + v.length(), true, false);
@@ -769,6 +772,7 @@ public class HttpHeaderParserTest {
             TestUtils.assertEquals("b c&", hp.getUrlParam(new Utf8String("y")));
             TestUtils.assertEquals("ab ba", hp.getUrlParam(new Utf8String("z")));
             TestUtils.assertEquals("2", hp.getUrlParam(new Utf8String("w")));
+            TestUtils.assertEquals("x=a&y=b+c%26&z=ab%20ba&w=2", hp.getQuery());
         } finally {
             Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
         }
@@ -776,13 +780,14 @@ public class HttpHeaderParserTest {
 
     @Test
     public void testUrlParamsDecodeSpace() {
-        String v = "GET /ok?x=a&y=b+c&z=123 HTTP/1.1";
+        String v = "GET /ok?x=a&y=b+c&z=123 HTTP/1.1\r\n";
         long p = TestUtils.toMemory(v);
         try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
             hp.parse(p, p + v.length(), true, false);
             TestUtils.assertEquals("a", hp.getUrlParam(new Utf8String("x")));
             TestUtils.assertEquals("b c", hp.getUrlParam(new Utf8String("y")));
             TestUtils.assertEquals("123", hp.getUrlParam(new Utf8String("z")));
+            TestUtils.assertEquals("x=a&y=b+c&z=123", hp.getQuery());
         } finally {
             Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
         }
@@ -790,12 +795,13 @@ public class HttpHeaderParserTest {
 
     @Test
     public void testUrlParamsDecodeTrailingSpace() {
-        String v = "GET /xyz?x=a&y=b+c HTTP/1.1";
+        String v = "GET /xyz?x=a&y=b+c HTTP/1.1\r\n";
         long p = TestUtils.toMemory(v);
         try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
             hp.parse(p, p + v.length(), true, false);
             TestUtils.assertEquals("a", hp.getUrlParam(new Utf8String("x")));
             TestUtils.assertEquals("b c", hp.getUrlParam(new Utf8String("y")));
+            TestUtils.assertEquals("x=a&y=b+c", hp.getQuery());
         } finally {
             Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
         }
@@ -803,12 +809,13 @@ public class HttpHeaderParserTest {
 
     @Test
     public void testUrlParamsDuplicateAmp() {
-        String v = "GET /query?x=a&&y==b HTTP/1.1";
+        String v = "GET /query?x=a&&y==b HTTP/1.1\r\n";
         long p = TestUtils.toMemory(v);
         try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
             hp.parse(p, p + v.length(), true, false);
             TestUtils.assertEquals("a", hp.getUrlParam(new Utf8String("x")));
             TestUtils.assertEquals("b", hp.getUrlParam(new Utf8String("y")));
+            TestUtils.assertEquals("x=a&&y==b", hp.getQuery());
         } finally {
             Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
         }
@@ -816,7 +823,7 @@ public class HttpHeaderParserTest {
 
     @Test
     public void testUrlParamsSimple() {
-        String v = "GET /query?x=a&y=b HTTP/1.1";
+        String v = "GET /query?x=a&y=b HTTP/1.1\r\n";
         long p = TestUtils.toMemory(v);
         try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
             hp.parse(p, p + v.length(), true, false);
@@ -829,7 +836,7 @@ public class HttpHeaderParserTest {
 
     @Test
     public void testUrlParamsTrailingEmpty() {
-        String v = "GET /ip?x=a&y=b&z= HTTP/1.1";
+        String v = "GET /ip?x=a&y=b&z= HTTP/1.1\r\n";
         long p = TestUtils.toMemory(v);
         try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
             hp.parse(p, p + v.length(), true, false);
@@ -843,7 +850,7 @@ public class HttpHeaderParserTest {
 
     @Test
     public void testUrlParamsTrailingNull() {
-        String v = "GET /opi?x=a&y=b& HTTP/1.1";
+        String v = "GET /opi?x=a&y=b& HTTP/1.1\r\n";
         long p = TestUtils.toMemory(v);
         try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
             hp.parse(p, p + v.length(), true, false);
@@ -965,7 +972,8 @@ public class HttpHeaderParserTest {
         Assert.assertFalse(hp.isIncomplete());
         TestUtils.assertEquals("GET", hp.getMethod());
         TestUtils.assertEquals("/status", hp.getUrl());
-        TestUtils.assertEquals("GET /status?x=1&a=&b&c&d=x HTTP/1.1", hp.getMethodLine());
+        TestUtils.assertEquals("GET /status?x=1&a=%26b&c&d=x HTTP/1.1", hp.getMethodLine());
+        TestUtils.assertEquals("x=1&a=%26b&c&d=x", hp.getQuery());
         Assert.assertEquals(9, hp.size());
         TestUtils.assertEquals("localhost:9000", hp.getHeader(new Utf8String("Host")));
         TestUtils.assertEquals("keep-alive", hp.getHeader(new Utf8String("Connection")));

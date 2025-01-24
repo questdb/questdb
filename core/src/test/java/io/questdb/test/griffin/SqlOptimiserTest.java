@@ -4380,6 +4380,239 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         });
     }
 
+    @Test
+    public void testWindowRangeFrameDependOnSubqueryOrderBy() throws SqlException {
+        execute("create table cpu_ts ( hostname symbol, usage_system double, ts1 timestamp, ts2 timestamp) timestamp(ts1);");
+        execute("insert into cpu_ts select rnd_symbol('A', 'B', 'C'), x, x::timestamp, x::timestamp + 6000000 from long_sequence(10)");
+        String q1 = "SELECT * from " +
+                "( " +
+                "SELECT ts2, hostname, usage_system, " +
+                "max(usage_system) OVER ( partition by hostname ORDER BY ts2 ASC RANGE BETWEEN 3 seconds preceding and current row ) AS max_usage_system " +
+                "from ( " +
+                "select * FROM cpu_ts WHERE ts2 >= '1970-01-01T00:00:00.000001Z' ORDER BY ts2)" +
+                ") order by hostname, ts2 LIMIT 40;";
+
+        assertPlanNoLeakCheck(
+                q1,
+                "Limit lo: 40\n" +
+                        "    Sort\n" +
+                        "      keys: [hostname, ts2]\n" +
+                        "        Window\n" +
+                        "          functions: [max(usage_system) over (partition by [hostname] range between 3000000 preceding and current row)]\n" +
+                        "            Radix sort light\n" +
+                        "              keys: [ts2]\n" +
+                        "                Async JIT Filter workers: 1\n" +
+                        "                  filter: ts2>=1\n" +
+                        "                    PageFrame\n" +
+                        "                        Row forward scan\n" +
+                        "                        Frame forward scan on: cpu_ts\n"
+        );
+        assertSql("ts2\thostname\tusage_system\tmax_usage_system\n" +
+                "1970-01-01T00:00:06.000001Z\tA\t1.0\t1.0\n" +
+                "1970-01-01T00:00:06.000002Z\tA\t2.0\t2.0\n" +
+                "1970-01-01T00:00:06.000009Z\tA\t9.0\t9.0\n" +
+                "1970-01-01T00:00:06.000003Z\tB\t3.0\t3.0\n" +
+                "1970-01-01T00:00:06.000008Z\tB\t8.0\t8.0\n" +
+                "1970-01-01T00:00:06.000010Z\tB\t10.0\t10.0\n" +
+                "1970-01-01T00:00:06.000004Z\tC\t4.0\t4.0\n" +
+                "1970-01-01T00:00:06.000005Z\tC\t5.0\t5.0\n" +
+                "1970-01-01T00:00:06.000006Z\tC\t6.0\t6.0\n" +
+                "1970-01-01T00:00:06.000007Z\tC\t7.0\t7.0\n", q1);
+
+        String q2 = "SELECT ts2, hostname, usage_system, " +
+                "max(usage_system) OVER ( partition by hostname ORDER BY ts2 ASC RANGE BETWEEN 3 seconds preceding and current row ) AS max_usage_system " +
+                "from ( " +
+                "select * FROM cpu_ts WHERE ts2 >= '1970-01-01T00:00:00.000001Z' ORDER BY ts2)";
+        assertPlanNoLeakCheck(
+                q2,
+                "Window\n" +
+                        "  functions: [max(usage_system) over (partition by [hostname] range between 3000000 preceding and current row)]\n" +
+                        "    Radix sort light\n" +
+                        "      keys: [ts2]\n" +
+                        "        Async JIT Filter workers: 1\n" +
+                        "          filter: ts2>=1\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: cpu_ts\n"
+        );
+        assertSql("ts2\thostname\tusage_system\tmax_usage_system\n" +
+                "1970-01-01T00:00:06.000001Z\tA\t1.0\t1.0\n" +
+                "1970-01-01T00:00:06.000002Z\tA\t2.0\t2.0\n" +
+                "1970-01-01T00:00:06.000003Z\tB\t3.0\t3.0\n" +
+                "1970-01-01T00:00:06.000004Z\tC\t4.0\t4.0\n" +
+                "1970-01-01T00:00:06.000005Z\tC\t5.0\t5.0\n" +
+                "1970-01-01T00:00:06.000006Z\tC\t6.0\t6.0\n" +
+                "1970-01-01T00:00:06.000007Z\tC\t7.0\t7.0\n" +
+                "1970-01-01T00:00:06.000008Z\tB\t8.0\t8.0\n" +
+                "1970-01-01T00:00:06.000009Z\tA\t9.0\t9.0\n" +
+                "1970-01-01T00:00:06.000010Z\tB\t10.0\t10.0\n", q2);
+
+        String q3 = "SELECT * FROM (" +
+                "SELECT ts1, hostname, usage_system, " +
+                "max(usage_system) OVER ( partition by hostname ORDER BY ts1 ASC RANGE BETWEEN 3 seconds preceding and current row ) AS max_usage_system " +
+                "from cpu_ts order by ts1)" +
+                "order by ts1 desc";
+        assertPlanNoLeakCheck(
+                q3,
+                "Sort\n" +
+                        "  keys: [ts1 desc]\n" +
+                        "    Limit lo: 9223372036854775807L\n" +
+                        "        Window\n" +
+                        "          functions: [max(usage_system) over (partition by [hostname] range between 3000000 preceding and current row)]\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: cpu_ts\n"
+        );
+        assertSql("ts1\thostname\tusage_system\tmax_usage_system\n" +
+                "1970-01-01T00:00:00.000010Z\tB\t10.0\t10.0\n" +
+                "1970-01-01T00:00:00.000009Z\tA\t9.0\t9.0\n" +
+                "1970-01-01T00:00:00.000008Z\tB\t8.0\t8.0\n" +
+                "1970-01-01T00:00:00.000007Z\tC\t7.0\t7.0\n" +
+                "1970-01-01T00:00:00.000006Z\tC\t6.0\t6.0\n" +
+                "1970-01-01T00:00:00.000005Z\tC\t5.0\t5.0\n" +
+                "1970-01-01T00:00:00.000004Z\tC\t4.0\t4.0\n" +
+                "1970-01-01T00:00:00.000003Z\tB\t3.0\t3.0\n" +
+                "1970-01-01T00:00:00.000002Z\tA\t2.0\t2.0\n" +
+                "1970-01-01T00:00:00.000001Z\tA\t1.0\t1.0\n", q3);
+
+        String q4 = "SELECT * FROM (" +
+                "SELECT ts1, hostname, usage_system, " +
+                "first_value(usage_system) OVER ( partition by hostname) AS first_usage_system " +
+                "from cpu_ts order by ts2)" +
+                "order by ts1 desc";
+        assertPlanNoLeakCheck(
+                q4,
+                "Radix sort light\n" +
+                        "  keys: [ts1 desc]\n" +
+                        "    SelectedRecord\n" +
+                        "        Limit lo: 9223372036854775807L\n" +
+                        "            Sort\n" +
+                        "              keys: [ts2]\n" +
+                        "                Window\n" +
+                        "                  functions: [first_value(usage_system) over (partition by [hostname])]\n" +
+                        "                    PageFrame\n" +
+                        "                        Row forward scan\n" +
+                        "                        Frame forward scan on: cpu_ts\n"
+        );
+        assertSql("ts1\thostname\tusage_system\tfirst_usage_system\n" +
+                "1970-01-01T00:00:00.000010Z\tB\t10.0\t3.0\n" +
+                "1970-01-01T00:00:00.000009Z\tA\t9.0\t1.0\n" +
+                "1970-01-01T00:00:00.000008Z\tB\t8.0\t3.0\n" +
+                "1970-01-01T00:00:00.000007Z\tC\t7.0\t4.0\n" +
+                "1970-01-01T00:00:00.000006Z\tC\t6.0\t4.0\n" +
+                "1970-01-01T00:00:00.000005Z\tC\t5.0\t4.0\n" +
+                "1970-01-01T00:00:00.000004Z\tC\t4.0\t4.0\n" +
+                "1970-01-01T00:00:00.000003Z\tB\t3.0\t3.0\n" +
+                "1970-01-01T00:00:00.000002Z\tA\t2.0\t1.0\n" +
+                "1970-01-01T00:00:00.000001Z\tA\t1.0\t1.0\n", q4);
+
+        String q5 = "SELECT * from " +
+                "( " +
+                "SELECT ts2, hostname, usage_system, " +
+                "max(usage_system) OVER ( partition by hostname ORDER BY ts2 ASC RANGE BETWEEN 3 seconds preceding and current row ) AS max_usage_system " +
+                "from ( " +
+                "select * FROM cpu_ts WHERE ts2 >= '1970-01-01T00:00:00.000001Z' ORDER BY ts2)" +
+                ") order by ts2, hostname LIMIT 40;";
+
+        assertPlanNoLeakCheck(
+                q5,
+                "Limit lo: 40\n" +
+                        "    Sort\n" +
+                        "      keys: [ts2, hostname]\n" +
+                        "        Window\n" +
+                        "          functions: [max(usage_system) over (partition by [hostname] range between 3000000 preceding and current row)]\n" +
+                        "            Radix sort light\n" +
+                        "              keys: [ts2]\n" +
+                        "                Async JIT Filter workers: 1\n" +
+                        "                  filter: ts2>=1\n" +
+                        "                    PageFrame\n" +
+                        "                        Row forward scan\n" +
+                        "                        Frame forward scan on: cpu_ts\n"
+        );
+        assertSql("ts2\thostname\tusage_system\tmax_usage_system\n" +
+                "1970-01-01T00:00:06.000001Z\tA\t1.0\t1.0\n" +
+                "1970-01-01T00:00:06.000002Z\tA\t2.0\t2.0\n" +
+                "1970-01-01T00:00:06.000003Z\tB\t3.0\t3.0\n" +
+                "1970-01-01T00:00:06.000004Z\tC\t4.0\t4.0\n" +
+                "1970-01-01T00:00:06.000005Z\tC\t5.0\t5.0\n" +
+                "1970-01-01T00:00:06.000006Z\tC\t6.0\t6.0\n" +
+                "1970-01-01T00:00:06.000007Z\tC\t7.0\t7.0\n" +
+                "1970-01-01T00:00:06.000008Z\tB\t8.0\t8.0\n" +
+                "1970-01-01T00:00:06.000009Z\tA\t9.0\t9.0\n" +
+                "1970-01-01T00:00:06.000010Z\tB\t10.0\t10.0\n", q5);
+    }
+
+    @Test
+    public void testDuplicateColumnsInWindowModel() throws SqlException {
+        execute("create table cpu_ts ( hostname symbol, usage_system double, ts timestamp) timestamp(ts);");
+        execute("insert into cpu_ts select rnd_symbol('A', 'B', 'C'), x, x::timestamp from long_sequence(3)");
+        String q1 = "select rank() over(), t1.usage_system, t1.usage_system from cpu_ts t1 join cpu_ts t2 on t1.ts > t2.ts";
+
+        assertPlanNoLeakCheck(
+                q1,
+                "CachedWindow\n" +
+                        "  unorderedFunctions: [rank()]\n" +
+                        "    SelectedRecord\n" +
+                        "        Filter filter: t2.ts<t1.ts\n" +
+                        "            Cross Join\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: cpu_ts\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: cpu_ts\n"
+        );
+        assertSql("rank\tusage_system\tusage_system1\n" +
+                "1\t2.0\t2.0\n" +
+                "1\t3.0\t3.0\n" +
+                "1\t3.0\t3.0\n", q1);
+
+        String q2 = "select rank() over(partition by t1.hostname order by t1.ts), t2.usage_system, t2.usage_system from cpu_ts t1 join cpu_ts t2 on t1.ts > t2.ts";
+
+        assertPlanNoLeakCheck(
+                q2,
+                "Window\n" +
+                        "  functions: [rank() over (partition by [hostname])]\n" +
+                        "    SelectedRecord\n" +
+                        "        Filter filter: t2.ts<t1.ts\n" +
+                        "            Cross Join\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: cpu_ts\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: cpu_ts\n"
+        );
+        assertSql("rank\tusage_system\tusage_system1\n" +
+                "1\t1.0\t1.0\n" +
+                "1\t1.0\t1.0\n" +
+                "2\t2.0\t2.0\n", q2);
+
+        // useInnerModel
+        String q3 = "select rank() over(partition by t1.hostname order by t1.ts), t2.usage_system, t2.usage_system, t1.usage_system + 10 from cpu_ts t1 join cpu_ts t2 on t1.ts > t2.ts";
+
+        assertPlanNoLeakCheck(
+                q3,
+                "Window\n" +
+                        "  functions: [rank() over (partition by [hostname])]\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [hostname,ts,usage_system,usage_system1+10]\n" +
+                        "        SelectedRecord\n" +
+                        "            Filter filter: t2.ts<t1.ts\n" +
+                        "                Cross Join\n" +
+                        "                    PageFrame\n" +
+                        "                        Row forward scan\n" +
+                        "                        Frame forward scan on: cpu_ts\n" +
+                        "                    PageFrame\n" +
+                        "                        Row forward scan\n" +
+                        "                        Frame forward scan on: cpu_ts\n"
+        );
+        assertSql("rank\tusage_system\tusage_system1\tcolumn\n" +
+                "1\t1.0\t1.0\t12.0\n" +
+                "1\t1.0\t1.0\t13.0\n" +
+                "2\t2.0\t2.0\t13.0\n", q3);
+    }
+
     protected QueryModel compileModel(String query) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             ExecutionModel model = compiler.testCompileModel(query, sqlExecutionContext);

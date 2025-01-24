@@ -118,7 +118,9 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             int rowsHiKindPos,
             int exclusionKind,
             int exclusionKindPos,
-            int timestampIndex
+            int timestampIndex,
+            boolean ignoreNulls,
+            int nullsDescPos
     ) {
         windowContext.of(
                 partitionByRecord,
@@ -135,7 +137,9 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
                 rowsHiKindPos,
                 exclusionKind,
                 exclusionKindPos,
-                timestampIndex
+                timestampIndex,
+                ignoreNulls,
+                nullsDescPos
         );
     }
 
@@ -323,16 +327,13 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.securityContext = securityContext;
         this.bindVariableService = bindVariableService;
         this.random = rnd;
-        this.containsSecret = false;
-        this.useSimpleCircuitBreaker = false;
-        this.cacheHit = false;
+        resetFlags();
         return this;
     }
 
     public void with(long requestFd) {
         this.requestFd = requestFd;
-        this.cacheHit = false;
-        this.containsSecret = false;
+        resetFlags();
     }
 
     public void with(BindVariableService bindVariableService) {
@@ -363,14 +364,18 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.random = rnd;
         this.requestFd = requestFd;
         this.circuitBreaker = circuitBreaker == null ? SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER : circuitBreaker;
-        this.containsSecret = false;
-        this.useSimpleCircuitBreaker = false;
-        this.cacheHit = false;
+        resetFlags();
         return this;
     }
 
     private void doStoreTelemetry(short event, short origin) {
         TelemetryTask.store(telemetry, origin, event);
+    }
+
+    private void resetFlags() {
+        this.containsSecret = false;
+        this.useSimpleCircuitBreaker = false;
+        this.cacheHit = false;
     }
 
     private void storeTelemetryNoop(short event, short origin) {

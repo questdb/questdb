@@ -50,6 +50,8 @@ public class WindowContextImpl implements WindowContext, Mutable {
     private long rowsLo;
     private int rowsLoKindPos;
     private int timestampIndex;
+    private boolean ignoreNulls;
+    private int nullsDescPos;
 
     @Override
     public boolean baseSupportsRandomAccess() {
@@ -74,6 +76,8 @@ public class WindowContextImpl implements WindowContext, Mutable {
         this.rowsHiKindPos = 0;
         this.exclusionKindPos = 0;
         this.timestampIndex = -1;
+        this.ignoreNulls = false;
+        this.nullsDescPos = 0;
     }
 
     public int getExclusionKind() {
@@ -150,6 +154,16 @@ public class WindowContextImpl implements WindowContext, Mutable {
         return ordered;
     }
 
+    @Override
+    public boolean isIgnoreNulls() {
+        return ignoreNulls;
+    }
+
+    @Override
+    public int getNullsDescPos() {
+        return nullsDescPos;
+    }
+
     public boolean isOrderedByDesignatedTimestamp() {
         return orderByDirection == RecordCursorFactory.SCAN_DIRECTION_FORWARD || orderByDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
     }
@@ -169,7 +183,9 @@ public class WindowContextImpl implements WindowContext, Mutable {
             int rowsHiKindPos,
             int exclusionKind,
             int exclusionKindPos,
-            int timestampIndex
+            int timestampIndex,
+            boolean ignoreNulls,
+            int nullsDescPos
     ) {
         this.empty = false;
         this.partitionByRecord = partitionByRecord;
@@ -187,5 +203,7 @@ public class WindowContextImpl implements WindowContext, Mutable {
         this.exclusionKind = exclusionKind;
         this.exclusionKindPos = exclusionKindPos;
         this.timestampIndex = timestampIndex;
+        this.ignoreNulls = ignoreNulls;
+        this.nullsDescPos = nullsDescPos;
     }
 }

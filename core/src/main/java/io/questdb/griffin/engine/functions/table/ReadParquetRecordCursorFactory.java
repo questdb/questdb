@@ -35,6 +35,9 @@ import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 
+/**
+ * Factory for single-threaded read_parquet() SQL function.
+ */
 public class ReadParquetRecordCursorFactory extends AbstractRecordCursorFactory {
     private ReadParquetRecordCursor cursor;
     private Path path;
