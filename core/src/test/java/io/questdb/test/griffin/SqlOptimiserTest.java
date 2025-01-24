@@ -4550,8 +4550,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
         assertPlanNoLeakCheck(
                 q1,
-                "CachedWindow\n" +
-                        "  unorderedFunctions: [rank()]\n" +
+                "Window\n" +
+                        "  functions: [rank() over ()]\n" +
                         "    SelectedRecord\n" +
                         "        Filter filter: t2.ts<t1.ts\n" +
                         "            Cross Join\n" +
@@ -4586,7 +4586,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertSql("rank\tusage_system\tusage_system1\n" +
                 "1\t1.0\t1.0\n" +
                 "1\t1.0\t1.0\n" +
-                "2\t2.0\t2.0\n", q2);
+                "1\t2.0\t2.0\n", q2);
 
         // useInnerModel
         String q3 = "select rank() over(partition by t1.hostname order by t1.ts), t2.usage_system, t2.usage_system, t1.usage_system + 10 from cpu_ts t1 join cpu_ts t2 on t1.ts > t2.ts";
@@ -4610,7 +4610,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertSql("rank\tusage_system\tusage_system1\tcolumn\n" +
                 "1\t1.0\t1.0\t12.0\n" +
                 "1\t1.0\t1.0\t13.0\n" +
-                "2\t2.0\t2.0\t13.0\n", q3);
+                "1\t2.0\t2.0\t13.0\n", q3);
     }
 
     protected QueryModel compileModel(String query) throws SqlException {
