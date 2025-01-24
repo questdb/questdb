@@ -98,7 +98,7 @@ jobs:
         run: |
           echo "deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/20190220T000000Z/ stretch-backports contrib main" >> /etc/apt/sources.list
           apt-get update -y --allow-insecure-repositories
-          apt-get install -y -t stretch-backports git
+          apt-get install -y -t stretch-backports git --allow-unauthenticated
       - uses: actions/checkout@v4
         with:
           submodules: true
