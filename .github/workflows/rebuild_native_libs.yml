@@ -82,7 +82,7 @@ jobs:
         run: |
           ldd --version
           yum update -y
-          apt install nasm wget zstd curl -y
+          yum install nasm wget zstd curl -y
       #      - name: Install tools (CXX/NASM/Rust) - Debian
       #        run: |
       #          ldd --version
