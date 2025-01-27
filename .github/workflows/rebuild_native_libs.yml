@@ -78,11 +78,16 @@ jobs:
         - /node20217:/node20217
         - /node20217:/__e/node20
     steps:
-      - name: Install tools
+      - name: Install tools, most are needed to build nasm
         run: |
           ldd --version
           yum update -y
-          yum install nasm wget zstd curl -y
+          yum install perl-Font-TTF perl-Sort-Versions wget perf asciidoc xmlto ghostscript adobe-source-sans-pro-fonts adobe-source-code-pro-fonts rpm-build zstd curl -y
+      - name: build newer nasm
+        run: |
+          wget https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/linux/nasm-2.16.03-0.fc39.src.rpm
+          rpmbuild --rebuild ./nasm-2.16.03-0.fc39.src.rpm
+          rpm -i ~/rpmbuild/RPMS/x86_64/nasm-2.16.03-0.el7.x86_64.rpm
       - name: install nodejs20glibc2.17
         # override node20 compatible older glibc for linux x86_64
         # inspired by https://github.com/pytorch/test-infra/pull/5959
