@@ -7822,7 +7822,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             metadata.setMetadataVersion(version);
             ddlMem.putLong(metadata.getMetadataVersion());
             ddlMem.putBool(metadata.isWalEnabled());
-            ddlMem.putInt(TableUtils.calculateMetadataMinorFormatVersion(version + columnCount));
+            ddlMem.putInt(TableUtils.calculateMetaFormatMinorVersionField(version, columnCount));
             ddlMem.putInt(metadata.getTtlHoursOrMonths());
 
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);

@@ -135,7 +135,6 @@ public class TablesFunctionFactory implements FunctionFactory {
 
             @Override
             public void close() {
-
             }
 
             @Override

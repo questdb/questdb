@@ -46,10 +46,10 @@ public class TelemetryTask implements AbstractTelemetryTask {
                     .$("CREATE TABLE IF NOT EXISTS \"")
                     .$(TABLE_NAME)
                     .$("\" (" +
-                            "created timestamp, " +
-                            "event short, " +
-                            "origin short" +
-                            ") timestamp(created)"
+                            "created TIMESTAMP, " +
+                            "event SHORT, " +
+                            "origin SHORT" +
+                            ") TIMESTAMP(created) PARTITION BY DAY TTL 1 WEEK BYPASS WAL"
                     );
         }
 

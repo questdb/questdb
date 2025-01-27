@@ -28,6 +28,8 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cutlass.text.CopyRequestTask;
 import io.questdb.cutlass.text.CopyTask;
+import io.questdb.metrics.QueryTrace;
+import io.questdb.mp.ConcurrentQueue;
 import io.questdb.mp.FanOut;
 import io.questdb.mp.MCSequence;
 import io.questdb.mp.MPSequence;
@@ -87,6 +89,7 @@ public class MessageBusImpl implements MessageBus {
     private final MCSequence[] pageFrameReduceSubSeq;
     private final MPSequence queryCacheEventPubSeq;
     private final MCSequence queryCacheEventSubSeq;
+    private final ConcurrentQueue<QueryTrace> queryTraceQueue;
     private final MPSequence tableWriterEventPubSeq;
     private final RingQueue<TableWriterTask> tableWriterEventQueue;
     private final FanOut tableWriterEventSubSeq;
@@ -210,6 +213,8 @@ public class MessageBusImpl implements MessageBus {
             this.queryCacheEventPubSeq = new MPSequence(configuration.getQueryCacheEventQueueCapacity());
             this.queryCacheEventSubSeq = new MCSequence(configuration.getQueryCacheEventQueueCapacity());
             queryCacheEventPubSeq.then(queryCacheEventSubSeq).then(queryCacheEventPubSeq);
+
+            this.queryTraceQueue = new ConcurrentQueue<>(QueryTrace.ITEM_FACTORY);
         } catch (Throwable th) {
             close();
             throw th;
@@ -433,6 +438,11 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public MCSequence getQueryCacheEventSubSeq() {
         return queryCacheEventSubSeq;
+    }
+
+    @Override
+    public ConcurrentQueue<QueryTrace> getQueryTraceQueue() {
+        return queryTraceQueue;
     }
 
     @Override

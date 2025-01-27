@@ -243,6 +243,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long instanceHashLo;
     private final boolean interruptOnClosedConnection;
     private final boolean ioURingEnabled;
+    private final boolean isQueryTracingEnabled;
     private final boolean isReadOnlyInstance;
     private final int jsonCacheLimit;
     private final int jsonCacheSize;
@@ -724,6 +725,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 getIntPercentage(properties, env, PropertyKey.RAM_USAGE_LIMIT_PERCENT, 90)
         );
         this.isReadOnlyInstance = getBoolean(properties, env, PropertyKey.READ_ONLY_INSTANCE, false);
+        this.isQueryTracingEnabled = getBoolean(properties, env, PropertyKey.QUERY_TRACING_ENABLED, false);
         this.cairoTableRegistryAutoReloadFrequency = getMillis(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY, 500);
         this.cairoTableRegistryCompactionThreshold = getInt(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD, 30);
         this.repeatMigrationFromVersion = getInt(properties, env, PropertyKey.CAIRO_REPEAT_MIGRATION_FROM_VERSION, 426);
@@ -3603,6 +3605,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isPartitionO3OverwriteControlEnabled() {
             return o3PartitionOverwriteControlEnabled;
+        }
+
+        @Override
+        public boolean isQueryTracingEnabled() {
+            return isQueryTracingEnabled;
         }
 
         @Override
