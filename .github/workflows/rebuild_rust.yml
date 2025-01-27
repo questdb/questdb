@@ -125,7 +125,7 @@ jobs:
             core/src/main/resources/io/questdb/bin/linux-x86-64/libquestdbr.so
           key: nativelibs-linux-${{ github.sha }}
   build-all-linux-aarch64:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
         with:
