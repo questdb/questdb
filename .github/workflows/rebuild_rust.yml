@@ -92,7 +92,7 @@ jobs:
         run: |
           ldd --version
           yum update -y
-          yum install wget rpm-build zstd curl -y
+          yum install wget rpm-build zstd curl python3 -y
       #          apt install git python3 wget ca-certificates build-essential zstd -y
       - name: install nodejs20glibc2.17
         # override node20 compatible older glibc for linux x86_64
