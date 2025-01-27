@@ -33,8 +33,10 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.std.Files;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
@@ -46,6 +48,7 @@ import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import static io.questdb.cairo.TableUtils.DETACHED_DIR_MARKER;
 import static io.questdb.griffin.model.IntervalUtils.parseFloorPartialTimestamp;
 
 
@@ -64,6 +67,81 @@ public class MatViewTest extends AbstractCairoTest {
         super.setUp();
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+    }
+
+    @Test
+    public void testBaseTableInvalidateOnAttachPartition() throws Exception {
+        final String partition = "2024-01-01";
+        testBaseTableInvalidateOnOperation(
+                () -> {
+                    // insert a few rows to have a detachable partition
+                    execute(
+                            "insert into base_price (sym, price, ts) values('gbpusd', 1.223, '" + partition + "T00:01')," +
+                                    "('gbpusd', 1.423, '2024-01-02T00:01');"
+                    );
+                    execute("alter table base_price detach partition list '" + partition + "';");
+                    drainWalQueue();
+                    // rename to .attachable
+                    try (Path path = new Path(); Path other = new Path()) {
+                        TableToken tableToken = engine.verifyTableName("base_price");
+                        path.of(configuration.getRoot()).concat(tableToken).concat(partition).put(DETACHED_DIR_MARKER).$();
+                        other.of(configuration.getRoot()).concat(tableToken).concat(partition).put(configuration.getAttachPartitionSuffix()).$();
+                        Assert.assertTrue(Files.rename(path.$(), other.$()) > -1);
+                    }
+                },
+                "alter table base_price attach partition list '" + partition + "';"
+        );
+    }
+
+    @Test
+    public void testBaseTableInvalidateOnChangeColumnType() throws Exception {
+        testBaseTableInvalidateOnOperation("alter table base_price alter column amount type long;");
+    }
+
+    @Test
+    public void testBaseTableInvalidateOnDedupDisable() throws Exception {
+        testBaseTableInvalidateOnOperation(
+                () -> {
+                    execute("alter table base_price dedup enable upsert keys(ts);");
+                    drainWalQueue();
+                },
+                "alter table base_price dedup disable;"
+        );
+    }
+
+    @Test
+    public void testBaseTableInvalidateOnDedupEnable() throws Exception {
+        testBaseTableInvalidateOnOperation("alter table base_price dedup enable upsert keys(ts);");
+    }
+
+    @Test
+    public void testBaseTableInvalidateOnDetachPartition() throws Exception {
+        testBaseTableInvalidateOnOperation("alter table base_price detach partition where ts > 0;");
+    }
+
+    @Test
+    public void testBaseTableInvalidateOnDropColumn() throws Exception {
+        testBaseTableInvalidateOnOperation("alter table base_price drop column amount;");
+    }
+
+    @Test
+    public void testBaseTableInvalidateOnDropPartition() throws Exception {
+        testBaseTableInvalidateOnOperation("alter table base_price drop partition where ts > 0;");
+    }
+
+    @Test
+    public void testBaseTableInvalidateOnRenameColumn() throws Exception {
+        testBaseTableInvalidateOnOperation("alter table base_price rename column amount to amount2;");
+    }
+
+    @Test
+    public void testBaseTableInvalidateOnTruncate() throws Exception {
+        testBaseTableInvalidateOnOperation("truncate table base_price;");
+    }
+
+    @Test
+    public void testBaseTableInvalidateOnUpdate() throws Exception {
+        testBaseTableInvalidateOnOperation("update base_price set amount = 42;");
     }
 
     @Test
@@ -156,40 +234,6 @@ public class MatViewTest extends AbstractCairoTest {
             assertCannotModifyMatView("drop table price_1h");
             // vacuum
             assertCannotModifyMatView("vacuum table price_1h");
-        });
-    }
-
-    // TODO(puzpuzpuz): enable when we handle updates in mat view refresh;
-    //                  we should at least mark the mat view as invalidated
-    @Ignore
-    @Test
-    public void testColumnRenameChangesMatViewKeys() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table base_price (" +
-                    "  sym varchar, sym2 varchar, price double, ts timestamp " +
-                    ") timestamp(ts) partition by DAY WAL"
-            );
-
-            final String viewSql = "select sym, max(price) max_price, ts from base_price sample by 1h";
-
-            createMatView(viewSql);
-            execute("insert into base_price values('gbpusd', 'gbpbgn', 1.2, '2024-09-10T12:02:00.000000Z');");
-            execute("insert into base_price values('gbpusd', 'gbpbgn', 1.3, '2024-09-10T12:03:00.000000Z');");
-            execute("insert into base_price values('gbpusd', 'gbpbgn', 1.4, '2024-09-10T12:04:00.000000Z');");
-            drainWalQueue();
-
-            MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
-            refreshJob.run(0);
-            drainWalQueue();
-
-            execute("alter table base_price drop column 'sym';");
-            execute("alter table base_price rename column 'sym2' to 'sym';");
-            drainWalQueue();
-
-            refreshJob.run(0);
-            drainWalQueue();
-
-            assertViewMatchesSqlOverBaseTable(viewSql);
         });
     }
 
@@ -296,38 +340,6 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             Assert.assertNull(engine.getMatViewGraph().getViewRefreshState(matViewToken));
-        });
-    }
-
-    // TODO(puzpuzpuz): enable when we support partition drop in mat view refresh
-    @Ignore
-    @Test
-    public void testDropPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table base_price (" +
-                    "  sym varchar, price double, ts timestamp " +
-                    ") timestamp(ts) partition by hour WAL;"
-            );
-
-            final String viewSql = "select sym, max(price) max_price, ts from base_price sample by 1h";
-
-            createMatView(viewSql);
-            execute("insert into base_price values('gbpusd', 1.2, '2024-09-10T12:00:00.000000Z');");
-            execute("insert into base_price values('gbpusd', 1.3, '2024-09-10T13:00:00.000000Z');");
-            execute("insert into base_price values('gbpusd', 1.4, '2024-09-10T14:00:00.000000Z');");
-            drainWalQueue();
-
-            MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
-            refreshJob.run(0);
-            drainWalQueue();
-
-            execute("alter table base_price drop partition list '2024-09-10T13';");
-            drainWalQueue();
-
-            refreshJob.run(0);
-            drainWalQueue();
-
-            assertViewMatchesSqlOverBaseTable(viewSql);
         });
     }
 
@@ -1041,75 +1053,6 @@ public class MatViewTest extends AbstractCairoTest {
         });
     }
 
-    // TODO(puzpuzpuz): enable when we handle updates in mat view refresh
-    @Ignore
-    @Test
-    public void testUpdateChangesMatViewKeys() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table base_price (" +
-                    "  sym varchar, price double, ts timestamp" +
-                    ") timestamp(ts) partition by DAY WAL"
-            );
-
-            final String viewSql = "select sym, max(price) max_price, ts from base_price sample by 1h";
-
-            createMatView(viewSql);
-            execute("insert into base_price " +
-                    "select 'gbpusd', 1.320 + x / 1000.0, timestamp_sequence('2024-09-10T12:02', 1000000*60*5) " +
-                    "from long_sequence(60)"
-            );
-            drainWalQueue();
-
-            MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
-            refreshJob.run(0);
-            drainWalQueue();
-
-            update("update base_price set sym = 'gbpbgn' where sym = 'gbpusd';");
-            drainWalQueue();
-
-            refreshJob.run(0);
-            drainWalQueue();
-
-            assertViewMatchesSqlOverBaseTable(viewSql);
-        });
-    }
-
-    // TODO(puzpuzpuz): enable when we handle upserts in mat view refresh
-    @Ignore
-    @Test
-    public void testUpsertChangesMatViewKeys() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table base_price (" +
-                    "  sym varchar, price double, ts timestamp " +
-                    ") timestamp(ts) partition by DAY WAL " +
-                    "DEDUP UPSERT KEYS(ts);" // sym is not dedup key
-            );
-
-            final String viewSql = "select sym, max(price) max_price, ts from base_price sample by 1h";
-
-            createMatView(viewSql);
-            execute("insert into base_price values('gbpusd', 1.2, '2024-09-10T12:02:00.000000Z');");
-            execute("insert into base_price values('gbpusd', 1.3, '2024-09-10T12:03:00.000000Z');");
-            execute("insert into base_price values('gbpusd', 1.4, '2024-09-10T12:04:00.000000Z');");
-            drainWalQueue();
-
-            MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
-            refreshJob.run(0);
-            drainWalQueue();
-
-            // same ts, but different sym
-            execute("insert into base_price values('gbpbgn', 1.2, '2024-09-10T12:02:00.000000Z');");
-            execute("insert into base_price values('gbpbgn', 1.3, '2024-09-10T12:03:00.000000Z');");
-            execute("insert into base_price values('gbpbgn', 1.4, '2024-09-10T12:04:00.000000Z');");
-            drainWalQueue();
-
-            refreshJob.run(0);
-            drainWalQueue();
-
-            assertViewMatchesSqlOverBaseTable(viewSql);
-        });
-    }
-
     private static void assertCannotModifyMatView(String updateSql) {
         try {
             execute(updateSql);
@@ -1171,6 +1114,57 @@ public class MatViewTest extends AbstractCairoTest {
 
     private String outSelect(String out, String in) {
         return out + " from (" + in + ")";
+    }
+
+    private void testBaseTableInvalidateOnOperation(String operationSql) throws Exception {
+        testBaseTableInvalidateOnOperation(null, operationSql);
+    }
+
+    private void testBaseTableInvalidateOnOperation(
+            @Nullable TestUtils.LeakProneCode runBeforeMatViewCreate,
+            String operationSql
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, amount int, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            if (runBeforeMatViewCreate != null) {
+                runBeforeMatViewCreate.run();
+            }
+
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
+            execute(
+                    "insert into base_price (sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            );
+            drainWalQueue();
+
+            currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
+            MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
+            refreshJob.run(0);
+            drainWalQueue();
+
+            assertSql(
+                    "name\tbase_table_name\tinvalid\n" +
+                            "price_1h\tbase_price\tfalse\n",
+                    "select name, base_table_name, invalid from views"
+            );
+
+            execute(operationSql);
+            drainWalQueue();
+            refreshJob.run(0);
+
+            assertSql(
+                    "name\tbase_table_name\tinvalid\n" +
+                            "price_1h\tbase_price\ttrue\n",
+                    "select name, base_table_name, invalid from views"
+            );
+        });
     }
 
     private void testIncrementalRefresh0(String viewSql) throws Exception {

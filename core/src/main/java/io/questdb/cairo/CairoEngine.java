@@ -983,7 +983,7 @@ public class CairoEngine implements Closeable, WriterSource {
         tableNameRegistry.dropTable(tableToken);
     }
 
-    public void notifyMaterializedViewBaseCommit(MatViewRefreshTask task, long seqTxn) {
+    public void notifyMatViewBaseCommit(MatViewRefreshTask task, long seqTxn) {
         matViewGraph.notifyTxnApplied(task, seqTxn);
     }
 

@@ -3680,7 +3680,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testDropMaterializedViewIfExistsMissingName() throws Exception {
+    public void testDropMatViewIfExistsMissingName() throws Exception {
         assertSyntaxError(
                 "drop materialized view if exists",
                 32,
@@ -3689,7 +3689,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testDropMaterializedViewMissingName() throws Exception {
+    public void testDropMatViewMissingName() throws Exception {
         assertSyntaxError(
                 "drop materialized view",
                 18,
@@ -3698,7 +3698,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testDropMaterializedViewMissingView() throws Exception {
+    public void testDropMatViewMissingView() throws Exception {
         assertSyntaxError(
                 "drop materialized tab1",
                 18,

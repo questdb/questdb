@@ -367,6 +367,23 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     }
 
     @Override
+    public boolean requiresMatViewInvalidation() {
+        switch (command) {
+            case DROP_COLUMN:
+            case RENAME_COLUMN:
+            case CHANGE_COLUMN_TYPE:
+            case DROP_PARTITION:
+            case DETACH_PARTITION:
+            case ATTACH_PARTITION:
+            case SET_DEDUP_ENABLE:
+            case SET_DEDUP_DISABLE:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    @Override
     public void serialize(TableWriterTask event) {
         super.serialize(event);
         event.putShort(command);

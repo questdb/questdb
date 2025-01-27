@@ -38,6 +38,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.cairo.wal.seq.TableMetadataChange;
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
@@ -264,6 +265,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         boolean isTerminating;
         boolean finishedAll = true;
         long initialSeqTxn = writer.getSeqTxn();
+        // Default to incremental mat view refresh.
+        mvRefreshTask.operation = MatViewRefreshTask.INCREMENTAL_REFRESH;
+        mvRefreshTask.baseTableToken = writer.getTableToken();
 
         try (TransactionLogCursor transactionLogCursor = tableSequencerAPI.getCursor(tableToken, writer.getAppliedSeqTxn())) {
             TableMetadataChangeLog structuralChangeCursor = null;
@@ -295,7 +299,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         final long commitTimestamp = transactionLogCursor.getCommitTimestamp();
                         final long seqTxn = transactionLogCursor.getTxn();
 
-                        this.lastAttemptSeqTxn = seqTxn;
+                        lastAttemptSeqTxn = seqTxn;
                         if (seqTxn != writer.getAppliedSeqTxn() + 1) {
                             throw CairoException.critical(0)
                                     .put("unexpected sequencer transaction, expected ").put(writer.getAppliedSeqTxn() + 1)
@@ -327,7 +331,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                     walTelemetryFacade.store(WAL_TXN_APPLY_START, tableToken, walId, seqTxn, -1L, -1L, start - commitTimestamp);
                                     writer.setSeqTxn(seqTxn);
                                     try {
-                                        structuralChangeCursor.next().apply(writer, true);
+                                        final TableMetadataChange metadataChangeOp = structuralChangeCursor.next();
+                                        metadataChangeOp.apply(writer, true);
+                                        if (metadataChangeOp.requiresMatViewInvalidation()) {
+                                            mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
+                                        }
                                     } catch (Throwable th) {
                                         // Don't mark transaction as applied if exception occurred
                                         writer.setSeqTxn(seqTxn - 1);
@@ -422,9 +430,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 }
 
                 if (initialSeqTxn < writer.getAppliedSeqTxn()) {
-                    mvRefreshTask.operation = MatViewRefreshTask.INCREMENTAL_REFRESH;
-                    mvRefreshTask.baseTableToken = writer.getTableToken();
-                    engine.notifyMaterializedViewBaseCommit(mvRefreshTask, writer.getSeqTxn());
+                    engine.notifyMatViewBaseCommit(mvRefreshTask, writer.getSeqTxn());
                 }
             } catch (Throwable th) {
                 // We could have been applying multiple txns, and we failed somewhere in the middle. The writer will
@@ -539,15 +545,19 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     final long rowsAffected = processWalSql(writer, sqlInfo, operationExecutor, seqTxn);
                     walTelemetryFacade.store(WAL_TXN_SQL_APPLIED, writer.getTableToken(), walId, seqTxn, -1L, -1L, microClock.getTicks() - start);
                     return rowsAffected;
+
                 case TRUNCATE:
-                    long txn = writer.getTxn();
+                    final long txn = writer.getTxn();
                     writer.setSeqTxn(seqTxn);
                     writer.removeAllPartitions();
                     if (writer.getTxn() == txn) {
                         // force mark the transaction as applied
                         writer.markSeqTxnCommitted(seqTxn);
                     }
+                    // Invalidate dependent mat views on truncate.
+                    mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
                     return -1L;
+
                 default:
                     throw new UnsupportedOperationException("Unsupported WAL txn type: " + walTxnType);
             }
@@ -564,10 +574,15 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 try {
                     switch (cmdType) {
                         case CMD_ALTER_TABLE:
-                            operationExecutor.executeAlter(tableWriter, sql, seqTxn);
+                            final boolean requiresMatViewInvalidation = operationExecutor.executeAlter(tableWriter, sql, seqTxn);
+                            if (requiresMatViewInvalidation) {
+                                mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
+                            }
                             return -1;
                         case CMD_UPDATE_TABLE:
-                            return operationExecutor.executeUpdate(tableWriter, sql, seqTxn);
+                            final long rowsAffected = operationExecutor.executeUpdate(tableWriter, sql, seqTxn);
+                            mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
+                            return rowsAffected;
                         default:
                             throw new UnsupportedOperationException("Unsupported command type: " + cmdType);
                     }

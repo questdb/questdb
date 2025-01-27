@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.WalEventCursor;
 import io.questdb.cairo.wal.WalEventReader;
+import io.questdb.cairo.wal.WalTxnType;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
@@ -55,7 +56,7 @@ public class WalTxnRangeLoader {
     }
 
     public void load(CairoEngine engine, Path tempPath, TableToken tableToken, long txnLo, long txnHi) {
-        try (var transactionLogCursor = engine.getTableSequencerAPI().getCursor(tableToken, txnLo)) {
+        try (TransactionLogCursor transactionLogCursor = engine.getTableSequencerAPI().getCursor(tableToken, txnLo)) {
             if (transactionLogCursor.getVersion() == WAL_SEQUENCER_FORMAT_VERSION_V1) {
                 tempPath.of(engine.getConfiguration().getRoot()).concat(tableToken);
                 int rootLen = tempPath.size();
@@ -119,6 +120,11 @@ public class WalTxnRangeLoader {
                     lastWalId = walId;
                     lastSegmentId = segmentId;
                     lastSegmentTxn = segmentTxn;
+                }
+
+                if (walEventCursor.getType() != WalTxnType.DATA) {
+                    // Skip non-inserts
+                    continue;
                 }
 
                 minTimestamp = Math.min(minTimestamp, walEventCursor.getDataInfo().getMinTimestamp());

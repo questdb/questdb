@@ -40,6 +40,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.util.function.Function;
 
+// TODO(puzpuzpuz): extract interface and introduce a no-op implementation to be used when mat views are disabled
 public class MatViewGraph implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(MatViewGraph.class);
     private final Function<CharSequence, MatViewRefreshList> createRefreshList;
@@ -166,9 +167,9 @@ public class MatViewGraph implements QuietCloseable {
     }
 
     public void notifyTxnApplied(MatViewRefreshTask task, long seqTxn) {
-        final MatViewRefreshList state = dependentViewsByTableName.get(task.baseTableToken.getTableName());
-        if (state != null) {
-            if (state.notifyOnBaseTableCommitNoLock(seqTxn)) {
+        final MatViewRefreshList list = dependentViewsByTableName.get(task.baseTableToken.getTableName());
+        if (list != null) {
+            if (list.notifyOnBaseTableCommitNoLock(seqTxn)) {
                 refreshTaskQueue.enqueue(task);
                 LOG.info().$("refresh notified table=").$(task.baseTableToken.getTableName()).$();
             } else {
