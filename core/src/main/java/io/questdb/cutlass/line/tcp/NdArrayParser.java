@@ -26,6 +26,7 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.ndarr.NdArrayBuffer;
@@ -205,6 +206,14 @@ public class NdArrayParser implements QuietCloseable {
         if (error != ErrorCode.NONE) {
             return;
         }
+
+        IntList shapeBackwards = new IntList();
+        int level = 0;
+
+        for (int n = parsing.size(), i = 0; i < n; i++) {
+            
+        }
+
 
         if (Utf8s.equalsUtf16("1.0,2.5,3.0,4.5,5.0}", parsing)) {
             assert bufs.type == ColumnType.buildNdArrayType('f', (byte) 6);  // ARRAY(DOUBLE)
