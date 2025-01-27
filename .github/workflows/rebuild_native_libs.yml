@@ -69,8 +69,7 @@ jobs:
           key: nativelibs-osx-${{ github.sha }}
   build-all-linux-x86-64:
     runs-on: ubuntu-latest
-    # this is very bare container, we use it to restrict GLIBC to 2.24
-    # everything has to be installed on it manually
+    # manylinux2014 is a container with new-ish compilers and tools, but old glibc
     container:
       image:
         quay.io/pypa/manylinux2014_x86_64
