@@ -73,40 +73,44 @@ jobs:
     # everything has to be installed on it manually
     container:
       image:
-        debian:stretch
+        quay.io/pypa/manylinux_2_28_x86_64
       volumes:
         - /node20217:/node20217
         - /node20217:/__e/node20
     steps:
-      - name: Install tools (CXX/NASM/Rust)
+      - name: Install tools (CXX/NASM/Rust) - Anylinux
         run: |
           ldd --version
-          sed -i s/deb.debian.org/archive.debian.org/g /etc/apt/sources.list
-          sed -i s/security.debian.org/archive.debian.org/g /etc/apt/sources.list
-          sed -i s/stretch-updates/stretch/g /etc/apt/sources.list
-          apt-get update -y
-          apt install git nasm python3 wget ca-certificates build-essential zstd -y
+          yum update -y
+          apt install nasm wget zstd curl -y
+      #      - name: Install tools (CXX/NASM/Rust) - Debian
+      #        run: |
+      #          ldd --version
+      #          sed -i s/deb.debian.org/archive.debian.org/g /etc/apt/sources.list
+      #          sed -i s/security.debian.org/archive.debian.org/g /etc/apt/sources.list
+      #          sed -i s/stretch-updates/stretch/g /etc/apt/sources.list
+      #          apt-get update -y
+      #          apt install git nasm python3 wget ca-certificates build-essential zstd -y
       - name: install nodejs20glibc2.17
         # override node20 compatible glibc for linux x86_64
         # inspired by https://github.com/pytorch/test-infra/pull/5959
         run: |
-          apt install curl -y
           curl -LO https://unofficial-builds.nodejs.org/download/release/v20.9.0/node-v20.9.0-linux-x64-glibc-217.tar.xz
           tar -xf node-v20.9.0-linux-x64-glibc-217.tar.xz --strip-components 1 -C /node20217
           ldd /__e/node20/bin/node
-      - name: install git backport - checkout action requires git 2.18+ while debian stretch has 2.11
-        run: |
-          echo "deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/20190220T000000Z/ stretch-backports contrib main" >> /etc/apt/sources.list
-          apt-get update -y --allow-insecure-repositories
-          apt-get install -y -t stretch-backports git --allow-unauthenticated
+      #      - name: install git backport - checkout action requires git 2.18+ while debian stretch has 2.11
+      #        run: |
+      #          echo "deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/20190220T000000Z/ stretch-backports contrib main" >> /etc/apt/sources.list
+      #          apt-get update -y --allow-insecure-repositories
+      #          apt-get install -y -t stretch-backports git --allow-unauthenticated
       - uses: actions/checkout@v4
         with:
           submodules: true
-      - name: Install up-to-date CMake
-        run: |
-          wget -nv https://github.com/Kitware/CMake/releases/download/v3.29.2/cmake-3.29.2-linux-x86_64.tar.gz
-          tar -zxf cmake-3.29.2-linux-x86_64.tar.gz
-          echo "PATH=`pwd`/cmake-3.29.2-linux-x86_64/bin/:$PATH" >> "$GITHUB_ENV"
+      #      - name: Install up-to-date CMake
+      #        run: |
+      #          wget -nv https://github.com/Kitware/CMake/releases/download/v3.29.2/cmake-3.29.2-linux-x86_64.tar.gz
+      #          tar -zxf cmake-3.29.2-linux-x86_64.tar.gz
+      #          echo "PATH=`pwd`/cmake-3.29.2-linux-x86_64/bin/:$PATH" >> "$GITHUB_ENV"
       - name: Install JDK17 (for jni.h)
         run: |
           wget -nv https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.11%2B9/OpenJDK17U-jdk_x64_linux_hotspot_17.0.11_9.tar.gz
