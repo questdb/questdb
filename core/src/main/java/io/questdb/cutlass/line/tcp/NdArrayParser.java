@@ -39,14 +39,14 @@ import org.jetbrains.annotations.NotNull;
  * Parse N-dimensional arrays for ILP input.
  * <p>Here are a few examples:</p>
  * <p>A 1-D array of longs: <code>{6s1,2,3}</code></p>
- * <p>A 2-D array of doubles: <code>{{6fNaN,1},{6f2.5,3}}</code></p>
+ * <p>A 2-D array of doubles: <code>{6f{NaN,1},{2.5,3}}</code></p>
  * <p>The type marker is as follows: <code>[type_precision][type_class]</code></p>
  * <dl>
  *     <dt>type_precision</dt>
  *     <dd>power of two of number of bits in the numeric type, e.g.
  *         <code>0=1 bit (bool)</code>, <code>2=2 bit int</code> .. <code>5=32 bit</code> .. <code>6=64 bit</code></dd>
  *     <dt>type_class</dt>
- *     <dd>type of number, <code>s</code> for signed integer, <code>u</code> for unsigned,
+ *     <dd>type of number, <code>i</code> for signed integer, <code>u</code> for unsigned,
  *         <code>f</code> for floating point</dd>
  * </dl>
  * <p><string>Obviously not all combinations are valid</strong>: Refer to `ColType.java`'s ND_ARRAY implementation.</p>
@@ -216,7 +216,7 @@ public class NdArrayParser implements QuietCloseable {
             bufs.shape.add(5);
             parsing.advance(20);
         } else if (Utf8s.equalsUtf16("-1,0,100000000}", parsing)) {
-            assert bufs.type == ColumnType.buildNdArrayType('s', (byte) 6);  // ARRAY(LONG)
+            assert bufs.type == ColumnType.buildNdArrayType('i', (byte) 6);  // ARRAY(LONG)
             elementsPutLong(-1);
             elementsPutLong(0);
             elementsPutLong(100000000);
@@ -251,7 +251,7 @@ public class NdArrayParser implements QuietCloseable {
         final char ch = (char) parsing.byteAt(0);
         switch (ch) {
             case 'u':
-            case 's':
+            case 'i':
             case 'f':
                 return ch;
             default:

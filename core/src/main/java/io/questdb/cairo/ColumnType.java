@@ -155,10 +155,10 @@ public final class ColumnType {
 //                        (typePrecision == 4 && typeClass == 'u') ||
 //                        (typePrecision == 5 && typeClass == 'u') ||
 //                        (typePrecision == 6 && typeClass == 'u') ||
-                        (typePrecision == 3 && typeClass == 's') ||  // byte
-                        (typePrecision == 4 && typeClass == 's') ||  // short
-                        (typePrecision == 5 && typeClass == 's') ||  // int
-                        (typePrecision == 6 && typeClass == 's') ||  // long
+                        (typePrecision == 3 && typeClass == 'i') ||  // byte
+                        (typePrecision == 4 && typeClass == 'i') ||  // short
+                        (typePrecision == 5 && typeClass == 'i') ||  // int
+                        (typePrecision == 6 && typeClass == 'i') ||  // long
 //                        (typePrecision == 3 && typeClass == 'f') ||
 //                        (typePrecision == 4 && typeClass == 'f') ||
                         (typePrecision == 5 && typeClass == 'f') ||  // float
@@ -178,13 +178,13 @@ public final class ColumnType {
             case BOOLEAN:
                 return buildNdArrayType('u', (byte) 0);
             case BYTE:
-                return buildNdArrayType('s', (byte) 3);
+                return buildNdArrayType('i', (byte) 3);
             case SHORT:
-                return buildNdArrayType('s', (byte) 4);
+                return buildNdArrayType('i', (byte) 4);
             case INT:
-                return buildNdArrayType('s', (byte) 5);
+                return buildNdArrayType('i', (byte) 5);
             case LONG:
-                return buildNdArrayType('s', (byte) 6);
+                return buildNdArrayType('i', (byte) 6);
             case FLOAT:
                 return buildNdArrayType('f', (byte) 5);
             case DOUBLE:
