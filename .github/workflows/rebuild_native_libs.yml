@@ -73,7 +73,7 @@ jobs:
     # everything has to be installed on it manually
     container:
       image:
-        quay.io/pypa/manylinux_2_28_x86_64
+        quay.io/pypa/manylinux2014_x86_64
       volumes:
         - /node20217:/node20217
         - /node20217:/__e/node20
