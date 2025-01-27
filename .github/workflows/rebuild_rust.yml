@@ -94,9 +94,6 @@ jobs:
           yum update -y
           yum install wget rpm-build zstd curl -y
       #          apt install git python3 wget ca-certificates build-essential zstd -y
-      - uses: actions/checkout@v4
-        with:
-          submodules: false
       - name: install nodejs20glibc2.17
         # override node20 compatible older glibc for linux x86_64
         # inspired by https://github.com/pytorch/test-infra/pull/5959
@@ -104,6 +101,9 @@ jobs:
           curl -LO https://unofficial-builds.nodejs.org/download/release/v20.9.0/node-v20.9.0-linux-x64-glibc-217.tar.xz
           tar -xf node-v20.9.0-linux-x64-glibc-217.tar.xz --strip-components 1 -C /node20217
           ldd /__e/node20/bin/node
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
       - name: Install toolchains (Rust)
         run: |
           python3 ./.github/prepare_rust_env.py --nightly
