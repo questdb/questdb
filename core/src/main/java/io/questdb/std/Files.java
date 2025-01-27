@@ -37,9 +37,37 @@ import java.io.File;
 import java.net.URL;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public final class Files {
+    public static class PathAndBacktrace {
+        public final String path;
+        public final String backtrace;
+
+        public PathAndBacktrace(String path, String backtrace) {
+            this.path = path;
+            this.backtrace = backtrace;
+        }
+
+        public PathAndBacktrace(String path) {
+            this(path, getBacktraceAsString(2));
+        }
+
+        public static String getBacktraceAsString(int skipLevels) {
+            StackTraceElement[] stackTrace = Thread.currentThread().getStackTrace();
+            StringBuilder sb = new StringBuilder();
+
+            // Start skipping the specified levels and append the rest
+            for (int i = skipLevels + 1; i < stackTrace.length; i++) {
+                sb.append("      ");
+                sb.append(stackTrace[i].toString()).append("\n");
+            }
+
+            return sb.toString();
+        }
+    }
+
     // The default varies across kernel versions and distros, so we use the same value as for vm.max_map_count.
     public static final long DEFAULT_FILE_LIMIT = 65536;
     public static final long DEFAULT_MAP_COUNT_LIMIT = 65536;
@@ -68,6 +96,7 @@ public final class Files {
     private static final int VIRTIO_FS_MAGIC = 0x6a656a63;
     private static final AtomicInteger fdCounter = new AtomicInteger();
     private static final LongHashSet openFds = new LongHashSet();
+    private static final LongObjHashMap<PathAndBacktrace> openFdPaths = new LongObjHashMap<>();
     // To be set in tests to check every call for using OPEN file descriptor
     public static boolean PARANOIA_FD_MODE = false;
     public static boolean VIRTIO_FS_DETECTED = false;
@@ -115,9 +144,9 @@ public final class Files {
         return copyDataToOffset(toOsFd(srcFd), toOsFd(destFd), offsetSrc, offsetDest, length);
     }
 
-    public static long createUniqueFd(int fd) {
+    public static long createUniqueFd(int fd, String path) {
         if (fd != -1) {
-            long uniqueFd = auditOpen(fd);
+            long uniqueFd = auditOpen(fd, path);
             OPEN_FILE_COUNT.incrementAndGet();
             return uniqueFd;
         }
@@ -235,6 +264,18 @@ public final class Files {
 
     public static String getOpenFdDebugInfo() {
         return openFds.toString();
+    }
+
+    public static LongHashSet cloneOpenFds() {
+        final LongHashSet cloned = new LongHashSet();
+        for (int i = 0; i < openFds.size(); i++) {
+            cloned.add(openFds.get(i));
+        }
+        return cloned;
+    }
+
+    public static LongObjHashMap<PathAndBacktrace> getOpenFdPaths() {
+        return openFdPaths;
     }
 
     public static long getOpenFileCount() {
@@ -393,25 +434,25 @@ public final class Files {
     }
 
     public static long openAppend(LPSZ lpsz) {
-        return createUniqueFd(openAppend(lpsz.ptr()));
+        return createUniqueFd(openAppend(lpsz.ptr()), lpsz.toString());
     }
 
     public static long openCleanRW(LPSZ lpsz, long size) {
-        return createUniqueFd(openCleanRW(lpsz.ptr(), size));
+        return createUniqueFd(openCleanRW(lpsz.ptr(), size), lpsz.toString());
     }
 
     public native static int openCleanRW(long lpszName, long size);
 
     public static long openRO(LPSZ lpsz) {
-        return createUniqueFd(openRO(lpsz.ptr()));
+        return createUniqueFd(openRO(lpsz.ptr()), lpsz.toString());
     }
 
     public static long openRW(LPSZ lpsz) {
-        return createUniqueFd(openRW(lpsz.ptr()));
+        return createUniqueFd(openRW(lpsz.ptr()), lpsz.toString());
     }
 
     public static long openRW(LPSZ lpsz, long opts) {
-        return createUniqueFd(openRWOpts(lpsz.ptr(), opts));
+        return createUniqueFd(openRWOpts(lpsz.ptr(), opts), lpsz.toString());
     }
 
     public static long read(long fd, long address, long len, long offset) {
@@ -627,15 +668,17 @@ public final class Files {
         if (openFds.remove(fd) == -1) {
             throw new IllegalStateException("fd " + fd + " is already closed!");
         }
+        openFdPaths.remove(fd);
     }
 
-    private static synchronized long auditOpen(int fd) {
+    private static synchronized long auditOpen(int fd, String path) {
         if (fd < 0) {
             throw new IllegalStateException("Invalid fd " + fd);
         }
         int index = fdCounter.getAndIncrement();
         long uniqueFd = Numbers.encodeLowHighInts(index, fd);
         openFds.add(uniqueFd);
+        openFdPaths.put(uniqueFd, new PathAndBacktrace(path));
         return uniqueFd;
     }
 

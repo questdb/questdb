@@ -73,7 +73,9 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
+import io.questdb.std.LongHashSet;
 import io.questdb.std.LongList;
+import io.questdb.std.LongObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -1962,6 +1964,7 @@ public final class TestUtils {
         private final int addrInfoCount;
         private final long fileCount;
         private final String fileDebugInfo;
+        private final LongHashSet fileOpenFds;
         private final long mem;
         private final long[] memoryUsageByTag = new long[MemoryTag.SIZE];
         private final int sockAddrCount;
@@ -1977,6 +1980,7 @@ public final class TestUtils {
             Assert.assertTrue("Initial file unsafe mem should be >= 0", mem >= 0);
             fileCount = Files.getOpenFileCount();
             fileDebugInfo = Files.getOpenFdDebugInfo();
+            fileOpenFds = Files.cloneOpenFds();
             Assert.assertTrue("Initial file count should be >= 0", fileCount >= 0);
 
             addrInfoCount = Net.getAllocatedAddrInfoCount();
@@ -1994,6 +1998,14 @@ public final class TestUtils {
 
             Path.clearThreadLocals();
             if (fileCount != Files.getOpenFileCount()) {
+                System.err.println("Unexpected open FDs:");
+                final LongObjHashMap<Files.PathAndBacktrace> openPaths = Files.getOpenFdPaths();
+                openPaths.forEach((key, value) -> {
+                        if (!fileOpenFds.contains(key)) {
+                            System.err.println("    * " + key + ": " + value.path);
+                            System.err.println(value.backtrace);
+                        }
+                    });
                 Assert.assertEquals("file descriptors, expected: " + fileDebugInfo + ", actual: "
                         + Files.getOpenFdDebugInfo(), fileCount, Files.getOpenFileCount());
             }

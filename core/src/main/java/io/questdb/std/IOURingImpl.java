@@ -79,7 +79,7 @@ public class IOURingImpl implements IOURing {
         int cqKringEntries = Unsafe.getUnsafe().getInt(cqEntriesAddr);
         cachedCqes = new long[2 * cqKringEntries];
 
-        this.ringFd = Files.createUniqueFd(ringFd);
+        this.ringFd = Files.createUniqueFd(ringFd, "[io_uring]");
     }
 
     @Override

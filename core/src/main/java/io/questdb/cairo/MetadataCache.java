@@ -244,7 +244,7 @@ public class MetadataCache implements QuietCloseable {
                             column.setSymbolCapacity(TableUtils.getSymbolCapacity(metaMem, writerIndex));
                             column.setSymbolCached(TableUtils.isSymbolCached(metaMem, writerIndex));
                         } else {
-                            LOG.debug().$("updating symbol capacity [table=").$(token).$(", column=").$(columnName).I$();
+                            LOG.info().$("updating symbol capacity [table=").$(token).$(", column=").$(columnName).I$();
                             loadCapacities(column, token, path, engine.getConfiguration(), getColumnVersionReader());
 
                         }
@@ -289,7 +289,7 @@ public class MetadataCache implements QuietCloseable {
         var writerIndex = column.getWriterIndex();
 
         try (columnVersionReader) {
-            LOG.debug().$("hydrating symbol metadata [table=").$(token.getTableName()).$(", column=").$(columnName).I$();
+            LOG.info().$("hydrating symbol metadata [table=").$(token.getTableName()).$(", column=").$(columnName).I$();
 
             // get column version
             path.trimTo(configuration.getRoot().length()).concat(token);

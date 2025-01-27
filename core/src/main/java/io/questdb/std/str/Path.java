@@ -483,5 +483,10 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
         public int size() {
             return (int) (tailPtr - headPtr);
         }
+
+        @Override
+        public String toString() {
+            return Path.this.toString();
+        }
     }
 }
