@@ -102,7 +102,7 @@ public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         if (offset == 0) {
-            return new LagDoubleFunctionFactory.LeadLagValueCurrentRow(args.get(0), NAME, windowContext.isIgnoreNulls());
+            return new LagDoubleFunctionFactory.LeadLagValueCurrentRow(windowContext.getPartitionByRecord(), args.get(0), NAME, windowContext.isIgnoreNulls());
         }
 
         if (windowContext.getPartitionByRecord() != null) {

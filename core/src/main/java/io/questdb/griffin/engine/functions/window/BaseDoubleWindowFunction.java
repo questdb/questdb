@@ -71,10 +71,6 @@ public abstract class BaseDoubleWindowFunction extends DoubleFunction implements
     }
 
     @Override
-    public void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order) {
-    }
-
-    @Override
     public void reset() {
 
     }
