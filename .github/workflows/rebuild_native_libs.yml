@@ -123,7 +123,7 @@ jobs:
       - name: Install tooling
         run: |
           yum update -y
-          yum install wget nasm -y
+          yum install wget nasm zstd -y
       - name: Install JDK17 (for jni.h)
         run: |
           wget -v --timeout=180 https://api.adoptium.net/v3/binary/version/jdk-17.0.11+9/linux/aarch64/jdk/hotspot/normal/eclipse
