@@ -6851,11 +6851,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select first(i) from a sample by 1h fill(null) align to calendar",
                     "SelectedRecord\n" +
-                            "    Sort\n" +
-                            "      keys: [ts]\n" +
-                            "        Fill Range\n" +
-                            "          stride: '1h'\n" +
-                            "          values: [null]\n" +
+                            "    Fill Range\n" +
+                            "      stride: '1h'\n" +
+                            "      values: [null]\n" +
+                            "        Radix sort light\n" +
+                            "          keys: [ts]\n" +
                             "            Async Group By workers: 1\n" +
                             "              keys: [ts]\n" +
                             "              values: [first(i)]\n" +
@@ -6979,11 +6979,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select first(i) from a sample by 1h fill(1) align to calendar",
                     "SelectedRecord\n" +
-                            "    Sort\n" +
-                            "      keys: [ts]\n" +
-                            "        Fill Range\n" +
-                            "          stride: '1h'\n" +
-                            "          values: [1]\n" +
+                            "    Fill Range\n" +
+                            "      stride: '1h'\n" +
+                            "      values: [1]\n" +
+                            "        Radix sort light\n" +
+                            "          keys: [ts]\n" +
                             "            Async Group By workers: 1\n" +
                             "              keys: [ts]\n" +
                             "              values: [first(i)]\n" +

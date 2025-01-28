@@ -199,6 +199,10 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     default void halfClose() {
     }
 
+    default boolean implementsFill() {
+        return getBaseFactory() != null && getBaseFactory().implementsFill();
+    }
+
     /**
      * Returns true if this factory handles limit M , N clause already and false otherwise .
      * If true then separate limit cursor factory is not needed (and could actually cause problem
