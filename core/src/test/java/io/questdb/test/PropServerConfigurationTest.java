@@ -208,6 +208,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(32, configuration.getCairoConfiguration().getCopyPoolCapacity());
         Assert.assertEquals(5, configuration.getCairoConfiguration().getCreateAsSelectRetryCount());
         Assert.assertFalse(configuration.getCairoConfiguration().isMatViewEnabled());
+        Assert.assertEquals(20, configuration.getCairoConfiguration().getMatViewMaxRecompileAttempts());
         Assert.assertTrue(configuration.getCairoConfiguration().getDefaultSymbolCacheFlag());
         Assert.assertEquals(256, configuration.getCairoConfiguration().getDefaultSymbolCapacity());
         Assert.assertEquals(30, configuration.getCairoConfiguration().getFileOperationRetryCount());
@@ -487,7 +488,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(50 * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getPartitionO3SplitMinSize());
         Assert.assertFalse(configuration.getCairoConfiguration().getTextConfiguration().isUseLegacyStringDefault());
 
-        Assert.assertFalse(configuration.getCairoConfiguration().isMatViewEnabled());
         Assert.assertTrue(configuration.getMatViewRefreshPoolConfiguration().isEnabled());
         Assert.assertFalse(configuration.getMatViewRefreshPoolConfiguration().haltOnError());
         Assert.assertEquals("mat-view-refresh", configuration.getMatViewRefreshPoolConfiguration().getPoolName());
@@ -1306,6 +1306,9 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(1.5, configuration.getHttpServerConfiguration().getWaitProcessorConfiguration().getExponentialWaitMultiplier(), 0.00001);
 
             Assert.assertTrue(configuration.getMetricsConfiguration().isEnabled());
+
+            Assert.assertTrue(configuration.getCairoConfiguration().isMatViewEnabled());
+            Assert.assertEquals(100, configuration.getCairoConfiguration().getMatViewMaxRecompileAttempts());
 
             // PG wire
             Assert.assertEquals(9, configuration.getPGWireConfiguration().getBinParamCountCapacity());

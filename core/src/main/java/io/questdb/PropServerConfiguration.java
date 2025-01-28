@@ -278,6 +278,16 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final DateLocale logTimestampLocale;
     private final String logTimestampTimezone;
     private final TimeZoneRules logTimestampTimezoneRules;
+    private final boolean matViewEnabled;
+    private final int matViewMaxRecompileAttempts;
+    private final WorkerPoolConfiguration matViewRefreshPoolConfiguration = new PropMatViewRefreshPoolConfiguration();
+    private final long matViewRefreshSleepTimeout;
+    private final int[] matViewRefreshWorkerAffinity;
+    private final int matViewRefreshWorkerCount;
+    private final boolean matViewRefreshWorkerHaltOnError;
+    private final long matViewRefreshWorkerNapThreshold;
+    private final long matViewRefreshWorkerSleepThreshold;
+    private final long matViewRefreshWorkerYieldThreshold;
     private final int maxFileNameLength;
     private final long maxHttpQueryResponseRowLimit;
     private final double maxRequiredDelimiterStdDev;
@@ -449,17 +459,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final PropertyValidator validator;
     private final int vectorAggregateQueueCapacity;
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
-
-    private final boolean matViewEnabled;
-    private final WorkerPoolConfiguration matViewRefreshPoolConfiguration = new PropMatViewRefreshPoolConfiguration();
-    private final long matViewRefreshSleepTimeout;
-    private final int[] matViewRefreshWorkerAffinity;
-    private final int matViewRefreshWorkerCount;
-    private final boolean matViewRefreshWorkerHaltOnError;
-    private final long matViewRefreshWorkerNapThreshold;
-    private final long matViewRefreshWorkerSleepThreshold;
-    private final long matViewRefreshWorkerYieldThreshold;
-
     private final boolean walApplyEnabled;
     private final int walApplyLookAheadTransactionCount;
     private final WorkerPoolConfiguration walApplyPoolConfiguration = new PropWalApplyPoolConfiguration();
@@ -1259,6 +1258,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             // reuse wal apply defaults for mat view workers
             this.matViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ENABLED, false);
+            this.matViewMaxRecompileAttempts = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_RECOMPILE_ATTEMPTS, 20);
             this.matViewRefreshWorkerCount = getInt(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_COUNT, cpuWalApplyWorkers);
             this.matViewRefreshWorkerAffinity = getAffinity(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_AFFINITY, matViewRefreshWorkerCount);
             this.matViewRefreshWorkerHaltOnError = getBoolean(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_HALT_ON_ERROR, false);
@@ -1726,6 +1726,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @Override
+    public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
+        return matViewRefreshPoolConfiguration;
+    }
+
+    @Override
     public MemoryConfiguration getMemoryConfiguration() {
         return memoryConfiguration;
     }
@@ -1748,11 +1753,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     @Override
     public PublicPassthroughConfiguration getPublicPassthroughConfiguration() {
         return publicPassthroughConfiguration;
-    }
-
-    @Override
-    public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
-        return matViewRefreshPoolConfiguration;
     }
 
     @Override
@@ -2877,6 +2877,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public TimeZoneRules getLogTimestampTimezoneRules() {
             return logTimestampTimezoneRules;
+        }
+
+        @Override
+        public int getMatViewMaxRecompileAttempts() {
+            return matViewMaxRecompileAttempts;
         }
 
         @Override
@@ -4755,6 +4760,58 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
+    private class PropMatViewRefreshPoolConfiguration implements WorkerPoolConfiguration {
+        @Override
+        public Metrics getMetrics() {
+            return metrics;
+        }
+
+        @Override
+        public long getNapThreshold() {
+            return matViewRefreshWorkerNapThreshold;
+        }
+
+        @Override
+        public String getPoolName() {
+            return "mat-view-refresh";
+        }
+
+        @Override
+        public long getSleepThreshold() {
+            return matViewRefreshWorkerSleepThreshold;
+        }
+
+        @Override
+        public long getSleepTimeout() {
+            return matViewRefreshSleepTimeout;
+        }
+
+        @Override
+        public int[] getWorkerAffinity() {
+            return matViewRefreshWorkerAffinity;
+        }
+
+        @Override
+        public int getWorkerCount() {
+            return matViewRefreshWorkerCount;
+        }
+
+        @Override
+        public long getYieldThreshold() {
+            return matViewRefreshWorkerYieldThreshold;
+        }
+
+        @Override
+        public boolean haltOnError() {
+            return matViewRefreshWorkerHaltOnError;
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return matViewRefreshWorkerCount > 0;
+        }
+    }
+
     private class PropMetricsConfiguration implements MetricsConfiguration {
 
         @Override
@@ -5314,58 +5371,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getMaxWaitCapMs() {
             return maxRerunWaitCapMs;
-        }
-    }
-
-    private class PropMatViewRefreshPoolConfiguration implements WorkerPoolConfiguration {
-        @Override
-        public Metrics getMetrics() {
-            return metrics;
-        }
-
-        @Override
-        public long getNapThreshold() {
-            return matViewRefreshWorkerNapThreshold;
-        }
-
-        @Override
-        public String getPoolName() {
-            return "mat-view-refresh";
-        }
-
-        @Override
-        public long getSleepThreshold() {
-            return matViewRefreshWorkerSleepThreshold;
-        }
-
-        @Override
-        public long getSleepTimeout() {
-            return matViewRefreshSleepTimeout;
-        }
-
-        @Override
-        public int[] getWorkerAffinity() {
-            return matViewRefreshWorkerAffinity;
-        }
-
-        @Override
-        public int getWorkerCount() {
-            return matViewRefreshWorkerCount;
-        }
-
-        @Override
-        public long getYieldThreshold() {
-            return matViewRefreshWorkerYieldThreshold;
-        }
-
-        @Override
-        public boolean haltOnError() {
-            return matViewRefreshWorkerHaltOnError;
-        }
-
-        @Override
-        public boolean isEnabled() {
-            return matViewRefreshWorkerCount > 0;
         }
     }
 

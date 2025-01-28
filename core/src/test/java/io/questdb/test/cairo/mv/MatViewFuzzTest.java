@@ -49,6 +49,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         super.setUp();
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_MAX_RECOMPILE_ATTEMPTS, String.valueOf(Integer.MAX_VALUE));
     }
 
     @Test
@@ -67,7 +68,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             createMatView(view2Sql, mv2Name);
 
             AtomicBoolean stop = new AtomicBoolean();
-            Thread refreshJob = startRefreshJob(stop, rnd);
+            Thread refreshJob = startRefreshJob(0, stop, rnd);
 
             setFuzzParams(rnd, 0);
 
@@ -139,7 +140,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             createMatView(viewSql, mvName);
 
             AtomicBoolean stop = new AtomicBoolean();
-            Thread refreshJob = startRefreshJob(stop, rnd);
+            Thread refreshJob = startRefreshJob(0, stop, rnd);
 
             setFuzzParams(rnd, 0);
 
@@ -197,7 +198,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         int refreshJobCount = 1 + rnd.nextInt(4);
 
         for (int i = 0; i < refreshJobCount; i++) {
-            refreshJobs.add(startRefreshJob(stop, rnd));
+            refreshJobs.add(startRefreshJob(i, stop, rnd));
         }
 
         ObjList<ObjList<FuzzTransaction>> fuzzTransactions = new ObjList<>();
@@ -223,11 +224,21 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         drainWalQueue();
         fuzzer.checkNoSuspendedTables();
 
+        MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
+        refreshJob.run(0);
+        drainWalQueue();
+        fuzzer.checkNoSuspendedTables();
+
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             for (int i = 0; i < tableCount; i++) {
                 String viewSql = viewSqls.getQuick(i);
                 String mvName = testTableName + "_" + i + "_mv";
                 LOG.info().$("asserting view ").$(mvName).$(" against ").$(viewSql).$();
+                assertSql(
+                        "count\n" +
+                                "1\n",
+                        "select count() from views where name = '" + mvName + "' and not invalid;"
+                );
                 TestUtils.assertSqlCursors(
                         compiler,
                         sqlExecutionContext,
@@ -270,11 +281,11 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         );
     }
 
-    private Thread startRefreshJob(AtomicBoolean stop, Rnd outsideRnd) {
+    private Thread startRefreshJob(int i, AtomicBoolean stop, Rnd outsideRnd) {
         Rnd rnd = new Rnd(outsideRnd.nextLong(), outsideRnd.nextLong());
         Thread th = new Thread(() -> {
             try {
-                MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
+                MatViewRefreshJob refreshJob = new MatViewRefreshJob(i, engine);
                 while (!stop.get()) {
                     refreshJob.run(0);
                     Os.sleep(rnd.nextInt(1000));
@@ -286,7 +297,6 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                         drainWalQueue(walApplyJob);
                     } while (refreshJob.run(0));
                 }
-
             } catch (Throwable throwable) {
                 LOG.error().$("Refresh job failed: ").$(throwable).$();
             } finally {

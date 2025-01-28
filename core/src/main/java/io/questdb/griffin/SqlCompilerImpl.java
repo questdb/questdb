@@ -2579,7 +2579,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private void executeCreateMatView(CreateMatViewOperation createMatViewOp, SqlExecutionContext executionContext) throws SqlException {
         final long sqlId = queryRegistry.register(createMatViewOp.getSqlText(), executionContext);
-        long beginNanos = configuration.getMicrosecondClock().getTicks();
+        final long beginNanos = configuration.getMicrosecondClock().getTicks();
         QueryProgress.logStart(sqlId, createMatViewOp.getSqlText(), executionContext, false);
         try {
             final int status = executionContext.getTableStatus(path, createMatViewOp.getTableName());
@@ -2627,7 +2627,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             clear();
                             compileInner(executionContext, createTableOp.getSelectText());
                             factory.close();
-                            factory = this.compiledQuery.getRecordCursorFactory();
+                            factory = compiledQuery.getRecordCursorFactory();
                             LOG.info().$("retrying plan [q=`").$(createTableOp.getSelectText()).$("`]").$();
                         }
                     }
@@ -2648,7 +2648,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         matViewToken = matViewDefinition.getMatViewToken();
 
                         cursor.hasNext();
-                        queryRegistry.unregister(sqlId, executionContext);
                     }
 
                     final TableToken baseTableToken = engine.getTableTokenIfExists(matViewDefinition.getBaseTableName());
@@ -2665,6 +2664,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
             QueryProgress.logError(th, sqlId, createMatViewOp.getSqlText(), executionContext, beginNanos);
             throw th;
+        } finally {
+            queryRegistry.unregister(sqlId, executionContext);
         }
     }
 

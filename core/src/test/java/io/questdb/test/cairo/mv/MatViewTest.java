@@ -767,7 +767,7 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     @Ignore
     public void testSampleByNoFillNotKeyedAlignToCalendarTimezoneOct() throws Exception {
-        // We are going over spring time change. Because time is "expanding" we dont have
+        // We are going over spring time change. Because time is "expanding" we don't have
         // to do anything special. Our UTC timestamps will show "gap" and data doesn't
         // have to change
         assertMemoryLeak(() -> {
@@ -799,7 +799,7 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     @Ignore
     public void testSampleByNoFillNotKeyedAlignToCalendarTimezoneOctMin() throws Exception {
-        // We are going over spring time change. Because time is "expanding" we dont have
+        // We are going over spring time change. Because time is "expanding" we don't have
         // to do anything special. Our UTC timestamps will show "gap" and data doesn't
         // have to change
         assertMemoryLeak(() -> {

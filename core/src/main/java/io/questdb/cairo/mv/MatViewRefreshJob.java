@@ -194,6 +194,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     private boolean insertAsSelect(MatViewRefreshState state, MatViewDefinition viewDef, TableWriterAPI tableWriter) throws SqlException {
+        assert state.isLocked();
+
         RecordCursorFactory factory = null;
         RecordToRowCopier copier;
         long rowCount;
