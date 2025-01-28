@@ -24,11 +24,14 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.api.MemoryCMOR;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.Unsafe;
 
 public class SegmentCopyInfo implements QuietCloseable {
     private final IntList seqTxnOrder = new IntList();
@@ -90,6 +93,28 @@ public class SegmentCopyInfo implements QuietCloseable {
     public void close() {
         segments = Misc.free(segments);
         txns = Misc.free(txns);
+    }
+
+    public void createAddressBuffersPrimary(int columnIndex, int columnCount, ObjList<MemoryCMOR> walMappedColumns, long mappedAddrBuffPrimary) {
+        int walColumnCountPerSegment = columnCount * 2;
+
+        for (int i = 0, n = getSegmentCount(); i < n; i++) {
+            var segmentColumnPrimary = walMappedColumns.get(walColumnCountPerSegment * i + 2 * columnIndex);
+            Unsafe.getUnsafe().putLong(mappedAddrBuffPrimary + (long) i * Long.BYTES, segmentColumnPrimary.addressOf(0));
+        }
+    }
+
+    public long createAddressBuffersSecondary(int columnIndex, int columnCount, ObjList<MemoryCMOR> walMappedColumns, long mappedAddrBuffSecondary, ColumnTypeDriver driver) {
+        int walColumnCountPerSegment = columnCount * 2;
+
+        long totalVarSize = 0;
+        for (int i = 0, n = getSegmentCount(); i < n; i++) {
+            var segmentColumnAux = walMappedColumns.get(walColumnCountPerSegment * i + 2 * columnIndex + 1);
+            long segmentColumnAuxAddr = segmentColumnAux.addressOf(0);
+            Unsafe.getUnsafe().putLong(mappedAddrBuffSecondary + (long) i * Long.BYTES, segmentColumnAuxAddr);
+            totalVarSize += driver.getDataVectorSize(segmentColumnAuxAddr, getRowLo(i), getRowHi(i) - 1);
+        }
+        return totalVarSize;
     }
 
     public int getMappingOrder(long absoluteSeqTxn) {
@@ -155,7 +180,7 @@ public class SegmentCopyInfo implements QuietCloseable {
         return segments.get(segmentIndex * 4L + 3) > 0;
     }
 
-    public int segmentCount() {
+    public int getSegmentCount() {
         return (int) (segments.size() / 4);
     }
 }

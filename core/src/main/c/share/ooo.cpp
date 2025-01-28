@@ -237,7 +237,7 @@ void radix_sort_long_index_asc_in_place(T *array, uint64_t size, T *cpy) {
 
 template<uint16_t n>
 void
-radix_sort_ab_long_index_asc(const int64_t *arrayA, const uint64_t sizeA, const index_l * arrayB, const uint64_t sizeB,
+radix_sort_ab_long_index_asc(const int64_t *arrayA, const uint64_t sizeA, const index_l *arrayB, const uint64_t sizeB,
                              index_l *out, index_l *cpy, int64_t minValue) {
     uint64_t counts[n][256] = {{0}};
     uint64_t x;
@@ -707,20 +707,15 @@ Java_io_questdb_std_Vect_radixSortABLongIndexAsc(JNIEnv *env, jclass cl, jlong p
                                                  jlong maxTimestamp) {
     auto minTs = __JLONG_REINTERPRET_CAST__(int64_t, minTimestamp);
     auto maxTs = __JLONG_REINTERPRET_CAST__(int64_t, maxTimestamp);
-    uint64_t range = maxTs - minTs;
 
-    int range_bytes = 0;
-    do {
-        ++range_bytes;
-        range = range >> 8;
-    } while (range != 0);
+    auto ts_range_bytes = range_bytes(maxTs - minTs + 1);
 
     auto *a = reinterpret_cast<int64_t *>(pDataA);
     auto *b = reinterpret_cast<index_l *>(pDataB);
     auto *out = reinterpret_cast<index_l *>(pDataOut);
     auto *cpy = reinterpret_cast<index_l *>(pDataCpy);
 
-    switch (range_bytes) {
+    switch (ts_range_bytes) {
         case 1:
             radix_sort_ab_long_index_asc<1>(a, countA, b, countB, out, cpy, minTs);
             break;
@@ -753,7 +748,7 @@ Java_io_questdb_std_Vect_radixSortABLongIndexAsc(JNIEnv *env, jclass cl, jlong p
 }
 
 
-JNIEXPORT jint JNICALL
+JNIEXPORT jlong JNICALL
 Java_io_questdb_std_Vect_radixSortManySegmentsIndexAsc(
         JNIEnv *env,
         jclass cl,
@@ -768,7 +763,8 @@ Java_io_questdb_std_Vect_radixSortManySegmentsIndexAsc(
         jlong lagRowCount,
         jlong minTimestamp,
         jlong maxTimestamp,
-        jlong totalRowCount
+        jlong totalRowCount,
+        jbyte resultFormat
 ) {
     auto *out = reinterpret_cast<index_l *>(pDataOut);
     auto *cpy = reinterpret_cast<index_l *>(pDataCpy);
@@ -776,6 +772,7 @@ Java_io_questdb_std_Vect_radixSortManySegmentsIndexAsc(
     auto *lag_ts_addr = reinterpret_cast<const int64_t *>(lagTsAddr);
     auto *txn_info_addr = reinterpret_cast<const txn_info *>(txnInfo);
     auto txn_count = __JLONG_REINTERPRET_CAST__(uint64_t, txnCount);
+    uint8_t result_format = resultFormat;
 
     auto segment_count = (uint32_t) segmentCount;
     auto max_segment_row_count = __JLONG_REINTERPRET_CAST__(uint64_t, maxSegmentRowCount);
@@ -790,7 +787,7 @@ Java_io_questdb_std_Vect_radixSortManySegmentsIndexAsc(
 
     // Check that ts + seq_txn fits 64 bits
     if (ts_range_bytes + txn_bytes > 8 || ts_range_bytes < 0 || txn_bytes < 0) {
-        return -1;
+        return merge_index_format(-1, 0, 0, 0);
     }
 
     auto row_count_range_bytes = range_bytes(std::max(max_segment_row_count, lag_row_count));
@@ -798,25 +795,25 @@ Java_io_questdb_std_Vect_radixSortManySegmentsIndexAsc(
 
     // Check that segment index + segment row offset fits 64 bits
     if (row_count_range_bytes + segments_range_bytes > 8 || row_count_range_bytes < 0 || segments_range_bytes < 0) {
-        return -2;
+        return merge_index_format(-2, 0, 0, 0);
     }
 
     // Check that total rows fits 64 bits
     if (total_row_count_bytes < 0 || total_row_count_bytes > 8) {
-        return -3;
+        return merge_index_format(-3, 0, 0, 0);
     }
 
-    auto sorted_count = radix_copy_segments_index_asc_precompiled(ts_range_bytes * 8u, txn_bytes * 8u, segments_range_bytes * 8u,
-                                              lag_ts_addr, lag_row_count,
-                                              segment_map_addresses, txn_info_addr, txn_count, out, cpy,
-                                              segment_count,
-                                              min_ts,
-                                              total_row_count_bytes);
+    auto sorted_count = radix_copy_segments_index_asc_precompiled(
+            ts_range_bytes * 8u, txn_bytes * 8u, segments_range_bytes * 8u,
+            lag_ts_addr, lag_row_count,
+            segment_map_addresses, txn_info_addr, txn_count, out, cpy,
+            segment_count,
+            min_ts,
+            total_row_count_bytes,
+            result_format
+    );
 
-    if (sorted_count != total_row_count) {
-        return -4;
-    }
-    return segments_range_bytes;
+    return merge_index_format((int64_t) sorted_count, total_row_count_bytes, segments_range_bytes, result_format);
 }
 
 JNIEXPORT jint JNICALL
@@ -824,32 +821,49 @@ Java_io_questdb_std_Vect_mergeShuffleColumnFromManyAddresses(
         JNIEnv *env,
         jclass cl,
         jint columnSizeBytes,
-        jint indexSegmentEncodingBytes,
+        jlong indexFormat,
         jlong srcAddresses,
         jlong dstAddress,
-        jlong mergeIndex,
-        jlong rowCount
+        jlong mergeIndex
 ) {
     auto merge_index_address = reinterpret_cast<const index_l *>(mergeIndex);
-    auto row_count = __JLONG_REINTERPRET_CAST__(uint64_t, rowCount);
-    auto column_size_bytes = (int32_t)columnSizeBytes;
-    auto index_segment_encoding_bytes = (int32_t)indexSegmentEncodingBytes;
-    auto src_addresses = reinterpret_cast<const void**>(srcAddresses);
-    auto dst_address = reinterpret_cast<void*>(dstAddress);
+    auto row_count = read_row_count(indexFormat);
+    auto column_size_bytes = reinterpret_cast<int32_t>(columnSizeBytes);
+    auto index_segment_encoding_bytes = read_segment_bytes(indexFormat);
+    auto src_addresses = reinterpret_cast<const void **>(srcAddresses);
+    auto dst_address = reinterpret_cast<void *>(dstAddress);
 
     switch (column_size_bytes) {
         case 1:
-            return merge_shuffle_column_from_many_addresses<uint8_t>(index_segment_encoding_bytes, src_addresses, dst_address, merge_index_address, row_count);
+            return merge_shuffle_column_from_many_addresses<uint8_t>(
+                    index_segment_encoding_bytes, src_addresses,
+                    dst_address, merge_index_address, row_count
+            );
         case 2:
-            return merge_shuffle_column_from_many_addresses<uint16_t>(index_segment_encoding_bytes, src_addresses, dst_address, merge_index_address, row_count);
+            return merge_shuffle_column_from_many_addresses<uint16_t>(
+                    index_segment_encoding_bytes, src_addresses,
+                    dst_address, merge_index_address, row_count
+            );
         case 4:
-            return merge_shuffle_column_from_many_addresses<uint32_t>(index_segment_encoding_bytes, src_addresses, dst_address, merge_index_address, row_count);
+            return merge_shuffle_column_from_many_addresses<uint32_t>(
+                    index_segment_encoding_bytes, src_addresses,
+                    dst_address, merge_index_address, row_count
+            );
         case 8:
-            return merge_shuffle_column_from_many_addresses<uint64_t>(index_segment_encoding_bytes, src_addresses, dst_address, merge_index_address, row_count);
+            return merge_shuffle_column_from_many_addresses<uint64_t>(
+                    index_segment_encoding_bytes, src_addresses,
+                    dst_address, merge_index_address, row_count
+            );
         case 16:
-            return merge_shuffle_column_from_many_addresses<__int128>(index_segment_encoding_bytes, src_addresses, dst_address, merge_index_address, row_count);
+            return merge_shuffle_column_from_many_addresses<__int128>(
+                    index_segment_encoding_bytes, src_addresses,
+                    dst_address, merge_index_address, row_count
+            );
         case 32:
-            return merge_shuffle_column_from_many_addresses<long_256bit>(index_segment_encoding_bytes, src_addresses, dst_address, merge_index_address, row_count);
+            return merge_shuffle_column_from_many_addresses<long_256bit>(
+                    index_segment_encoding_bytes, src_addresses,
+                    dst_address, merge_index_address, row_count
+            );
         default:
             return -1;
     }
@@ -861,31 +875,45 @@ JNIEXPORT jint JNICALL
 Java_io_questdb_std_Vect_mergeShuffleStringColumnFromManyAddresses(
         JNIEnv *env,
         jclass cl,
-        jint indexSegmentEncodingBytes,
+        jlong indexFormat,
         jint dataLengthBytes,
         jlong srcPrimaryAddresses,
         jlong srcSecondaryAddresses,
         jlong dstPrimaryAddress,
         jlong dstSecondaryAddress,
         jlong mergeIndex,
-        jlong rowCount,
         jlong dstVarOffset
 ) {
     auto merge_index_address = reinterpret_cast<const index_l *>(mergeIndex);
-    auto row_count = __JLONG_REINTERPRET_CAST__(int64_t, rowCount);
-    auto index_segment_encoding_bytes = (int32_t)indexSegmentEncodingBytes;
-    auto src_primary = reinterpret_cast<const char**>(srcPrimaryAddresses);
+    auto src_primary = reinterpret_cast<const char **>(srcPrimaryAddresses);
     auto src_secondary = reinterpret_cast<const int64_t **>(srcSecondaryAddresses);
-    auto dst_primary = reinterpret_cast<char*>(dstPrimaryAddress);
+    auto dst_primary = reinterpret_cast<char *>(dstPrimaryAddress);
     auto dst_secondary = reinterpret_cast<int64_t *>(dstSecondaryAddress);
     auto dst_var_offset = __JLONG_REINTERPRET_CAST__(const int64_t, dstVarOffset);
+    auto row_count = read_row_count(indexFormat);
+    auto index_segment_encoding_bytes = read_segment_bytes(indexFormat);
+    auto format = read_format(indexFormat);
+
+    if (format != SHUFFLE_INDEX_FORMAT && format != DEDUP_SHUFFLE_INDEX_FORMAT) {
+        return -2;
+    }
 
     switch (dataLengthBytes) {
         case 4:
-            merge_shuffle_string_column_from_many_addresses<int32_t, 2u>(index_segment_encoding_bytes, src_primary, src_secondary, dst_primary, dst_secondary, merge_index_address, row_count, dst_var_offset);
+            merge_shuffle_string_column_from_many_addresses<int32_t, 2u>(
+                    index_segment_encoding_bytes, src_primary,
+                    src_secondary, dst_primary, dst_secondary,
+                    merge_index_address, row_count,
+                    dst_var_offset
+            );
             break;
         case 8:
-            merge_shuffle_string_column_from_many_addresses<int64_t, 1u>(index_segment_encoding_bytes, src_primary, src_secondary, dst_primary, dst_secondary, merge_index_address, row_count, dst_var_offset);
+            merge_shuffle_string_column_from_many_addresses<int64_t, 1u>(
+                    index_segment_encoding_bytes, src_primary,
+                    src_secondary, dst_primary, dst_secondary,
+                    merge_index_address, row_count,
+                    dst_var_offset
+            );
             break;
         default:
             return -1;
@@ -899,47 +927,66 @@ JNIEXPORT jint JNICALL
 Java_io_questdb_std_Vect_mergeShuffleVarcharColumnFromManyAddresses(
         JNIEnv *env,
         jclass cl,
-        jint indexSegmentEncodingBytes,
+        jlong indexFormat,
         jlong srcPrimaryAddresses,
         jlong srcSecondaryAddresses,
         jlong dstPrimaryAddress,
         jlong dstSecondaryAddress,
         jlong mergeIndex,
-        jlong rowCount,
         jlong dstVarOffset
 ) {
     auto merge_index_address = reinterpret_cast<const index_l *>(mergeIndex);
-    auto row_count = __JLONG_REINTERPRET_CAST__(int64_t, rowCount);
-    auto src_primary = reinterpret_cast<const char**>(srcPrimaryAddresses);
+    auto src_primary = reinterpret_cast<const char **>(srcPrimaryAddresses);
     auto src_secondary = reinterpret_cast<const int64_t **>(srcSecondaryAddresses);
-    auto dst_primary = reinterpret_cast<char*>(dstPrimaryAddress);
+    auto dst_primary = reinterpret_cast<char *>(dstPrimaryAddress);
     auto dst_secondary = reinterpret_cast<int64_t *>(dstSecondaryAddress);
     auto dst_var_offset = __JLONG_REINTERPRET_CAST__(const int64_t, dstVarOffset);
+    auto row_count = read_row_count(indexFormat);
+    auto index_segment_encoding_bytes = read_segment_bytes(indexFormat);
+    auto format = read_format(indexFormat);
 
-    switch (indexSegmentEncodingBytes) {
+    if (format != SHUFFLE_INDEX_FORMAT && format != DEDUP_SHUFFLE_INDEX_FORMAT) {
+        return -2;
+    }
+
+    switch (index_segment_encoding_bytes) {
         case 0:
-            merge_shuffle_varchar_column_from_many_addresses<0u>(src_primary, src_secondary, dst_primary, dst_secondary, merge_index_address, row_count, dst_var_offset);
+            merge_shuffle_varchar_column_from_many_addresses<0u>(src_primary, src_secondary, dst_primary, dst_secondary,
+                                                                 merge_index_address, row_count, dst_var_offset);
             break;
         case 1:
-            merge_shuffle_varchar_column_from_many_addresses<8u>(src_primary, src_secondary, dst_primary, dst_secondary, merge_index_address, row_count, dst_var_offset);
+            merge_shuffle_varchar_column_from_many_addresses<8u>(src_primary, src_secondary, dst_primary, dst_secondary,
+                                                                 merge_index_address, row_count, dst_var_offset);
             break;
         case 2:
-            merge_shuffle_varchar_column_from_many_addresses<16u>(src_primary, src_secondary, dst_primary, dst_secondary, merge_index_address, row_count, dst_var_offset);
+            merge_shuffle_varchar_column_from_many_addresses<16u>(src_primary, src_secondary, dst_primary,
+                                                                  dst_secondary, merge_index_address, row_count,
+                                                                  dst_var_offset);
             break;
         case 3:
-            merge_shuffle_varchar_column_from_many_addresses<24u>(src_primary, src_secondary, dst_primary, dst_secondary, merge_index_address, row_count, dst_var_offset);
+            merge_shuffle_varchar_column_from_many_addresses<24u>(src_primary, src_secondary, dst_primary,
+                                                                  dst_secondary, merge_index_address, row_count,
+                                                                  dst_var_offset);
             break;
         case 4:
-            merge_shuffle_varchar_column_from_many_addresses<32u>(src_primary, src_secondary, dst_primary, dst_secondary, merge_index_address, row_count, dst_var_offset);
+            merge_shuffle_varchar_column_from_many_addresses<32u>(src_primary, src_secondary, dst_primary,
+                                                                  dst_secondary, merge_index_address, row_count,
+                                                                  dst_var_offset);
             break;
         case 5:
-            merge_shuffle_varchar_column_from_many_addresses<40u>(src_primary, src_secondary, dst_primary, dst_secondary, merge_index_address, row_count, dst_var_offset);
+            merge_shuffle_varchar_column_from_many_addresses<40u>(src_primary, src_secondary, dst_primary,
+                                                                  dst_secondary, merge_index_address, row_count,
+                                                                  dst_var_offset);
             break;
         case 6:
-            merge_shuffle_varchar_column_from_many_addresses<48u>(src_primary, src_secondary, dst_primary, dst_secondary, merge_index_address, row_count, dst_var_offset);
+            merge_shuffle_varchar_column_from_many_addresses<48u>(src_primary, src_secondary, dst_primary,
+                                                                  dst_secondary, merge_index_address, row_count,
+                                                                  dst_var_offset);
             break;
         case 7:
-            merge_shuffle_varchar_column_from_many_addresses<56u>(src_primary, src_secondary, dst_primary, dst_secondary, merge_index_address, row_count, dst_var_offset);
+            merge_shuffle_varchar_column_from_many_addresses<56u>(src_primary, src_secondary, dst_primary,
+                                                                  dst_secondary, merge_index_address, row_count,
+                                                                  dst_var_offset);
             break;
         default:
             return -1;
@@ -953,37 +1000,112 @@ JNIEXPORT jlong JNICALL
 Java_io_questdb_std_Vect_mergeShuffleSymbolColumnFromManyAddresses(
         JNIEnv *env,
         jclass cl,
-        jint indexSegmentEncodingBytes,
+        jlong indexFormat,
         jlong srcAddresses,
         jlong dstAddress,
         jlong mergeIndex,
-        jlong rowCount,
         jlong txnInfo,
         jlong txnCount,
         jlong symbolMap,
         jlong symbolMapSize
 ) {
-    auto merge_index_address = reinterpret_cast<const index_l *>(mergeIndex);
-    auto row_count = __JLONG_REINTERPRET_CAST__(int64_t, rowCount);
     auto src = reinterpret_cast<const int32_t **>(srcAddresses);
-    auto dst = reinterpret_cast<int32_t*>(dstAddress);
+    auto dst = reinterpret_cast<int32_t *>(dstAddress);
     auto *txn_info_addr = reinterpret_cast<const txn_info *>(txnInfo);
     auto txn_count = __JLONG_REINTERPRET_CAST__(uint64_t, txnCount);
     auto symbol_map = reinterpret_cast<const int32_t *>(symbolMap);
-    auto symbol_map_size = __JLONG_REINTERPRET_CAST__(uint64_t, symbolMapSize);
-    auto row_index_bytes = range_bytes(row_count);
+    auto row_index_bytes = read_reverse_index_format_bytes(indexFormat);
+    auto reverse_index_ptr = read_reverse_index_ptr(mergeIndex, indexFormat);
+    auto format = read_format(indexFormat);
 
-    switch (row_index_bytes) {
-        case 1:
-            return merge_shuffle_symbol_column_from_many_addresses<uint8_t>(src, dst, merge_index_address, row_count, txn_info_addr, txn_count, symbol_map, symbol_map_size);
-        case 2:
-            return merge_shuffle_symbol_column_from_many_addresses<uint16_t>(src, dst, merge_index_address, row_count, txn_info_addr, txn_count, symbol_map, symbol_map_size);
-        case 3:
-        case 4:
-            return merge_shuffle_symbol_column_from_many_addresses<uint32_t>(src, dst, merge_index_address, row_count, txn_info_addr, txn_count, symbol_map, symbol_map_size);
-        default:
-            return merge_shuffle_symbol_column_from_many_addresses<uint64_t>(src, dst, merge_index_address, row_count, txn_info_addr, txn_count, symbol_map, symbol_map_size);
+    if (format == SHUFFLE_INDEX_FORMAT) {
+        switch (row_index_bytes) {
+            case 1:
+                return merge_shuffle_symbol_column_from_many_addresses<uint8_t, SHUFFLE_INDEX_FORMAT>(
+                        src, dst,
+                        txn_info_addr, txn_count, symbol_map,
+                        reverse_index_ptr
+                );
+            case 2:
+                return merge_shuffle_symbol_column_from_many_addresses<uint16_t, SHUFFLE_INDEX_FORMAT>(
+                        src, dst,
+                        txn_info_addr, txn_count, symbol_map,
+                        reverse_index_ptr
+                );
+            case 3:
+            case 4:
+                return merge_shuffle_symbol_column_from_many_addresses<uint32_t, SHUFFLE_INDEX_FORMAT>(
+                        src, dst,
+                        txn_info_addr, txn_count, symbol_map,
+                        reverse_index_ptr
+                );
+            case 5:
+            case 6:
+            case 7:
+            case 8:
+                return merge_shuffle_symbol_column_from_many_addresses<uint32_t, SHUFFLE_INDEX_FORMAT>(
+                        src, dst,
+                        txn_info_addr, txn_count, symbol_map,
+                        reverse_index_ptr
+                );
+            default:
+                return -1;
+        }
+    } else if (format == DEDUP_SHUFFLE_INDEX_FORMAT) {
+        switch (row_index_bytes) {
+            case 1:
+                return merge_shuffle_symbol_column_from_many_addresses<uint8_t, DEDUP_SHUFFLE_INDEX_FORMAT>(
+                        src, dst,
+                        txn_info_addr, txn_count, symbol_map,
+                        reverse_index_ptr
+                );
+            case 2:
+                return merge_shuffle_symbol_column_from_many_addresses<uint16_t, DEDUP_SHUFFLE_INDEX_FORMAT>(
+                        src, dst,
+                        txn_info_addr, txn_count, symbol_map,
+                        reverse_index_ptr
+                );
+            case 3:
+            case 4:
+                return merge_shuffle_symbol_column_from_many_addresses<uint32_t, DEDUP_SHUFFLE_INDEX_FORMAT>(
+                        src, dst,
+                        txn_info_addr, txn_count, symbol_map,
+                        reverse_index_ptr
+                );
+            case 5:
+            case 6:
+            case 7:
+            case 8:
+                return merge_shuffle_symbol_column_from_many_addresses<uint32_t, DEDUP_SHUFFLE_INDEX_FORMAT>(
+                        src, dst,
+                        txn_info_addr, txn_count, symbol_map,
+                        reverse_index_ptr
+                );
+            default:
+                return -1;
+        }
+    } else {
+        return -1;
     }
+}
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_remapSymbolColumnFromManyAddresses(
+        JNIEnv *env,
+        jclass cl,
+        jlong srcAddresses,
+        jlong dstAddress,
+        jlong txnInfo,
+        jlong txnCount,
+        jlong symbolMap
+) {
+    auto src = reinterpret_cast<const int32_t **>(srcAddresses);
+    auto dst = reinterpret_cast<int32_t *>(dstAddress);
+    auto *txn_info_addr = reinterpret_cast<const txn_info *>(txnInfo);
+    auto txn_count = __JLONG_REINTERPRET_CAST__(uint64_t, txnCount);
+    auto symbol_map = reinterpret_cast<const int32_t *>(symbolMap);
+
+    return remap_symbol_column_from_many_addresses(src, dst, txn_info_addr, txn_count, symbol_map);
 }
 
 JNIEXPORT void JNICALL

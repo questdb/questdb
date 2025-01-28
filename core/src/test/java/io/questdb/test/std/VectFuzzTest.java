@@ -1659,7 +1659,7 @@ public class VectFuzzTest {
                     Unsafe.getUnsafe().putLong(lagBuf + (long) lr * Long.BYTES, startTs + tsIncrement * lr);
                 }
 
-                int bytesPerSegmentId = Vect.radixSortManySegmentsIndexAsc(
+                long indexFormat = Vect.radixSortManySegmentsIndexAsc(
                         buf1,
                         buf2,
                         segmentAddresses.getAddress(),
@@ -1671,15 +1671,15 @@ public class VectFuzzTest {
                         lagRows,
                         startTs,
                         maxTs,
-                        totalRows
+                        totalRows,
+                        Vect.SHUFFLE_INDEX_FORMAT
                 );
 
-                Assert.assertTrue("Internal sort failure: " + bytesPerSegmentId, bytesPerSegmentId >= 0 && bytesPerSegmentId <= 8);
-                Assert.assertEquals(segmentBytes, bytesPerSegmentId);
+                Assert.assertTrue("Internal sort failure: " + indexFormat, Vect.isIndexSuccess(indexFormat));
 
                 // Assert the data
                 long lastTs = startTs;
-                long segmentIdMask = (1L << (bytesPerSegmentId * 8)) - 1;
+                long segmentIdMask = (1L << (segmentBytes * 8)) - 1;
                 for (long r = 0; r < totalRows; r++) {
                     long ts = Unsafe.getUnsafe().getLong(buf1 + r * 2L * Long.BYTES);
                     long idx = Unsafe.getUnsafe().getLong(buf1 + r * 2L * Long.BYTES + Long.BYTES);
@@ -1691,7 +1691,7 @@ public class VectFuzzTest {
 
                     int divider = segmentCount + (withLag ? 1 : 0);
                     long segmentId = idx & segmentIdMask;
-                    long segmentRow = idx >> (bytesPerSegmentId * 8);
+                    long segmentRow = idx >> (segmentBytes * 8);
 
                     if (startTs + (r / divider) * tsIncrement != ts) {
                         Assert.assertEquals(Long.toString(r), startTs + (r / divider) * tsIncrement, ts);

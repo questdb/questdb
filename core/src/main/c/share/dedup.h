@@ -44,6 +44,24 @@ struct dedup_column {
     int64_t java_reserved_5;
     uint8_t null_value[32];
 };
+
+struct dedup_column_many_addresses {
+    int32_t column_type;
+    int32_t value_size_bytes;
+    int64_t _reserved1;
+    void **column_data;
+    void **column_var_data;
+    int64_t column_var_data_len;
+    void *_reserved2;
+    void *_reserved3;
+    int64_t _o3_var_data_len;
+    int64_t java_reserved_1;
+    int64_t java_reserved_2;
+    int64_t java_reserved_3;
+    int64_t java_reserved_4;
+    int64_t java_reserved_5;
+    uint8_t null_value[32];
+};
 #pragma pack(pop)
 
 struct int256 {
@@ -74,6 +92,5 @@ inline bool operator<(const int256 &a, const int256 &b) {
     // If the high parts are equal, compare the low 128-bit parts
     return a.lo < b.lo;
 }
-
 
 #endif //QUESTDB_DEDUP_H

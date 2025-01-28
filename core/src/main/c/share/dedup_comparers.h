@@ -28,6 +28,7 @@
 #include "dedup.h"
 #include "column_type.h"
 #include <algorithm>
+#include "ooo.h"
 
 #define assertm(exp, msg) assert(((void)msg, exp))
 
@@ -52,12 +53,33 @@ class SortColumnComparer : dedup_column {
 public:
     inline int operator()(int64_t l, int64_t r) const {
         const T l_val = l > -1
-                           ? reinterpret_cast<T *>(column_data)[l]
-                           : reinterpret_cast<T *>(o3_data)[l & ~(1ull << 63)];
+                        ? reinterpret_cast<T *>(column_data)[l]
+                        : reinterpret_cast<T *>(o3_data)[l & ~(1ull << 63)];
 
         const T r_val = r > -1
-                           ? reinterpret_cast<T *>(column_data)[r]
-                           : reinterpret_cast<T *>(o3_data)[r & ~(1ull << 63)];
+                        ? reinterpret_cast<T *>(column_data)[r]
+                        : reinterpret_cast<T *>(o3_data)[r & ~(1ull << 63)];
+
+        // One of the values can be MIN of the type (null value)
+        // and subtraction can result in type overflow
+        return (l_val > r_val) - (l_val < r_val);
+    }
+};
+
+template<typename T, uint16_t segment_bits, typename TIdx>
+class SortColumnComparerManyAddresses : dedup_column_many_addresses {
+public:
+    inline int operator()(index_tr_i<TIdx> l, index_tr_i<TIdx> r) const {
+        constexpr uint64_t segment_mask = (1ULL << segment_bits) - 1;
+
+        auto l_row_index = l.i >> segment_bits;
+        auto l_src_index = l.i & segment_mask;
+
+        auto r_row_index = r.i >> segment_bits;
+        auto r_src_index = r.i & segment_mask;
+
+        const T l_val = reinterpret_cast<T *>(column_data[l_src_index])[l_row_index];
+        const T r_val = reinterpret_cast<T *>(column_data[r_src_index])[r_row_index];
 
         // One of the values can be MIN of the type (null value)
         // and subtraction can result in type overflow
@@ -117,11 +139,12 @@ struct data_point {
 };
 #pragma pack(pop)
 
-
-inline int compare_varchar(const data_point *l_col, int64_t l_offset, const data_point *r_col, int64_t r_offset) {
-
-    auto l_val_aux = l_col->aux_data + l_offset * sizeof(VarcharAuxEntrySplit);
-    auto r_val_aux = r_col->aux_data + r_offset * sizeof(VarcharAuxEntrySplit);
+inline int compare_varchar(
+        const uint8_t *l_aux, const uint8_t *l_var_data, int64_t l_var_data_len, int64_t l_offset,
+        const uint8_t *r_aux, const uint8_t *r_var_data, int64_t r_var_data_len, int64_t r_offset
+) {
+    auto l_val_aux = l_aux + l_offset * sizeof(VarcharAuxEntrySplit);
+    auto r_val_aux = r_aux + r_offset * sizeof(VarcharAuxEntrySplit);
 
     auto l_size = read_varchar_size(l_val_aux);
     auto r_size = read_varchar_size(r_val_aux);
@@ -152,11 +175,19 @@ inline int compare_varchar(const data_point *l_col, int64_t l_offset, const data
 
         default: {
             // Both are not inlined
-            auto l_tail_chars_ptr = get_tail_chars_ptr(l_val_aux, l_size, l_col->var_data, l_col->var_data_len);
-            auto r_tail_chars_ptr = get_tail_chars_ptr(r_val_aux, r_size, r_col->var_data, r_col->var_data_len);
+            auto l_tail_chars_ptr = get_tail_chars_ptr(l_val_aux, l_size, l_var_data, l_var_data_len);
+            auto r_tail_chars_ptr = get_tail_chars_ptr(r_val_aux, r_size, r_var_data, r_var_data_len);
             return memcmp(l_tail_chars_ptr, r_tail_chars_ptr, l_size);
         }
     }
+}
+
+inline int compare_varchar(const data_point *l_col, int64_t l_offset, const data_point *r_col, int64_t r_offset) {
+
+    return compare_varchar(
+            l_col->aux_data, l_col->var_data, l_col->var_data_len, l_offset,
+            r_col->aux_data, r_col->var_data, r_col->var_data_len, r_offset
+    );
 }
 
 
@@ -186,6 +217,29 @@ public:
             // if right is null, then 0 (equals), otherwise -1 (left null is first)
             return r_header_null ? 0 : -1;
         }
+    }
+};
+
+
+template<uint16_t segment_bits, typename TIdx>
+class SortVarcharColumnComparerManyAddresses : dedup_column_many_addresses {
+
+public:
+    inline int operator()(index_tr_i<TIdx> l, index_tr_i<TIdx> r) const {
+        auto column_aux = reinterpret_cast<uint8_t **>(this->column_data);
+        auto column_var_data = reinterpret_cast<uint8_t **>(this->column_var_data);
+        constexpr uint64_t segment_mask = (1ULL << segment_bits) - 1;
+
+        auto l_row_index = l.i >> segment_bits;
+        auto l_src_index = l.i & segment_mask;
+
+        auto r_row_index = r.i >> segment_bits;
+        auto r_src_index = r.i & segment_mask;
+
+        return compare_varchar(
+                column_aux[l_src_index], column_var_data[l_src_index], std::numeric_limits<int64_t>::max(), l_row_index,
+                column_aux[r_src_index], column_var_data[r_src_index], std::numeric_limits<int64_t>::max(), r_row_index
+        );
     }
 };
 
@@ -228,6 +282,49 @@ public:
                 l_col->var_data + l_val_offset,
                 r_col->var_data + r_val_offset
         );
+    }
+};
+
+template<typename T, int item_size, int segment_bits, typename TIdx>
+class SortStrBinColumnComparerManyAddresses : dedup_column_many_addresses {
+
+public:
+    inline int operator()(index_tr_i<TIdx> l, index_tr_i<TIdx> r) const {
+        auto column_aux = reinterpret_cast<int64_t **>(this->column_data);
+        auto column_var_data = reinterpret_cast<uint8_t **>(this->column_var_data);
+
+        constexpr uint64_t segment_mask = (1ULL << segment_bits) - 1;
+
+        auto l_row_index = l.i >> segment_bits;
+        auto l_src_index = l.i & segment_mask;
+
+        auto r_row_index = r.i >> segment_bits;
+        auto r_src_index = r.i & segment_mask;
+
+        const auto l_val_offset = column_aux[l_src_index][l_row_index];
+        assertm(l_val_offset >= 0, "ERROR: column aux data point beyond var data buffer");
+
+        const auto r_val_offset = column_aux[r_src_index][r_row_index];
+        assertm(r_val_offset >= 0, "ERROR: column aux data point beyond var data buffer");
+
+        return compare_str_bin<T, item_size>(
+                column_var_data[l_src_index] + l_val_offset,
+                column_var_data[r_src_index] + r_val_offset
+        );
+    }
+};
+
+template<typename TIdx>
+class SortRemappedSymbolComparer : dedup_column_many_addresses {
+
+public:
+    inline int operator()(index_tr_i<TIdx> l, index_tr_i<TIdx> r) const {
+        auto column_data = reinterpret_cast<const int32_t *>(this->column_data);
+
+        auto l_val = column_data[l.ri];
+        auto r_val = column_data[r.ri];
+
+        return (l_val > r_val) - (l_val < r_val);
     }
 };
 

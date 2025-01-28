@@ -145,6 +145,7 @@ else ()
             SOURCE_FILES ${SOURCE_FILES}
             src/main/c/share/files.c
             src/main/c/share/os.c
+            src/main/c/share/ooo.h
     )
 endif ()
 

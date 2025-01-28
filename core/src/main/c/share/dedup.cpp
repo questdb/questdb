@@ -32,7 +32,10 @@
 #include <cassert>
 #include "dedup.h"
 #include "dedup_comparers.h"
+#include "ooo.h"
+
 #define assertm(exp, msg) assert(((void)msg, exp))
+
 template<typename LambdaDiff>
 inline int64_t branch_free_search(const index_t *array, int64_t count, int64_t value_index, LambdaDiff compare) {
     const index_t *base = array;
@@ -136,6 +139,7 @@ int64_t merge_dedup_long_index_int_keys(
     return dest - dest_index;
 }
 
+template<typename index_t>
 inline int64_t dedup_sorted_timestamp_index(const index_t *index_in, int64_t count, index_t *index_out) {
     // std::unique_copy takes first record but here we want last
     if (count > 0) {
@@ -156,7 +160,7 @@ inline int64_t dedup_sorted_timestamp_index(const index_t *index_in, int64_t cou
     return 0;
 }
 
-template<typename diff_lambda>
+template<typename diff_lambda, typename index_t>
 inline int64_t dedup_sorted_timestamp_index_with_keys(
         const index_t *index_src,
         const int64_t count,
@@ -201,8 +205,8 @@ inline int64_t dedup_sorted_timestamp_index_with_keys(
     int64_t last = dup_start;
 
     for (int64_t i = dup_start + 1; i < dup_end; i++) {
-        uint64_t l = merge_result[last].i;
-        uint64_t r = merge_result[i].i;
+        auto l = merge_result[last].i;
+        auto r = merge_result[i].i;
         if (merge_result[i].ts > merge_result[last].ts || diff_l(l, r) != 0) {
             index_dest[copy_to++] = merge_result[i - 1];
             last = i;
@@ -222,7 +226,7 @@ inline int64_t dedup_sorted_timestamp_index_with_keys(
     return copy_to + 1 + tail;
 }
 
-template<typename diff_lambda>
+template<typename diff_lambda, typename index_t>
 inline void merge_sort_slice(const index_t *src1, const index_t *src2, index_t *dest, const int64_t &src1_len,
                              const int64_t &src2_len, const diff_lambda diff_l) {
 
@@ -250,7 +254,7 @@ inline void merge_sort_slice(const index_t *src1, const index_t *src2, index_t *
     }
 }
 
-template<typename diff_lambda>
+template<typename diff_lambda, typename index_t>
 inline index_t *merge_sort(
         const index_t *index_src,
         index_t *index_dest1,
@@ -284,6 +288,233 @@ inline index_t *merge_sort(
     } while (slice_len < len);
 
     return dest;
+}
+
+template<uint16_t segment_bits, typename TIdx>
+uint64_t dedup_sorted_timestamp_index_many_addresses(
+        index_tr<TIdx> *index_out,
+        const index_tr<TIdx> *index_in,
+        const int64_t index_count,
+        index_tr<TIdx> *index_temp,
+        int32_t dedup_key_count,
+        const dedup_column_many_addresses *src_keys
+) {
+    if (dedup_key_count == 0) {
+        return dedup_sorted_timestamp_index(index_in, index_count, index_out);
+    }
+    const auto diff_l = [&](const index_tr_i<TIdx> l, const index_tr_i<TIdx> r) {
+        for (int c = 0; c < dedup_key_count; c++) {
+            const dedup_column_many_addresses *col_key = &src_keys[c];
+            int diff;
+            switch (col_key->value_size_bytes) {
+                case 1: {
+                    auto comparer{
+                            *reinterpret_cast<const SortColumnComparerManyAddresses<int8_t, segment_bits, TIdx> *>(col_key)};
+                    diff = comparer(l, r);
+                    break;
+                }
+                case 2: {
+                    auto comparer{
+                            *reinterpret_cast<const SortColumnComparerManyAddresses<int16_t, segment_bits, TIdx> *>(col_key)};
+                    diff = comparer(l, r);
+                    break;
+                }
+                case 4: {
+                    auto comparer{
+                            *reinterpret_cast<const SortColumnComparerManyAddresses<int32_t, segment_bits, TIdx> *>(col_key)};
+                    diff = comparer(l, r);
+                    break;
+                }
+                case 8: {
+                    auto comparer{
+                            *reinterpret_cast<const SortColumnComparerManyAddresses<int64_t, segment_bits, TIdx> *>(col_key)};
+                    diff = comparer(l, r);
+                    break;
+                }
+                case 16: {
+                    auto comparer{
+                            *reinterpret_cast<const SortColumnComparerManyAddresses<__int128, segment_bits, TIdx> *>(col_key)};
+                    diff = comparer(l, r);
+                    break;
+                }
+                case 32: {
+                    auto comparer{
+                            *reinterpret_cast<const SortColumnComparerManyAddresses<int256, segment_bits, TIdx> *>(col_key)};
+                    diff = comparer(l, r);
+                    break;
+                }
+                case -1: {
+                    switch ((ColumnType) (col_key->column_type)) {
+                        case ColumnType::VARCHAR: {
+                            auto comparer{
+                                    *reinterpret_cast<const SortVarcharColumnComparerManyAddresses<segment_bits, TIdx> *>(col_key)};
+                            diff = comparer(l, r);
+                            break;
+                        }
+                        case ColumnType::STRING: {
+                            auto comparer{
+                                    *reinterpret_cast<const SortStrBinColumnComparerManyAddresses<int32_t, 2, segment_bits, TIdx> *>(col_key)};
+                            diff = comparer(l, r);
+                            break;
+                        }
+                        case ColumnType::BINARY: {
+                            auto comparer{
+                                    *reinterpret_cast<const SortStrBinColumnComparerManyAddresses<int64_t, 1, segment_bits, TIdx> *>(col_key)};
+                            diff = comparer(l, r);
+                            break;
+                        }
+                        case ColumnType::SYMBOL: {
+                            // Very special case, it's the symbol that is re-mapped into a single buffer
+                            // e.g. the values do not come from multiple segments but from a single buffer
+                            auto comparer{*reinterpret_cast<const SortRemappedSymbolComparer<TIdx> *>(col_key)};
+                            diff = comparer(l, r);
+                            break;
+                        }
+                        default: {
+                            assertm(false, "unsupported column type");
+                            return -1;
+                        }
+                    }
+                    break;
+                }
+                default:
+                    assertm(false, "unsupported column type");
+                    return -1;
+            }
+            if (diff != 0) {
+                return diff;
+            }
+        }
+        return 0;
+    };
+
+    return dedup_sorted_timestamp_index_with_keys(index_in, index_count, index_out, index_temp, diff_l);
+}
+
+template<typename TIdx>
+uint64_t dedup_sorted_timestamp_index_many_addresses_segment_bits(
+        int32_t segment_encoding_bytes,
+        jlong indexOut,
+        const jlong indexIn,
+        const int64_t index_count,
+        jlong indexTemp,
+        int32_t dedup_key_count,
+        const dedup_column_many_addresses *src_keys
+) {
+
+    auto index_out = reinterpret_cast<index_tr<TIdx> *>(indexOut);
+    auto index_in = reinterpret_cast<const index_tr<TIdx> *>(indexIn);
+    auto index_temp = reinterpret_cast<index_tr<TIdx> *>(indexTemp);
+
+    switch (segment_encoding_bytes) {
+        case 0:
+            return dedup_sorted_timestamp_index_many_addresses<0, TIdx>(index_out, index_in, index_count, index_temp,
+                                                                        dedup_key_count, src_keys);
+        case 1:
+            return dedup_sorted_timestamp_index_many_addresses<8, TIdx>(index_out, index_in, index_count, index_temp,
+                                                                        dedup_key_count, src_keys);
+        case 2:
+            return dedup_sorted_timestamp_index_many_addresses<16, TIdx>(index_out, index_in, index_count, index_temp,
+                                                                         dedup_key_count, src_keys);
+        case 3:
+            return dedup_sorted_timestamp_index_many_addresses<24, TIdx>(index_out, index_in, index_count, index_temp,
+                                                                         dedup_key_count, src_keys);
+        case 4:
+            return dedup_sorted_timestamp_index_many_addresses<32, TIdx>(index_out, index_in, index_count, index_temp,
+                                                                         dedup_key_count, src_keys);
+        case 5:
+            return dedup_sorted_timestamp_index_many_addresses<40, TIdx>(index_out, index_in, index_count, index_temp,
+                                                                         dedup_key_count, src_keys);
+        case 6:
+            return dedup_sorted_timestamp_index_many_addresses<48, TIdx>(index_out, index_in, index_count, index_temp,
+                                                                         dedup_key_count, src_keys);
+        case 7:
+            return dedup_sorted_timestamp_index_many_addresses<56, TIdx>(index_out, index_in, index_count, index_temp,
+                                                                         dedup_key_count, src_keys);
+        default:
+            return -1;
+    }
+}
+
+template<typename TIdx>
+uint64_t dedup_sorted_timestamp_index_many_addresses_segment_bits_clean(
+        int32_t segment_encoding_bytes,
+        jlong indexOut,
+        const jlong indexIn,
+        const int64_t row_count,
+        jlong indexTemp,
+        int32_t dedup_key_count,
+        const dedup_column_many_addresses *src_keys
+) {
+    uint64_t dedup_rows = dedup_sorted_timestamp_index_many_addresses_segment_bits<TIdx>(
+            segment_encoding_bytes, indexOut, indexIn, row_count, indexTemp, dedup_key_count, src_keys
+    );
+
+    if (dedup_rows > 0) {
+        auto index_out = reinterpret_cast<index_tr<TIdx> *>(indexOut);
+        auto index_temp = reinterpret_cast<index_l *>(indexTemp);
+
+        // Format of the index is
+        // dedup_rows of records index_l
+        // then row count of the all rows, before the dedup took place
+        // and then reverse shuffle index of all rows, before the dedup took place
+        auto all_row_count = reinterpret_cast<int64_t *>(&index_temp[dedup_rows]);
+        auto reverse_index = reinterpret_cast<TIdx *>(&all_row_count[1]);
+        __MEMSET(reverse_index, -1, row_count * sizeof(TIdx));
+        all_row_count[0] = row_count;
+
+        for (uint64_t i = 0; i < dedup_rows; i++) {
+            index_temp[i].ts = index_out[i].ts;
+            index_temp[i].i = index_out[i].i.i;
+            reverse_index[index_out[i].i.ri] = i;
+        }
+    }
+    return dedup_rows;
+}
+
+uint64_t dedup_sorted_timestamp_index_many_addresses_segment_bits_row_encoding(
+        int32_t segment_encoding_bytes,
+        jlong indexOut,
+        const jlong indexIn,
+        const int64_t index_count,
+        jlong indexTemp,
+        int32_t dedup_key_count,
+        const dedup_column_many_addresses *src_keys
+) {
+
+    auto rows_bytes = range_bytes(index_count);
+    switch (rows_bytes) {
+        case 1:
+            return dedup_sorted_timestamp_index_many_addresses_segment_bits_clean<uint8_t>(
+                    segment_encoding_bytes, indexOut,
+                    indexIn, index_count, indexTemp,
+                    dedup_key_count, src_keys
+            );
+        case 2:
+            return dedup_sorted_timestamp_index_many_addresses_segment_bits_clean<uint16_t>(
+                    segment_encoding_bytes, indexOut,
+                    indexIn, index_count, indexTemp,
+                    dedup_key_count, src_keys
+            );
+        case 3:
+        case 4:
+            return dedup_sorted_timestamp_index_many_addresses_segment_bits_clean<uint32_t>(
+                    segment_encoding_bytes, indexOut,
+                    indexIn, index_count, indexTemp,
+                    dedup_key_count, src_keys
+            );
+        case 5:
+        case 6:
+        case 7:
+        case 8:
+            return dedup_sorted_timestamp_index_many_addresses_segment_bits_clean<uint64_t>(
+                    segment_encoding_bytes, indexOut,
+                    indexIn, index_count, indexTemp,
+                    dedup_key_count, src_keys
+            );
+        default:
+            return -2;
+    }
 }
 
 extern "C" {
@@ -421,7 +652,7 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                 );
             }
             case -1: {
-                switch ((ColumnType)(col_key->column_type)) {
+                switch ((ColumnType) (col_key->column_type)) {
                     case ColumnType::VARCHAR: {
                         return merge_dedup_long_index_int_keys(
                                 src, data_lo, data_hi,
@@ -495,7 +726,7 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                     break;
                 }
                 case -1: {
-                    switch ((ColumnType)(col_key->column_type)) {
+                    switch ((ColumnType) (col_key->column_type)) {
                         case ColumnType::VARCHAR: {
                             auto comparer{*reinterpret_cast<const MergeVarcharColumnComparer *>(col_key)};
                             diff = comparer(l, r);
@@ -586,7 +817,7 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
                             *reinterpret_cast<const SortColumnComparer<int256> *>(src_keys)
                     );
                 case -1:
-                    switch ((ColumnType)(col_key->column_type)) {
+                    switch ((ColumnType) (col_key->column_type)) {
                         case ColumnType::VARCHAR:
                             return dedup_sorted_timestamp_index_with_keys(
                                     index_in, index_count, index_out, index_temp,
@@ -649,7 +880,7 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
                         break;
                     }
                     case -1: {
-                        switch ((ColumnType)(col_key->column_type)) {
+                        switch ((ColumnType) (col_key->column_type)) {
                             case ColumnType::VARCHAR: {
                                 auto comparer{*reinterpret_cast<const SortVarcharColumnComparer *>(col_key)};
                                 diff = comparer(l, r);
@@ -687,13 +918,44 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
     }
 }
 
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_dedupSortedTimestampIndexManyAddresses(
+        JAVA_STATIC,
+        jint indexFromat,
+        jlong pIndexIn,
+        jlong pIndexTemp,
+        const jint dedupKeyCount,
+        jlong dedupColBuffs
+) {
+    auto index_count = read_row_count(indexFromat);
+    auto segment_bytes = read_segment_bytes(indexFromat);
+    auto dedup_key_count = reinterpret_cast<const int32_t>(dedupKeyCount);
+    auto format = read_format(indexFromat);
+
+    if (format != DEDUP_INDEX_FORMAT) {
+        return merge_index_format(-1, 0, 0, 0);
+    }
+    uint8_t reverse_index_bytes = read_reverse_index_format_bytes(indexFromat);
+    if (reverse_index_bytes != range_bytes(index_count)) {
+        return merge_index_format(-2, 0, 0, 0);
+    }
+
+    const auto src_keys = reinterpret_cast<const dedup_column_many_addresses *>(dedupColBuffs);
+    auto dedup_row_count = (int64_t) dedup_sorted_timestamp_index_many_addresses_segment_bits_row_encoding(
+            segment_bytes, pIndexIn, pIndexIn, index_count, pIndexTemp, dedup_key_count, src_keys
+    );
+    return merge_index_format(dedup_row_count, reverse_index_bytes, segment_bytes, DEDUP_SHUFFLE_INDEX_FORMAT);
+}
+
 
 JNIEXPORT jlong JNICALL
-Java_io_questdb_std_Vect_dedupMergeStrBinColumnSize(JNIEnv *env, jclass cl,
-                                                    jlong merge_index_addr,
-                                                    jlong merge_index_row_count,
-                                                    jlong src_data_fix_addr,
-                                                    jlong src_ooo_fix_addr) {
+Java_io_questdb_std_Vect_dedupMergeStrBinColumnSize(
+        JNIEnv *env, jclass cl,
+        jlong merge_index_addr,
+        jlong merge_index_row_count,
+        jlong src_data_fix_addr,
+        jlong src_ooo_fix_addr
+) {
     auto merge_index = reinterpret_cast<index_t *>(merge_index_addr);
     auto src_ooo_fix = reinterpret_cast<int64_t *>(src_ooo_fix_addr);
     auto src_data_fix = reinterpret_cast<int64_t *>(src_data_fix_addr);
@@ -739,6 +1001,5 @@ Java_io_questdb_std_Vect_dedupMergeVarcharColumnSize(JNIEnv *env, jclass cl,
     return dst_var_offset;
 }
 
-}
+} // extern C
 
-// extern C

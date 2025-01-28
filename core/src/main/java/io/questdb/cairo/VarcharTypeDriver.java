@@ -491,15 +491,14 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public void mergeShuffleColumnFromManyAddresses(int mergeIndexEncodingSegmentBytes, long primaryAddressList, long secondaryAddressList, long outPrimaryAddress, long outSecondaryAddress, long mergeIndex, long rowCount, long destDataOffset) {
+    public void mergeShuffleColumnFromManyAddresses(long indexFormat, long primaryAddressList, long secondaryAddressList, long outPrimaryAddress, long outSecondaryAddress, long mergeIndex, long destDataOffset) {
         int res = Vect.mergeShuffleVarcharColumnFromManyAddresses(
-                mergeIndexEncodingSegmentBytes,
+                indexFormat,
                 primaryAddressList,
                 secondaryAddressList,
                 outPrimaryAddress,
                 outSecondaryAddress,
                 mergeIndex,
-                rowCount,
                 destDataOffset
         );
         if (res != 0) {
