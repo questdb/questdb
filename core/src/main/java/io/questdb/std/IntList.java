@@ -32,8 +32,8 @@ import org.jetbrains.annotations.NotNull;
 import java.util.Arrays;
 
 public class IntList implements Mutable, Sinkable {
+    public static final int NO_ENTRY_VALUE = -1;
     private static final int DEFAULT_ARRAY_SIZE = 16;
-    private static final int NO_ENTRY_VALUE = -1;
     private final int initialCapacity;
     private int[] data;
     private int pos = 0;

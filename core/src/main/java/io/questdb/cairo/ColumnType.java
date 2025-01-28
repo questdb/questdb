@@ -120,7 +120,7 @@ public final class ColumnType {
     public static final int VERSION = 426;
     static final int[] GEO_TYPE_SIZE_POW2;
     private static final boolean ALLOW_DEFAULT_STRING_CHANGE = false;
-    private static final int BITS_OFFSET = 8;
+    private static final int BYTE_BITS = 8;
     private static final short[][] OVERLOAD_PRIORITY;
     private static final int TYPE_FLAG_DESIGNATED_TIMESTAMP = (1 << 17);
     private static final int TYPE_FLAG_GEO_HASH = (1 << 16);
@@ -163,8 +163,8 @@ public final class ColumnType {
 //                        (typePrecision == 4 && typeClass == 'f') ||
                         (typePrecision == 5 && typeClass == 'f') ||  // float
                         (typePrecision == 6 && typeClass == 'f')) {  // double
-            final int elementType = (((int) typeClass) << BITS_OFFSET) | typePrecision;
-            return ND_ARRAY | (elementType << BITS_OFFSET);
+            final int elementType = (((int) typeClass) << BYTE_BITS) | typePrecision;
+            return ND_ARRAY | (elementType << BYTE_BITS);
         } else {
             return -1;
         }
@@ -214,7 +214,7 @@ public final class ColumnType {
     }
 
     public static int getGeoHashBits(int type) {
-        return (byte) ((type >> BITS_OFFSET) & 0xFF);
+        return (byte) ((type >> BYTE_BITS) & 0xFF);
     }
 
     public static int getGeoHashTypeWithBits(int bits) {
@@ -237,14 +237,14 @@ public final class ColumnType {
 
     /**
      * Get the N-dimensional array element type's class.
-     * <p>'s' for a signed integer, 'u' for an unsigned integer, 'f' for a floating point number.</p>
-     * returns -1 if the type is not an array.
+     * <p>'i' for a signed integer, 'u' for an unsigned integer, 'f' for a floating point number.</p>
+     * returns <code>Character.MAX_VALUE</code> if the type is not an array.
      */
     public static char getNdArrayElementTypeClass(int type) {
         if (ColumnType.tagOf(type) == ColumnType.ND_ARRAY) {
-            return (char) ((type >> BITS_OFFSET >> BITS_OFFSET) & 0x7FFF);  // 15-bit mask.
+            return (char) ((type >> (2 * BYTE_BITS)) & 0x7FFF);  // 15-bit mask.
         }
-        return (char) -1;
+        return Character.MAX_VALUE;
     }
 
     /**
@@ -263,7 +263,7 @@ public final class ColumnType {
      */
     public static byte getNdArrayElementTypePrecision(int type) {
         if (ColumnType.tagOf(type) == ColumnType.ND_ARRAY) {
-            return (byte) ((type >> BITS_OFFSET) & 0xFF);
+            return (byte) ((type >> BYTE_BITS) & 0xFF);
         }
         return -1;
     }
@@ -479,16 +479,16 @@ public final class ColumnType {
             typeClass = 'u';
             precision = 0;
         } else if (Chars.equalsIgnoreCase(name, "byte")) {
-            typeClass = 's';
+            typeClass = 'i';
             precision = 3;
         } else if (Chars.equalsIgnoreCase(name, "short")) {
-            typeClass = 's';
+            typeClass = 'i';
             precision = 4;
         } else if (Chars.equalsIgnoreCase(name, "int")) {
-            typeClass = 's';
+            typeClass = 'i';
             precision = 5;
         } else if (Chars.equalsIgnoreCase(name, "long")) {
-            typeClass = 's';
+            typeClass = 'i';
             precision = 6;
         } else if (Chars.equalsIgnoreCase(name, "float")) {
             typeClass = 'f';
@@ -548,8 +548,8 @@ public final class ColumnType {
      * Unsigned -> Signed -> Floating
      */
     private static char getNdArrayCommonWideningTypeClass(char tc1, char tc2) {
-        assert tc1 == 'u' || tc1 == 's' || tc1 == 'f';
-        assert tc2 == 'u' || tc2 == 's' || tc2 == 'f';
+        assert tc1 == 'u' || tc1 == 'i' || tc1 == 'f';
+        assert tc2 == 'u' || tc2 == 'i' || tc2 == 'f';
         // This works, but by coincidence.
         // Replace with a weights table if adding another type where the
         // type class letter does not reverse-sort.
@@ -619,7 +619,7 @@ public final class ColumnType {
     }
 
     private static int mkGeoHashType(int bits, short baseType) {
-        return (baseType & ~(0xFF << BITS_OFFSET)) | (bits << BITS_OFFSET) | TYPE_FLAG_GEO_HASH; // bit 16 is GeoHash flag
+        return (baseType & ~(0xFF << BYTE_BITS)) | (bits << BYTE_BITS) | TYPE_FLAG_GEO_HASH; // bit 16 is GeoHash flag
     }
 
     static {

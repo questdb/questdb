@@ -29,7 +29,6 @@ import io.questdb.cairo.Reopenable;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.str.Utf16Sink;
-import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -71,11 +70,26 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
         this.pos += thatSize;
     }
 
+    public DirectIntSlice asSlice() {
+        final long length = size();
+        assert length >= 0;
+        assert length <= Integer.MAX_VALUE;
+        slice.of(getAddress(), (int) length);
+        return slice;
+    }
+
     // clear without "zeroing" memory
     public void clear() {
         pos = address;
     }
 
+    /**
+     * Overwrites the range from `address` to `pos` (exclusive) with the provided
+     * value, and then resets `pos` to `address`. The value is interpreted as a
+     * single byte, so this sets all the involved bytes to that value.
+     *
+     * @param b the byte value to set
+     */
     public void clear(int b) {
         zero(b);
         pos = address;
@@ -122,8 +136,7 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
     public void resetCapacity() {
         if (initialCapacity == 0) {
             close();
-        }
-        else {
+        } else {
             setCapacityBytes(initialCapacity);
         }
     }
@@ -208,18 +221,9 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
         }
     }
 
-    public DirectIntSlice asSlice() {
-        final long length = size();
-        assert length >= 0;
-        assert length <= Integer.MAX_VALUE;
-        slice.of(getAddress(), (int) length);
-        return slice;
-    }
-
     void checkCapacity() {
-        if (pos < limit) {
-            return;
+        if (pos >= limit) {
+            setCapacityBytes((Math.max(capacity, Integer.BYTES)) << 1);
         }
-        setCapacityBytes((Math.max(capacity, Integer.BYTES)) << 1);
     }
 }

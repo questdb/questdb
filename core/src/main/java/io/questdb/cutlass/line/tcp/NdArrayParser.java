@@ -26,9 +26,13 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.ThreadLocal;
 import io.questdb.std.ndarr.NdArrayBuffer;
 import io.questdb.std.ndarr.NdArrayMeta;
 import io.questdb.std.ndarr.NdArrayView;
@@ -69,7 +73,7 @@ public class NdArrayParser implements QuietCloseable {
      * </ul>
      * <p>In short, negative (uncertain) dimensions are counted down, positive (determined) dimensions validate future data.</p>
      */
-    private final NdArrayBuffer bufs = new NdArrayBuffer();
+    private final NdArrayBuffer arrayBuf = new NdArrayBuffer();
     private final DirectUtf8String parsing = new DirectUtf8String();
 
     private final NdArrayView view = new NdArrayView();
@@ -79,27 +83,16 @@ public class NdArrayParser implements QuietCloseable {
     private long baseLo = 0;
 
     /**
-     * The current number of elements in the current dimension (for `NdArrFormat.RM` parsing).
-     */
-    private int currDimLen = 0;
-
-    /**
-     * The dimension index we're currently parsing (for `NdArrFormat.RM` parsing).
-     */
-    private int dimIndex = -1;
-    private ErrorCode error = ErrorCode.NONE;
-
-    /**
      * Count of how many elements we've stored.
      * <p>This is tracked separately since our <code>elements</code> is just bytes,
      * and we can't determine the elementsCount if the <code>type</code>
      * has a precision smaller than a byte.</p>
      */
-    private int valuesCount = 0;
+    private int numValues = 0;
 
     @Override
     public void close() {
-        Misc.free(bufs);
+        Misc.free(arrayBuf);
     }
 
     /**
@@ -116,7 +109,7 @@ public class NdArrayParser implements QuietCloseable {
      * Resets state and parses.
      * <p>Check the return code. If it's {@link ErrorCode#NONE}, access the result via {@link #getView()}.</p>
      */
-    public LineTcpParser.ErrorCode parse(DirectUtf8String value) {
+    public @NotNull ErrorCode parse(DirectUtf8String value) {
         reset();
 
         if (Utf8s.equalsAscii("{}", value)) {
@@ -127,22 +120,19 @@ public class NdArrayParser implements QuietCloseable {
         baseLo = value.lo();
         parsing.of(value);
 
-        parseLeftBrace();
-        if (error != ErrorCode.NONE) {
-            return error;
+        try {
+            parseOpenBrace();
+            parseDataType();
+            parseElements();
+            setArray();
+            return ErrorCode.NONE;
+        } catch (ParseException e) {
+            e.printStackTrace();
+            return e.errorCode;
+        } catch (Throwable t) {
+            t.printStackTrace();
+            return ErrorCode.ND_ARR_MALFORMED;
         }
-
-        parseDataType();
-        if (error != ErrorCode.NONE) {
-            return error;
-        }
-
-        parseElements();
-        if (error != ErrorCode.NONE) {
-            return error;
-        }
-
-        return setArray();
     }
 
     /**
@@ -153,44 +143,107 @@ public class NdArrayParser implements QuietCloseable {
         return (int) (parsing.lo() - baseLo);
     }
 
-    private void clearError() {
-        error = ErrorCode.NONE;
+    private void elementsPutByte(byte n) {
+        arrayBuf.values.putByte(n);
+        ++numValues;
     }
 
     private void elementsPutDouble(double n) {
-        bufs.values.putDouble(n);
-        ++valuesCount;
+        arrayBuf.values.putDouble(n);
+        ++numValues;
     }
 
-    private void elementsPutLong(int n) {
-        bufs.values.putLong(n);
-        ++valuesCount;
+    private void elementsPutFloat(float n) {
+        arrayBuf.values.putFloat(n);
+        ++numValues;
     }
 
-    private void parseDataType() {
+    private void elementsPutInt(int n) {
+        arrayBuf.values.putInt(n);
+        ++numValues;
+    }
+
+    private void elementsPutLong(long n) {
+        arrayBuf.values.putLong(n);
+        ++numValues;
+    }
+
+    private void parseDataType() throws ParseException {
         if (parsing.size() < 3) {
-            error = ErrorCode.ND_ARR_TOO_SHORT;
-            return;
+            throw ParseException.prematureEnd();
         }
 
         final byte typePrecision = parseTypePrecision();
-        if (error != ErrorCode.NONE) {
-            return;
-        }
-
         final char typeClass = parseTypeClass();
-        if (error != ErrorCode.NONE) {
-            return;
+        int elementSize = 1 << typePrecision;
+        switch (typeClass) {
+            case 'i':
+            case 'f':
+                switch (elementSize) {
+                    case 32:
+                    case 64:
+                        break;
+                    default:
+                        throw ParseException.invalidType();
+                }
+                break;
+            case 'u':
+                if (elementSize != 1) {
+                    throw ParseException.invalidType();
+                }
+                break;
+            default:
+                assert false : "Unexpected type class";
         }
 
         final int arrayType = ColumnType.buildNdArrayType(typeClass, typePrecision);
         if (arrayType == -1) {
-            error = ErrorCode.ND_ARR_INVALID_TYPE;
-            return;
+            throw ParseException.invalidType();
         }
 
-        bufs.type = arrayType;
+        arrayBuf.type = arrayType;
         parsing.advance();
+    }
+
+    private void parseElement(char typeClass, int bitSize, int tokenLimit) throws ParseException {
+        try {
+            switch (typeClass) {
+                case 'i':
+                    switch (bitSize) {
+                        case 32:
+                            elementsPutInt(Numbers.parseInt(parsing, 0, tokenLimit));
+                            break;
+                        case 64:
+                            elementsPutLong(Numbers.parseLong(parsing, 0, tokenLimit));
+                            break;
+                        default:
+                            throw new AssertionError("Unexpected signed element size");
+                    }
+                    break;
+                case 'u':
+                    assert bitSize == 1 : "Unexpected unsigned element size";
+                    int n = Numbers.parseInt(parsing, 0, tokenLimit);
+                    if (n != 0 && n != 1) {
+                        throw ParseException.unexpectedToken();
+                    }
+                    elementsPutByte((byte) n);
+                    break;
+                case 'f':
+                    switch (bitSize) {
+                        case 32:
+                            elementsPutFloat(Numbers.parseFloat(parsing.ptr(), tokenLimit));
+                            break;
+                        case 64:
+                            elementsPutDouble(Numbers.parseDouble(parsing.ptr(), tokenLimit));
+                            break;
+                        default:
+                            throw new AssertionError("Unexpected floating-point element size");
+                    }
+                    break;
+            }
+        } catch (NumericException e) {
+            throw ParseException.unexpectedToken();
+        }
     }
 
     /**
@@ -202,136 +255,156 @@ public class NdArrayParser implements QuietCloseable {
      * </pre>
      * <p>Note that by the time we call this function, the opening left brace and type have already been parsed.</p>
      */
-    private void parseElements() {
-        if (error != ErrorCode.NONE) {
-            return;
-        }
+    private void parseElements() throws ParseException {
+        final char elementType = ColumnType.getNdArrayElementTypeClass(arrayBuf.type);
+        final int elementBitSize = 1 << ColumnType.getNdArrayElementTypePrecision(arrayBuf.type);
+        final DirectIntList shape = arrayBuf.shape;
 
-        IntList shapeBackwards = new IntList();
+        int shapeSize = 0;
         int level = 0;
-
-        for (int n = parsing.size(), i = 0; i < n; i++) {
-            
+        int countAtCurrLevel = 0;
+        while (parsing.size() > 0) {
+            if (level == -1) {
+                throw ParseException.unexpectedToken();
+            }
+            byte b = parsing.byteAt(0);
+            switch (b) {
+                case '{':
+                    level++;
+                    if (shapeSize > 0 && level + 1 > shapeSize) {
+                        throw ParseException.unaligned();
+                    }
+                    countAtCurrLevel = 0;
+                    parsing.advance();
+                    continue;
+                case '}':
+                    if (shapeSize == 0) {
+                        shapeSize = level + 1;
+                        shape.setCapacity(shapeSize);
+                        shape.setPos(level);
+                        shape.clear(IntList.NO_ENTRY_VALUE);
+                        shape.setPos(level);
+                        shape.add(countAtCurrLevel);
+                    } else {
+                        int determinedLevelSize = shape.get(level);
+                        if (determinedLevelSize == IntList.NO_ENTRY_VALUE) {
+                            shape.set(level, countAtCurrLevel);
+                        } else if (countAtCurrLevel != determinedLevelSize) {
+                            throw ParseException.unaligned();
+                        }
+                    }
+                    level--;
+                    countAtCurrLevel = 0;
+                    parsing.advance();
+                    continue;
+                case ',':
+                    parsing.advance();
+                    continue;
+                default:
+                    countAtCurrLevel++;
+                    int tokenLimit = 0;
+                    for (int n = parsing.size(), i = 1; i < n; i++) {
+                        b = parsing.byteAt(i);
+                        if (b == ',' || b == '}') {
+                            tokenLimit = i;
+                            break;
+                        }
+                    }
+                    if (tokenLimit == 0) {
+                        throw ParseException.prematureEnd();
+                    }
+                    parseElement(elementType, elementBitSize, tokenLimit);
+                    parsing.advance(tokenLimit);
+            }
         }
-
-
-        if (Utf8s.equalsUtf16("1.0,2.5,3.0,4.5,5.0}", parsing)) {
-            assert bufs.type == ColumnType.buildNdArrayType('f', (byte) 6);  // ARRAY(DOUBLE)
-            elementsPutDouble(1.0);
-            elementsPutDouble(2.5);
-            elementsPutDouble(3.0);
-            elementsPutDouble(4.5);
-            elementsPutDouble(5.0);
-            bufs.shape.add(5);
-            parsing.advance(20);
-        } else if (Utf8s.equalsUtf16("-1,0,100000000}", parsing)) {
-            assert bufs.type == ColumnType.buildNdArrayType('i', (byte) 6);  // ARRAY(LONG)
-            elementsPutLong(-1);
-            elementsPutLong(0);
-            elementsPutLong(100000000);
-            bufs.shape.add(3);
-            parsing.advance(15);
-        } else {
-            throw new UnsupportedOperationException("not yet implemented");
-        }
-
-
-        // TODO(amunra): Complete the parser.
-
     }
 
-    private void parseLeftBrace() {
+    private void parseOpenBrace() throws ParseException {
         if (parsing.size() == 0) {
-            error = ErrorCode.ND_ARR_TOO_SHORT;
-            return;
+            throw ParseException.prematureEnd();
         }
-        final byte b0 = parsing.byteAt(0);
-        if (b0 != (byte) '{') {
-            error = ErrorCode.ND_ARR_UNEXPECTED;
-            return;
+        final byte b = parsing.byteAt(0);
+        if (b != (byte) '{') {
+            throw ParseException.unexpectedToken();
         }
         parsing.advance();
     }
 
     /**
-     * Parse number class: u -> unsigned, s -> signed, f -> floating point
+     * Parse number class: i -> signed, u -> unsigned, f -> floating point
      */
-    private char parseTypeClass() {
+    private char parseTypeClass() throws ParseException {
         final char ch = (char) parsing.byteAt(0);
         switch (ch) {
-            case 'u':
             case 'i':
+            case 'u':
             case 'f':
                 return ch;
             default:
-                error = ErrorCode.ND_ARR_INVALID_TYPE;
-                return 0;
+                throw ParseException.invalidType();
         }
     }
 
     /**
      * Power of 2, number of bits: e.g. 0 -> bool, 1 -> int2, ..., 5 -> int32, 6 -> int64
      */
-    private byte parseTypePrecision() {
+    private byte parseTypePrecision() throws ParseException {
         final char ch = (char) parsing.byteAt(0);
         if (ch < '0' || ch > '6') {
-            error = ErrorCode.ND_ARR_INVALID_TYPE;
-            return -1;
+            throw ParseException.invalidType();
         }
         parsing.advance();
-        return (byte) (ch - (char) 48);  // parse the single digit
-    }
-
-    /**
-     * Continue parsing the previous level of array nesting.
-     */
-    private void popDim() {
-        // Solidify the last dim before going back to the previous level.
-        // The negative (uncertain) value will be converted to positive.
-        bufs.shape.set(dimIndex, currDimLen);
-        assert (dimIndex >= 0);
-        assert dimIndex <= 0 || currDimLen > 0;
-        --dimIndex;
-        if (dimIndex >= 0) {
-            currDimLen = Math.abs(bufs.shape.get(dimIndex));
-        }
-    }
-
-    /**
-     * Parse the next level of array nesting.
-     */
-    private void pushDim() {
-        bufs.shape.add(0);
-        ++dimIndex;
-        currDimLen = 0;
+        return (byte) (ch - '0');  // parse the single digit
     }
 
     private void reset() {
-        clearError();
         view.reset();
-        bufs.reset();
-        currDimLen = 0;
-        dimIndex = -1;  // No dimensions until the first `{`
-        valuesCount = 0;
+        arrayBuf.reset();
+        numValues = 0;
         baseLo = 0;
     }
 
-    private ErrorCode setArray() {
-        NdArrayMeta.setDefaultStrides(bufs.shape.asSlice(), bufs.strides);
-        if (bufs.setView(view) != NdArrayView.ValidatonStatus.OK) {
-            return ErrorCode.ND_ARR_MALFORMED;
+    private void setArray() throws ParseException {
+        NdArrayMeta.setDefaultStrides(arrayBuf.shape.asSlice(), arrayBuf.strides);
+        if (arrayBuf.setView(view) != NdArrayView.ValidatonStatus.OK) {
+            throw ParseException.malformed();
         }
-        return ErrorCode.NONE;
     }
 
-    private void valueWritten() {
-        currDimLen++;
-        final int lastDimLen = bufs.shape.get(dimIndex);
-        if (lastDimLen <= 0) {
-            // yet undetermined
-            bufs.shape.set(dimIndex, -currDimLen);
-        } else if (lastDimLen >= currDimLen) {
-            error = ErrorCode.ND_ARR_UNALIGNED;
+    private static class ParseException extends Exception {
+        private static final ThreadLocal<ParseException> tlException = new ThreadLocal<>(ParseException::new);
+        ErrorCode errorCode;
+
+        private static ParseException instance() {
+            ParseException ex = tlException.get();
+            // This is to have correct stack trace in local debugging with -ea option
+            assert (ex = new ParseException()) != null;
+            return ex;
+        }
+
+        static @NotNull ParseException invalidType() {
+            return instance().errorCode(ErrorCode.ND_ARR_INVALID_TYPE);
+        }
+
+        static @NotNull ParseException malformed() {
+            return instance().errorCode(ErrorCode.ND_ARR_MALFORMED);
+        }
+
+        static @NotNull ParseException prematureEnd() {
+            return instance().errorCode(ErrorCode.ND_ARR_TOO_SHORT);
+        }
+
+        static @NotNull ParseException unaligned() {
+            return instance().errorCode(ErrorCode.ND_ARR_UNALIGNED);
+        }
+
+        static @NotNull ParseException unexpectedToken() {
+            return instance().errorCode(ErrorCode.ND_ARR_UNEXPECTED);
+        }
+
+        ParseException errorCode(ErrorCode errorCode) {
+            this.errorCode = errorCode;
+            return this;
         }
     }
 }
