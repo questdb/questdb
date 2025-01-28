@@ -126,8 +126,8 @@ jobs:
           yum install wget nasm -y
       - name: Install JDK17 (for jni.h)
         run: |
-          wget -nv https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.11%2B9/OpenJDK17U-jdk_arm_linux_hotspot_17.0.11_9.tar.gz
-          tar xfz OpenJDK17U-jdk_arm_linux_hotspot_17.0.11_9.tar.gz
+          wget -v --timeout=180 https://api.adoptium.net/v3/binary/version/jdk-17.0.11+9/linux/aarch64/jdk/hotspot/normal/eclipse
+          tar xfvz eclipse
           echo "JAVA_HOME=`pwd`/jdk-17.0.11+9/" >> "$GITHUB_ENV"
       - name: CMAKE linux-aarch64
         run: |
