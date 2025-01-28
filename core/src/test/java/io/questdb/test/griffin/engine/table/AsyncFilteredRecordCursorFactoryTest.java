@@ -1049,7 +1049,9 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                 int rowsHiKindPos,
                 int exclusionKind,
                 int exclusionKindPos,
-                int timestampIndex
+                int timestampIndex,
+                boolean ignoreNulls,
+                int nullsDescPos
         ) {
             sqlExecutionContext.configureWindowContext(
                     partitionByRecord,
@@ -1066,7 +1068,9 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     rowsHiKindPos,
                     exclusionKind,
                     exclusionKindPos,
-                    timestampIndex
+                    timestampIndex,
+                    ignoreNulls,
+                    nullsDescPos
             );
         }
 

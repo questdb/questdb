@@ -136,13 +136,13 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                                 partitionByKeyTypes,
                                 rowsLo == Long.MIN_VALUE ? MAX_OVER_PARTITION_RANGE_COLUMN_TYPES : MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES
                         );
-                        mem = Vm.getARWInstance(
+                        mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(),
                                 MemoryTag.NATIVE_CIRCULAR_BUFFER
                         );
                         if (rowsLo != Long.MIN_VALUE) {
-                            dequeMem = Vm.getARWInstance(
+                            dequeMem = Vm.getCARWInstance(
                                     configuration.getSqlWindowStorePageSize(),
                                     configuration.getSqlWindowStoreMaxPages(),
                                     MemoryTag.NATIVE_CIRCULAR_BUFFER
@@ -219,13 +219,13 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                                 partitionByKeyTypes,
                                 rowsLo == Long.MIN_VALUE ? MAX_OVER_PARTITION_ROWS_COLUMN_TYPES : MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES
                         );
-                        mem = Vm.getARWInstance(
+                        mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(),
                                 MemoryTag.NATIVE_CIRCULAR_BUFFER
                         );
                         if (rowsLo != Long.MIN_VALUE) {
-                            dequeMem = Vm.getARWInstance(
+                            dequeMem = Vm.getCARWInstance(
                                     configuration.getSqlWindowStorePageSize(),
                                     configuration.getSqlWindowStoreMaxPages(),
                                     MemoryTag.NATIVE_CIRCULAR_BUFFER
@@ -272,13 +272,13 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     MemoryARW mem = null;
                     MemoryARW dequeMem = null;
                     try {
-                        mem = Vm.getARWInstance(
+                        mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(),
                                 MemoryTag.NATIVE_CIRCULAR_BUFFER
                         );
                         if (rowsLo != Long.MIN_VALUE) {
-                            dequeMem = Vm.getARWInstance(
+                            dequeMem = Vm.getCARWInstance(
                                     configuration.getSqlWindowStorePageSize(),
                                     configuration.getSqlWindowStoreMaxPages(),
                                     MemoryTag.NATIVE_CIRCULAR_BUFFER
@@ -314,14 +314,14 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     return new MaxMinOverWholeResultSetFunction(args.get(0), GREATER_THAN, NAME);
                 } // between [unbounded | x] preceding and [x preceding | current row]
                 else {
-                    MemoryARW mem = Vm.getARWInstance(
+                    MemoryARW mem = Vm.getCARWInstance(
                             configuration.getSqlWindowStorePageSize(),
                             configuration.getSqlWindowStoreMaxPages(),
                             MemoryTag.NATIVE_CIRCULAR_BUFFER
                     );
                     MemoryARW dequeMem = null;
                     if (rowsLo != Long.MIN_VALUE) {
-                        dequeMem = Vm.getARWInstance(
+                        dequeMem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(),
                                 MemoryTag.NATIVE_CIRCULAR_BUFFER
@@ -1550,7 +1550,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             sink.val(" over (");
             sink.val("partition by ");
             sink.val(partitionByRecord.getFunctions());
-            sink.val(" rows between unbounded preceding and current row )");
+            sink.val(" rows between unbounded preceding and current row)");
         }
     }
 

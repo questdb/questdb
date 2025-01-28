@@ -24,6 +24,7 @@
 
 package io.questdb.std.datetime.microtime;
 
+import io.questdb.cairo.PartitionBy;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
@@ -31,8 +32,10 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.FixedTimeZoneRule;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.str.Utf16Sink;
+import org.jetbrains.annotations.NotNull;
 
 import java.time.Duration;
 import java.time.temporal.ChronoUnit;
@@ -50,6 +53,7 @@ public final class Timestamps {
     public static final long FIRST_CENTURY_MICROS = -62135596800000000L;
     public static final long HOUR_MICROS = 3600000000L;
     public static final long HOUR_SECONDS = 3600;
+    public static final long MICRO_NANOS = 1000;
     public static final long MILLI_MICROS = 1000;
     public static final long MINUTE_MICROS = 60000000;
     public static final long MINUTE_SECONDS = 60;
@@ -66,6 +70,7 @@ public final class Timestamps {
     public static final int STATE_MINUTE = 5;
     public static final int STATE_SIGN = 7;
     public static final int STATE_UTC = 1;
+    public static final int WEEK_DAYS = 7;
     public static final long WEEK_MICROS = 604800000000L; // DAY_MICROS * 7
     private static final char AFTER_NINE = '9' + 1;
     private static final char BEFORE_ZERO = '0' - 1;
@@ -78,7 +83,9 @@ public final class Timestamps {
     private static final long LEAP_YEAR_MICROS = 366 * DAY_MICROS;
     private static final long[] MAX_MONTH_OF_YEAR_MICROS = new long[12];
     private static final long[] MIN_MONTH_OF_YEAR_MICROS = new long[12];
-    private static final long YEAR_MICROS = 365 * DAY_MICROS;
+    private static final int YEAR_DAYS = 365;
+    private static final long YEAR_MICROS = YEAR_DAYS * DAY_MICROS;
+    private static final int YEAR_MONTHS = 12;
 
     private Timestamps() {
     }
@@ -132,31 +139,6 @@ public final class Timestamps {
             _d = maxDay;
         }
         return toMicros(_y, _m, _d) + getTimeMicros(micros) + (micros < 0 ? 1 : 0);
-    }
-
-    /**
-     * Convert a timestamp in arbitrary units to microseconds.
-     *
-     * @param value timestamp value
-     * @param unit  timestamp unit
-     * @return timestamp in microseconds
-     */
-    public static long toMicros(long value, ChronoUnit unit) {
-        switch (unit) {
-            case NANOS:
-                return value / 1_000;
-            case MICROS:
-                return value;
-            case MILLIS:
-                return value * 1_000;
-            case SECONDS:
-                return value * 1_000_000;
-            default:
-                Duration duration = unit.getDuration();
-                long micros = duration.getSeconds() * 1_000_000L;
-                micros += duration.getNano() / 1_000;
-                return micros * value;
-        }
     }
 
     public static long addPeriod(long lo, char type, int period) {
@@ -369,6 +351,7 @@ public final class Timestamps {
         return yearMicros(y = getYear(micros), l = isLeapYear(y)) + monthOfYearMicros(getMonthOfYear(micros, y, l), l);
     }
 
+    @SuppressWarnings("unused")
     public static long floorMM(long micros, long offset) {
         return floorMM(micros, 1, offset);
     }
@@ -488,6 +471,7 @@ public final class Timestamps {
         return yearMicros(y, isLeapYear(y));
     }
 
+    @SuppressWarnings("unused")
     public static long floorYYYY(long micros, long offset) {
         return floorYYYY(micros, 1, offset);
     }
@@ -822,6 +806,26 @@ public final class Timestamps {
         }
     }
 
+    public static TimeZoneRules getTimezoneRules(@NotNull DateLocale locale, @NotNull CharSequence timezone) throws NumericException {
+        return getTimezoneRules(locale, timezone, 0, timezone.length());
+    }
+
+    public static TimeZoneRules getTimezoneRules(
+            DateLocale locale,
+            CharSequence timezone,
+            int lo,
+            int hi
+    ) throws NumericException {
+        long l = parseOffset(timezone, lo, hi);
+        if (l == Long.MIN_VALUE) {
+            return locale.getZoneRules(
+                    Numbers.decodeLowInt(locale.matchZone(timezone, lo, hi)),
+                    RESOLUTION_MICROS
+            );
+        }
+        return new FixedTimeZoneRule(Numbers.decodeLowInt(l) * MINUTE_MICROS);
+    }
+
     // https://en.wikipedia.org/wiki/ISO_week_date
     public static int getWeek(long micros) {
         int w = (10 + getDoy(micros) - getDayOfWeek(micros)) / 7;
@@ -1102,6 +1106,79 @@ public final class Timestamps {
             return micros - (7 + (thisDow - dow)) * DAY_MICROS;
         } else {
             return micros - (thisDow - dow) * DAY_MICROS;
+        }
+    }
+
+    /**
+     * Returns a duration value in TTL format: if positive, it's in hours; if negative, it's in months (and
+     * the actual value is positive)
+     *
+     * @param value           the number of units, must be a non-negative number
+     * @param partitionByUnit the time unit, one of `PartitionBy` constants
+     * @param tokenPos        the position of the number token in the SQL string
+     * @return the TTL value as described
+     * @throws SqlException if the passed value is out of range
+     */
+    public static int toHoursOrMonths(int value, int partitionByUnit, int tokenPos) throws SqlException {
+        if (value < 0) {
+            throw new AssertionError("The value must be non-negative");
+        }
+        if (value == 0) {
+            return 0;
+        }
+        switch (partitionByUnit) {
+            case PartitionBy.HOUR:
+                return value;
+            case PartitionBy.DAY:
+                int maxDays = Integer.MAX_VALUE / DAY_HOURS;
+                if (value > maxDays) {
+                    throw SqlException.$(tokenPos, "value out of range: ")
+                            .put(value).put(" days. Max value: ").put(maxDays).put(" days");
+                }
+                return DAY_HOURS * value;
+            case PartitionBy.WEEK:
+                int maxWeeks = Integer.MAX_VALUE / WEEK_DAYS / DAY_HOURS;
+                if (value > maxWeeks) {
+                    throw SqlException.$(tokenPos, "value out of range: ")
+                            .put(value).put(" weeks. Max value: ").put(maxWeeks).put(" weeks");
+                }
+                return WEEK_DAYS * DAY_HOURS * value;
+            case PartitionBy.MONTH:
+                return -value;
+            case PartitionBy.YEAR:
+                int maxYears = Integer.MAX_VALUE / YEAR_MONTHS;
+                if (value > maxYears) {
+                    throw SqlException.$(tokenPos, "value out of range: ")
+                            .put(value).put(" years. Max value: ").put(maxYears).put(" years");
+                }
+                return -(YEAR_MONTHS * value);
+            default:
+                throw new AssertionError("invalid value for partitionByUnit: " + partitionByUnit);
+        }
+    }
+
+    /**
+     * Convert a timestamp in arbitrary units to microseconds.
+     *
+     * @param value timestamp value
+     * @param unit  timestamp unit
+     * @return timestamp in microseconds
+     */
+    public static long toMicros(long value, ChronoUnit unit) {
+        switch (unit) {
+            case NANOS:
+                return value / 1_000;
+            case MICROS:
+                return value;
+            case MILLIS:
+                return value * 1_000;
+            case SECONDS:
+                return value * 1_000_000;
+            default:
+                Duration duration = unit.getDuration();
+                long micros = duration.getSeconds() * 1_000_000L;
+                micros += duration.getNano() / 1_000;
+                return micros * value;
         }
     }
 

@@ -53,7 +53,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     public final static int MAX_WAL_APPLY_O3_SPLIT_PARTITION_CEIL = 20000;
     public final static int MAX_WAL_APPLY_O3_SPLIT_PARTITION_MIN = 200;
     protected final FuzzRunner fuzzer = new FuzzRunner();
-    protected final WorkerPool sharedWorkerPool = new TestWorkerPool(4, metrics);
+    protected final WorkerPool sharedWorkerPool = new TestWorkerPool(4, node1.getMetrics());
 
     public static int getRndO3PartitionSplit(Rnd rnd) {
         return MAX_WAL_APPLY_O3_SPLIT_PARTITION_MIN + rnd.nextInt(MAX_WAL_APPLY_O3_SPLIT_PARTITION_CEIL - MAX_WAL_APPLY_O3_SPLIT_PARTITION_MIN);
@@ -120,10 +120,11 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                 rnd.nextDouble(),
                 rnd.nextDouble(),
                 rnd.nextDouble(),
+                0.01,
                 rnd.nextDouble(),
                 0.1 * rnd.nextDouble(),
                 rnd.nextDouble(),
-                0.01
+                rnd.nextDouble()
         );
 
         fuzzer.setFuzzCounts(
@@ -137,11 +138,11 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                 5 + rnd.nextInt(10)
         );
 
-        assertMemoryLeak(() -> fuzzer.runFuzz(getTestName(), rnd));
+        assertMemoryLeak(fuzzer.getFileFacade(), () -> fuzzer.runFuzz(getTestName(), rnd));
     }
 
     protected void fullRandomFuzz(Rnd rnd, int tableCount) throws Exception {
-        assertMemoryLeak(() -> fuzzer.runFuzz(rnd, getTestName(), tableCount, true, true));
+        assertMemoryLeak(fuzzer.getFileFacade(), () -> fuzzer.runFuzz(rnd, getTestName(), tableCount, true, true));
     }
 
     protected String[] generateSymbols(Rnd rnd, int totalSymbols, int strLen, String baseSymbolTableName) {
@@ -187,7 +188,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     }
 
     protected void runFuzz(Rnd rnd) throws Exception {
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(fuzzer.getFileFacade(), () -> {
             try {
                 WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
                 sharedWorkerPool.start(LOG);
@@ -203,7 +204,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     }
 
     protected void runFuzz(Rnd rnd, String tableNameBase, int tableCount) throws Exception {
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(fuzzer.getFileFacade(), () -> {
             try {
                 WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
                 sharedWorkerPool.start(LOG);
@@ -243,11 +244,13 @@ public class AbstractFuzzTest extends AbstractCairoTest {
             double equalTsRowsProb,
             double partitionDropProb,
             double truncateProb,
-            double tableDropProb
+            double tableDropProb,
+            double setTtlProb
     ) {
         fuzzer.setFuzzProbabilities(cancelRowsProb, notSetProb, nullSetProb, rollbackProb,
                 colAddProb, colRemoveProb, colRenameProb, colTypeChangeProb, dataAddProb,
-                partitionDropProb, truncateProb, tableDropProb, equalTsRowsProb);
+                equalTsRowsProb, partitionDropProb, truncateProb, tableDropProb, setTtlProb
+        );
     }
 
     protected void setFuzzProperties(long maxApplyTimePerTable, long splitPartitionThreshold, int o3PartitionSplitMaxCount) {

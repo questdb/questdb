@@ -22,8 +22,45 @@
  *
  ******************************************************************************/
 
-package io.questdb.mp;
+package io.questdb.metrics;
 
-public interface QueueValueHolder<T> {
-    void copyTo(T anotherHolder);
+import java.util.concurrent.atomic.AtomicLong;
+
+public class AtomicLongGaugeImpl extends AbstractLongGauge implements AtomicLongGauge {
+    private final AtomicLong counter;
+
+    public AtomicLongGaugeImpl(CharSequence name) {
+        super(name);
+        counter = new AtomicLong();
+    }
+
+    @Override
+    public void add(long value) {
+        counter.addAndGet(value);
+    }
+
+    @Override
+    public void dec() {
+        counter.decrementAndGet();
+    }
+
+    @Override
+    public long getValue() {
+        return counter.get();
+    }
+
+    @Override
+    public void inc() {
+        counter.incrementAndGet();
+    }
+
+    @Override
+    public long incrementAndGet() {
+        return counter.incrementAndGet();
+    }
+
+    @Override
+    public void setValue(long value) {
+        counter.set(value);
+    }
 }

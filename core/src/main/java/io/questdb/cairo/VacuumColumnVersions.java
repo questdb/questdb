@@ -130,7 +130,7 @@ public class VacuumColumnVersions implements Closeable {
                     }
 
                     writerIndex = metadata.getWriterIndex(newReaderIndex);
-                    CharSequence columnName = metadata.getColumnName(newReaderIndex);
+                    String columnName = metadata.getColumnName(newReaderIndex);
                     int columnType = metadata.getColumnType(newReaderIndex);
                     purgeTask.of(reader.getTableToken(), columnName, tableId, truncateVersion, columnType, partitionBy, updateTxn);
                 }

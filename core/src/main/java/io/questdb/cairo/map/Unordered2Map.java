@@ -58,7 +58,7 @@ import org.jetbrains.annotations.Nullable;
  */
 public class Unordered2Map implements Map, Reopenable {
     static final long KEY_SIZE = Short.BYTES;
-    private static final int TABLE_SIZE = Short.toUnsignedInt((short) -1) + 1;
+    private static final int TABLE_CAPACITY = Short.toUnsignedInt((short) -1) + 1;
 
     private final Unordered2MapCursor cursor;
     private final long entrySize;
@@ -126,7 +126,7 @@ public class Unordered2Map implements Map, Reopenable {
 
             this.entrySize = Bytes.align2b(KEY_SIZE + valueSize);
 
-            final long sizeBytes = entrySize * TABLE_SIZE;
+            final long sizeBytes = entrySize * TABLE_CAPACITY;
             memStart = Unsafe.malloc(sizeBytes, memoryTag);
             Vect.memset(memStart, sizeBytes, 0);
             memLimit = memStart + sizeBytes;
@@ -150,14 +150,14 @@ public class Unordered2Map implements Map, Reopenable {
     public void clear() {
         size = 0;
         hasZero = false;
-        Vect.memset(memStart, entrySize * TABLE_SIZE, 0);
+        Vect.memset(memStart, entrySize * TABLE_CAPACITY, 0);
         Unsafe.getUnsafe().putShort(keyMemStart, (short) 0);
     }
 
     @Override
     public void close() {
         if (memStart != 0) {
-            memStart = memLimit = Unsafe.free(memStart, entrySize * TABLE_SIZE, memoryTag);
+            memStart = memLimit = Unsafe.free(memStart, entrySize * TABLE_CAPACITY, memoryTag);
             keyMemStart = Unsafe.free(keyMemStart, KEY_SIZE, memoryTag);
             size = 0;
             hasZero = false;
@@ -171,7 +171,7 @@ public class Unordered2Map implements Map, Reopenable {
 
     @Override
     public int getKeyCapacity() {
-        return TABLE_SIZE;
+        return TABLE_CAPACITY;
     }
 
     @Override
@@ -214,7 +214,7 @@ public class Unordered2Map implements Map, Reopenable {
         // Then we handle all non-zero keys.
         long destAddr = memStart + entrySize;
         long srcAddr = src2Map.memStart + entrySize;
-        for (int i = 1; i < TABLE_SIZE; i++, destAddr += entrySize, srcAddr += entrySize) {
+        for (int i = 1; i < TABLE_CAPACITY; i++, destAddr += entrySize, srcAddr += entrySize) {
             short srcKey = Unsafe.getUnsafe().getShort(srcAddr);
             if (srcKey == 0) {
                 continue;
@@ -249,7 +249,7 @@ public class Unordered2Map implements Map, Reopenable {
     @Override
     public void restoreInitialCapacity() {
         if (memStart == 0) {
-            final long sizeBytes = entrySize * TABLE_SIZE;
+            final long sizeBytes = entrySize * TABLE_CAPACITY;
             memStart = Unsafe.malloc(sizeBytes, memoryTag);
             memLimit = memStart + sizeBytes;
         }

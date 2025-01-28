@@ -22,15 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.metrics;
+package io.questdb.griffin.engine.table;
 
-import io.questdb.std.str.BorrowableUtf8Sink;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFrameCursor;
 
-/**
- * Anything that can be scraped for Prometheus metrics.
- */
-public interface Scrapable {
+public interface TablePageFrameCursor extends PageFrameCursor {
 
-    // We need a sink that we can borrow from and append to in native code.
-    void scrapeIntoPrometheus(BorrowableUtf8Sink sink);
+    TableReader getTableReader();
+
+    TablePageFrameCursor of(PartitionFrameCursor partitionFrameCursor);
 }

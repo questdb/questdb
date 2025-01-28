@@ -22,25 +22,35 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http;
+package io.questdb.metrics;
 
-import io.questdb.FactoryProvider;
-import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.mp.ValueHolder;
+import io.questdb.std.ObjectFactory;
 
-public interface HttpMinServerConfiguration extends WorkerPoolConfiguration {
+public class QueryTrace implements ValueHolder<QueryTrace> {
+    public static final ObjectFactory<QueryTrace> ITEM_FACTORY = QueryTrace::new;
 
-    IODispatcherConfiguration getDispatcherConfiguration();
+    public long executionNanos;
+    public boolean isJit;
+    public String principal;
+    public String queryText;
+    public long timestamp;
 
-    FactoryProvider getFactoryProvider();
+    @Override
+    public void clear() {
+        executionNanos = 0;
+        isJit = false;
+        principal = null;
+        queryText = null;
+        timestamp = 0;
+    }
 
-    HttpContextConfiguration getHttpContextConfiguration();
-
-    byte getRequiredAuthType();
-
-    WaitProcessorConfiguration getWaitProcessorConfiguration();
-
-    boolean isPessimisticHealthCheckEnabled();
-
-    boolean preAllocateBuffers();
+    @Override
+    public void copyTo(QueryTrace dest) {
+        dest.executionNanos = executionNanos;
+        dest.isJit = isJit;
+        dest.principal = principal;
+        dest.queryText = queryText;
+        dest.timestamp = timestamp;
+    }
 }

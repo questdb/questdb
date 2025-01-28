@@ -53,7 +53,8 @@ import java.util.concurrent.atomic.AtomicLong;
 public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private static final AtomicLong ERROR_COUNT = new AtomicLong();
     private static final String ERROR_ID = generateErrorId();
-    private static final Log LOG = LogFactory.getLog(LineHttpProcessorState.class);
+    @SuppressWarnings("FieldMayBeFinal")
+    private static Log LOG = LogFactory.getLog(LineHttpProcessorState.class);
     private final LineWalAppender appender;
     private final StringSink error = new StringSink();
     private final LineHttpTudCache ilpTudCache;
@@ -284,21 +285,31 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private Status handleCommitError(Throwable ex) {
         errorId = ERROR_COUNT.incrementAndGet();
         errorLine = -1;
-        LOG.critical()
-                .$('[').$(fd).$("] could not commit [table=").$(parser.getMeasurementName())
-                .$(", errorId=").$(ERROR_ID).$('-').$(errorId)
-                .$(", ex=").$(ex.getMessage())
-                .I$();
 
+        final Status status;
+        final LogRecord errorRec;
         error.put("commit error for table: ").put(parser.getMeasurementName());
         if (ex instanceof CairoException) {
             CairoException exception = (CairoException) ex;
             error.put(", errno: ").put(exception.getErrno()).put(", error: ").put(exception.getFlyweightMessage());
-            return exception.isAuthorizationError() ? Status.SECURITY_ERROR : Status.INTERNAL_ERROR;
+            if (exception.isAuthorizationError()) {
+                errorRec = LOG.error();
+                status = Status.SECURITY_ERROR;
+            } else {
+                errorRec = LOG.critical();
+                status = Status.INTERNAL_ERROR;
+            }
         } else {
             error.put(", error: ").put(ex.getClass().getCanonicalName());
-            return Status.INTERNAL_ERROR;
+            errorRec = LOG.critical();
+            status = Status.INTERNAL_ERROR;
         }
+
+        errorRec.$('[').$(fd).$("] could not commit [table=").$(parser.getMeasurementName())
+                .$(", errorId=").$(ERROR_ID).$('-').$(errorId)
+                .$(", ex=").$(ex.getMessage())
+                .I$();
+        return status;
     }
 
     private Status handleLineError(LineTcpParser parser) {

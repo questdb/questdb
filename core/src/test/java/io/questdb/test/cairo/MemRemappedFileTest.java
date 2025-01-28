@@ -78,7 +78,7 @@ public class MemRemappedFileTest extends AbstractTest {
 
     private double test(MemoryMR readMem) {
         long nanos = 0;
-        try (MemoryMA appMem = Vm.getMAInstance(null)) {
+        try (MemoryMA appMem = Vm.getPMARInstance(null)) {
             for (int cycle = 0; cycle < NCYCLES; cycle++) {
                 path.trimTo(0).concat(root).concat("file" + nFile).$();
                 nFile++;

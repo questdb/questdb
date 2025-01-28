@@ -36,8 +36,9 @@ import io.questdb.std.Vect;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectString;
 
-//contiguous readable 
+// contiguous readable
 public interface MemoryCR extends MemoryC, MemoryR {
+
     long addressHi();
 
     default boolean checkOffsetMapped(long offset) {
@@ -93,18 +94,13 @@ public interface MemoryCR extends MemoryC, MemoryR {
     }
 
     default long getLong(long offset) {
-        assert addressOf(offset + Long.BYTES) > 0;
+        assert offset > -1 && addressOf(offset + Long.BYTES) > 0;
         return Unsafe.getUnsafe().getLong(addressOf(offset));
     }
 
     default void getLong256(long offset, CharSink<?> sink) {
         final long addr = addressOf(offset + Long256.BYTES);
-        final long a, b, c, d;
-        a = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 4);
-        b = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 3);
-        c = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 2);
-        d = Unsafe.getUnsafe().getLong(addr - Long.BYTES);
-        Numbers.appendLong256(a, b, c, d, sink);
+        Numbers.appendLong256FromUnsafe(addr - Long256.BYTES, sink);
     }
 
     default long getPageSize() {

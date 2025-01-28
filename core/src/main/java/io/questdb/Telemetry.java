@@ -24,7 +24,12 @@
 
 package io.questdb;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.QueryBuilder;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -35,7 +40,12 @@ import io.questdb.mp.MPSequence;
 import io.questdb.mp.QueueConsumer;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjectFactory;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.AbstractTelemetryTask;
@@ -98,8 +108,26 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
             return;
         }
         String tableName = telemetryType.getTableName();
+        boolean shouldDropTable = false;
+        try {
+            TableToken tableToken = engine.verifyTableName(tableName);
+            try (TableMetadata meta = engine.getTableMetadata(tableToken)) {
+                shouldDropTable = (meta.getTtlHoursOrMonths() == 0);
+            }
+        } catch (CairoException e) {
+            if (!Chars.contains(e.getFlyweightMessage(), "table does not exist")) {
+                throw e;
+            }
+        }
+        if (shouldDropTable) {
+            compiler.query().$("DROP TABLE '").$(tableName).$("'")
+                    .compile(sqlExecutionContext)
+                    .getOperation()
+                    .execute(sqlExecutionContext, null)
+                    .await();
+        }
         telemetryType.getCreateSql(compiler.query()).createTable(sqlExecutionContext);
-        final TableToken tableToken = engine.verifyTableName(tableName);
+        TableToken tableToken = engine.verifyTableName(tableName);
         try {
             writer = engine.getWriter(tableToken, "telemetry");
         } catch (CairoException ex) {
@@ -135,11 +163,13 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
             return null;
         }
 
-        return telemetryQueue.get(cursor);
+        var task = telemetryQueue.get(cursor);
+        task.setQueueCursor(cursor);
+        return task;
     }
 
-    public void store() {
-        telemetryPubSeq.done(telemetryPubSeq.current());
+    public void store(T task) {
+        telemetryPubSeq.done(task.getQueueCursor());
     }
 
     private static short getCpuClass() {

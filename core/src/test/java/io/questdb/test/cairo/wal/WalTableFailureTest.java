@@ -25,7 +25,14 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.AlterTableContextException;
+import io.questdb.cairo.BitmapIndexUtils;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.RecordCursor;
@@ -38,13 +45,18 @@ import io.questdb.cairo.wal.MetadataService;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.Misc;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -185,7 +197,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
     public void testAlterTableSetTypeSqlSyntaxErrors() throws Exception {
         assertMemoryLeak(ff, () -> {
             TableToken tableToken = createStandardWalTable(testName.getMethodName());
-            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set", "'param' or 'type' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set", "'param', 'ttl' or 'type' expected");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set typ", "'param' or 'type' expected");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set type", "'bypass' or 'wal' expected");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set type byoass", "'bypass' or 'wal' expected");
@@ -1202,7 +1214,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final TableToken tableToken = createStandardWalTable(testName.getMethodName());
 
-            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspen wal", AlterTableUtils.ALTER_TABLE_EXPECTED_TOKEN_DESCR);
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspen wal", SqlCompilerImpl.ALTER_TABLE_EXPECTED_TOKEN_DESCR);
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wall", "'wal' expected");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wal witj", "'with' expected");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wal with", "error code/tag expected");
@@ -1572,7 +1584,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             createStandardNonWalTable(nonWalTable);
 
             assertAlterTableTypeFail("alter table " + nonWalTable + " resume wal", nonWalTable + " is not a WAL table");
-            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resum wal", AlterTableUtils.ALTER_TABLE_EXPECTED_TOKEN_DESCR);
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resum wal", SqlCompilerImpl.ALTER_TABLE_EXPECTED_TOKEN_DESCR);
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wall", "'wal' expected");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wal frol", "'from' expected");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wal from", "'transaction' or 'txn' expected");
@@ -1611,6 +1623,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
         String query = "update " + tableName + " set x = 1111";
         Overrides overrides = node1.getConfigurationOverrides();
         overrides.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
+        spinLockTimeout = 1;
         runCheckTableSuspended(tableName, query, new TestFilesFacadeImpl() {
             private int attempt = 0;
 

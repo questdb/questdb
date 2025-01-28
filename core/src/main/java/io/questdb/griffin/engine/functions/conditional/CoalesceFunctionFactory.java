@@ -30,8 +30,24 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.*;
-import io.questdb.std.*;
+import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.DateFunction;
+import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.griffin.engine.functions.FloatFunction;
+import io.questdb.griffin.engine.functions.IPv4Function;
+import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.Long256Function;
+import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.functions.MultiArgFunction;
+import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.griffin.engine.functions.UuidFunction;
+import io.questdb.griffin.engine.functions.VarcharFunction;
+import io.questdb.std.IntList;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 
@@ -121,6 +137,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
                         .put(nameOf(returnType))
                         .put(" data type");
         }
+    }
+
+    @Override
+    public int resolvePreferredVariadicType(int sqlPos, int argPos, ObjList<Function> args) throws SqlException {
+        throw SqlException.$(sqlPos, "coalesce cannot be used with bind variables");
     }
 
     private static boolean isNotNull(Long256 value) {
@@ -296,7 +317,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             for (int i = 0; i < size; i++) {
                 Long256 value = args.getQuick(i).getLong256A(rec);
                 if (isNotNull(value)) {
-                    Numbers.appendLong256(value.getLong0(), value.getLong1(), value.getLong2(), value.getLong3(), sink);
+                    Numbers.appendLong256(value, sink);
                     return;
                 }
             }
@@ -591,7 +612,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             if (!isNotNull(value)) {
                 value = args1.getLong256A(rec);
             }
-            Numbers.appendLong256(value.getLong0(), value.getLong1(), value.getLong2(), value.getLong3(), sink);
+            Numbers.appendLong256(value, sink);
         }
 
         @Override

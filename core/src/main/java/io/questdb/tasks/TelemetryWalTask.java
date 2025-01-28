@@ -40,18 +40,18 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
         return new Telemetry.TelemetryType<>() {
             @Override
             public QueryBuilder getCreateSql(QueryBuilder builder) {
-                return builder.$("CREATE TABLE IF NOT EXISTS \"")
+                return builder.$("CREATE TABLE IF NOT EXISTS '")
                         .$(tableName)
-                        .$("\" (" +
-                                "created timestamp, " +
-                                "event short, " +
-                                "tableId int, " +
-                                "walId int, " +
-                                "seqTxn long, " +
-                                "rowCount long," +
-                                "physicalRowCount long," +
-                                "latency float" +
-                                ") timestamp(created) partition by MONTH BYPASS WAL"
+                        .$("' (" +
+                                "created TIMESTAMP, " +
+                                "event SHORT, " +
+                                "tableId INT, " +
+                                "walId INT, " +
+                                "seqTxn LONG, " +
+                                "rowCount LONG," +
+                                "physicalRowCount LONG," +
+                                "latency FLOAT" +
+                                ") TIMESTAMP(created) PARTITION BY DAY TTL 1 WEEK BYPASS WAL"
                         );
             }
 
@@ -70,6 +70,7 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
     private short event;
     private float latency; // millis
     private long physicalRowCount;
+    private long queueCursor;
     private long rowCount;
     private long seqTxn;
     private int tableId;
@@ -88,8 +89,17 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
             task.rowCount = rowCount;
             task.physicalRowCount = physicalRowCount;
             task.latency = latencyUs / 1000.0f; // millis
-            telemetry.store();
+            telemetry.store(task);
         }
+    }
+
+    public long getQueueCursor() {
+        return queueCursor;
+    }
+
+    @Override
+    public void setQueueCursor(long cursor) {
+        this.queueCursor = cursor;
     }
 
     @Override

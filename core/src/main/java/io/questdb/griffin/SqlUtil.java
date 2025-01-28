@@ -452,7 +452,7 @@ public class SqlUtil {
         if (Long256Impl.isNull(long256)) {
             return false;
         }
-        Numbers.appendLong256(long256.getLong0(), long256.getLong1(), long256.getLong2(), long256.getLong3(), sink);
+        Numbers.appendLong256(long256, sink);
         return true;
     }
 

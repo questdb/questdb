@@ -24,7 +24,21 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractIndexReader;
+import io.questdb.cairo.BitmapIndexBwdReader;
+import io.questdb.cairo.BitmapIndexFwdReader;
+import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.BitmapIndexUtils;
+import io.questdb.cairo.BitmapIndexWriter;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ConcurrentBitmapIndexFwdReader;
+import io.questdb.cairo.EmptyRowCursor;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.Vm;
@@ -34,7 +48,20 @@ import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.griffin.engine.table.LatestByArguments;
-import io.questdb.std.*;
+import io.questdb.std.BitmapIndexUtilsNative;
+import io.questdb.std.Chars;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.IntList;
+import io.questdb.std.IntObjHashMap;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.Rnd;
+import io.questdb.std.Rows;
+import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -62,7 +89,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
         try {
             final FilesFacade ff = configuration.getFilesFacade();
             try (
-                    MemoryMA mem = Vm.getSmallMAInstance(
+                    MemoryMA mem = Vm.getSmallCMARWInstance(
                             ff,
                             BitmapIndexUtils.keyFileName(path, name, COLUMN_NAME_TXN_NONE),
                             MemoryTag.MMAP_DEFAULT,
@@ -211,7 +238,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
 
-                try (MemoryMARW mem = Vm.getMARWInstance()) {
+                try (MemoryMARW mem = Vm.getCMARWInstance()) {
                     try (Path path = new Path()) {
                         path.of(configuration.getRoot()).concat("x").put(".k");
                         mem.wholeFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
@@ -724,7 +751,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             // prepare the data
             long timestamp = 0;
-            try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
                 for (int i = 0; i < M; i++) {
                     TableWriter.Row row = writer.newRow(timestamp += timestampIncrement);
                     row.putStr(0, rnd.nextChars(20));
@@ -860,7 +887,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
 
-                try (MemoryMARW mem = Vm.getMARWInstance()) {
+                try (MemoryMARW mem = Vm.getCMARWInstance()) {
                     try (Path path = new Path()) {
                         path.of(configuration.getRoot()).concat("x").put(".k");
                         mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);

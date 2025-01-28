@@ -25,7 +25,14 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoError;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
 import io.questdb.std.NumericException;
@@ -103,21 +110,22 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
 
     @Test
     public void setMaxUncommittedRowsFailsToReopenBackMetaFile() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
+        spinLockTimeout = 1;
         assertMemoryLeak(() -> {
             TableModel tbl = new TableModel(configuration, "X", PartitionBy.DAY);
             createX(tbl);
             engine.releaseAllWriters();
-            node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
 
             ff = new TestFilesFacadeImpl() {
                 int attempt = 0;
 
                 @Override
-                public long openRO(LPSZ path) {
-                    if (Utf8s.endsWithAscii(path, TableUtils.META_FILE_NAME) && (attempt++ == 2)) {
+                public int rename(LPSZ from, LPSZ to) {
+                    if (Utf8s.endsWithAscii(to, TableUtils.META_FILE_NAME) && attempt++ < 2) {
                         return -1;
                     }
-                    return super.openRO(path);
+                    return super.rename(from, to);
                 }
 
             };
@@ -126,7 +134,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
                 execute(alterCommand, sqlExecutionContext);
                 Assert.fail("Alter table should fail");
             } catch (CairoError e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "could not open, file does not exist");
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not rename");
             }
 
             engine.releaseAllReaders();
@@ -190,6 +198,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
     public void setMaxUncommittedRowsFailsToSwapMetadataUntilWriterReopen() throws Exception {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
+            spinLockTimeout = 1;
             TableModel tbl = new TableModel(configuration, "X", PartitionBy.DAY);
             AbstractCairoTest.create(tbl.timestamp("ts")
                     .col("i", ColumnType.INT)
@@ -231,6 +240,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
     public void setMaxUncommittedRowsFailsToSwapMetadataUntilWriterReopen2() throws Exception {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
+            spinLockTimeout = 1;
             TableModel tbl = new TableModel(configuration, "X", PartitionBy.DAY);
             AbstractCairoTest.create(tbl.timestamp("ts")
                     .col("i", ColumnType.INT)
@@ -331,7 +341,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
         assertException("ALTER TABLE X PARAM o3MaxLag = 111ms",
                 "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
                 14,
-                AlterTableUtils.ALTER_TABLE_EXPECTED_TOKEN_DESCR);
+                SqlCompilerImpl.ALTER_TABLE_EXPECTED_TOKEN_DESCR);
     }
 
     @Test

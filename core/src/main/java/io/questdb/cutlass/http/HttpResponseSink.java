@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.cairo.Reopenable;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.Net;
@@ -51,6 +50,7 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -90,17 +90,18 @@ public class HttpResponseSink implements Closeable, Mutable {
     private long totalBytesSent = 0;
     private long zStreamPtr = 0;
 
-    public HttpResponseSink(HttpContextConfiguration configuration) {
-        final int responseBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
+    public HttpResponseSink(HttpServerConfiguration configuration) {
+        final int responseBufferSize = configuration.getSendBufferSize();
         this.nf = configuration.getNetworkFacade();
         this.buffer = new ChunkUtf8Sink(responseBufferSize);
         this.compressOutBuffer = new ChunkUtf8Sink(responseBufferSize);
-        this.headerImpl = new HttpResponseHeaderImpl(configuration.getMillisecondClock());
-        this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
-        this.httpVersion = configuration.getHttpVersion();
-        this.connectionCloseHeader = !configuration.getServerKeepAlive();
-        this.cookiesEnabled = configuration.areCookiesEnabled();
-        this.forceSendFragmentationChunkSize = configuration.getForceSendFragmentationChunkSize();
+        final HttpContextConfiguration contextConfiguration = configuration.getHttpContextConfiguration();
+        this.headerImpl = new HttpResponseHeaderImpl(contextConfiguration.getMillisecondClock());
+        this.dumpNetworkTraffic = contextConfiguration.getDumpNetworkTraffic();
+        this.httpVersion = contextConfiguration.getHttpVersion();
+        this.connectionCloseHeader = !contextConfiguration.getServerKeepAlive();
+        this.cookiesEnabled = contextConfiguration.areCookiesEnabled();
+        this.forceSendFragmentationChunkSize = contextConfiguration.getForceSendFragmentationChunkSize();
     }
 
     public static String getStatusMessage(int code) {
@@ -159,11 +160,11 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
     }
 
-    public void setDeflateBeforeSend(boolean deflateBeforeSend) {
+    public void setDeflateBeforeSend(boolean deflateBeforeSend, long bufferSize) {
         this.deflateBeforeSend = deflateBeforeSend;
         if (zStreamPtr == 0 && deflateBeforeSend) {
             zStreamPtr = Zip.deflateInit();
-            compressOutBuffer.reopen();
+            compressOutBuffer.reopen(bufferSize);
         }
     }
 
@@ -320,23 +321,23 @@ public class HttpResponseSink implements Closeable, Mutable {
         return totalBytesSent;
     }
 
-    void of(Socket socket) {
+    void of(Socket socket, long bufferSize) {
         this.socket = socket;
         if (socket != null) {
-            this.buffer.reopen();
+            buffer.reopen(bufferSize);
         }
     }
 
-    void open() {
-        this.buffer.reopen();
+    void open(long bufferSize) {
+        buffer.reopen(bufferSize);
     }
 
-    private class ChunkUtf8Sink implements Utf8Sink, Closeable, Mutable, Reopenable {
+    private class ChunkUtf8Sink implements Utf8Sink, Closeable, Mutable {
         private static final String EOF_CHUNK = "\r\n00\r\n\r\n";
         private static final int MAX_CHUNK_HEADER_SIZE = 12;
-        private final long bufSize;
         private long _rptr;
         private long _wptr;
+        private long bufSize;
         private long bufStart;
         private long bufStartOfData;
 
@@ -383,9 +384,9 @@ public class HttpResponseSink implements Closeable, Mutable {
             return this;
         }
 
-        @Override
-        public void reopen() {
+        public void reopen(long bufSize) {
             if (bufStart == 0) {
+                this.bufSize = bufSize;
                 bufStart = Unsafe.malloc(bufSize + MAX_CHUNK_HEADER_SIZE + EOF_CHUNK.length(), MemoryTag.NATIVE_HTTP_CONN);
                 bufStartOfData = bufStart + MAX_CHUNK_HEADER_SIZE;
                 clear();
@@ -474,8 +475,11 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         @Override
         public boolean resetToBookmark() {
-            buffer._wptr = bookmark;
-            return bookmark != buffer.bufStartOfData;
+            if (bookmark != 0) {
+                buffer._wptr = bookmark;
+                return bookmark != buffer.bufStartOfData;
+            }
+            return false;
         }
 
         @Override
@@ -733,8 +737,19 @@ public class HttpResponseSink implements Closeable, Mutable {
             flushSingle();
         }
 
+        public void sendStatusNoContent(int code, @NotNull Utf8Sequence header) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            if (!headerSent) {
+                buffer.clearAndPrepareToWriteToBuffer();
+                headerImpl.status(httpVersion, code, null, -2L);
+                headerImpl.put(header).put(Misc.EOL);
+                prepareHeaderSink();
+                headerSent = true;
+            }
+            flushSingle();
+        }
+
         public void sendStatusNoContent(int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            sendStatusNoContent(code, null);
+            sendStatusNoContent(code, (CharSequence) null);
         }
 
         /**
@@ -777,6 +792,10 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         public void sendStatusWithCookie(int code, CharSequence message, CharSequence cookieName, CharSequence cookieValue) throws PeerDisconnectedException, PeerIsSlowToReadException {
             sendStatusTextContent(code, message, null, cookieName, cookieValue);
+        }
+
+        public void shutdownWrite() {
+            socket.shutdown(Net.SHUT_WR);
         }
 
         private void sendStatusWithContent(
@@ -831,6 +850,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         httpStatusMap.put(HTTP_OK, "OK");
         httpStatusMap.put(HTTP_NO_CONTENT, "OK");
         httpStatusMap.put(HTTP_PARTIAL, "Partial content");
+        httpStatusMap.put(HTTP_MOVED_PERM, "Moved Permanently");
         httpStatusMap.put(HTTP_MOVED_TEMP, "Temporarily Moved");
         httpStatusMap.put(HTTP_NOT_MODIFIED, "Not Modified");
         httpStatusMap.put(HTTP_BAD_REQUEST, "Bad request");

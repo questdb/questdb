@@ -87,6 +87,8 @@ import io.questdb.griffin.engine.functions.cast.CastDoubleToVarcharFunctionFacto
 import io.questdb.griffin.engine.functions.cast.CastFloatToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastFloatToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastGeoHashToGeoHashFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastIPv4ToStrFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastIPv4ToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIntToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIntToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIntervalToStrFunctionFactory;
@@ -319,44 +321,43 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * The UNION_CAST_MATRIX captures all the combinations of "left" and "right" column types
      * in a set operation (UNION etc.), providing the desired output type. Since there are many
      * special cases in the conversion logic, we decided to use a matrix of literals instead.
-     * The matrix doesn't cover generic types (geohash, array) since they have a more complex structure.
+     * The matrix doesn't cover generic types (e.g. geohash) since they have a more complex structure.
      * Initially, we used the code below to print out the values for the matrix:
      */
     private static final int[][] UNION_CAST_MATRIX = new int[][]{
-            { 0, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 11, 11,  0}, //  0 = unknown
-            {11,  1, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 11, 11,  1}, //  1 = BOOLEAN
-            {11, 11,  2,  3, 11,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 11, 11,  2}, //  2 = BYTE
-            {11, 11,  3,  3,  3,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 11, 11,  3}, //  3 = SHORT
-            {11, 11, 11,  3,  4,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 11, 11, 11}, //  4 = CHAR
-            {11, 11,  5,  5,  5,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 11, 11,  5}, //  5 = INT
-            {11, 11,  6,  6,  6,  6,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 11, 11,  6}, //  6 = LONG
-            {11, 11,  7,  7,  7,  7,  7,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 11, 11,  7}, //  7 = DATE
-            {11, 11,  8,  8,  8,  8,  8,  8,  8,  9, 10, 11,  8, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 11, 11,  8}, //  8 = TIMESTAMP
-            {11, 11,  9,  9,  9,  9,  9,  9,  9,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 11, 11,  9}, //  9 = FLOAT
-            {11, 11, 10, 10, 10, 10, 10, 10, 10, 10, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 11, 11, 10}, // 10 = DOUBLE
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 25, 11, -1, 11, 11, 11, 11, 11, 11}, // 11 = STRING
-            {11, 11, 11, 11, 11, 11, 11, 11,  8, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 11, 11, 11}, // 12 = SYMBOL
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 13, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 11, 11, 13}, // 13 = LONG256
-            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 14 = unknown
-            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 15 = unknown
-            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 16 = unknown
-            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 17 = unknown
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 18, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 11, 11, 18}, // 18 = BINARY
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 19, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 11, 11, 19}, // 19 = UUID
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 20, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 11, 11, 20}, // 20 = CURSOR
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 21, 11, 11, 11, 11, 26, -1, 11, 11, 11, 11, 11, 21}, // 21 = VARARG
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 22, 11, 11, 11, 26, -1, 11, 11, 11, 11, 11, 22}, // 22 = RECORD
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 23, 11, 11, 26, -1, 11, 11, 11, 11, 11, 23}, // 23 = GEOHASH
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 24, 11, 26, -1, 11, 11, 11, 11, 11, 24}, // 24 = LONG128
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 25, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 25, 26, -1, 11, 11, 11, 11, 11, 25}, // 25 = IPv4
-            {26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 11, 26, 26, -1, -1, -1, -1, 26, 26, 26, 26, 26, 26, 26, 26, 26, -1, 26, 26, 26, 26, 26, 26}, // 26 = VARCHAR
-            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 27 = ARRAY
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 28, 11, 11, 11, 11, 28}, // 28 = regclass
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 29, 11, 11, 11, 29}, // 29 = regprocedure
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 30, 11, 11, 30}, // 30 = text[]
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 31, 11, 31}, // 31 = PARAMETER
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, -1, 11, 11, 11, 11, 32, 32}, // 32 = INTERVAL
-            { 0,  1,  2,  3, 11,  5,  6,  7,  8,  9, 10, 11, 11, 13, -1, -1, -1, -1, 18, 19, 20, 21, 22, 23, 24, 25, 26, -1, 28, 29, 30, 31, 32, 33}  // 33 = NULL
+            { 0, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11,  0}, //  0 = unknown
+            {11,  1, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11,  1}, //  1 = BOOLEAN
+            {11, 11,  2,  3, 11,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11,  2}, //  2 = BYTE
+            {11, 11,  3,  3,  3,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11,  3}, //  3 = SHORT
+            {11, 11, 11,  3,  4,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11}, //  4 = CHAR
+            {11, 11,  5,  5,  5,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11,  5}, //  5 = INT
+            {11, 11,  6,  6,  6,  6,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11,  6}, //  6 = LONG
+            {11, 11,  7,  7,  7,  7,  7,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11,  7}, //  7 = DATE
+            {11, 11,  8,  8,  8,  8,  8,  8,  8,  9, 10, 11,  8, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11,  8}, //  8 = TIMESTAMP
+            {11, 11,  9,  9,  9,  9,  9,  9,  9,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11,  9}, //  9 = FLOAT
+            {11, 11, 10, 10, 10, 10, 10, 10, 10, 10, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 10}, // 10 = DOUBLE
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11}, // 11 = STRING
+            {11, 11, 11, 11, 11, 11, 11, 11,  8, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11}, // 12 = SYMBOL
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 13, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 13}, // 13 = LONG256
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 14 = unknown
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 15 = unknown
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 16 = unknown
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 17 = unknown
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 18, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 18}, // 18 = BINARY
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 19, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 19}, // 19 = UUID
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 20, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 20}, // 20 = CURSOR
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 21, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 21}, // 21 = VARARG
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 22, 11, 11, 11, 26, 11, 11, 11, 11, 11, 22}, // 22 = RECORD
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 23, 11, 11, 26, 11, 11, 11, 11, 11, 23}, // 23 = GEOHASH
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 24, 11, 26, 11, 11, 11, 11, 11, 24}, // 24 = LONG128
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 25, 26, 11, 11, 11, 11, 11, 25}, // 25 = IPv4
+            {26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 11, 26, 26, -1, -1, -1, -1, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26}, // 26 = VARCHAR
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 27, 11, 11, 11, 11, 27}, // 27 = regclass
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 28, 11, 11, 11, 28}, // 28 = regprocedure
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 29, 11, 11, 29}, // 29 = text[]
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 30, 11, 30}, // 30 = PARAMETER
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 31, 31}, // 31 = INTERVAL
+            { 0,  1,  2,  3, 11,  5,  6,  7,  8,  9, 10, 11, 11, 13, -1, -1, -1, -1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32}  // 32 = NULL
     };
     // @formatter:on
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> avgConstructors = new IntObjHashMap<>();
@@ -412,6 +413,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final BitSet writeSymbolAsString = new BitSet();
     private boolean enableJitNullChecks = true;
     private boolean fullFatJoins = false;
+    private boolean validateSampleByFillType;
 
     public SqlCodeGenerator(
             CairoEngine engine,
@@ -436,6 +438,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             this.expressionNodePool = expressionNodePool;
             this.reduceTaskFactory = () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_SQL_COMPILER);
             this.fastAsOfJoins = configuration.useFastAsOfJoin();
+            this.validateSampleByFillType = configuration.isValidateSampleByFillType();
         } catch (Throwable th) {
             close();
             throw th;
@@ -452,10 +455,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final int[][] expected = new int[ColumnType.NULL + 1][ColumnType.NULL + 1];
         for (int typeA = 0; typeA <= ColumnType.NULL; typeA++) {
             for (int typeB = 0; typeB <= ColumnType.NULL; typeB++) {
-                final boolean vsGenericType =
-                        isGeoHashType(typeA) || isGeoHashType(typeB) ||
-                                ColumnType.isGenericType(typeA) || ColumnType.isGenericType(typeB);
-                final int outType = vsGenericType ? -1 : castToType(typeA, typeB);
+                final int outType = (isGeoType(typeA) || isGeoType(typeB)) ? -1 : castToType(typeA, typeB);
                 expected[typeA][typeB] = outType;
             }
         }
@@ -723,6 +723,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private static boolean isGeoHashType(int colType) {
+        return colType >= ColumnType.GEOBYTE && colType <= ColumnType.GEOLONG;
+    }
+
+    private static boolean isParseableType(int colType) {
+        return colType == ColumnType.TIMESTAMP || colType == ColumnType.LONG256;
+    }
+
+    private static boolean isGeoType(int colType) {
         return colType >= ColumnType.GEOBYTE && colType <= ColumnType.GEOLONG;
     }
 
@@ -1697,6 +1705,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         fromType,
                                         toType
                                 );
+                            case ColumnType.IPv4:
+                                castFunctions.add(new CastIPv4ToStrFunctionFactory.Func(new IPv4Column(i)));
+                                break;
                         }
                         break;
                     case ColumnType.SYMBOL:
@@ -1949,6 +1960,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 break;
                             case ColumnType.UUID:
                                 castFunctions.add(new CastUuidToVarcharFunctionFactory.Func(new UuidColumn(i)));
+                                break;
+                            case ColumnType.IPv4:
+                                castFunctions.add(new CastIPv4ToVarcharFunctionFactory.Func(new IPv4Column(i)));
                                 break;
                             case ColumnType.SYMBOL:
                                 castFunctions.add(
@@ -3411,7 +3425,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         null,
                         valueTypes,
                         keyTypes,
-                        listColumnFilterA
+                        listColumnFilterA,
+                        sampleByFill,
+                        validateSampleByFillType
                 );
 
                 return new SampleByInterpolateRecordCursorFactory(
@@ -3459,7 +3475,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     null,
                     valueTypes,
                     keyTypes,
-                    listColumnFilterA
+                    listColumnFilterA,
+                    sampleByFill,
+                    validateSampleByFillType
             );
 
             boolean isFillNone = fillCount == 0 || fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "none");
@@ -4226,7 +4244,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     keyFunctionNodes,
                     valueTypes,
                     keyTypes,
-                    listColumnFilterA
+                    listColumnFilterA,
+                    null,
+                    validateSampleByFillType
             );
 
             // Check if we have a non-keyed query with all early exit aggregate functions (e.g. count_distinct(symbol))
@@ -4435,7 +4455,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     targetColumnType = model.getUpdateTableColumnTypes().get(columnIndex);
                 }
 
-                // define "undefined" functions as string unless it's update. Leave Undefined if update
+                // define "undefined" functions as string unless it's update.
                 if (function.isUndefined()) {
                     if (!model.isUpdate()) {
                         function.assignType(ColumnType.STRING, executionContext.getBindVariableService());
@@ -4572,9 +4592,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (qc.isWindowColumn()) {
                     final WindowColumn ac = (WindowColumn) qc;
                     final ExpressionNode ast = qc.getAst();
-                    if (ast.paramCount > 1) {
-                        throw SqlException.$(ast.position, "too many arguments");
-                    }
 
                     partitionByFunctions = null;
                     int psz = ac.getPartitionBy().size();
@@ -4654,7 +4671,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             ac.getRowsHiKindPos(),
                             ac.getExclusionKind(),
                             ac.getExclusionKindPos(),
-                            baseMetadata.getTimestampIndex()
+                            baseMetadata.getTimestampIndex(),
+                            ac.isIgnoreNulls(),
+                            ac.getNullsDescPos()
                     );
                     final Function f;
                     try {
@@ -4742,7 +4761,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (!qc.isWindowColumn()) {
                     final int columnIndex = baseMetadata.getColumnIndexQuiet(qc.getAst().token);
                     final TableColumnMetadata m = baseMetadata.getColumnMetadata(columnIndex);
-                    chainMetadata.add(i, m);
+                    chainMetadata.addIfNotExists(i, m);
                     if (Chars.equalsIgnoreCase(qc.getAst().token, qc.getAlias())) {
                         factoryMetadata.add(i, m);
                     } else { // keep alias
@@ -4798,9 +4817,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (qc.isWindowColumn()) {
                     final WindowColumn ac = (WindowColumn) qc;
                     final ExpressionNode ast = qc.getAst();
-                    if (ast.paramCount > 1) {
-                        throw SqlException.$(ast.position, "too many arguments");
-                    }
 
                     partitionByFunctions = null;
                     int psz = ac.getPartitionBy().size();
@@ -4881,7 +4897,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             ac.getRowsHiKindPos(),
                             ac.getExclusionKind(),
                             ac.getExclusionKindPos(),
-                            chainMetadata.getTimestampIndex()
+                            chainMetadata.getTimestampIndex(),
+                            ac.isIgnoreNulls(),
+                            ac.getNullsDescPos()
                     );
                     final Function f;
                     try {
@@ -4898,6 +4916,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     WindowFunction windowFunction = (WindowFunction) f;
 
                     if (osz > 0 && !dismissOrder) {
+                        IntList directions = ac.getOrderByDirection();
+                        if (windowFunction.getPass1ScanDirection() == WindowFunction.Pass1ScanDirection.BACKWARD) {
+                            for (int j = 0, size = directions.size(); j < size; j++) {
+                                directions.set(j, 1 - directions.getQuick(j));
+                            }
+                        }
+
                         IntList order = toOrderIndices(chainMetadata, ac.getOrderBy(), ac.getOrderByDirection());
                         // init comparator if we need
                         windowFunction.initRecordComparator(recordComparatorCompiler, chainTypes, order);
@@ -5144,16 +5169,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     ) throws SqlException {
         final ObjList<ExpressionNode> latestBy = model.getLatestBy();
 
-        final BufferWindowCharSequence tab = (BufferWindowCharSequence) model.getTableName();
         final boolean supportsRandomAccess;
-        if (Chars.startsWith(tab, NO_ROWID_MARKER)) {
+        CharSequence tableName = model.getTableName();
+        if (Chars.startsWith(tableName, NO_ROWID_MARKER)) {
+            final BufferWindowCharSequence tab = (BufferWindowCharSequence) tableName;
             tab.shiftLo(NO_ROWID_MARKER.length());
             supportsRandomAccess = false;
         } else {
             supportsRandomAccess = true;
         }
 
-        final TableToken tableToken = executionContext.getTableToken(tab);
+        final TableToken tableToken = executionContext.getTableToken(tableName);
         if (model.isUpdate() && !executionContext.isWalApplication() && executionContext.getCairoEngine().isWalTable(tableToken)) {
             // two phase update execution, this is client-side branch. It has to execute against the sequencer metadata
             // to allow the client to succeed even if WAL apply does not run.

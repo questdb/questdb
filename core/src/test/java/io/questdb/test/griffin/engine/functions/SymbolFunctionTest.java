@@ -88,9 +88,9 @@ public class SymbolFunctionTest {
         function.getByte(null);
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
     public void testGetChar() {
-        function.getChar(null);
+        Assert.assertEquals('X', function.getChar(null));
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -209,7 +209,7 @@ public class SymbolFunctionTest {
 
     @Test
     public void testTimestamp() {
-        SymbolFunction symbolFunction = new SymbolFunction() {
+        try (SymbolFunction symbolFunction = new SymbolFunction() {
             @Override
             public int getInt(Record rec) {
                 throw new UnsupportedOperationException();
@@ -239,7 +239,8 @@ public class SymbolFunctionTest {
             public CharSequence valueOf(int key) {
                 throw new UnsupportedOperationException();
             }
-        };
-        Assert.assertEquals("2024-04-09T00:00:00.000Z", Timestamps.toString(symbolFunction.getTimestamp(null)));
+        }) {
+            Assert.assertEquals("2024-04-09T00:00:00.000Z", Timestamps.toString(symbolFunction.getTimestamp(null)));
+        }
     }
 }

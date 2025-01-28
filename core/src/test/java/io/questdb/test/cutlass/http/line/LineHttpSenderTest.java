@@ -57,89 +57,19 @@ import static io.questdb.PropertyKey.LINE_HTTP_ENABLED;
 
 public class LineHttpSenderTest extends AbstractBootstrapTest {
 
+    public void assertSql(CairoEngine engine, CharSequence sql, CharSequence expectedResult) throws SqlException {
+        StringSink sink = Misc.getThreadLocalSink();
+        engine.print(sql, sink);
+        if (!Chars.equals(sink, expectedResult)) {
+            Assert.assertEquals(expectedResult, sink);
+        }
+    }
+
     @Before
     public void setUp() {
         super.setUp();
         TestUtils.unchecked(() -> createDummyConfiguration());
         dbPath.parent().$();
-    }
-
-    @Test
-    public void testTimestampUpperBounds() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            TimestampFormatCompiler timestampFormatCompiler = new TimestampFormatCompiler();
-
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
-            )) {
-                serverMain.start();
-                serverMain.ddl("create table tab (ts timestamp, ts2 timestamp) timestamp(ts) partition by DAY WAL");
-
-                int port = serverMain.getHttpServerPort();
-                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
-                        .address("localhost:" + port)
-                        .build()
-                ) {
-
-                    DateFormat format = timestampFormatCompiler.compile("yyyy-MM-dd HH:mm:ss.SSSUUU");
-                    // technically, we the storage layer supports dates up to 294247-01-10T04:00:54.775807Z
-                    // but DateFormat does reliably support only 4 digit years. thus we use 9999-12-31T23:59:59.999Z
-                    // is the maximum date that can be reliably worked with.
-                    long nonDsTs = format.parse("9999-12-31 23:59:59.999999", DateFormatUtils.EN_LOCALE);
-                    long dsTs = format.parse("9999-12-31 23:59:59.999999", DateFormatUtils.EN_LOCALE);
-
-                    // first try with ChronoUnit
-                    sender.table("tab")
-                            .timestampColumn("ts2", nonDsTs, ChronoUnit.MICROS)
-                            .at(dsTs, ChronoUnit.MICROS);
-                    sender.flush();
-                    serverMain.awaitTable("tab");
-                    serverMain.assertSql("SELECT * FROM tab", "ts\tts2\n" +
-                            "9999-12-31T23:59:59.999999Z\t9999-12-31T23:59:59.999999Z\n");
-
-
-                    // now try with the Instant overloads of `at()` and `timestampColumn()`
-                    Instant nonDsInstant = Instant.ofEpochSecond(nonDsTs / 1_000_000, (nonDsTs % 1_000_000) * 1_000);
-                    Instant dsInstant = Instant.ofEpochSecond(dsTs / 1_000_000, (nonDsTs % 1_000_000) * 1_000);
-                    sender.table("tab")
-                            .timestampColumn("ts2", nonDsInstant)
-                            .at(dsInstant);
-                    sender.flush();
-
-                    serverMain.awaitTable("tab");
-                    serverMain.assertSql("SELECT * FROM tab", "ts\tts2\n" +
-                            "9999-12-31T23:59:59.999999Z\t9999-12-31T23:59:59.999999Z\n" +
-                            "9999-12-31T23:59:59.999999Z\t9999-12-31T23:59:59.999999Z\n");
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testNegativeDesignatedTimestampDoesNotRetry() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
-            )) {
-                serverMain.start();
-
-                int port = serverMain.getHttpServerPort();
-                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
-                        .address("localhost:" + port)
-                        .retryTimeoutMillis(Integer.MAX_VALUE) // high-enoung value so the test times out if retry is attempted
-                        .build()
-                ) {
-                    sender.table("tab")
-                            .longColumn("l", 1) // filler
-                            .at(-1, ChronoUnit.MICROS);
-                    flushAndAssertError(
-                            sender,
-                            "Could not flush buffer",
-                            "error in line 1: table: tab, timestamp: -1; designated timestamp before 1970-01-01 is not allowed"
-                    );
-                }
-            }
-        });
     }
 
     @Test
@@ -206,51 +136,6 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             "http-status=400",
                             "error in line 1: table: ex_tbl, column: str; cast error from protocol type: FLOAT to column type: STRING"
                     );
-                }
-            }
-        });
-    }
-
-    public void assertSql(CairoEngine engine, CharSequence sql, CharSequence expectedResult) throws SqlException {
-        StringSink sink = Misc.getThreadLocalSink();
-        engine.print(sql, sink);
-        if (!Chars.equals(sink, expectedResult)) {
-            Assert.assertEquals(expectedResult, sink);
-        }
-    }
-
-    @Test
-    public void testHttpWithDrop() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
-                int httpPort = serverMain.getHttpServerPort();
-
-                int totalCount = 100;
-                int autoFlushRows = 1000;
-                String tableName = "accounts";
-
-                try (LineHttpSender sender = new LineHttpSender("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, null, autoFlushRows, null, null, null, 0, 0, Long.MAX_VALUE)) {
-                    for (int i = 0; i < totalCount; i++) {
-                        // Add new symbol column with each second row
-                        sender.table(tableName)
-                                .symbol("balance" + i / 2, String.valueOf(i))
-                                .atNow();
-
-                        sender.flush();
-                    }
-                }
-
-                for (int i = 0; i < 10; i++) {
-                    serverMain.ddl("drop table " + tableName);
-                    assertSql(serverMain.getEngine(), "SELECT count() from tables() where table_name='" + tableName + "'", "count\n0\n");
-                    serverMain.ddl("create table " + tableName + " (" +
-                            "balance1 symbol capacity 16, " +
-                            "balance10 symbol capacity 16, " +
-                            "timestamp timestamp)" +
-                            " timestamp(timestamp) partition by DAY WAL " +
-                            " dedup upsert keys (balance1, balance10, timestamp)");
-                    assertSql(serverMain.getEngine(), "SELECT count() FROM (table_columns('Accounts')) WHERE upsertKey=true AND ( column = 'timestamp' )", "count\n" + 1 + "\n");
-                    Os.sleep(10);
                 }
             }
         });
@@ -379,6 +264,64 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     serverMain.assertSql("select count() from 'table'", "count\n" +
                             10 + "\n");
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testHttpWithDrop() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                int totalCount = 100;
+                int autoFlushRows = 1000;
+                String tableName = "accounts";
+
+                try (LineHttpSender sender = new LineHttpSender("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, null, autoFlushRows, null, null, null, 0, 0, Long.MAX_VALUE)) {
+                    for (int i = 0; i < totalCount; i++) {
+                        // Add new symbol column with each second row
+                        sender.table(tableName)
+                                .symbol("balance" + i / 2, String.valueOf(i))
+                                .atNow();
+
+                        sender.flush();
+                    }
+                }
+
+                for (int i = 0; i < 10; i++) {
+                    serverMain.ddl("drop table " + tableName);
+                    assertSql(serverMain.getEngine(), "SELECT count() from tables() where table_name='" + tableName + "'", "count\n0\n");
+                    serverMain.ddl("create table " + tableName + " (" +
+                            "balance1 symbol capacity 16, " +
+                            "balance10 symbol capacity 16, " +
+                            "timestamp timestamp)" +
+                            " timestamp(timestamp) partition by DAY WAL " +
+                            " dedup upsert keys (balance1, balance10, timestamp)");
+                    assertSql(serverMain.getEngine(), "SELECT count() FROM (table_columns('Accounts')) WHERE upsertKey=true AND ( column = 'timestamp' )", "count\n" + 1 + "\n");
+                    Os.sleep(10);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testIlpWithHttpContextPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048",
+                    PropertyKey.HTTP_CONTEXT_WEB_CONSOLE.getEnvVarName(), "context1"
+            )) {
+                serverMain.start();
+
+                String tableName = "h2o_feet";
+                int count = 9250;
+
+                sendIlp(tableName, count, serverMain);
+
+                serverMain.awaitTxn(tableName, 2);
+                serverMain.assertSql("SELECT count() FROM h2o_feet", "count\n" + count + "\n");
+                serverMain.assertSql("SELECT sum(water_level) FROM h2o_feet", "sum\n" + (count * (count - 1) / 2) + "\n");
             }
         });
     }
@@ -535,6 +478,33 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testNegativeDesignatedTimestampDoesNotRetry() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                serverMain.start();
+
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .retryTimeoutMillis(Integer.MAX_VALUE) // high-enoung value so the test times out if retry is attempted
+                        .build()
+                ) {
+                    sender.table("tab")
+                            .longColumn("l", 1) // filler
+                            .at(-1, ChronoUnit.MICROS);
+                    flushAndAssertError(
+                            sender,
+                            "Could not flush buffer",
+                            "error in line 1: table: tab, timestamp: -1; designated timestamp before 1970-01-01 is not allowed"
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testRestrictedCreateColumnsError() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
@@ -651,6 +621,57 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 serverMain.awaitTable("table with space");
                 serverMain.assertSql("select count() from 'table with space'", "count\n" +
                         totalCount + "\n");
+            }
+        });
+    }
+
+    @Test
+    public void testTimestampUpperBounds() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            TimestampFormatCompiler timestampFormatCompiler = new TimestampFormatCompiler();
+
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                serverMain.start();
+                serverMain.ddl("create table tab (ts timestamp, ts2 timestamp) timestamp(ts) partition by DAY WAL");
+
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .build()
+                ) {
+
+                    DateFormat format = timestampFormatCompiler.compile("yyyy-MM-dd HH:mm:ss.SSSUUU");
+                    // technically, we the storage layer supports dates up to 294247-01-10T04:00:54.775807Z
+                    // but DateFormat does reliably support only 4 digit years. thus we use 9999-12-31T23:59:59.999Z
+                    // is the maximum date that can be reliably worked with.
+                    long nonDsTs = format.parse("9999-12-31 23:59:59.999999", DateFormatUtils.EN_LOCALE);
+                    long dsTs = format.parse("9999-12-31 23:59:59.999999", DateFormatUtils.EN_LOCALE);
+
+                    // first try with ChronoUnit
+                    sender.table("tab")
+                            .timestampColumn("ts2", nonDsTs, ChronoUnit.MICROS)
+                            .at(dsTs, ChronoUnit.MICROS);
+                    sender.flush();
+                    serverMain.awaitTable("tab");
+                    serverMain.assertSql("SELECT * FROM tab", "ts\tts2\n" +
+                            "9999-12-31T23:59:59.999999Z\t9999-12-31T23:59:59.999999Z\n");
+
+
+                    // now try with the Instant overloads of `at()` and `timestampColumn()`
+                    Instant nonDsInstant = Instant.ofEpochSecond(nonDsTs / 1_000_000, (nonDsTs % 1_000_000) * 1_000);
+                    Instant dsInstant = Instant.ofEpochSecond(dsTs / 1_000_000, (nonDsTs % 1_000_000) * 1_000);
+                    sender.table("tab")
+                            .timestampColumn("ts2", nonDsInstant)
+                            .at(dsInstant);
+                    sender.flush();
+
+                    serverMain.awaitTable("tab");
+                    serverMain.assertSql("SELECT * FROM tab", "ts\tts2\n" +
+                            "9999-12-31T23:59:59.999999Z\t9999-12-31T23:59:59.999999Z\n" +
+                            "9999-12-31T23:59:59.999999Z\t9999-12-31T23:59:59.999999Z\n");
+                }
             }
         });
     }

@@ -360,46 +360,12 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public CharSequence getStrA(int columnIndex) {
-        final long dataPageAddress = pageAddresses.getQuick(columnIndex);
-        if (dataPageAddress != 0) {
-            final long auxPageAddress = auxPageAddresses.getQuick(columnIndex);
-            final long auxPageLim = auxPageSizes.getQuick(columnIndex);
-            final long auxOffset = rowIndex << 3;
-            if (auxPageLim < auxOffset + 8) {
-                throw CairoException.critical(0)
-                        .put("string is outside of file boundary [auxOffset=")
-                        .put(auxOffset)
-                        .put(", auxPageLim=")
-                        .put(auxPageLim)
-                        .put(']');
-            }
-            final long dataPageLim = pageSizes.getQuick(columnIndex);
-            final long dataOffset = Unsafe.getUnsafe().getLong(auxPageAddress + auxOffset);
-            return getStr(dataPageAddress, dataOffset, dataPageLim, csViewA(columnIndex));
-        }
-        return NullMemoryCMR.INSTANCE.getStrA(0);
+        return getStr0(columnIndex, csViewA(columnIndex));
     }
 
     @Override
     public CharSequence getStrB(int columnIndex) {
-        final long dataPageAddress = pageAddresses.getQuick(columnIndex);
-        if (dataPageAddress != 0) {
-            final long auxPageAddress = auxPageAddresses.getQuick(columnIndex);
-            final long auxPageLim = auxPageSizes.getQuick(columnIndex);
-            final long auxOffset = rowIndex << 3;
-            if (auxPageLim < auxOffset + 8) {
-                throw CairoException.critical(0)
-                        .put("string is outside of file boundary [auxOffset=")
-                        .put(auxOffset)
-                        .put(", auxPageLim=")
-                        .put(auxPageLim)
-                        .put(']');
-            }
-            final long dataPageLim = pageSizes.getQuick(columnIndex);
-            final long dataOffset = Unsafe.getUnsafe().getLong(auxPageAddress + auxOffset);
-            return getStr(dataPageAddress, dataOffset, dataPageLim, csViewB(columnIndex));
-        }
-        return NullMemoryCMR.INSTANCE.getStrB(0);
+        return getStr0(columnIndex, csViewB(columnIndex));
     }
 
     @Override
@@ -559,14 +525,8 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         NullMemoryCMR.INSTANCE.getLong256(0, sink);
     }
 
-    private void getLong256(long offset, CharSink<?> sink) {
-        final long addr = offset + Long.BYTES * 4;
-        final long a, b, c, d;
-        a = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 4);
-        b = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 3);
-        c = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 2);
-        d = Unsafe.getUnsafe().getLong(addr - Long.BYTES);
-        Numbers.appendLong256(a, b, c, d, sink);
+    private void getLong256(long addr, CharSink<?> sink) {
+        Numbers.appendLong256FromUnsafe(addr, sink);
     }
 
     private NdArrayView getNdArray(ObjList<NdArrayMmapBuffer> ndArrays, int columnIndex, int columnType) {
@@ -604,6 +564,27 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             return view.of(address + Vm.STRING_LENGTH_BYTES, len);
         }
         return null; // Column top.
+    }
+
+    private CharSequence getStr0(int columnIndex, DirectString csView) {
+        final long dataPageAddress = pageAddresses.getQuick(columnIndex);
+        if (dataPageAddress != 0) {
+            final long auxPageAddress = auxPageAddresses.getQuick(columnIndex);
+            final long auxPageLim = auxPageSizes.getQuick(columnIndex);
+            final long auxOffset = rowIndex << 3;
+            if (auxPageLim < auxOffset + 8) {
+                throw CairoException.critical(0)
+                        .put("string is outside of file boundary [auxOffset=")
+                        .put(auxOffset)
+                        .put(", auxPageLim=")
+                        .put(auxPageLim)
+                        .put(']');
+            }
+            final long dataPageLim = pageSizes.getQuick(columnIndex);
+            final long dataOffset = Unsafe.getUnsafe().getLong(auxPageAddress + auxOffset);
+            return getStr(dataPageAddress, dataOffset, dataPageLim, csView);
+        }
+        return NullMemoryCMR.INSTANCE.getStrB(0);
     }
 
     private SymbolTable getSymbolTable(int columnIndex) {

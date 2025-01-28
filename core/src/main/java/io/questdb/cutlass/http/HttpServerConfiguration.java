@@ -24,28 +24,30 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
-import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
-import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
+import io.questdb.FactoryProvider;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.std.ObjList;
 
-public interface HttpServerConfiguration extends WorkerPoolConfiguration, HttpMinServerConfiguration {
-    String DEFAULT_PROCESSOR_URL = "*";
-    int MIN_SEND_BUFFER_SIZE = 128;
+public interface HttpServerConfiguration extends IODispatcherConfiguration, WorkerPoolConfiguration {
 
-    JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration();
+    default ObjList<String> getContextPathMetrics() {
+        return new ObjList<>("/metrics");
+    }
 
-    LineHttpProcessorConfiguration getLineHttpProcessorConfiguration();
+    default ObjList<String> getContextPathStatus() {
+        return new ObjList<>(getHttpContextConfiguration().getMetrics().isEnabled() ? "/status" : "*");
+    }
 
-    String getPassword();
+    FactoryProvider getFactoryProvider();
 
-    int getQueryCacheBlockCount();
+    HttpContextConfiguration getHttpContextConfiguration();
 
-    int getQueryCacheRowCount();
+    byte getRequiredAuthType();
 
-    StaticContentProcessorConfiguration getStaticContentProcessorConfiguration();
+    WaitProcessorConfiguration getWaitProcessorConfiguration();
 
-    String getUsername();
+    boolean isPessimisticHealthCheckEnabled();
 
-    boolean isQueryCacheEnabled();
+    boolean preAllocateBuffers();
 }

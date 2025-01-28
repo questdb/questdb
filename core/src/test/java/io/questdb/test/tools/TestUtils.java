@@ -26,7 +26,6 @@ package io.questdb.test.tools;
 
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
-import io.questdb.Metrics;
 import io.questdb.ServerMain;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
@@ -662,7 +661,12 @@ public final class TestUtils {
 
     public static void assertMemoryLeak(LeakProneCode runnable) throws Exception {
         try (LeakCheck ignore = new LeakCheck()) {
-            runnable.run();
+            try {
+                runnable.run();
+            } catch (Throwable e) {
+                ignore.skipChecks();
+                throw e;
+            }
         }
     }
 
@@ -1024,13 +1028,16 @@ public final class TestUtils {
             int tableId,
             TableToken tableToken
     ) {
-        try (Path path = new Path(); MemoryMARW mem = Vm.getMARWInstance()) {
+        try (
+                Path path = new Path();
+                MemoryMARW mem = Vm.getCMARWInstance()
+        ) {
             TableUtils.createTable(configuration, mem, path, model, tableVersion, tableId, tableToken.getDirName());
         }
     }
 
     public static TableToken createTable(CairoEngine engine, TableStructure structure, int tableId) {
-        try (MemoryMARW mem = Vm.getMARWInstance(); Path path = new Path()) {
+        try (MemoryMARW mem = Vm.getCMARWInstance(); Path path = new Path()) {
             return TestUtils.createTable(engine, mem, path, structure, tableId, structure.getTableName());
         }
     }
@@ -1127,13 +1134,12 @@ public final class TestUtils {
             @Nullable WorkerPool pool,
             CustomisableRunnable runnable,
             CairoConfiguration configuration,
-            Metrics metrics,
             Log log
     ) throws Exception {
         final int workerCount = pool != null ? pool.getWorkerCount() : 1;
         final BindVariableServiceImpl bindVariableService = new BindVariableServiceImpl(configuration);
         try (
-                final CairoEngine engine = new CairoEngine(configuration, metrics);
+                final CairoEngine engine = new CairoEngine(configuration);
                 final SqlCompiler compiler = engine.getSqlCompiler();
                 final SqlExecutionContext sqlExecutionContext = createSqlExecutionCtx(engine, bindVariableService, workerCount)
         ) {
@@ -1152,12 +1158,6 @@ public final class TestUtils {
             Assert.assertEquals(0, engine.getBusyWriterCount());
             Assert.assertEquals(0, engine.getBusyReaderCount());
         }
-    }
-
-    public static void execute(
-            @Nullable WorkerPool pool, CustomisableRunnable runner, CairoConfiguration configuration, Log log
-    ) throws Exception {
-        execute(pool, runner, configuration, Metrics.disabled(), log);
     }
 
     @NotNull
@@ -1393,22 +1393,13 @@ public final class TestUtils {
         }
     }
 
-    public static TableWriter newOffPoolWriter(
-            CairoConfiguration configuration, TableToken tableToken, CairoEngine engine
-    ) {
-        return newOffPoolWriter(configuration, tableToken, Metrics.disabled(), engine);
-    }
-
-    public static TableWriter newOffPoolWriter(
-            CairoConfiguration configuration, TableToken tableToken, Metrics metrics, CairoEngine engine
-    ) {
-        return newOffPoolWriter(configuration, tableToken, metrics, new MessageBusImpl(configuration), engine);
+    public static TableWriter newOffPoolWriter(CairoConfiguration configuration, TableToken tableToken, CairoEngine engine) {
+        return newOffPoolWriter(configuration, tableToken, new MessageBusImpl(configuration), engine);
     }
 
     public static TableWriter newOffPoolWriter(
             CairoConfiguration configuration,
             TableToken tableToken,
-            Metrics metrics,
             MessageBus messageBus,
             CairoEngine engine
     ) {
@@ -1422,7 +1413,6 @@ public final class TestUtils {
                 configuration.getRoot(),
                 DefaultDdlListener.INSTANCE,
                 () -> Numbers.LONG_NULL,
-                metrics,
                 engine
         );
     }
@@ -1975,6 +1965,7 @@ public final class TestUtils {
         private final long mem;
         private final long[] memoryUsageByTag = new long[MemoryTag.SIZE];
         private final int sockAddrCount;
+        private boolean skipChecksOnClose;
 
         public LeakCheck() {
             Path.clearThreadLocals();
@@ -1997,6 +1988,10 @@ public final class TestUtils {
 
         @Override
         public void close() {
+            if (skipChecksOnClose) {
+                return;
+            }
+
             Path.clearThreadLocals();
             if (fileCount != Files.getOpenFileCount()) {
                 Assert.assertEquals("file descriptors, expected: " + fileDebugInfo + ", actual: "
@@ -2039,6 +2034,10 @@ public final class TestUtils {
                 Assert.fail("SockAddr allocation count before the test: " + sockAddrCount
                         + ", after the test: " + sockAddrCountAfter);
             }
+        }
+
+        public void skipChecks() {
+            skipChecksOnClose = true;
         }
     }
 }

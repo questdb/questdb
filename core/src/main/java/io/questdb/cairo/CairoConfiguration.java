@@ -28,6 +28,7 @@ import io.questdb.BuildInformation;
 import io.questdb.ConfigPropertyKey;
 import io.questdb.ConfigPropertyValue;
 import io.questdb.FactoryProvider;
+import io.questdb.Metrics;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
@@ -44,6 +45,7 @@ import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.RostiAllocFacadeImpl;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -69,6 +71,10 @@ public interface CairoConfiguration {
     }
 
     boolean enableTestFactories();
+
+    default boolean freeLeakedReaders() {
+        return true;
+    }
 
     /**
      * All effective configuration values are seen by the server instance.
@@ -238,6 +244,14 @@ public interface CairoConfiguration {
 
     boolean getLogSqlQueryProgressExe();
 
+    DateFormat getLogTimestampFormat();
+
+    String getLogTimestampTimezone();
+
+    DateLocale getLogTimestampTimezoneLocale();
+
+    TimeZoneRules getLogTimestampTimezoneRules();
+
     int getMaxCrashFiles();
 
     int getMaxFileNameLength();
@@ -251,6 +265,8 @@ public interface CairoConfiguration {
     int getMaxUncommittedRows();
 
     int getMetadataPoolCapacity();
+
+    Metrics getMetrics();
 
     @NotNull
     default MicrosecondClock getMicrosecondClock() {
@@ -627,6 +643,8 @@ public interface CairoConfiguration {
 
     boolean isPartitionO3OverwriteControlEnabled();
 
+    boolean isQueryTracingEnabled();
+
     boolean isReadOnlyInstance();
 
     boolean isSqlJitDebugEnabled();
@@ -639,7 +657,33 @@ public interface CairoConfiguration {
 
     boolean isSqlParallelGroupByEnabled();
 
+    boolean isSqlParallelReadParquetEnabled();
+
     boolean isTableTypeConversionEnabled();
+
+    /**
+     * A compatibility switch that controls validation of sample-by fill type.
+     * <p>
+     * This temporary switch maintains backward compatibility following changes introduced in
+     * <a href="https://github.com/questdb/questdb/pull/5324">this PR</a>.
+     * The pull request implemented stricter validation of sample validity, where:
+     * <p>
+     * 1. LINEAR interpolation is disabled by default
+     * 2. Group-by functions must explicitly declare support for interpolation
+     * <p>
+     * Currently, LINEAR interpolation is enabled only for functions with verified test coverage.
+     * However, there may be other functions that support interpolation but lack proper testing.
+     * The introduction of strict validation could break these untested functions.
+     * <p>
+     * This switch allows users to disable the validation check and maintain the previous behavior.
+     * Note: This configuration option is temporary and will be removed in a future release, at
+     * which point sample-by-fill type validation will become mandatory.
+     *
+     * @return true if sample-by-fill type validation is enabled (default), false otherwise
+     */
+    default boolean isValidateSampleByFillType() {
+        return true;
+    }
 
     boolean isWalApplyEnabled();
 

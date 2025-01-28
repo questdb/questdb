@@ -461,6 +461,7 @@ public interface Sender extends Closeable {
         private int autoFlushRows = PARAMETER_NOT_SET_EXPLICITLY;
         private int bufferCapacity = PARAMETER_NOT_SET_EXPLICITLY;
         private String host;
+        private String httpPath;
         private int httpTimeout = PARAMETER_NOT_SET_EXPLICITLY;
         private String httpToken;
         private String keyId;
@@ -691,7 +692,7 @@ public interface Sender extends Closeable {
                     assert (trustStorePath == null) == (trustStorePassword == null); //either both null or both non-null
                     tlsConfig = new ClientTlsConfiguration(trustStorePath, trustStorePassword, tlsValidationMode == TlsValidationMode.DEFAULT ? ClientTlsConfiguration.TLS_VALIDATION_MODE_FULL : ClientTlsConfiguration.TLS_VALIDATION_MODE_NONE);
                 }
-                return new LineHttpSender(host, port, httpClientConfiguration, tlsConfig, actualAutoFlushRows, httpToken, username, password, actualMaxRetriesNanos, actualMinRequestThroughput, actualAutoFlushIntervalMillis);
+                return new LineHttpSender(host, port, httpPath, httpClientConfiguration, tlsConfig, actualAutoFlushRows, httpToken, username, password, actualMaxRetriesNanos, actualMinRequestThroughput, actualAutoFlushIntervalMillis);
             }
             assert protocol == PROTOCOL_TCP;
             LineChannel channel = new PlainTcpLineChannel(nf, host, port, bufferCapacity * 2);
@@ -799,6 +800,28 @@ public interface Sender extends Closeable {
                 throw new LineSenderException("tls was already enabled");
             }
             tlsEnabled = true;
+            return this;
+        }
+
+        /**
+         * Path component of the HTTP URL.
+         * <br>
+         * This is only used when communicating over HTTP transport.
+         *
+         * @param path HTTP path
+         * @return this instance for method chaining
+         */
+        public LineSenderBuilder httpPath(String path) {
+            if (this.httpPath != null) {
+                throw new LineSenderException("path was already configured");
+            }
+            if (Chars.isBlank(path)) {
+                throw new LineSenderException("path cannot be empty nor null");
+            }
+            if (!Chars.startsWith(path, '/')) {
+                throw new LineSenderException("the path has to start with '/'");
+            }
+            this.httpPath = path;
             return this;
         }
 
@@ -1277,16 +1300,13 @@ public interface Sender extends Closeable {
          * Use HTTP protocol as transport.
          * <br>
          * Configures the Sender to use the HTTP protocol.
-         *
-         * @return an instance of {@link LineSenderBuilder} for further configuration
          */
-        private LineSenderBuilder http() {
+        private void http() {
             if (protocol != PARAMETER_NOT_SET_EXPLICITLY) {
                 throw new LineSenderException("protocol was already configured ")
                         .put("[protocol=").put(protocol).put("]");
             }
             protocol = PROTOCOL_HTTP;
-            return this;
         }
 
         private void tcp() {

@@ -27,6 +27,7 @@ package io.questdb.tasks;
 import io.questdb.cairo.TableToken;
 import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
+import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class ColumnPurgeTask implements Mutable {
@@ -108,7 +109,7 @@ public class ColumnPurgeTask implements Mutable {
     public void of(
             @NotNull
             TableToken tableName,
-            CharSequence columnName,
+            String columnName,
             int tableId,
             long truncateVersion,
             int columnType,
@@ -128,15 +129,32 @@ public class ColumnPurgeTask implements Mutable {
     public void of(
             @NotNull
             TableToken tableName,
-            CharSequence columnName,
+            String columnName,
             int tableId,
             int truncateVersion,
             int columnType,
             int partitionBy,
             long updateTxn,
-            LongList columnVersions
+            @Transient LongList columnVersions
     ) {
         of(tableName, columnName, tableId, truncateVersion, columnType, partitionBy, updateTxn);
         this.updatedColumnInfo.add(columnVersions);
+    }
+
+    public void of(
+            @NotNull
+            TableToken tableName,
+            String columnName,
+            int tableId,
+            int truncateVersion,
+            int columnType,
+            int partitionBy,
+            long updateTxn,
+            @Transient LongList columnVersions,
+            int columnVersionsLo,
+            int columnVersionsHi
+    ) {
+        of(tableName, columnName, tableId, truncateVersion, columnType, partitionBy, updateTxn);
+        this.updatedColumnInfo.add(columnVersions, columnVersionsLo, columnVersionsHi);
     }
 }

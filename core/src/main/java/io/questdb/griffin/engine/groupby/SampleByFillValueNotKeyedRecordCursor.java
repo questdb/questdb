@@ -108,6 +108,7 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
             nextSampleLocalEpoch = expectedLocalEpoch;
             return true;
         }
+
         if (endFill) {
             sampleLocalEpoch = expectedLocalEpoch;
             nextSampleLocalEpoch = expectedLocalEpoch;
@@ -125,10 +126,9 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
         if (baseRecord == null && sampleToFunc != TimestampConstant.NULL && !endFill) {
             endFill = true;
             upperBound = sampleToFunc.getTimestamp(null);
-            baseRecord = baseCursor.getRecord();
+            // we must not re-initialize baseRecord after base cursor has been exhausted
             nextSamplePeriod(upperBound);
         }
-
         return hasNext;
     }
 
@@ -136,6 +136,7 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
         super.of(baseCursor, executionContext);
         endFill = false;
+        upperBound = Long.MAX_VALUE;
     }
 
     @Override
@@ -159,7 +160,11 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
     private void setActiveB(long expectedLocalEpoch) {
         if (!gapFill) {
             record.setActiveB(sampleLocalEpoch, expectedLocalEpoch, localEpoch);
-            record.setTarget(peeker.peek());
+            if (endFill) {
+                record.setInterpolationTarget(null);
+            } else {
+                record.setInterpolationTarget(peeker.peek());
+            }
             gapFill = true;
         }
     }

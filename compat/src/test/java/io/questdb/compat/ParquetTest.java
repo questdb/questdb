@@ -240,28 +240,28 @@ public class ParquetTest extends AbstractTest {
             serverMain.start();
             serverMain.getEngine().execute(ddl); // txn 1
 
-            serverMain.getEngine().execute("alter table " + tableName + " add column a_boolean_top boolean");
-            serverMain.getEngine().execute("alter table " + tableName + " add column a_byte_top byte");
-            serverMain.getEngine().execute("alter table " + tableName + " add column a_short_top short");
-            serverMain.getEngine().execute("alter table " + tableName + " add column a_char_top char");
-            serverMain.getEngine().execute("alter table " + tableName + " add column an_int_top int");
-            serverMain.getEngine().execute("alter table " + tableName + " add column a_long_top long");
-            serverMain.getEngine().execute("alter table " + tableName + " add column a_float_top float");
-            serverMain.getEngine().execute("alter table " + tableName + " add column a_double_top double");
-            serverMain.getEngine().execute("alter table " + tableName + " add column a_symbol_top symbol");
-            serverMain.getEngine().execute("alter table " + tableName + " add column a_geo_byte_top geohash(4b)");
-            serverMain.getEngine().execute("alter table " + tableName + " add column a_geo_short_top geohash(8b)");
-            serverMain.getEngine().execute("alter table " + tableName + " add column a_geo_int_top geohash(16b)");
-            serverMain.getEngine().execute("alter table " + tableName + " add column a_geo_long_top geohash(32b)");
-            serverMain.getEngine().execute("alter table " + tableName + " add column a_string_top string");
-            serverMain.getEngine().execute("alter table " + tableName + " add column a_bin_top binary");
-            serverMain.getEngine().execute("alter table " + tableName + " add column a_varchar_top varchar");
-            serverMain.getEngine().execute("alter table " + tableName + " add column a_ip_top ipv4");
-            serverMain.getEngine().execute("alter table " + tableName + " add column a_uuid_top uuid");
-            serverMain.getEngine().execute("alter table " + tableName + " add column a_long128_top long128");
-            serverMain.getEngine().execute("alter table " + tableName + " add column a_long256_top long256");
-            serverMain.getEngine().execute("alter table " + tableName + " add column a_date_top date");
-            serverMain.getEngine().execute("alter table " + tableName + " add column a_ts_top timestamp");
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_boolean_top boolean"); // txn 2
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_byte_top byte"); // txn 3
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_short_top short"); // txn 4
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_char_top char"); // txn 5
+            serverMain.getEngine().execute("alter table " + tableName + " add column an_int_top int"); // txn 6
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_long_top long"); // txn 7
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_float_top float"); // txn 8
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_double_top double"); // txn 9
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_symbol_top symbol"); // txn 10
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_geo_byte_top geohash(4b)"); // txn 11
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_geo_short_top geohash(8b)"); // txn 12
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_geo_int_top geohash(16b)"); // txn 13
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_geo_long_top geohash(32b)"); // txn 14
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_string_top string"); // txn 15
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_bin_top binary"); // txn 16
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_varchar_top varchar"); // txn 17
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_ip_top ipv4"); // txn 18
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_uuid_top uuid"); // txn 19
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_long128_top long128"); // txn 20
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_long256_top long256"); // txn 21
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_date_top date"); //  txn 22
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_ts_top timestamp"); // txn 23
 
             String insert = "insert into " + tableName + "(id, a_boolean_top, a_byte_top, a_short_top, a_char_top," +
                     " an_int_top, a_long_top, a_float_top, a_double_top,\n" +
@@ -300,9 +300,9 @@ public class ParquetTest extends AbstractTest {
                     " timestamp_sequence(1600000000000, 500)" +
                     " from long_sequence(" + UPDATE_ROWS + ");";
 
-            serverMain.getEngine().execute(insert); // txn 20
+            serverMain.getEngine().execute(insert); // txn 24
 
-            serverMain.awaitTxn(tableName, 20);
+            serverMain.awaitTxn(tableName, 24);
 
             final String parquetPathStr;
             try (
@@ -367,7 +367,7 @@ public class ParquetTest extends AbstractTest {
             GenericRecord nextParquetRecord;
             while (cursor.hasNext()) {
                 nextParquetRecord = parquetReader.read();
-                Assert.assertNotNull(nextParquetRecord);
+                Assert.assertNotNull("Missing parquet record [currentRow=" + actualRows + ", totalRows=" + rows + "]", nextParquetRecord);
 
                 Assert.assertEquals(tableReaderRecord.getLong(0), nextParquetRecord.get("id"));
                 Assert.assertEquals(++actualRows, nextParquetRecord.get("id"));

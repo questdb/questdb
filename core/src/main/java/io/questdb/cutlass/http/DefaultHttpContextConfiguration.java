@@ -26,6 +26,7 @@ package io.questdb.cutlass.http;
 
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
+import io.questdb.Metrics;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.NanosecondClock;
@@ -34,6 +35,7 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 
 public class DefaultHttpContextConfiguration implements HttpContextConfiguration {
+
     @Override
     public boolean allowDeflateBeforeSend() {
         return false;
@@ -81,6 +83,21 @@ public class DefaultHttpContextConfiguration implements HttpContextConfiguration
     }
 
     @Override
+    public int getIlpConnectionLimit() {
+        return -1;
+    }
+
+    @Override
+    public int getJsonQueryConnectionLimit() {
+        return -1;
+    }
+
+    @Override
+    public Metrics getMetrics() {
+        return Metrics.ENABLED;
+    }
+
+    @Override
     public MillisecondClock getMillisecondClock() {
         return MillisecondClockImpl.INSTANCE;
     }
@@ -106,18 +123,8 @@ public class DefaultHttpContextConfiguration implements HttpContextConfiguration
     }
 
     @Override
-    public int getRecvBufferSize() {
-        return 1024 * 1024;
-    }
-
-    @Override
     public int getRequestHeaderBufferSize() {
         return 4096;
-    }
-
-    @Override
-    public int getSendBufferSize() {
-        return 1024 * 1024;
     }
 
     @Override
