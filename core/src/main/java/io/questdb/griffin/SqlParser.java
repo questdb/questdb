@@ -3236,6 +3236,13 @@ public class SqlParser {
             expectTok(lexer, ')');
             return ColumnType.getGeoHashTypeWithBits(bits);
         }
+        else if (ColumnType.ND_ARRAY == typeTag) {
+            expectTok(lexer, '(');
+            final CharSequence elementTypeTok = SqlUtil.fetchNext(lexer);
+            final int ndArrayType = SqlUtil.toNdArrayType(elementTypeTok, lexer.lastTokenPosition());
+            expectTok(lexer, ')');
+            return ndArrayType;
+        }
         return typeTag;
     }
 

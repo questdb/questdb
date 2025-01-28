@@ -25,9 +25,18 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.InsertMethod;
+import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -813,6 +822,19 @@ public class InsertTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertSelectTwoWheres() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table result (r long)");
+
+            assertExceptionNoLeakCheck(
+                    "insert into result select * from long_sequence(1) where true where false;",
+                    61,
+                    "unexpected token [where]"
+            );
+        });
+    }
+
+    @Test
     public void testInsertSingleAndMultipleCharacterSymbols() throws Exception {
         final String expected = "sym\tid\tts\n" + "A\t315515118\t1970-01-03T00:00:00.000000Z\n" + "BB\t-727724771\t1970-01-03T00:06:00.000000Z\n" + "BB\t-948263339\t1970-01-03T00:12:00.000000Z\n" + "CC\t592859671\t1970-01-03T00:18:00.000000Z\n" + "CC\t-847531048\t1970-01-03T00:24:00.000000Z\n" + "A\t-2041844972\t1970-01-03T00:30:00.000000Z\n" + "CC\t-1575378703\t1970-01-03T00:36:00.000000Z\n" + "BB\t1545253512\t1970-01-03T00:42:00.000000Z\n" + "A\t1573662097\t1970-01-03T00:48:00.000000Z\n" + "BB\t339631474\t1970-01-03T00:54:00.000000Z\n";
 
@@ -1172,19 +1194,6 @@ public class InsertTest extends AbstractCairoTest {
                             "{[pG5d^fG>v [6\tȔ\uDB75\uDF17ߚ`ŷ֪\t1970-01-01T00:00:00.000000Z\n" +
                             "Ɨ\uDA83\uDD95\uD9ED\uDF4C눻D\uDBA8\uDFB6qٽUY⚂խ:\tC>Wy;\t1970-01-01T00:00:00.000000Z\n",
                     "'*!*y' order by a, b"
-            );
-        });
-    }
-
-    @Test
-    public void testInsertSelectTwoWheres() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table result (r long)");
-
-            assertExceptionNoLeakCheck(
-                    "insert into result select * from long_sequence(1) where true where false;",
-                    61,
-                    "unexpected token [where]"
             );
         });
     }

@@ -90,5 +90,6 @@ public class DefaultColumnTypes {
         MAPPED_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_TIMESTAMP] = ColumnType.TIMESTAMP;
         MAPPED_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_UUID] = ColumnType.UUID;
         MAPPED_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_VARCHAR] = ColumnType.VARCHAR;
+        MAPPED_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_ND_ARRAY] = ColumnType.ND_ARRAY;  // TODO(amunra): No type arg specified!
     }
 }

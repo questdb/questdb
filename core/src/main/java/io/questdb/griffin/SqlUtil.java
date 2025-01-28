@@ -788,6 +788,14 @@ public class SqlUtil {
         }
     }
 
+    public static int toNdArrayType(CharSequence tok, int tokPosition) throws SqlException {
+        final int ndArrayType = ColumnType.parseNdArrayType(tok);
+        if (ndArrayType == -1) {
+            throw SqlException.$(tokPosition, "non-array element type: ").put(tok);
+        }
+        return ndArrayType;
+    }
+
     public static short toPersistedTypeTag(CharSequence tok, int tokPosition) throws SqlException {
         final short typeTag = ColumnType.tagOf(tok);
         if (typeTag == -1) {
@@ -797,7 +805,6 @@ public class SqlUtil {
             return typeTag;
         }
         throw SqlException.$(tokPosition, "non-persisted type: ").put(tok);
-
     }
 
     private static long implicitCastStrVarcharAsDate0(CharSequence value, int columnType) {

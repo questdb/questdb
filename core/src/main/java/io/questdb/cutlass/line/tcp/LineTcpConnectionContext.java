@@ -141,6 +141,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     public void close() {
         clear();
         Misc.free(authenticator);
+        Misc.free(parser);
     }
 
     public long commitWalTables(long wallClockMillis) {

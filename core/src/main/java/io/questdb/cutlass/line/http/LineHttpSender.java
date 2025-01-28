@@ -152,6 +152,14 @@ public final class LineHttpSender implements Sender {
     }
 
     @Override
+    public Sender arrayColumn(CharSequence name, CharSequence value) {
+        // TODO(amunra): Validation of the value
+        writeFieldName(name);
+        request.put(value);
+        return this;
+    }
+
+    @Override
     public void at(long timestamp, ChronoUnit unit) {
         request.putAscii(' ').put(Timestamps.toMicros(timestamp, unit)).put('t');
         atNow();
@@ -224,7 +232,13 @@ public final class LineHttpSender implements Sender {
 
     @Override
     public void flush() {
+        System.err.println("ABOUT TO FLUSH: " + client.getDebugBuffer());
         flush0(false);
+    }
+
+    @TestOnly
+    public String getDebugBuffer() {
+        return client.getDebugBuffer();
     }
 
     @Override

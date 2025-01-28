@@ -43,11 +43,14 @@ import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
+import io.questdb.std.ndarr.NdArrayMmapBuffer;
+import io.questdb.std.ndarr.NdArrayView;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectString;
 import io.questdb.std.str.StableStringSource;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8SplitString;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -65,6 +68,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     private final byte letter;
     private final ObjList<Long256Impl> longs256A = new ObjList<>();
     private final ObjList<Long256Impl> longs256B = new ObjList<>();
+    private final ObjList<NdArrayMmapBuffer> ndArrays = new ObjList<>();
     private final ObjList<SymbolTable> symbolTableCache = new ObjList<>();
     private final ObjList<Utf8SplitString> utf8ViewsA = new ObjList<>();
     private final ObjList<Utf8SplitString> utf8ViewsB = new ObjList<>();
@@ -111,6 +115,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     @Override
     public void close() {
         Misc.freeObjListIfCloseable(symbolTableCache);
+        Misc.freeObjList(ndArrays);
         symbolTableCache.clear();
         clear();
     }
@@ -331,6 +336,10 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return Numbers.ipv4ToLong(getIPv4(columnIndex));
     }
 
+    public NdArrayView getNdArray(int columnIndex, int columnType) {
+        return getNdArray(ndArrays, columnIndex, columnType);
+    }
+
     @Override
     public long getRowId() {
         return Rows.toRowID(frameIndex, rowIndex);
@@ -458,6 +467,15 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.rowIndex = rowIndex;
     }
 
+    private static @NotNull NdArrayMmapBuffer ensureNdArrayMmapBuffer(ObjList<NdArrayMmapBuffer> buffers, int columnIndex) {
+        NdArrayMmapBuffer buffer = buffers.getQuiet(columnIndex);
+        if (buffer == null) {
+            buffer = new NdArrayMmapBuffer();
+            buffers.extendAndSet(columnIndex, buffer);
+        }
+        return buffer;
+    }
+
     private MemoryCR.ByteSequenceView bsView(int columnIndex) {
         if (bsViews.getQuiet(columnIndex) == null) {
             bsViews.extendAndSet(columnIndex, new MemoryCR.ByteSequenceView());
@@ -509,6 +527,24 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     private void getLong256(long addr, CharSink<?> sink) {
         Numbers.appendLong256FromUnsafe(addr, sink);
+    }
+
+    private NdArrayView getNdArray(ObjList<NdArrayMmapBuffer> ndArrays, int columnIndex, int columnType) {
+        final long auxPageAddress = auxPageAddresses.getQuick(columnIndex);
+        if (auxPageAddress != 0) {
+            final long auxPageLim = auxPageAddress + auxPageSizes.getQuick(columnIndex);
+            final long dataPageAddress = pageAddresses.getQuick(columnIndex);
+            final long dataPageLim = dataPageAddress + pageSizes.getQuick(columnIndex);
+            final NdArrayMmapBuffer buffer = ensureNdArrayMmapBuffer(ndArrays, columnIndex);
+            return buffer.of(
+                    columnType,
+                    auxPageAddress,
+                    auxPageLim,
+                    dataPageAddress,
+                    dataPageLim,
+                    rowIndex).getView();
+        }
+        return null;
     }
 
     private DirectString getStr(long base, long offset, long dataLim, DirectString view) {
