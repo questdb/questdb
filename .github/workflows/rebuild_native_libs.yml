@@ -113,7 +113,9 @@ jobs:
             core/src/main/bin/linux-x86-64/libjemalloc.so
           key: nativelibs-linux-${{ github.sha }}
   build-all-linux-aarch64:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
+    container:
+      image: quay.io/pypa/manylinux_2_28_aarch64
     steps:
       - uses: actions/checkout@v4
         with:
@@ -121,16 +123,17 @@ jobs:
       - name: Increase file count and install tooling
         run: |
           sudo sysctl -w fs.file-max=500000
-          sudo apt-get update -y
-          sudo apt-get install -y nasm g++-10-aarch64-linux-gnu gcc-10-aarch64-linux-gnu
-      - name: Generate Makefiles
+          yum update -y
+          yum install wget nasm -y
+      - name: Install JDK17 (for jni.h)
         run: |
-          cd ./core
-          cmake -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
+          wget -nv https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.11%2B9/OpenJDK17U-jdk_arm_linux_hotspot_17.0.11_9.tar.gz
+          tar xfz OpenJDK17U-jdk_arm_linux_hotspot_17.0.11_9.tar.gz
+          echo "JAVA_HOME=`pwd`/jdk-17.0.11+9/" >> "$GITHUB_ENV"
       - name: CMAKE linux-aarch64
         run: |
           cd ./core
-          cmake -DCMAKE_TOOLCHAIN_FILE=./src/main/c/toolchains/linux-arm64.cmake -DARM_TOOLCHAIN_PATH=/usr/bin/ -DCMAKE_EXECUTABLE_SUFFIX=-10 -DCMAKE_CROSSCOMPILING=True -DCMAKE_BUILD_TYPE=Release -B cmake-build-release-arm64
+          cmake -DCMAKE_TOOLCHAIN_FILE=./src/main/c/toolchains/linux-arm64.cmake -DCMAKE_BUILD_TYPE=Release -B cmake-build-release-arm64 -S.
       - name: Build linux-aarch64 CXX Library
         run: |
           cd core
