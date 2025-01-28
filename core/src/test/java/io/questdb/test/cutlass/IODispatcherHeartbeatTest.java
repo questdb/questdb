@@ -26,9 +26,23 @@ package io.questdb.test.cutlass;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.metrics.NullLongGauge;
-import io.questdb.network.*;
-import io.questdb.std.*;
+import io.questdb.network.DefaultIODispatcherConfiguration;
+import io.questdb.network.IOContext;
+import io.questdb.network.IODispatcher;
+import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.network.IODispatchers;
+import io.questdb.network.IOOperation;
+import io.questdb.network.IORequestProcessor;
+import io.questdb.network.Net;
+import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.network.PlainSocketFactory;
+import io.questdb.network.SuspendEvent;
+import io.questdb.network.SuspendEventFactory;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -110,7 +124,7 @@ public class IODispatcherHeartbeatTest {
                             Assert.assertEquals(1, Net.send(fds[idx], buf, 1));
                         }
                         dispatcher.run(0);
-                        while (dispatcher.processIOQueue(processor)) ;
+                        dispatcher.drainIOQueue(processor);
                     }
                 } finally {
                     Unsafe.free(buf, 1, MemoryTag.NATIVE_DEFAULT);
@@ -182,7 +196,7 @@ public class IODispatcherHeartbeatTest {
                     for (int i = 0; i < tickCount; i++) {
                         clock.setCurrent(i);
                         dispatcher.run(0);
-                        while (dispatcher.processIOQueue(processor)) ;
+                        dispatcher.drainIOQueue(processor);
                     }
 
                     TestUtils.assertEventually(() -> {
@@ -258,7 +272,7 @@ public class IODispatcherHeartbeatTest {
                     for (int i = 0; i < tickCount; i++) {
                         clock.setCurrent(i);
                         dispatcher.run(0);
-                        while (dispatcher.processIOQueue(processor)) ;
+                        dispatcher.drainIOQueue(processor);
                     }
 
                     TestUtils.assertEventually(() -> {
@@ -328,7 +342,7 @@ public class IODispatcherHeartbeatTest {
                     for (; tick.get() < tickCount; tick.incrementAndGet()) {
                         clock.setCurrent(tick.get());
                         dispatcher.run(0);
-                        while (dispatcher.processIOQueue(processor)) ;
+                        dispatcher.drainIOQueue(processor);
                     }
 
                     // Trigger the event and wait until the dispatcher handles it.
@@ -336,7 +350,7 @@ public class IODispatcherHeartbeatTest {
                     TestUtils.assertEventually(() -> {
                         clock.setCurrent(tick.incrementAndGet());
                         dispatcher.run(0);
-                        while (dispatcher.processIOQueue(processor)) ;
+                        dispatcher.drainIOQueue(processor);
                         Assert.assertTrue(suspendEvent.isClosedByAtLeastOneSide());
                     }, 10);
                 } finally {
@@ -408,7 +422,7 @@ public class IODispatcherHeartbeatTest {
                     for (int i = 0; i < tickCount; i++) {
                         clock.setCurrent(i);
                         dispatcher.run(0);
-                        while (dispatcher.processIOQueue(processor)) ;
+                        dispatcher.drainIOQueue(processor);
                     }
 
                     TestUtils.assertEventually(() -> {
@@ -472,7 +486,7 @@ public class IODispatcherHeartbeatTest {
         SuspendEvent suspendEvent;
 
         public TestContext(long fd, IODispatcher<TestContext> dispatcher, long heartbeatInterval) {
-            super(PlainSocketFactory.INSTANCE, NetworkFacadeImpl.INSTANCE, LOG, NullLongGauge.INSTANCE);
+            super(PlainSocketFactory.INSTANCE, NetworkFacadeImpl.INSTANCE, LOG);
             socket.of(fd);
             this.dispatcher = dispatcher;
             this.heartbeatInterval = heartbeatInterval;

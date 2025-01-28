@@ -87,7 +87,7 @@ public interface TableWriterAPI extends Closeable {
     @Override
     void close();
 
-    long commit();
+    void commit();
 
     TableRecordMetadata getMetadata();
 

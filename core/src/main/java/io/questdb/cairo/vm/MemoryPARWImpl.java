@@ -29,8 +29,23 @@ import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
-import io.questdb.std.str.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Acceptor;
+import io.questdb.std.Long256FromCharSequenceDecoder;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
+import io.questdb.std.str.AbstractCharSequence;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.FlyweightDirectUtf16Sink;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -244,19 +259,17 @@ public class MemoryPARWImpl implements MemoryARW {
 
     @Override
     public void getLong256(long offset, CharSink<?> sink) {
-        final long a, b, c, d;
         if (roOffsetLo < offset && offset < roOffsetHi - Long256.BYTES) {
-            a = Unsafe.getUnsafe().getLong(absolutePointer + offset);
-            b = Unsafe.getUnsafe().getLong(absolutePointer + offset + Long.BYTES);
-            c = Unsafe.getUnsafe().getLong(absolutePointer + offset + Long.BYTES * 2);
-            d = Unsafe.getUnsafe().getLong(absolutePointer + offset + Long.BYTES * 3);
+            Numbers.appendLong256FromUnsafe(absolutePointer + offset, sink);
         } else {
-            a = getLong(offset);
-            b = getLong(offset + Long.BYTES);
-            c = getLong(offset + Long.BYTES * 2);
-            d = getLong(offset + Long.BYTES * 3);
+            Numbers.appendLong256(
+                    getLong(offset),
+                    getLong(offset + Long.BYTES),
+                    getLong(offset + Long.BYTES * 2),
+                    getLong(offset + Long.BYTES * 3),
+                    sink
+            );
         }
-        Numbers.appendLong256(a, b, c, d, sink);
     }
 
     @Override

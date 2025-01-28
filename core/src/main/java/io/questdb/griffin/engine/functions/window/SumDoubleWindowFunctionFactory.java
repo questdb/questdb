@@ -121,7 +121,7 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                                 partitionByKeyTypes,
                                 columnTypes
                         );
-                        mem = Vm.getARWInstance(
+                        mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(),
                                 MemoryTag.NATIVE_CIRCULAR_BUFFER
@@ -194,8 +194,10 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                                 partitionByKeyTypes,
                                 columnTypes
                         );
-                        mem = Vm.getARWInstance(configuration.getSqlWindowStorePageSize(),
-                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER
+                        mem = Vm.getCARWInstance(
+                                configuration.getSqlWindowStorePageSize(),
+                                configuration.getSqlWindowStoreMaxPages(),
+                                MemoryTag.NATIVE_CIRCULAR_BUFFER
                         );
 
                         // moving sum over preceding N rows
@@ -253,7 +255,7 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     return new SumOverWholeResultSetFunction(args.get(0));
                 } // between [unbounded | x] preceding and [x preceding | current row]
                 else {
-                    MemoryARW mem = Vm.getARWInstance(
+                    MemoryARW mem = Vm.getCARWInstance(
                             configuration.getSqlWindowStorePageSize(),
                             configuration.getSqlWindowStoreMaxPages(),
                             MemoryTag.NATIVE_CIRCULAR_BUFFER
@@ -477,11 +479,10 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             if (Numbers.isFinite(d)) {
                 sum += d;
                 count++;
-
-                value.putDouble(0, sum);
-                value.putLong(1, count);
             }
 
+            value.putDouble(0, sum);
+            value.putLong(1, count);
             this.sum = count != 0 ? sum : Double.NaN;
         }
 
@@ -513,7 +514,7 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             sink.val(" over (");
             sink.val("partition by ");
             sink.val(partitionByRecord.getFunctions());
-            sink.val(" rows between unbounded preceding and current row )");
+            sink.val(" rows between unbounded preceding and current row)");
         }
     }
 

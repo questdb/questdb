@@ -24,8 +24,21 @@
 
 package io.questdb.test.cairo.map;
 
-import io.questdb.cairo.*;
-import io.questdb.cairo.map.*;
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SingleColumnType;
+import io.questdb.cairo.SymbolAsIntTypes;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.map.OrderedMap;
+import io.questdb.cairo.map.RecordValueSink;
+import io.questdb.cairo.map.RecordValueSinkFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.std.BytecodeAssembler;
@@ -58,7 +71,7 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
 
         final int N = 1024;
         final Rnd rnd = new Rnd();
-        try (TableWriter writer = newOffPoolWriter(configuration, "all", metrics)) {
+        try (TableWriter writer = newOffPoolWriter(configuration, "all")) {
             for (int i = 0; i < N; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.putInt(0, rnd.nextInt());
@@ -143,7 +156,7 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
 
         final int N = 1024;
         final Rnd rnd = new Rnd();
-        try (TableWriter writer = newOffPoolWriter(configuration, "all", metrics)) {
+        try (TableWriter writer = newOffPoolWriter(configuration, "all")) {
             for (int i = 0; i < N; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.putInt(0, rnd.nextInt());

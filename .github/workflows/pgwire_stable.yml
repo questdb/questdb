@@ -31,6 +31,10 @@ jobs:
         with:
           toolchain: 1.79.0
           cache-workspaces: compat/src/test/rust/scenarios
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: '9.0.x'
       - name: Setup Python version
         uses: actions/setup-python@v2
         with:

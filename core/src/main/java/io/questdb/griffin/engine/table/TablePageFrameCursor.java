@@ -22,8 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.mp;
+package io.questdb.griffin.engine.table;
 
-public interface QueueValueHolder<T> {
-    void copyTo(T anotherHolder);
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFrameCursor;
+
+public interface TablePageFrameCursor extends PageFrameCursor {
+
+    TableReader getTableReader();
+
+    TablePageFrameCursor of(PartitionFrameCursor partitionFrameCursor);
 }

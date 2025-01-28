@@ -24,13 +24,33 @@
 
 package io.questdb.metrics;
 
-import io.questdb.std.str.BorrowableUtf8Sink;
+import io.questdb.mp.ValueHolder;
+import io.questdb.std.ObjectFactory;
 
-/**
- * Anything that can be scraped for Prometheus metrics.
- */
-public interface Scrapable {
+public class QueryTrace implements ValueHolder<QueryTrace> {
+    public static final ObjectFactory<QueryTrace> ITEM_FACTORY = QueryTrace::new;
 
-    // We need a sink that we can borrow from and append to in native code.
-    void scrapeIntoPrometheus(BorrowableUtf8Sink sink);
+    public long executionNanos;
+    public boolean isJit;
+    public String principal;
+    public String queryText;
+    public long timestamp;
+
+    @Override
+    public void clear() {
+        executionNanos = 0;
+        isJit = false;
+        principal = null;
+        queryText = null;
+        timestamp = 0;
+    }
+
+    @Override
+    public void copyTo(QueryTrace dest) {
+        dest.executionNanos = executionNanos;
+        dest.isJit = isJit;
+        dest.principal = principal;
+        dest.queryText = queryText;
+        dest.timestamp = timestamp;
+    }
 }

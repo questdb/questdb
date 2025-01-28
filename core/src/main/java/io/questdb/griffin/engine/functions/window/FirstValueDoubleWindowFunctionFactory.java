@@ -48,6 +48,7 @@ import io.questdb.griffin.model.WindowColumn;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -55,14 +56,19 @@ import io.questdb.std.Vect;
 // Returns value evaluated at the row that is the first row of the window frame.
 public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
-    private static final ArrayColumnTypes FIRST_VALUE_COLUMN_TYPES;
+    protected static final ArrayColumnTypes FIRST_VALUE_COLUMN_TYPES;
 
-    private static final String NAME = "first_value";
+    public static final String NAME = "first_value";
     private static final String SIGNATURE = NAME + "(D)";
 
     @Override
     public String getSignature() {
         return SIGNATURE;
+    }
+
+    @Override
+    protected boolean supportNullsDesc() {
+        return true;
     }
 
     @Override
@@ -74,6 +80,16 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         checkWindowParameter(position, sqlExecutionContext);
+        return windowContext.isIgnoreNulls() ?
+                this.generateIgnoreNullsFunction(position, args, configuration) :
+                this.generateRespectNullsFunction(position, args, configuration);
+    }
+
+    private Function generateRespectNullsFunction(
+            int position,
+            ObjList<Function> args,
+            CairoConfiguration configuration
+    ) throws SqlException {
         int framingMode = windowContext.getFramingMode();
         RecordSink partitionBySink = windowContext.getPartitionBySink();
         ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
@@ -132,7 +148,11 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
                     );
 
                     final int initialBufferSize = configuration.getSqlWindowInitialRangeBufferSize();
-                    MemoryARW mem = Vm.getARWInstance(configuration.getSqlWindowStorePageSize(), configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                    MemoryARW mem = Vm.getCARWInstance(
+                            configuration.getSqlWindowStorePageSize(),
+                            configuration.getSqlWindowStoreMaxPages(),
+                            MemoryTag.NATIVE_CIRCULAR_BUFFER
+                    );
 
                     // moving average over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
                     return new FirstValueOverPartitionRangeFrameFunction(
@@ -164,7 +184,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsLo == rowsHi) {
-                    return new FirstValueOverCurrentRowFunction(args.get(0));
+                    return new FirstValueOverCurrentRowFunction(args.get(0), false);
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(
@@ -193,8 +213,10 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
                             columnTypes
                     );
 
-                    MemoryARW mem = Vm.getARWInstance(configuration.getSqlWindowStorePageSize(),
-                            configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER
+                    MemoryARW mem = Vm.getCARWInstance(
+                            configuration.getSqlWindowStorePageSize(),
+                            configuration.getSqlWindowStoreMaxPages(),
+                            MemoryTag.NATIVE_CIRCULAR_BUFFER
                     );
 
                     // moving average over preceding N rows
@@ -242,10 +264,10 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
                     return new FirstValueOverWholeResultSetFunction(args.get(0));
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsLo == rowsHi) {
-                    return new FirstValueOverCurrentRowFunction(args.get(0));
+                    return new FirstValueOverCurrentRowFunction(args.get(0), false);
                 } // between [unbounded | x] preceding and [y preceding | current row]
                 else {
-                    MemoryARW mem = Vm.getARWInstance(
+                    MemoryARW mem = Vm.getCARWInstance(
                             configuration.getSqlWindowStorePageSize(),
                             configuration.getSqlWindowStoreMaxPages(),
                             MemoryTag.NATIVE_CIRCULAR_BUFFER
@@ -264,13 +286,216 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
         throw SqlException.$(position, "function not implemented for given window parameters");
     }
 
+    private Function generateIgnoreNullsFunction(
+            int position,
+            ObjList<Function> args,
+            CairoConfiguration configuration
+    ) throws SqlException {
+        int framingMode = windowContext.getFramingMode();
+        RecordSink partitionBySink = windowContext.getPartitionBySink();
+        ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
+        VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
+
+        if (partitionByRecord != null) {
+            if (framingMode == WindowColumn.FRAMING_RANGE) {
+                // moving first_value() ignore nulls over whole partition (no order by, default frame) or (order by, unbounded preceding to unbounded following)
+                if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
+                    Map map = MapFactory.createUnorderedMap(
+                            configuration,
+                            partitionByKeyTypes,
+                            FIRST_VALUE_COLUMN_TYPES
+                    );
+
+                    return new FirstNotNullValueOverPartitionFunction(
+                            map,
+                            partitionByRecord,
+                            partitionBySink,
+                            args.get(0)
+                    );
+                } // between unbounded preceding and current row
+                else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    Map map = MapFactory.createUnorderedMap(
+                            configuration,
+                            partitionByKeyTypes,
+                            FIRST_VALUE_COLUMN_TYPES
+                    );
+
+                    return new FirstNotNullValueOverUnboundedPartitionRowsFrameFunction(
+                            map,
+                            partitionByRecord,
+                            partitionBySink,
+                            args.get(0)
+                    );
+                } // range between [unbounded | x] preceding and [x preceding | current row]
+                else {
+                    if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
+                        throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
+                    }
+
+                    int timestampIndex = windowContext.getTimestampIndex();
+
+                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
+                    columnTypes.add(ColumnType.LONG);  // number of values in current frame
+                    columnTypes.add(ColumnType.LONG);  // native array start offset, requires updating on resize
+                    columnTypes.add(ColumnType.LONG);   // native buffer size
+                    columnTypes.add(ColumnType.LONG);   // native buffer capacity
+                    columnTypes.add(ColumnType.LONG);   // index of first buffered element
+
+                    Map map = MapFactory.createUnorderedMap(
+                            configuration,
+                            partitionByKeyTypes,
+                            columnTypes
+                    );
+
+                    final int initialBufferSize = configuration.getSqlWindowInitialRangeBufferSize();
+                    MemoryARW mem = Vm.getCARWInstance(
+                            configuration.getSqlWindowStorePageSize(),
+                            configuration.getSqlWindowStoreMaxPages(),
+                            MemoryTag.NATIVE_CIRCULAR_BUFFER
+                    );
+
+                    // moving average over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
+                    return new FirstNotNullValueOverPartitionRangeFrameFunction(
+                            map,
+                            partitionByRecord,
+                            partitionBySink,
+                            rowsLo,
+                            rowsHi,
+                            args.get(0),
+                            mem,
+                            initialBufferSize,
+                            timestampIndex
+                    );
+                }
+            } else if (framingMode == WindowColumn.FRAMING_ROWS) {
+                //between unbounded preceding and current row
+                if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    Map map = MapFactory.createUnorderedMap(
+                            configuration,
+                            partitionByKeyTypes,
+                            FIRST_VALUE_COLUMN_TYPES
+                    );
+
+                    return new FirstNotNullValueOverUnboundedPartitionRowsFrameFunction(
+                            map,
+                            partitionByRecord,
+                            partitionBySink,
+                            args.get(0)
+                    );
+                } // between current row and current row
+                else if (rowsLo == 0 && rowsLo == rowsHi) {
+                    return new FirstValueOverCurrentRowFunction(args.get(0), true);
+                } // whole partition
+                else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
+                    Map map = MapFactory.createUnorderedMap(
+                            configuration,
+                            partitionByKeyTypes,
+                            FIRST_VALUE_COLUMN_TYPES
+                    );
+
+                    return new FirstNotNullValueOverPartitionFunction(
+                            map,
+                            partitionByRecord,
+                            partitionBySink,
+                            args.get(0)
+                    );
+                }
+                //between [unbounded | x] preceding and [x preceding | current row] (but not unbounded preceding to current row )
+                else {
+                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
+                    columnTypes.add(ColumnType.LONG);// position of current oldest element
+                    columnTypes.add(ColumnType.LONG);// start offset of native array
+                    columnTypes.add(ColumnType.LONG);// count of values in buffer
+                    columnTypes.add(ColumnType.LONG);// count of values in buffer
+
+                    Map map = MapFactory.createUnorderedMap(
+                            configuration,
+                            partitionByKeyTypes,
+                            columnTypes
+                    );
+
+                    MemoryARW mem = Vm.getCARWInstance(
+                            configuration.getSqlWindowStorePageSize(),
+                            configuration.getSqlWindowStoreMaxPages(),
+                            MemoryTag.NATIVE_CIRCULAR_BUFFER
+                    );
+
+                    // moving first over preceding N rows
+                    return new FirstNotNullValueOverPartitionRowsFrameFunction(
+                            map,
+                            partitionByRecord,
+                            partitionBySink,
+                            rowsLo,
+                            rowsHi,
+                            args.get(0),
+                            mem
+                    );
+                }
+            }
+        } else { // no partition key
+            if (framingMode == WindowColumn.FRAMING_RANGE) {
+                // if there's no order by then all elements are equal in range mode, thus calculation is done on whole result set
+                if (!windowContext.isOrdered() && windowContext.isDefaultFrame()) {
+                    return new FirstNotNullValueOverWholeResultSetFunction(args.get(0));
+                } // between unbounded preceding and current row
+                else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    // same as for rows because calculation stops at current rows even if there are 'equal' following rows
+                    // if lower bound is unbounded then it's the same as over ()
+                    return new FirstNotNullValueOverWholeResultSetFunction(args.get(0));
+                } // range between [unbounded | x] preceding and [y preceding | current row]
+                else {
+                    if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
+                        throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
+                    }
+
+                    int timestampIndex = windowContext.getTimestampIndex();
+
+                    // first_value() ignore nulls over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
+                    return new FirstNotNullValueOverRangeFrameFunction(
+                            rowsLo,
+                            rowsHi,
+                            args.get(0),
+                            configuration,
+                            timestampIndex
+                    );
+                }
+            } else if (framingMode == WindowColumn.FRAMING_ROWS) {
+                // between unbounded preceding and [current row | unbounded following]
+                if (rowsLo == Long.MIN_VALUE && (rowsHi == 0 || rowsHi == Long.MAX_VALUE)) {
+                    return new FirstNotNullValueOverWholeResultSetFunction(args.get(0));
+                } // between current row and current row
+                else if (rowsLo == 0 && rowsLo == rowsHi) {
+                    return new FirstValueDoubleWindowFunctionFactory.FirstValueOverCurrentRowFunction(args.get(0), true);
+                } // between [unbounded | x] preceding and [y preceding | current row]
+                else {
+                    MemoryARW mem = Vm.getCARWInstance(
+                            configuration.getSqlWindowStorePageSize(),
+                            configuration.getSqlWindowStoreMaxPages(),
+                            MemoryTag.NATIVE_CIRCULAR_BUFFER
+                    );
+
+                    return new FirstNotNullValueOverRowsFrameFunction(
+                            args.get(0),
+                            rowsLo,
+                            rowsHi,
+                            mem
+                    );
+                }
+            }
+        }
+
+        throw SqlException.$(position, "function not implemented for given window parameters");
+    }
+
     // (rows between current row and current row) processes 1-element-big set, so simply it returns expression value
     static class FirstValueOverCurrentRowFunction extends BaseDoubleWindowFunction {
 
         private double value;
+        private final boolean ignoreNulls;
 
-        FirstValueOverCurrentRowFunction(Function arg) {
+        FirstValueOverCurrentRowFunction(Function arg, boolean ignoreNulls) {
             super(arg);
+            this.ignoreNulls = ignoreNulls;
         }
 
         @Override
@@ -286,6 +511,11 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
         @Override
         public String getName() {
             return NAME;
+        }
+
+        @Override
+        public boolean isIgnoreNulls() {
+            return ignoreNulls;
         }
 
         @Override
@@ -351,20 +581,20 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
     // Removable cumulative aggregation with timestamp & value stored in resizable ring buffers
     public static class FirstValueOverPartitionRangeFrameFunction extends BasePartitionedDoubleWindowFunction {
 
-        private static final int RECORD_SIZE = Long.BYTES + Double.BYTES;
-        private final boolean frameIncludesCurrentValue;
-        private final boolean frameLoBounded;
+        protected static final int RECORD_SIZE = Long.BYTES + Double.BYTES;
+        protected final boolean frameIncludesCurrentValue;
+        protected final boolean frameLoBounded;
         // list of [size, startOffset] pairs marking free space within mem
-        private final LongList freeList = new LongList();
-        private final int initialBufferSize;
-        private final long maxDiff;
+        protected final LongList freeList = new LongList();
+        protected final int initialBufferSize;
+        protected final long maxDiff;
         // holds resizable ring buffers
-        private final MemoryARW memory;
-        private final long minDiff;
-        private final int timestampIndex;
+        protected final MemoryARW memory;
+        protected final long minDiff;
+        protected final int timestampIndex;
 
-        private double firstValue;
-        private final RingBufferDesc memoryDesc = new RingBufferDesc();
+        protected double firstValue;
+        protected final RingBufferDesc memoryDesc = new RingBufferDesc();
 
         public FirstValueOverPartitionRangeFrameFunction(
                 Map map,
@@ -455,7 +685,9 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
                         if (Math.abs(timestamp - ts) > maxDiff) {
-                            frameSize--;
+                            if (frameSize > 0) {
+                                frameSize--;
+                            }
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
                         } else {
@@ -557,6 +789,9 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(')');
+            if (isIgnoreNulls()) {
+                sink.val(" ignore nulls");
+            }
             sink.val(" over (");
             sink.val("partition by ");
             sink.val(partitionByRecord.getFunctions());
@@ -579,19 +814,20 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
         }
     }
 
+
     // handles first_value() over (partition by x [order by o] rows between y and z)
     // removable cumulative aggregation
     public static class FirstValueOverPartitionRowsFrameFunction extends BasePartitionedDoubleWindowFunction {
 
         //number of values we need to keep to compute over frame
         // (can be bigger than frame because we've to buffer values between rowsHi and current row )
-        private final int bufferSize;
-        private final boolean frameIncludesCurrentValue;
-        private final boolean frameLoBounded;
-        private final int frameSize;
+        protected final int bufferSize;
+        protected final boolean frameIncludesCurrentValue;
+        protected final boolean frameLoBounded;
+        protected final int frameSize;
         // holds fixed-size ring buffers of double values
-        private final MemoryARW memory;
-        private double firstValue;
+        protected final MemoryARW memory;
+        protected double firstValue;
 
         public FirstValueOverPartitionRowsFrameFunction(
                 Map map,
@@ -708,6 +944,9 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(')');
+            if (isIgnoreNulls()) {
+                sink.val(" ignore nulls");
+            }
             sink.val(" over (");
             sink.val("partition by ");
             sink.val(partitionByRecord.getFunctions());
@@ -731,22 +970,23 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
 
     // Handles first_value() over ([order by ts] range between x preceding and [ y preceding | current row ] ); no partition by key
     public static class FirstValueOverRangeFrameFunction extends BaseDoubleWindowFunction implements Reopenable {
-        private final int RECORD_SIZE = Long.BYTES + Double.BYTES;
-        private final boolean frameLoBounded;
-        private final long initialCapacity;
-        private final long maxDiff;
+        protected final int RECORD_SIZE = Long.BYTES + Double.BYTES;
+        protected final boolean frameLoBounded;
+        protected final long initialCapacity;
+        protected final long maxDiff;
         // holds resizable ring buffers
         // actual frame data - [timestamp, value] pairs - is stored in mem at [ offset + first_idx*16, offset + last_idx*16]
         // note: we ignore nulls to reduce memory usage
-        private final MemoryARW memory;
-        private final long minDiff;
-        private final int timestampIndex;
-        private long capacity;
-        private long firstIdx;
-        private double firstValue;
-        private long frameSize;
-        private long size;
-        private long startOffset;
+        protected final MemoryARW memory;
+        protected final long minDiff;
+        protected final int timestampIndex;
+        protected long capacity;
+        protected long firstIdx;
+        protected double firstValue;
+        protected long frameSize;
+        protected long size;
+        protected long startOffset;
+        protected final boolean frameIncludesCurrentValue;
 
         public FirstValueOverRangeFrameFunction(
                 long rangeLo,
@@ -763,10 +1003,15 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
             initialCapacity = configuration.getSqlWindowStorePageSize() / RECORD_SIZE;
 
             capacity = initialCapacity;
-            memory = Vm.getARWInstance(configuration.getSqlWindowStorePageSize(), configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+            memory = Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
             startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
             firstIdx = 0;
             frameSize = 0;
+            frameIncludesCurrentValue = rangeHi == 0;
         }
 
         @Override
@@ -793,7 +1038,9 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
                     if (Math.abs(timestamp - ts) > maxDiff) {
-                        frameSize--;
+                        if (frameSize > 0) {
+                            frameSize--;
+                        }
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
                     } else {
@@ -900,6 +1147,9 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(')');
+            if (isIgnoreNulls()) {
+                sink.val(" ignore nulls");
+            }
             sink.val(" over (");
             sink.val("range between ");
             sink.val(maxDiff);
@@ -928,14 +1178,14 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
     // Handles first_value() over ([order by o] rows between y and z); there's no partition by.
     // Removable cumulative aggregation.
     public static class FirstValueOverRowsFrameFunction extends BaseDoubleWindowFunction implements Reopenable {
-        private final MemoryARW buffer;
-        private final int bufferSize;
-        private final boolean frameIncludesCurrentValue;
-        private final boolean frameLoBounded;
-        private final int frameSize;
-        private long count = 0;
-        private double firstValue;
-        private int loIdx = 0;
+        protected final MemoryARW buffer;
+        protected final int bufferSize;
+        protected final boolean frameIncludesCurrentValue;
+        protected final boolean frameLoBounded;
+        protected final int frameSize;
+        protected long count = 0;
+        protected double firstValue;
+        protected int loIdx = 0;
 
         public FirstValueOverRowsFrameFunction(Function arg, long rowsLo, long rowsHi, MemoryARW memory) {
             super(arg);
@@ -1029,6 +1279,9 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(')');
+            if (isIgnoreNulls()) {
+                sink.val(" ignore nulls");
+            }
             sink.val(" over (");
             sink.val(" rows between ");
             sink.val(bufferSize);
@@ -1062,7 +1315,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
     // - first_value(a) over (partition by x order by ts range between unbounded preceding and [current row | x preceding])
     static class FirstValueOverUnboundedPartitionRowsFrameFunction extends BasePartitionedDoubleWindowFunction {
 
-        private double value;
+        protected double value;
 
         public FirstValueOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
             super(map, partitionByRecord, partitionBySink, arg);
@@ -1107,12 +1360,15 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(NAME);
+            sink.val(getName());
             sink.val('(').val(arg).val(')');
+            if (isIgnoreNulls()) {
+                sink.val(" ignore nulls");
+            }
             sink.val(" over (");
             sink.val("partition by ");
             sink.val(partitionByRecord.getFunctions());
-            sink.val(" rows between unbounded preceding and current row )");
+            sink.val(" rows between unbounded preceding and current row)");
         }
     }
 
@@ -1120,13 +1376,12 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
     // first_value() over () - empty clause, no partition by no order by, no frame == default frame
     // first_value() over (rows between unbounded preceding and current row); there's no partition by.
     public static class FirstValueOverWholeResultSetFunction extends BaseDoubleWindowFunction {
-        private boolean found;
-        private double value = Double.NaN;
+        protected boolean found;
+        protected double value = Double.NaN;
 
         public FirstValueOverWholeResultSetFunction(Function arg) {
             super(arg);
         }
-
 
         @Override
         public void computeNext(Record record) {
@@ -1155,6 +1410,550 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), value);
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            found = false;
+            value = Double.NaN;
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            found = false;
+            value = Double.NaN;
+        }
+    }
+
+    // handles first_value() ignore nulls over (partition by x)
+    // order by is absent so default frame mode includes all rows in the partition
+    static class FirstNotNullValueOverPartitionFunction extends BasePartitionedDoubleWindowFunction {
+
+        public FirstNotNullValueOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
+            super(map, partitionByRecord, partitionBySink, arg);
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.TWO_PASS;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            if (key.findValue() == null) {
+                double d = arg.getDouble(record);
+                if (Double.isFinite(d)) {
+                    MapValue value = key.createValue();
+                    value.putDouble(0, d);
+                }
+            }
+        }
+
+        @Override
+        public void pass2(Record record, long recordOffset, WindowSPI spi) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            double val = value != null ? value.getDouble(0) : Double.NaN;
+            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), val);
+        }
+
+        @Override
+        public boolean isIgnoreNulls() {
+            return true;
+        }
+    }
+
+    // Handles first_value() ignore nulls over (partition by x order by ts range between y preceding and [z preceding | current row])
+    // Removable cumulative aggregation with timestamp & value stored in resizable ring buffers
+    public static class FirstNotNullValueOverPartitionRangeFrameFunction extends FirstValueOverPartitionRangeFrameFunction {
+        public FirstNotNullValueOverPartitionRangeFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                long rangeLo,
+                long rangeHi,
+                Function arg,
+                MemoryARW memory,
+                int initialBufferSize,
+                int timestampIdx
+        ) {
+            super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, initialBufferSize, timestampIdx);
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            // map stores
+            // 0 - native array start offset (relative to memory address)
+            // 1 - size of ring buffer (number of elements stored in it; not all of them need to belong to frame)
+            // 2 - capacity of ring buffer
+            // 3 - index of first (the oldest) valid buffer element
+            // actual frame data - [timestamp, value] pairs - is stored in mem at [ offset + first_idx*16, offset + last_idx*16]
+
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mapValue = key.createValue();
+
+            long startOffset;
+            long size;
+            long capacity;
+            long firstIdx;
+            long timestamp = record.getTimestamp(timestampIndex);
+
+            if (mapValue.isNew()) {
+                double d = arg.getDouble(record);
+                capacity = initialBufferSize;
+                startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+                firstIdx = 0;
+
+                if (Numbers.isFinite(d)) {
+                    memory.putLong(startOffset, timestamp);
+                    memory.putDouble(startOffset + Long.BYTES, d);
+                    size = 1;
+                    if (frameIncludesCurrentValue) {
+                        this.firstValue = d;
+                    } else {
+                        this.firstValue = Double.NaN;
+                    }
+                } else {
+                    size = 0;
+                    this.firstValue = Double.NaN;
+                }
+            } else {
+                startOffset = mapValue.getLong(0);
+                size = mapValue.getLong(1);
+                capacity = mapValue.getLong(2);
+                firstIdx = mapValue.getLong(3);
+                if (!frameLoBounded && size > 0) {
+                    if (firstIdx == 0) { // use firstIdx as a flag
+                        long ts = memory.getLong(startOffset);
+                        if (Math.abs(timestamp - ts) >= minDiff) {
+                            firstIdx = 1;
+                            firstValue = memory.getDouble(startOffset + Long.BYTES);
+                            mapValue.putLong(3, firstIdx);
+                        } else {
+                            firstValue = Double.NaN;
+                        }
+                    } else {
+                        // first value always in first index case when frameLoBounded == false
+                        firstValue = memory.getDouble(startOffset + Long.BYTES);
+                    }
+                    return;
+                }
+
+                long newFirstIdx = firstIdx;
+                boolean findNewFirstValue = false;
+                // find new bottom border of range frame and remove unneeded elements
+                for (long i = 0, n = size; i < n; i++) {
+                    long idx = (firstIdx + i) % capacity;
+                    long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                    if (Math.abs(timestamp - ts) > maxDiff) {
+                        newFirstIdx = (idx + 1) % capacity;
+                        size--;
+                    } else {
+                        if (Math.abs(timestamp - ts) >= minDiff) {
+                            findNewFirstValue = true;
+                            this.firstValue = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
+                        }
+                        break;
+                    }
+                }
+                firstIdx = newFirstIdx;
+                double d = arg.getDouble(record);
+                if (Numbers.isFinite(d)) {
+                    if (size == capacity) { //buffer full
+                        memoryDesc.reset(capacity, startOffset, size, firstIdx, freeList);
+                        expandRingBuffer(memory, memoryDesc, RECORD_SIZE);
+                        capacity = memoryDesc.capacity;
+                        startOffset = memoryDesc.startOffset;
+                        firstIdx = memoryDesc.firstIdx;
+                    }
+
+                    // add element to buffer
+                    memory.putLong(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE, timestamp);
+                    memory.putDouble(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, d);
+                    size++;
+                }
+
+                if (!findNewFirstValue) {
+                    this.firstValue = frameIncludesCurrentValue ? d : Double.NaN;
+                }
+            }
+
+            mapValue.putLong(0, startOffset);
+            mapValue.putLong(1, size);
+            mapValue.putLong(2, capacity);
+            mapValue.putLong(3, firstIdx);
+        }
+
+        @Override
+        public boolean isIgnoreNulls() {
+            return true;
+        }
+    }
+
+    // handles first_value() ignore nulls over (partition by x [order by o] rows between y and z)
+    // removable cumulative aggregation
+    public static class FirstNotNullValueOverPartitionRowsFrameFunction extends FirstValueOverPartitionRowsFrameFunction {
+
+        public FirstNotNullValueOverPartitionRowsFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                long rowsLo,
+                long rowsHi,
+                Function arg,
+                MemoryARW memory
+        ) {
+            super(map, partitionByRecord, partitionBySink, rowsLo, rowsHi, arg, memory);
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            // map stores:
+            // 0 - (0-based) index of oldest value [0, bufferSize]
+            // 1 - native array start offset (relative to memory address)
+            // 2 - first not null index
+            // 3 - count of values in buffer if frameLoUnBounded
+
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.createValue();
+
+            long loIdx;//current index of lo frame value ('oldest')
+            long startOffset;
+            long firstNotNullIdx = -1;
+            long count = 0;
+
+            if (value.isNew()) {
+                loIdx = 0;
+                startOffset = memory.appendAddressFor((long) bufferSize * Double.BYTES) - memory.getPageAddress(0);
+                value.putLong(1, startOffset);
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putDouble(startOffset + (long) i * Double.BYTES, Double.NaN);
+                }
+            } else {
+                loIdx = value.getLong(0);
+                startOffset = value.getLong(1);
+                firstNotNullIdx = value.getLong(2);
+                count = value.getLong(3);
+            }
+
+            if (!frameLoBounded) {
+                if (firstNotNullIdx != -1 && count - bufferSize >= firstNotNullIdx) {
+                    firstValue = memory.getDouble(startOffset);
+                    return;
+                }
+
+                double d = arg.getDouble(record);
+                if (firstNotNullIdx == -1 && Numbers.isFinite(d)) {
+                    firstNotNullIdx = count;
+                    memory.putDouble(startOffset, d);
+                    this.firstValue = frameIncludesCurrentValue ? d : Double.NaN;
+                } else {
+                    this.firstValue = Double.NaN;
+                }
+                value.putLong(2, firstNotNullIdx);
+                value.putLong(3, count + 1);
+            } else {
+                double d = arg.getDouble(record);
+                if (firstNotNullIdx != -1 && Numbers.isFinite(memory.getDouble(startOffset + loIdx * Double.BYTES))) {
+                    firstNotNullIdx = -1;
+                }
+                if (firstNotNullIdx != -1) {
+                    this.firstValue = memory.getDouble(startOffset + firstNotNullIdx * Double.BYTES);
+                } else {
+                    boolean find = false;
+                    for (int i = 0; i < frameSize; i++) {
+                        double res = memory.getDouble(startOffset + (loIdx + i) % bufferSize * Double.BYTES);
+                        if (Numbers.isFinite(res)) {
+                            find = true;
+                            firstNotNullIdx = (loIdx + i) % bufferSize;
+                            this.firstValue = res;
+                            break;
+                        }
+                    }
+                    if (!find) {
+                        this.firstValue = frameIncludesCurrentValue ? d : Double.NaN;
+                    }
+
+                }
+
+                if (firstNotNullIdx == loIdx) {
+                    firstNotNullIdx = -1;
+                }
+                value.putLong(0, (loIdx + 1) % bufferSize);
+                value.putLong(2, firstNotNullIdx);
+                memory.putDouble(startOffset + loIdx * Double.BYTES, d);
+            }
+        }
+
+        @Override
+        public boolean isIgnoreNulls() {
+            return true;
+        }
+    }
+
+    // Handles first_value() ignore nulls over ([order by ts] range between x preceding and [ y preceding | current row ] ); no partition by key
+    public static class FirstNotNullValueOverRangeFrameFunction extends FirstValueOverRangeFrameFunction implements Reopenable {
+
+        public FirstNotNullValueOverRangeFrameFunction(
+                long rangeLo,
+                long rangeHi,
+                Function arg,
+                CairoConfiguration configuration,
+                int timestampIdx
+        ) {
+            super(rangeLo, rangeHi, arg, configuration, timestampIdx);
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            long timestamp = record.getTimestamp(timestampIndex);
+            if (!frameLoBounded && size > 0) {
+                if (firstIdx == 0) { // use firstIdx as a flag firstValue has in frame.
+                    long ts = memory.getLong(startOffset);
+                    if (Math.abs(timestamp - ts) >= minDiff) {
+                        firstIdx = 1;
+                        firstValue = memory.getDouble(startOffset + Long.BYTES);
+                    } else {
+                        firstValue = Double.NaN;
+                    }
+                } else {
+                    // first value always in first index case when not frameLoBounded
+                    firstValue = memory.getDouble(startOffset + Long.BYTES);
+                }
+                return;
+            }
+
+            long newFirstIdx = firstIdx;
+            boolean findNewFirstValue = false;
+            // find new bottom border of range frame and remove unneeded elements
+            for (long i = 0, n = size; i < n; i++) {
+                long idx = (firstIdx + i) % capacity;
+                long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                if (Math.abs(timestamp - ts) > maxDiff) {
+                    newFirstIdx = (idx + 1) % capacity;
+                    size--;
+                } else {
+                    if (Math.abs(timestamp - ts) >= minDiff) { // find the first not null value
+                        findNewFirstValue = true;
+                        this.firstValue = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
+                    }
+                    break;
+                }
+            }
+            firstIdx = newFirstIdx;
+            double d = arg.getDouble(record);
+            if (Numbers.isFinite(d)) {
+                if (size == capacity) { //buffer full
+                    long newAddress = memory.appendAddressFor(capacity * RECORD_SIZE);
+                    // call above can end up resizing and thus changing memory start address
+                    long oldAddress = memory.getPageAddress(0) + startOffset;
+
+                    if (firstIdx == 0) {
+                        Vect.memcpy(newAddress, oldAddress, size * RECORD_SIZE);
+                    } else {
+                        //we can't simply copy because that'd leave a gap in the middle
+                        long firstPieceSize = (size - firstIdx) * RECORD_SIZE;
+                        Vect.memcpy(newAddress, oldAddress + firstIdx * RECORD_SIZE, firstPieceSize);
+                        Vect.memcpy(newAddress + firstPieceSize, oldAddress, ((firstIdx + size) % size) * RECORD_SIZE);
+                        firstIdx = 0;
+                    }
+
+                    startOffset = newAddress - memory.getPageAddress(0);
+                    capacity <<= 1;
+                }
+
+                // add element to buffer
+                memory.putLong(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE, timestamp);
+                memory.putDouble(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, d);
+                size++;
+            }
+
+            if (!findNewFirstValue) {
+                this.firstValue = frameIncludesCurrentValue ? d : Double.NaN;
+            }
+        }
+
+        @Override
+        public boolean isIgnoreNulls() {
+            return true;
+        }
+    }
+
+    // Handles first_value() ignore nulls over ([order by o] rows between y and z); there's no partition by.
+    // Removable cumulative aggregation.
+    public static class FirstNotNullValueOverRowsFrameFunction extends FirstValueOverRowsFrameFunction implements Reopenable {
+        private long firstNotNullIdx = -1;
+
+        public FirstNotNullValueOverRowsFrameFunction(Function arg, long rowsLo, long rowsHi, MemoryARW memory) {
+            super(arg, rowsLo, rowsHi, memory);
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            if (!frameLoBounded) {
+                if (firstNotNullIdx != -1 && count - bufferSize >= firstNotNullIdx) {
+                    firstValue = buffer.getDouble(0);
+                    return;
+                }
+
+                double d = arg.getDouble(record);
+                if (firstNotNullIdx == -1 && Numbers.isFinite(d)) {
+                    firstNotNullIdx = count;
+                    buffer.putDouble(0, d);
+                    this.firstValue = frameIncludesCurrentValue ? d : Double.NaN;
+                } else {
+                    this.firstValue = Double.NaN;
+                }
+                count++;
+            } else {
+                double d = arg.getDouble(record);
+                if (firstNotNullIdx != -1 && Numbers.isFinite(buffer.getDouble((long) loIdx * Double.BYTES))) {
+                    firstNotNullIdx = -1;
+                }
+                if (firstNotNullIdx != -1) {
+                    this.firstValue = buffer.getDouble(firstNotNullIdx * Double.BYTES);
+                } else {
+                    boolean find = false;
+                    for (int i = 0; i < frameSize; i++) {
+                        double res = buffer.getDouble((long) (loIdx + i) % bufferSize * Double.BYTES);
+                        if (Numbers.isFinite(res)) {
+                            find = true;
+                            firstNotNullIdx = (loIdx + i) % bufferSize;
+                            this.firstValue = res;
+                            break;
+                        }
+                    }
+                    if (!find) {
+                        this.firstValue = frameIncludesCurrentValue ? d : Double.NaN;
+                    }
+                }
+
+                if (firstNotNullIdx == loIdx) {
+                    firstNotNullIdx = -1;
+                }
+                buffer.putDouble((long) loIdx * Double.BYTES, d);
+                loIdx = (loIdx + 1) % bufferSize;
+            }
+        }
+
+        @Override
+        public boolean isIgnoreNulls() {
+            return true;
+        }
+
+        @Override
+        public void reopen() {
+            super.reopen();
+            firstNotNullIdx = -1;
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            firstNotNullIdx = -1;
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            firstNotNullIdx = -1;
+        }
+    }
+
+    // Handles:
+    // - first_value(a) ignore nulls over (partition by x rows between unbounded preceding and [current row | x preceding ])
+    // - first__value(a) ignore nulls over (partition by x order by ts range between unbounded preceding and [current row | x preceding])
+    static class FirstNotNullValueOverUnboundedPartitionRowsFrameFunction extends FirstValueOverUnboundedPartitionRowsFrameFunction {
+        public FirstNotNullValueOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
+            super(map, partitionByRecord, partitionBySink, arg);
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mapValue = key.findValue();
+            if (mapValue != null) {
+                this.value = mapValue.getDouble(0);
+            } else {
+                double d = arg.getDouble(record);
+                if (Numbers.isFinite(d)) {
+                    mapValue = key.createValue();
+                    mapValue.putDouble(0, d);
+                    this.value = d;
+                } else {
+                    this.value = Double.NaN;
+                }
+            }
+        }
+
+        @Override
+        public boolean isIgnoreNulls() {
+            return true;
+        }
+    }
+
+    // handles:
+    // first_value() ignore nulls over () - empty clause, no partition by no order by, no frame == default frame
+    // first_value() ignore nulls over (rows between unbounded preceding and current row); there's no partition by.
+    public static class FirstNotNullValueOverWholeResultSetFunction extends FirstValueOverWholeResultSetFunction {
+
+        public FirstNotNullValueOverWholeResultSetFunction(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            if (!found) {
+                double d = arg.getDouble(record);
+                if (Numbers.isFinite(d)) {
+                    this.value = d;
+                    this.found = true;
+                }
+            }
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.TWO_PASS;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            if (!found) {
+                double d = arg.getDouble(record);
+                if (Numbers.isFinite(d)) {
+                    this.value = d;
+                    this.found = true;
+                }
+            }
+        }
+
+        @Override
+        public void pass2(Record record, long recordOffset, WindowSPI spi) {
+            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), value);
+        }
+
+        @Override
+        public boolean isIgnoreNulls() {
+            return true;
         }
 
         @Override

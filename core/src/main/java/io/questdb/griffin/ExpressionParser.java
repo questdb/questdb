@@ -34,9 +34,11 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.IntStack;
 import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseAsciiCharSequenceObjHashMap;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjStack;
 import io.questdb.std.ObjectPool;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.OperatorExpression.UNARY;
 
@@ -189,7 +191,8 @@ public class ExpressionParser {
             GenericLexer lexer,
             ExpressionParserListener listener,
             int argStackDepth,
-            SqlParserCallback sqlParserCallback
+            SqlParserCallback sqlParserCallback,
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
     ) throws SqlException {
         // It is highly likely this expression parser will be re-entered when
         // parsing sub-query. To prevent sub-query consuming operation stack we must add a
@@ -212,7 +215,7 @@ public class ExpressionParser {
         // validate is Query is allowed
         onNode(listener, node, argStackDepth, false);
         // we can compile query if all is well
-        node.queryModel = sqlParser.parseAsSubQuery(lexer, null, true, sqlParserCallback);
+        node.queryModel = sqlParser.parseAsSubQuery(lexer, null, true, sqlParserCallback, decls);
         argStackDepth = onNode(listener, node, argStackDepth, false);
 
         // pop our control node if sub-query hasn't done it
@@ -228,7 +231,12 @@ public class ExpressionParser {
         return argStackDepth;
     }
 
-    void parseExpr(GenericLexer lexer, ExpressionParserListener listener, SqlParserCallback sqlParserCallback) throws SqlException {
+    void parseExpr(
+            GenericLexer lexer,
+            ExpressionParserListener listener,
+            SqlParserCallback sqlParserCallback,
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
+    ) throws SqlException {
         try {
             int shadowParseMismatchFirstPosition = -1;
             int paramCount = 0;
@@ -241,6 +249,7 @@ public class ExpressionParser {
             int castAsCount = 0;
             int castBraceCount = 0;
             int betweenStartCaseCount = 0;
+            boolean parsedDeclaration = false;
 
             ExpressionNode node;
             CharSequence tok;
@@ -420,6 +429,21 @@ public class ExpressionParser {
                         break;
                     case 'd':
                     case 'D':
+                        if (parsedDeclaration && prevBranch != BRANCH_LEFT_PARENTHESIS && SqlKeywords.isDeclareKeyword(tok)) {
+                            lexer.unparseLast();
+                            break OUT;
+                        }
+
+                        if (prevBranch != BRANCH_LITERAL && SqlKeywords.isDeclareKeyword(tok)) {
+                            thisBranch = BRANCH_LAMBDA;
+                            if (betweenCount > 0) {
+                                throw SqlException.$(lastPos, "constant expected");
+                            }
+                            argStackDepth = processLambdaQuery(lexer, listener, argStackDepth, sqlParserCallback, decls);
+                            processDefaultBranch = false;
+                            break;
+                        }
+
                         if (prevBranch == BRANCH_LEFT_PARENTHESIS && SqlKeywords.isDistinctKeyword(tok)) {
                             // rewrite count(distinct x) to count_distinct(x)
                             // and string_agg(distinct x) to string_distinct_agg(x)
@@ -539,6 +563,13 @@ public class ExpressionParser {
                         break;
 
                     case '(':
+                        // check that we are handling a declare variable, and we have finished parsing it
+                        if (parsedDeclaration && prevBranch != BRANCH_LEFT_PARENTHESIS && prevBranch != BRANCH_LITERAL
+                                && !(prevBranch == BRANCH_OPERATOR && Chars.equals(opStack.peek().token, ":="))) {
+                            lexer.unparseLast();
+                            break OUT;
+                        }
+
                         if (prevBranch == BRANCH_RIGHT_PARENTHESIS) {
                             throw SqlException.$(lastPos, "not a method call");
                         }
@@ -802,12 +833,17 @@ public class ExpressionParser {
                         break;
                     case 's':
                     case 'S':
+                        if (parsedDeclaration && prevBranch != BRANCH_LEFT_PARENTHESIS && SqlKeywords.isSelectKeyword(tok)) {
+                            lexer.unparseLast();
+                            break OUT;
+                        }
+
                         if (prevBranch != BRANCH_LITERAL && SqlKeywords.isSelectKeyword(tok)) {
                             thisBranch = BRANCH_LAMBDA;
                             if (betweenCount > 0) {
                                 throw SqlException.$(lastPos, "constant expected");
                             }
-                            argStackDepth = processLambdaQuery(lexer, listener, argStackDepth, sqlParserCallback);
+                            argStackDepth = processLambdaQuery(lexer, listener, argStackDepth, sqlParserCallback, decls);
                         } else {
                             processDefaultBranch = true;
                         }
@@ -981,23 +1017,23 @@ public class ExpressionParser {
                                 final CharSequence isTok = GenericLexer.immutableOf(tok);
                                 tok = SqlUtil.fetchNext(lexer);
                                 if (tok == null) {
-                                    throw SqlException.$(lastPos, "IS must be followed by [NOT] NULL");
+                                    throw SqlException.$(lastPos, "IS must be followed by [NOT] NULL, TRUE or FALSE");
                                 }
                                 if (SqlKeywords.isNotKeyword(tok)) {
                                     final int notTokPosition = lexer.lastTokenPosition();
                                     final CharSequence notTok = GenericLexer.immutableOf(tok);
                                     tok = SqlUtil.fetchNext(lexer);
-                                    if (tok != null && SqlKeywords.isNullKeyword(tok)) {
+                                    if (tok != null && (SqlKeywords.isNullKeyword(tok) || SqlKeywords.isTrueKeyword(tok) || SqlKeywords.isFalseKeyword(tok))) {
                                         lexer.backTo(notTokPosition + 3, notTok);
                                         tok = "!=";
                                     } else {
-                                        throw SqlException.$(lastPos, "IS NOT must be followed by NULL");
+                                        throw SqlException.$(lastPos, "IS NOT must be followed by NULL, TRUE or FALSE");
                                     }
-                                } else if (SqlKeywords.isNullKeyword(tok)) {
+                                } else if (SqlKeywords.isNullKeyword(tok) || SqlKeywords.isTrueKeyword(tok) || SqlKeywords.isFalseKeyword(tok)) {
                                     lexer.backTo(lastPos + 2, isTok);
                                     tok = "=";
                                 } else {
-                                    throw SqlException.$(lastPos, "IS must be followed by NULL");
+                                    throw SqlException.$(lastPos, "IS must be followed by NULL, TRUE or FALSE");
                                 }
                             } else {
                                 throw SqlException.$(lastPos, "IS [NOT] not allowed here");
@@ -1045,6 +1081,10 @@ public class ExpressionParser {
                     if ((op = activeRegistry.map.get(tok)) != null) {
 
                         thisBranch = BRANCH_OPERATOR;
+
+                        if (Chars.equals(tok, ":=")) {
+                            parsedDeclaration = true;
+                        }
 
                         if (thisChar == '-' || thisChar == '~') {
                             assert prevBranch != BRANCH_BETWEEN_START; // BRANCH_BETWEEN_START will be processed as default branch, so prevBranch must be BRANCH_OPERATOR in this case

@@ -407,7 +407,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
 
         public void of(
                 TableToken tableName,
-                CharSequence columnName,
+                String columnName,
                 int tableId,
                 long truncateVersion,
                 int columnType,

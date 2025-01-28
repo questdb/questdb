@@ -40,11 +40,11 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     private int symbolMapCount;
     private int tableId;
     private TableToken tableToken;
+    private int ttlHoursOrMonths;
     private boolean walEnabled;
 
-    public TableWriterMetadata(TableToken tableToken, MemoryMR metaMem) {
+    public TableWriterMetadata(TableToken tableToken) {
         this.tableToken = tableToken;
-        reload(metaMem);
     }
 
     @Override
@@ -77,6 +77,11 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         return partitionBy;
     }
 
+    public int getReplacingColumnIndex(int columnIndex) {
+        WriterTableColumnMetadata columnMeta = (WriterTableColumnMetadata) columnMetadata.get(columnIndex);
+        return columnMeta.getReplacingIndex();
+    }
+
     @Override
     public boolean getSymbolCacheFlag(int columnIndex) {
         return getColumnMetadata(columnIndex).isSymbolCacheFlag();
@@ -107,6 +112,11 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
+    public int getTtlHoursOrMonths() {
+        return ttlHoursOrMonths;
+    }
+
+    @Override
     public boolean isIndexed(int columnIndex) {
         return getColumnMetadata(columnIndex).isSymbolIndexFlag();
     }
@@ -128,6 +138,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         this.columnMetadata.clear();
         this.metadataVersion = metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION);
         this.walEnabled = metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
+        this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(metaMem);
 
         long offset = TableUtils.getColumnNameOffset(columnCount);
         this.symbolMapCount = 0;
@@ -175,41 +186,12 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         this.o3MaxLag = o3MaxLagUs;
     }
 
-    public void updateTableToken(TableToken tableToken) {
-        this.tableToken = tableToken;
+    public void setTtlHoursOrMonths(int ttlHoursOrMonths) {
+        this.ttlHoursOrMonths = ttlHoursOrMonths;
     }
 
-    void addColumn(
-            CharSequence name,
-            int type,
-            boolean indexFlag,
-            int indexValueBlockCapacity,
-            int columnIndex,
-            int symbolCapacity,
-            boolean isDedupKey,
-            boolean isSymbolCached
-    ) {
-        String str = name.toString();
-        columnNameIndexMap.put(str, columnMetadata.size());
-        columnMetadata.add(
-                new WriterTableColumnMetadata(
-                        str,
-                        type,
-                        indexFlag,
-                        indexValueBlockCapacity,
-                        true,
-                        null,
-                        columnIndex,
-                        symbolCapacity,
-                        isDedupKey,
-                        0,
-                        isSymbolCached
-                )
-        );
-        columnCount++;
-        if (ColumnType.isSymbol(type)) {
-            symbolMapCount++;
-        }
+    public void updateTableToken(TableToken tableToken) {
+        this.tableToken = tableToken;
     }
 
     void addColumn(
@@ -268,9 +250,8 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         oldColumnMetadata.rename(newNameStr);
     }
 
-    public static class WriterTableColumnMetadata extends TableColumnMetadata {
+    protected static class WriterTableColumnMetadata extends TableColumnMetadata {
 
-        // todo: remove this class
         public WriterTableColumnMetadata(
                 String nameStr,
                 int type,

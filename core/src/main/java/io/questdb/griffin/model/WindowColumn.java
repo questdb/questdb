@@ -24,6 +24,11 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.griffin.engine.functions.window.FirstValueDoubleWindowFunctionFactory;
+import io.questdb.griffin.engine.functions.window.LastValueDoubleWindowFunctionFactory;
+import io.questdb.griffin.engine.functions.window.RankFunctionFactory;
+import io.questdb.griffin.engine.functions.window.RowNumberFunctionFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
@@ -68,6 +73,8 @@ public final class WindowColumn extends QueryColumn {
     private int rowsLoExprTimeUnitPos;
     private int rowsLoKind = PRECEDING;
     private int rowsLoKindPos = 0;
+    private boolean ignoreNulls = false;
+    private int nullsDescPos = 0;
 
     private WindowColumn() {
     }
@@ -100,6 +107,8 @@ public final class WindowColumn extends QueryColumn {
         rowsHi = Long.MAX_VALUE;
         exclusionKind = EXCLUDE_NO_OTHERS;
         exclusionKindPos = 0;
+        ignoreNulls = false;
+        nullsDescPos = 0;
     }
 
     public int getExclusionKind() {
@@ -188,6 +197,14 @@ public final class WindowColumn extends QueryColumn {
         return framingMode != FRAMING_RANGE || rowsLoKind != PRECEDING || rowsHiKind != CURRENT || rowsHiExpr != null || rowsLoExpr != null;
     }
 
+    public boolean isIgnoreNulls() {
+        return ignoreNulls;
+    }
+
+    public int getNullsDescPos() {
+        return nullsDescPos;
+    }
+
     @Override
     public boolean isWindowColumn() {
         return true;
@@ -201,6 +218,40 @@ public final class WindowColumn extends QueryColumn {
     public boolean requiresOrderBy() {
         return framingMode == FRAMING_RANGE && (rowsLoKind != PRECEDING || (rowsHiKind != CURRENT && rowsHiKind != FOLLOWING) || rowsHiExpr != null || rowsLoExpr != null) ||
                 framingMode == FRAMING_GROUPS;
+    }
+
+    public boolean stopOrderByPropagate(ObjList<ExpressionNode> modelOrder, IntList modelOrderDirection) {
+        CharSequence token = getAst().token;
+
+        // If this is an 'order' sensitive window function and there is no ORDER BY, it may depend on its child's ORDER BY clause.
+        if ((Chars.equalsIgnoreCase(token, FirstValueDoubleWindowFunctionFactory.NAME) ||
+                Chars.equalsIgnoreCase(token, LastValueDoubleWindowFunctionFactory.NAME)) &&
+                orderBy.size() == 0 && modelOrder.size() == 0) {
+            return true;
+        }
+
+        // Range frames work correctly depending on the ORDER BY clause of the subquery, which cannot be removed by the optimizer.
+        boolean stopOrderBy = framingMode == FRAMING_RANGE && !Chars.equalsIgnoreCase(getAst().token, RowNumberFunctionFactory.NAME)
+                && !Chars.equalsIgnoreCase(getAst().token, RankFunctionFactory.NAME) &&
+                orderBy.size() > 0 && ((rowsHi != 0 || rowsLo != Long.MIN_VALUE) && !(rowsHi == Long.MAX_VALUE && rowsLo == Long.MIN_VALUE));
+
+        // Heuristic. If current recordCursor has orderBy column exactly same as orderBy of window frame, we continue to push the order.
+        if (stopOrderBy) {
+            boolean sameOrder = true;
+            if (modelOrder.size() < orderBy.size()) {
+                sameOrder = false;
+            } else {
+                for (int i = 0, max = orderBy.size(); i < max; i++) {
+                    if (!Chars.equalsIgnoreCase(modelOrder.getQuick(i).token, orderBy.getQuick(i).token) ||
+                            modelOrderDirection.getQuick(i) != orderByDirection.getQuick(i)) {
+                        sameOrder = false;
+                        break;
+                    }
+                }
+            }
+            stopOrderBy = !sameOrder;
+        }
+        return stopOrderBy;
     }
 
     public void setExclusionKind(int exclusionKind, int exclusionKindPos) {
@@ -260,5 +311,13 @@ public final class WindowColumn extends QueryColumn {
     public void setRowsLoKind(int rowsLoKind, int rowsLoKindPos) {
         this.rowsLoKind = rowsLoKind;
         this.rowsLoKindPos = rowsLoKindPos;
+    }
+
+    public void setIgnoreNulls(boolean ignoreNulls) {
+        this.ignoreNulls = ignoreNulls;
+    }
+
+    public void setNullsDescPos(int nullsDescPos) {
+        this.nullsDescPos = nullsDescPos;
     }
 }

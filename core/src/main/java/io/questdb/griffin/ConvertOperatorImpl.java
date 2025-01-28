@@ -109,16 +109,23 @@ public class ConvertOperatorImpl implements Closeable {
     public void close() {
     }
 
-    public void convertColumn(@NotNull CharSequence columnName, int existingColIndex, int existingType, int columnIndex, int newType) {
+    public void convertColumn(@NotNull String columnName, int existingColIndex, int existingType, boolean existingIndexed, int columnIndex, int newType) {
         clear();
         partitionUpdated = 0;
-        convertColumn0(columnName, existingColIndex, existingType, columnIndex, newType);
+        convertColumn0(columnName, existingColIndex, existingType, existingIndexed, columnIndex, newType);
     }
 
     public void finishColumnConversion() {
-        if (partitionUpdated > -1 && asyncProcessingErrorCount.get() == 0) {
+        if (partitionUpdated > 0 && asyncProcessingErrorCount.get() == 0 && !tableWriter.isDistressed()) {
             partitionUpdated = 0;
-            purgingOperator.purge(path.trimTo(rootLen), tableWriter.getTableToken(), tableWriter.getPartitionBy(), tableWriter.checkScoreboardHasReadersBeforeLastCommittedTxn(), tableWriter.getMetadata(), tableWriter.getTruncateVersion(), tableWriter.getTxn());
+            purgingOperator.purge(
+                    path.trimTo(rootLen),
+                    tableWriter.getTableToken(),
+                    tableWriter.getPartitionBy(),
+                    tableWriter.checkScoreboardHasReadersBeforeLastCommittedTxn(),
+                    tableWriter.getTruncateVersion(),
+                    tableWriter.getTxn()
+            );
         }
         clear();
     }
@@ -129,6 +136,7 @@ public class ConvertOperatorImpl implements Closeable {
     }
 
     private void closeFds(long srcFixFd, long srcVarFd, long dstFixFd, long dstVarFd) {
+        LOG.debug().$("closing fds[srcFixFd=").$(srcFixFd).$(", srcVarFd=").$(srcVarFd).$(", dstFixFd=").$(dstFixFd).$(", dstVarFd=").$(dstVarFd).I$();
         ff.close(srcFixFd);
         ff.close(srcVarFd);
         ff.close(dstFixFd);
@@ -156,7 +164,7 @@ public class ConvertOperatorImpl implements Closeable {
         }
     }
 
-    private void convertColumn0(@NotNull CharSequence columnName, int existingColIndex, int existingType, int columnIndex, int newType) {
+    private void convertColumn0(@NotNull String columnName, int existingColIndex, int existingType, boolean existingIndexed, int columnIndex, int newType) {
         try {
             this.columnName = columnName;
             if (ColumnType.isSymbol(newType)) {
@@ -225,7 +233,7 @@ public class ConvertOperatorImpl implements Closeable {
                             }
 
                             long existingColTxnVer = tableWriter.getColumnNameTxn(partitionTimestamp, existingColIndex);
-                            purgingOperator.add(existingColIndex, existingColTxnVer, partitionTimestamp, partitionNameTxn);
+                            purgingOperator.add(existingColIndex, columnName, existingType, existingIndexed, existingColTxnVer, partitionTimestamp, partitionNameTxn);
                             partitionUpdated++;
                         }
                         if (columnTop != tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1)) {

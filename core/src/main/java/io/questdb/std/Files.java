@@ -349,6 +349,7 @@ public final class Files {
                     .put(", newSize=").put(newSize)
                     .put(", offset=").put(offset)
                     .put(", fd=").put(fd)
+                    .put(", memoryTag=").put(memoryTag)
                     .put(']');
         }
 

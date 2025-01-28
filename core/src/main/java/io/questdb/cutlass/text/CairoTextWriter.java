@@ -68,7 +68,7 @@ public class CairoTextWriter implements Closeable, Mutable {
     private static final String WRITER_LOCK_REASON = "textWriter";
     private final LongList columnErrorCounts = new LongList();
     private final CairoConfiguration configuration;
-    private final MemoryMARW ddlMem = Vm.getMARWInstance();
+    private final MemoryMARW ddlMem = Vm.getCMARWInstance();
     private final CairoEngine engine;
     private final ObjectPool<OtherToTimestampAdapter> otherToTimestampAdapterPool = new ObjectPool<>(OtherToTimestampAdapter::new, 4);
     private final IntList remapIndex = new IntList();
@@ -354,6 +354,7 @@ public class CairoTextWriter implements Closeable, Mutable {
             logError(line, i, dus);
             switch (atomicity) {
                 case Atomicity.SKIP_ALL:
+                    w.cancel();
                     writer.rollback();
                     throw CairoException.nonCritical().put("bad syntax [line=").put(line).put(", col=").put(i).put(']');
                 case Atomicity.SKIP_ROW:

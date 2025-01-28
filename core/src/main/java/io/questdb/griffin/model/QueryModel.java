@@ -114,6 +114,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ObjList<QueryColumn> bottomUpColumns = new ObjList<>();
     private final LowerCaseCharSequenceIntHashMap columnAliasIndexes = new LowerCaseCharSequenceIntHashMap();
     private final LowerCaseCharSequenceObjHashMap<CharSequence> columnNameToAliasMap = new LowerCaseCharSequenceObjHashMap<>();
+    private final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls = new LowerCaseCharSequenceObjHashMap<>();
     private final IntHashSet dependencies = new IntHashSet();
     private final ObjList<ExpressionNode> expressionModels = new ObjList<>();
     private final ObjList<ExpressionNode> groupBy = new ObjList<>();
@@ -467,6 +468,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         fillValues = null;
         skipped = false;
         allowPropagationOfOrderByAdvice = true;
+        decls.clear();
     }
 
     public void clearColumnMapStructs() {
@@ -474,6 +476,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.bottomUpColumnAliases.clear();
         this.aliasToColumnMap.clear();
         this.bottomUpColumns.clear();
+        this.columnAliasIndexes.clear();
+        this.columnNameToAliasMap.clear();
     }
 
     public void clearOrderBy() {
@@ -541,6 +545,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         for (int i = 0, n = columnNames.size(); i < n; i++) {
             final CharSequence name = columnNames.getQuick(i);
             this.aliasToColumnNameMap.put(name, name);
+        }
+    }
+
+    public void copyDeclsFrom(QueryModel model) {
+        copyDeclsFrom(model.getDecls());
+    }
+
+    public void copyDeclsFrom(LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) {
+        if (decls != null && decls.size() > 0) {
+            this.decls.putAll(decls);
         }
     }
 
@@ -665,7 +679,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && Objects.equals(updateTableModel, that.updateTableModel)
                 && Objects.equals(updateTableToken, that.updateTableToken)
                 && skipped == that.skipped
-                && allowPropagationOfOrderByAdvice == that.allowPropagationOfOrderByAdvice;
+                && allowPropagationOfOrderByAdvice == that.allowPropagationOfOrderByAdvice
+                && Objects.equals(decls, that.decls);
     }
 
     public QueryColumn findBottomUpColumnByAst(ExpressionNode node) {
@@ -694,6 +709,19 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return allowPropagationOfOrderByAdvice;
     }
 
+    public boolean windowStopPropagate() {
+        if (selectModelType != SELECT_MODEL_WINDOW) {
+            return false;
+        }
+        for (int i = 0, size = getColumns().size(); i < size; i++) {
+            QueryColumn column = getColumns().getQuick(i);
+            if (column.isWindowColumn() && ((WindowColumn) column).stopOrderByPropagate(getOrderBy(), getOrderByDirection())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public ObjList<CharSequence> getBottomUpColumnAliases() {
         return bottomUpColumnAliases;
     }
@@ -720,6 +748,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public JoinContext getContext() {
         return context;
+    }
+
+    public LowerCaseCharSequenceObjHashMap<ExpressionNode> getDecls() {
+        return decls;
     }
 
     public IntHashSet getDependencies() {
@@ -1024,7 +1056,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 distinct, unionModel, setOperationType,
                 modelPosition, orderByAdviceMnemonic, tableId,
                 isUpdateModel, modelType, updateTableModel,
-                updateTableToken, artificialStar, fillFrom, fillStride, fillTo, fillValues
+                updateTableToken, artificialStar, fillFrom, fillStride, fillTo, fillValues, decls
         );
     }
 

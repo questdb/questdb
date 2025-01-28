@@ -59,6 +59,40 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
+    public static boolean expectedUnionCastMatrixIsSymmetrical(int[][] expected) {
+        int n = expected.length;
+
+        // Check if the matrix is square
+        for (int[] row : expected) {
+            if (row.length != n) {
+                System.err.println("Matrix is not square.");
+                return false;
+            }
+        }
+
+        boolean symmetrical = true;
+
+        final java.util.function.IntFunction<String> fmtType = (int columnType) -> String.format("%d/%s", columnType, ColumnType.nameOf(columnType));
+
+        for (int i = 0; i < n; i++) {
+            // Check upper triangular vs lower triangular
+            for (int j = 0; j < i; j++) {
+                if (expected[i][j] != expected[j][i]) {
+                    System.err.printf("* Discrepancy at `expected[%s][%s] == %s`, but `expected[%s][%s] == %s`\n",
+                            fmtType.apply(i),
+                            fmtType.apply(j),
+                            fmtType.apply(expected[i][j]),
+                            fmtType.apply(j),
+                            fmtType.apply(i),
+                            fmtType.apply(expected[j][i]));
+                    symmetrical = false;
+                }
+            }
+        }
+
+        return symmetrical;
+    }
+
     @Test
     public void testAliasedColumnFollowedByWildcard() throws Exception {
         assertQuery(
@@ -7771,6 +7805,23 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionCastMatrix() {
+        final int[][] expected = SqlCodeGenerator.expectedUnionCastMatrix();
+        printExpectedUnionCastMatrix(expected);
+
+        Assert.assertTrue(expectedUnionCastMatrixIsSymmetrical(expected));
+
+        final int[][] actual = SqlCodeGenerator.actualUnionCastMatrix();
+        Assert.assertEquals(expected.length, actual.length);
+
+        for (int typeA = 0; typeA <= ColumnType.NULL; typeA++) {
+            final int[] expToTypes = expected[typeA];
+            final int[] actToTypes = actual[typeA];
+            Assert.assertArrayEquals(ColumnType.nameOf(typeA), expToTypes, actToTypes);
+        }
+    }
+
+    @Test
     public void testUnionCastTypeSymmetry() {
         for (int typeA = 0; typeA <= ColumnType.INTERVAL; typeA++) {
             for (int typeB = 0; typeB <= typeA; typeB++) {
@@ -8107,6 +8158,48 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 28,
                 "WITHIN clause requires LATEST BY clause"
         );
+    }
+
+    @Test
+    public void testResolveUnionOrderByPositionInJoinModel() throws Exception {
+        execute("create table t1 (id symbol, value double, timestamp timestamp) timestamp(timestamp)");
+        execute("create table t2 (id symbol, value double, value_max double, timestamp timestamp) timestamp(timestamp)");
+        execute("insert into t1 (id, value, timestamp) values ('id1', 2, '2024-12-26T14:30:00Z');\n");
+        execute("insert into t2 (id, value, value_max, timestamp) values ('id2', 1, 10, '2024-12-26T14:30:00Z');\n");
+        assertQueryNoLeakCheck("delta\ttimestamp\n" +
+                        "0.0\t2024-12-26T14:30:00.000000Z\n" +
+                        "1.0\t2024-12-26T14:30:00.000000Z\n" +
+                        "-1.0\t2024-12-26T14:30:00.000000Z\n" +
+                        "0.0\t2024-12-26T14:30:00.000000Z\n",
+                "with base as ( select max(value) as val, timestamp from t1 sample by 1m " +
+                        "UNION select max(value) as val, timestamp from t2 sample by 1m ), " +
+                        "sub as ( select min(value) as val, timestamp from t1 sample by 1m " +
+                        "UNION select min(value) as val, timestamp from t2 sample by 1m ) " +
+                        "select (base.val - sub.val) as delta, base.timestamp from base join sub on timestamp;",
+                null,
+                false,
+                true
+        );
+    }
+
+    private static void printExpectedUnionCastMatrix(int[][] expected) {
+        System.err.println("    private static final int[][] UNION_CAST_MATRIX = new int[][]{");
+        for (int i = 0; i < expected.length; ++i) {
+            System.err.print("            {");
+            for (int j = 0; j < expected[i].length; ++j) {
+                if (j > 0) {
+                    System.err.print(", ");
+                }
+                System.err.printf("%2d", expected[i][j]);
+            }
+            if (i < expected.length - 1) {
+                System.err.print("}, ");
+            } else {
+                System.err.print("}  ");
+            }
+            System.err.printf("// %2d = %s\n", i, ColumnType.nameOf(i));
+        }
+        System.err.println("    };");
     }
 
     private void createGeoHashTable(int chars) throws SqlException {

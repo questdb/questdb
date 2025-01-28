@@ -27,6 +27,7 @@ package io.questdb.cutlass.pgwire.modern;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.std.AbstractSelfReturningObject;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.Transient;
 import io.questdb.std.WeakSelfReturningObjectPool;
 
@@ -35,9 +36,11 @@ public class TypesAndInsertModern extends AbstractSelfReturningObject<TypesAndIn
     // arbitrary number of parameters, which does not have to match the number of actual
     // bind variable used in the INSERT SQL. These are PostgresSQL OIDs in BigEndian.
     private final IntList pgInParameterTypeOIDs = new IntList();
-    // Bind variable columns types, typically scraped from BindVariableService after SQL is parsed. These are
-    // our column types and are LittleEndian.
-    private final IntList pgOutParameterTypeOIDs = new IntList();
+    // Bind variable types. Each entry combines:
+    // 1. Lower 32 bits: QuestDB native types scrapped from BindingService after the SQL text is parsed.
+    // 2. Upper 32 bits: PostgresSQL OIDs in BigEndian. This combines types a client sent us in a PARSE message with the
+    //                   types SQL Compiled derived from the SQL. Type from the PARSE message have a priority.
+    private final LongList pgOutParameterTypes = new LongList();
     private boolean closing;
     private boolean hasBindVariables;
     private InsertOperation insert;
@@ -54,7 +57,7 @@ public class TypesAndInsertModern extends AbstractSelfReturningObject<TypesAndIn
             closing = true;
             super.close();
             pgInParameterTypeOIDs.clear();
-            pgOutParameterTypeOIDs.clear();
+            pgOutParameterTypes.clear();
             closing = false;
         }
     }
@@ -68,8 +71,8 @@ public class TypesAndInsertModern extends AbstractSelfReturningObject<TypesAndIn
         return pgInParameterTypeOIDs;
     }
 
-    public IntList getPgOutParameterTypeOIDs() {
-        return pgOutParameterTypeOIDs;
+    public LongList getPgOutParameterTypes() {
+        return pgOutParameterTypes;
     }
 
     public String getSqlTag() {
@@ -89,13 +92,13 @@ public class TypesAndInsertModern extends AbstractSelfReturningObject<TypesAndIn
             short sqlType,
             String sqlTag,
             @Transient IntList pgInParameterTypeOIDs,
-            @Transient IntList pgOutParameterTypeOIDs
+            @Transient LongList pgOutParameterTypes
     ) {
         this.insert = insert;
         this.sqlType = sqlType;
         this.sqlTag = sqlTag;
-        this.hasBindVariables = pgOutParameterTypeOIDs.size() > 0;
+        this.hasBindVariables = pgOutParameterTypes.size() > 0;
         this.pgInParameterTypeOIDs.addAll(pgInParameterTypeOIDs);
-        this.pgOutParameterTypeOIDs.addAll(pgOutParameterTypeOIDs);
+        this.pgOutParameterTypes.addAll(pgOutParameterTypes);
     }
 }
