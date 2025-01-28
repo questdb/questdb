@@ -120,7 +120,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: true
-      - name: Increase file count and install tooling
+      - name: Install tooling
         run: |
           yum update -y
           yum install wget nasm -y
