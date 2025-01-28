@@ -113,7 +113,7 @@ jobs:
             core/src/main/bin/linux-x86-64/libjemalloc.so
           key: nativelibs-linux-${{ github.sha }}
   build-all-linux-aarch64:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-22.04-arm
     container:
       image: quay.io/pypa/manylinux_2_28_aarch64
     steps:
