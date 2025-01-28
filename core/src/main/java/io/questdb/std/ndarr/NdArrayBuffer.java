@@ -25,6 +25,7 @@
 package io.questdb.std.ndarr;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cutlass.line.tcp.NdArrayParser.ParseException;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -60,14 +61,13 @@ public class NdArrayBuffer implements QuietCloseable {
     }
 
     /**
-     * Validate the buffers and set the array view.
+     * Validates the buffers and updates the array view.
      */
-    public NdArrayView.ValidatonStatus setView(@NotNull NdArrayView view) {
+    public void updateView(@NotNull NdArrayView view) throws ParseException {
         if (shape.size() == 0) {
             view.ofNull();
-            return NdArrayView.ValidatonStatus.OK;
         } else {
-            return view.of(
+            view.of(
                     type,
                     shape.getAddress(),
                     (int) shape.size(),
@@ -79,6 +79,4 @@ public class NdArrayBuffer implements QuietCloseable {
                     (short) 0);
         }
     }
-
-
 }

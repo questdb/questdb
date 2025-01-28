@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.cutlass.line.tcp.NdArrayParser.ParseException;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -658,7 +659,22 @@ public class LineTcpParser implements QuietCloseable {
         /**
          * Invalid array dimension nesting. E.g. {{1, 2}, {1, 2, 3}}
          */
-        ND_ARR_UNALIGNED,
+        ND_ARR_IRREGULAR_SHAPE,
+
+        /**
+         * Shape array contains zero or negative dimensions
+         */
+        ND_ARR_INVALID_SHAPE,
+
+        /**
+         * Values array size doesn't match expectation
+         */
+        ND_ARR_INVALID_VALUES_SIZE,
+
+        /**
+         * Length of the shape array mismatches the length of the strides array
+         */
+        ND_ARR_SHAPE_STRIDES_MISMATCH,
 
         /**
          * The array parsing completed, but the array state was invalid.
@@ -813,10 +829,15 @@ public class LineTcpParser implements QuietCloseable {
                     return false;
                 }
                 case '}': {
-                    // TODO(amunra): I have no idea if this is a decent way of handling errors
-                    errorCode = ndArrParser.parse(value);
-                    type = ENTITY_TYPE_ND_ARRAY;
-                    return errorCode == ErrorCode.NONE;
+                    try {
+                        ndArrParser.parse(value);
+                        type = ENTITY_TYPE_ND_ARRAY;
+                        errorCode = ErrorCode.NONE;
+                        return true;
+                    } catch (ParseException e) {
+                        errorCode = e.errorCode;
+                        return false;
+                    }
                 }
                 // fall through
                 default:

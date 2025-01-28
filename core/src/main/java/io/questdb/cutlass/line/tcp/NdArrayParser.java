@@ -109,30 +109,21 @@ public class NdArrayParser implements QuietCloseable {
      * Resets state and parses.
      * <p>Check the return code. If it's {@link ErrorCode#NONE}, access the result via {@link #getView()}.</p>
      */
-    public @NotNull ErrorCode parse(DirectUtf8String value) {
+    public void parse(DirectUtf8String value) throws ParseException {
         reset();
 
         if (Utf8s.equalsAscii("{}", value)) {
             view.ofNull();
-            return ErrorCode.NONE;
+            return;
         }
 
         baseLo = value.lo();
         parsing.of(value);
 
-        try {
-            parseOpenBrace();
-            parseDataType();
-            parseElements();
-            setArray();
-            return ErrorCode.NONE;
-        } catch (ParseException e) {
-            e.printStackTrace();
-            return e.errorCode;
-        } catch (Throwable t) {
-            t.printStackTrace();
-            return ErrorCode.ND_ARR_MALFORMED;
-        }
+        parseOpenBrace();
+        parseDataType();
+        parseElements();
+        setArray();
     }
 
     /**
@@ -272,7 +263,7 @@ public class NdArrayParser implements QuietCloseable {
                 case '{':
                     level++;
                     if (shapeSize > 0 && level + 1 > shapeSize) {
-                        throw ParseException.unaligned();
+                        throw ParseException.irregularShape();
                     }
                     countAtCurrLevel = 0;
                     parsing.advance();
@@ -290,7 +281,7 @@ public class NdArrayParser implements QuietCloseable {
                         if (determinedLevelSize == IntList.NO_ENTRY_VALUE) {
                             shape.set(level, countAtCurrLevel);
                         } else if (countAtCurrLevel != determinedLevelSize) {
-                            throw ParseException.unaligned();
+                            throw ParseException.irregularShape();
                         }
                     }
                     level--;
@@ -366,45 +357,59 @@ public class NdArrayParser implements QuietCloseable {
 
     private void setArray() throws ParseException {
         NdArrayMeta.setDefaultStrides(arrayBuf.shape.asSlice(), arrayBuf.strides);
-        if (arrayBuf.setView(view) != NdArrayView.ValidatonStatus.OK) {
-            throw ParseException.malformed();
-        }
+        arrayBuf.updateView(view);
     }
 
-    private static class ParseException extends Exception {
+    public static class ParseException extends Exception {
         private static final ThreadLocal<ParseException> tlException = new ThreadLocal<>(ParseException::new);
         ErrorCode errorCode;
+
+        public static @NotNull ParseException invalidShape() {
+            return instance().errorCode(ErrorCode.ND_ARR_INVALID_SHAPE);
+        }
+
+        public static @NotNull ParseException invalidType() {
+            return instance().errorCode(ErrorCode.ND_ARR_INVALID_TYPE);
+        }
+
+        public static @NotNull ParseException invalidValuesSize() {
+            return instance().errorCode(ErrorCode.ND_ARR_INVALID_VALUES_SIZE);
+        }
+
+        public static @NotNull ParseException irregularShape() {
+            return instance().errorCode(ErrorCode.ND_ARR_IRREGULAR_SHAPE);
+        }
+
+        public static @NotNull ParseException malformed() {
+            return instance().errorCode(ErrorCode.ND_ARR_MALFORMED);
+        }
+
+        public static @NotNull ParseException prematureEnd() {
+            return instance().errorCode(ErrorCode.ND_ARR_TOO_SHORT);
+        }
+
+        public static @NotNull ParseException shapeStridesMismatch() {
+            return instance().errorCode(ErrorCode.ND_ARR_SHAPE_STRIDES_MISMATCH);
+        }
+
+        public static @NotNull ParseException unexpectedToken() {
+            return instance().errorCode(ErrorCode.ND_ARR_UNEXPECTED);
+        }
+
+        public ParseException errorCode(ErrorCode errorCode) {
+            this.errorCode = errorCode;
+            return this;
+        }
+
+        public ErrorCode errorCode() {
+            return errorCode;
+        }
 
         private static ParseException instance() {
             ParseException ex = tlException.get();
             // This is to have correct stack trace in local debugging with -ea option
             assert (ex = new ParseException()) != null;
             return ex;
-        }
-
-        static @NotNull ParseException invalidType() {
-            return instance().errorCode(ErrorCode.ND_ARR_INVALID_TYPE);
-        }
-
-        static @NotNull ParseException malformed() {
-            return instance().errorCode(ErrorCode.ND_ARR_MALFORMED);
-        }
-
-        static @NotNull ParseException prematureEnd() {
-            return instance().errorCode(ErrorCode.ND_ARR_TOO_SHORT);
-        }
-
-        static @NotNull ParseException unaligned() {
-            return instance().errorCode(ErrorCode.ND_ARR_UNALIGNED);
-        }
-
-        static @NotNull ParseException unexpectedToken() {
-            return instance().errorCode(ErrorCode.ND_ARR_UNEXPECTED);
-        }
-
-        ParseException errorCode(ErrorCode errorCode) {
-            this.errorCode = errorCode;
-            return this;
         }
     }
 }

@@ -27,6 +27,7 @@ package io.questdb.std.ndarr;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.NdArrayTypeDriver;
+import io.questdb.cutlass.line.tcp.NdArrayParser.ParseException;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -38,6 +39,15 @@ public class NdArrayMmapBuffer implements QuietCloseable {
     private final DirectIntList strides = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY_DBG3);
     private final NdArrayView view = new NdArrayView();
     private @Nullable NdArrayView viewRes = null;  // set to `view` when has value, or `null` otherwise.
+
+    @Override
+    public void close() {
+        Misc.free(strides);
+    }
+
+    public NdArrayView getView() {
+        return viewRes;
+    }
 
     public NdArrayMmapBuffer of(
             int columnType,
@@ -80,30 +90,22 @@ public class NdArrayMmapBuffer implements QuietCloseable {
         final int valuesSize = NdArrayMeta.calcRequiredValuesByteSize(columnType, flatLength);
         assert valuesPtr + valuesSize <= dataLim;
 
-        NdArrayView.ValidatonStatus status = view.of(
-                columnType,
-                shapePtr,
-                shapeLength,
-                strides.getAddress(),
-                (int) strides.size(),
-                valuesPtr,
-                valuesSize,
-                0, // No values to skip in the values vec.
-                crc);
-        if (status != NdArrayView.ValidatonStatus.OK) {
+        try {
+            view.of(
+                    columnType,
+                    shapePtr,
+                    shapeLength,
+                    strides.getAddress(),
+                    (int) strides.size(),
+                    valuesPtr,
+                    valuesSize,
+                    0, // No values to skip in the values vec.
+                    crc);
+        } catch (ParseException e) {
             // TODO(amunra): Improve exception here.
-            throw CairoException.nonCritical().put("Invalid array encoding: " + status);
+            throw CairoException.nonCritical().put("Invalid array encoding: " + e.errorCode());
         }
         viewRes = view;
         return this;
-    }
-
-    public NdArrayView getView() {
-        return viewRes;
-    }
-
-    @Override
-    public void close() {
-        Misc.free(strides);
     }
 }

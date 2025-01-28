@@ -25,6 +25,7 @@
 package io.questdb.std.ndarr;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cutlass.line.tcp.NdArrayParser.ParseException;
 import io.questdb.std.CRC16XModem;
 import io.questdb.std.DirectIntSlice;
 
@@ -205,7 +206,7 @@ public class NdArrayView {
      * @param valuesSize    number of bytes
      * @param crc           the pre-computed CRC16/XModem checksum, or 0 if unavailable.
      */
-    public ValidatonStatus of(
+    public void of(
             int type,
             long shapePtr,
             int shapeLength,
@@ -214,23 +215,24 @@ public class NdArrayView {
             long valuesPtr,
             int valuesSize,
             int valuesOffset,
-            short crc) {
+            short crc
+    ) throws ParseException {
         boolean complete = false;
         try {
             if (!ColumnType.isNdArray(type)) {
-                return ValidatonStatus.BAD_TYPE;
+                throw ParseException.invalidType();
             }
             if (shapeLength != stridesLength) {
-                return ValidatonStatus.UNALIGNED_SHAPE_AND_STRIDES;
+                throw ParseException.shapeStridesMismatch();
             }
             this.type = type;
             this.shape.of(shapePtr, shapeLength);
             if (!NdArrayMeta.validShape(this.shape)) {
-                return ValidatonStatus.BAD_SHAPE;
+                throw ParseException.invalidShape();
             }
             final int valuesLength = NdArrayMeta.flatLength(shape);
             if (!validValuesSize(type, valuesOffset, valuesLength, valuesSize)) {
-                return ValidatonStatus.BAD_VALUES_SIZE;
+                throw ParseException.invalidValuesSize();
             }
             this.strides.of(stridesPtr, stridesLength);
             this.values.of(valuesPtr, valuesSize);
@@ -241,16 +243,14 @@ public class NdArrayView {
                 reset();
             }
         }
-        return ValidatonStatus.OK;
     }
 
     /**
      * Set to a null array.
      */
-    public NdArrayView ofNull() {
+    public void ofNull() {
         reset();
         type = ColumnType.NULL;
-        return this;
     }
 
     /**
