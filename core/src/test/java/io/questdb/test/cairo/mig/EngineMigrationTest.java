@@ -150,118 +150,126 @@ public class EngineMigrationTest extends AbstractCairoTest {
 
     @Test
     @Ignore
-    public void testGenerateTables() throws SqlException, NumericException {
-        generateMigrationTables();
-        engine.releaseAllWriters();
-        assertData(true, true, true, true);
+    public void testGenerateTables() throws Exception {
+        assertMemoryLeak(() -> {
+            generateMigrationTables();
+            engine.releaseAllWriters();
+            assertData(true, true, true, true);
+        });
     }
 
     @Test
-    public void testMig702HandlesMissingTxn() throws SqlException {
-        node1.setProperty(PropertyKey.CAIRO_REPEAT_MIGRATION_FROM_VERSION, 426);
+    public void testMig702HandlesMissingTxn() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_REPEAT_MIGRATION_FROM_VERSION, 426);
 
-        execute("create table abc (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
-        execute("create table def (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
-        TableToken tokenAbc = engine.verifyTableName("abc");
-        TableToken tokenDef = engine.verifyTableName("def");
+            execute("create table abc (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("create table def (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
+            TableToken tokenAbc = engine.verifyTableName("abc");
+            TableToken tokenDef = engine.verifyTableName("def");
 
-        engine.releaseInactive();
+            engine.releaseInactive();
 
-        CairoConfiguration config = engine.getConfiguration();
-        FilesFacade ff = config.getFilesFacade();
+            CairoConfiguration config = engine.getConfiguration();
+            FilesFacade ff = config.getFilesFacade();
 
-        // Make abc _txn too short
-        Path abcTxnPath = Path.getThreadLocal(config.getRoot()).concat(tokenAbc).concat(TableUtils.TXN_FILE_NAME);
-        long fd = TableUtils.openRW(ff, abcTxnPath.$(), LOG, config.getWriterFileOpenOpts());
-        Assert.assertTrue(ff.truncate(fd, 50));
-        ff.close(fd);
+            // Make abc _txn too short
+            Path abcTxnPath = Path.getThreadLocal(config.getRoot()).concat(tokenAbc).concat(TableUtils.TXN_FILE_NAME);
+            long fd = TableUtils.openRW(ff, abcTxnPath.$(), LOG, config.getWriterFileOpenOpts());
+            Assert.assertTrue(ff.truncate(fd, 50));
+            ff.close(fd);
 
-        // Mess, run migration and check
-        TestUtils.messTxnUnallocated(ff, Path.getThreadLocal(config.getRoot()), new Rnd(), tokenDef);
-        EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, true);
-        checkTxnFile(ff, config, tokenDef, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE);
+            // Mess, run migration and check
+            TestUtils.messTxnUnallocated(ff, Path.getThreadLocal(config.getRoot()), new Rnd(), tokenDef);
+            EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, true);
+            checkTxnFile(ff, config, tokenDef, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE);
 
-        // Remove _txn file for table abc
-        abcTxnPath = Path.getThreadLocal(config.getRoot()).concat(tokenAbc).concat(TableUtils.TXN_FILE_NAME);
-        Assert.assertTrue(ff.removeQuiet(abcTxnPath.$()));
+            // Remove _txn file for table abc
+            abcTxnPath = Path.getThreadLocal(config.getRoot()).concat(tokenAbc).concat(TableUtils.TXN_FILE_NAME);
+            Assert.assertTrue(ff.removeQuiet(abcTxnPath.$()));
 
-        // Mess, run migration and check
-        TestUtils.messTxnUnallocated(ff, Path.getThreadLocal(config.getRoot()), new Rnd(), tokenDef);
-        EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, true);
-        checkTxnFile(ff, config, tokenDef, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE);
+            // Mess, run migration and check
+            TestUtils.messTxnUnallocated(ff, Path.getThreadLocal(config.getRoot()), new Rnd(), tokenDef);
+            EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, true);
+            checkTxnFile(ff, config, tokenDef, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE);
+        });
     }
 
     @Test
-    public void testMig702NonRepeatable() throws SqlException {
-        node1.setProperty(PropertyKey.CAIRO_REPEAT_MIGRATION_FROM_VERSION, -1);
-        // Run migration
-        EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, true);
+    public void testMig702NonRepeatable() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_REPEAT_MIGRATION_FROM_VERSION, -1);
+            // Run migration
+            EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, true);
 
-        execute("create table abc (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
-        TableToken token = engine.verifyTableName("abc");
-        CairoConfiguration config = engine.getConfiguration();
+            execute("create table abc (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
+            TableToken token = engine.verifyTableName("abc");
+            CairoConfiguration config = engine.getConfiguration();
 
-        TestUtils.messTxnUnallocated(
-                config.getFilesFacade(),
-                Path.getThreadLocal(config.getRoot()),
-                new Rnd(123, 123),
-                token
-        );
+            TestUtils.messTxnUnallocated(
+                    config.getFilesFacade(),
+                    Path.getThreadLocal(config.getRoot()),
+                    new Rnd(123, 123),
+                    token
+            );
 
-        // Run migration
-        EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
+            // Run migration
+            EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
 
-        // Check txn file is upgraded
-        try (TxReader txReader = new TxReader(config.getFilesFacade())) {
-            Path p = Path.getThreadLocal(config.getRoot());
-            txReader.ofRO(p.concat(token).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
-            txReader.unsafeLoadAll();
+            // Check txn file is upgraded
+            try (TxReader txReader = new TxReader(config.getFilesFacade())) {
+                Path p = Path.getThreadLocal(config.getRoot());
+                txReader.ofRO(p.concat(token).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
+                txReader.unsafeLoadAll();
 
-            Assert.assertNotEquals(0, txReader.getLagRowCount());
-            Assert.assertNotEquals(0, txReader.getLagTxnCount());
-            Assert.assertNotEquals(0L, txReader.getLagMinTimestamp());
-            Assert.assertNotEquals(0L, txReader.getLagMaxTimestamp());
-        }
+                Assert.assertNotEquals(0, txReader.getLagRowCount());
+                Assert.assertNotEquals(0, txReader.getLagTxnCount());
+                Assert.assertNotEquals(0L, txReader.getLagMinTimestamp());
+                Assert.assertNotEquals(0L, txReader.getLagMaxTimestamp());
+            }
+        });
     }
 
     @Test
-    public void testMig702Repeatable() throws SqlException, NumericException {
-        node1.setProperty(PropertyKey.CAIRO_REPEAT_MIGRATION_FROM_VERSION, 426);
+    public void testMig702Repeatable() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_REPEAT_MIGRATION_FROM_VERSION, 426);
 
-        execute("create table abc (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
-        TableToken token = engine.verifyTableName("abc");
+            execute("create table abc (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
+            TableToken token = engine.verifyTableName("abc");
 
-        CairoConfiguration config = engine.getConfiguration();
-        try (TxWriter txWriter = new TxWriter(config.getFilesFacade(), config)) {
-            Path p = Path.getThreadLocal(config.getRoot());
-            txWriter.ofRW(p.concat(token).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
+            CairoConfiguration config = engine.getConfiguration();
+            try (TxWriter txWriter = new TxWriter(config.getFilesFacade(), config)) {
+                Path p = Path.getThreadLocal(config.getRoot());
+                txWriter.ofRW(p.concat(token).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
 
-            txWriter.setLagRowCount(100);
-            txWriter.setLagTxnCount(1);
-            txWriter.setLagMinTimestamp(IntervalUtils.parseFloorPartialTimestamp("2022-02-24"));
-            txWriter.setLagMaxTimestamp(IntervalUtils.parseFloorPartialTimestamp("2023-03-20"));
+                txWriter.setLagRowCount(100);
+                txWriter.setLagTxnCount(1);
+                txWriter.setLagMinTimestamp(IntervalUtils.parseFloorPartialTimestamp("2022-02-24"));
+                txWriter.setLagMaxTimestamp(IntervalUtils.parseFloorPartialTimestamp("2023-03-20"));
 
-            txWriter.commit(new ObjList<>());
-        }
+                txWriter.commit(new ObjList<>());
+            }
 
-        // Run migration
-        EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
+            // Run migration
+            EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
 
-        // Check txn file not upgraded
-        checkTxnFile(config.getFilesFacade(), config, token, 100, 1, IntervalUtils.parseFloorPartialTimestamp("2022-02-24"), IntervalUtils.parseFloorPartialTimestamp("2023-03-20"));
+            // Check txn file not upgraded
+            checkTxnFile(config.getFilesFacade(), config, token, 100, 1, IntervalUtils.parseFloorPartialTimestamp("2022-02-24"), IntervalUtils.parseFloorPartialTimestamp("2023-03-20"));
 
-        TestUtils.messTxnUnallocated(
-                config.getFilesFacade(),
-                Path.getThreadLocal(config.getRoot()),
-                new Rnd(),
-                token
-        );
+            TestUtils.messTxnUnallocated(
+                    config.getFilesFacade(),
+                    Path.getThreadLocal(config.getRoot()),
+                    new Rnd(),
+                    token
+            );
 
-        // Run migration
-        EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
+            // Run migration
+            EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
 
-        // Check txn file is upgraded
-        checkTxnFile(config.getFilesFacade(), config, token, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE);
+            // Check txn file is upgraded
+            checkTxnFile(config.getFilesFacade(), config, token, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE);
+        });
     }
 
     private static void assertCairoMetadata(CharSequence expected, String tableName, boolean ignoreMaxLag) {
