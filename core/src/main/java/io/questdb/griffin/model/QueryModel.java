@@ -45,6 +45,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.ArrayDeque;
@@ -192,6 +193,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     // Expression clause that is actually part of left/outer join but not in join model.
     // Inner join expressions
     private ExpressionNode outerJoinExpressionClause;
+    private @Nullable ObjList<QueryColumn> pivotColumns = null;
+    private @Nullable ObjList<ExpressionNode> pivotFor = null;
+    private @Nullable ObjList<QueryColumn> unpivotColumns = null;
+    private @Nullable ObjList<ExpressionNode> unpivotFor = null;
+
     private ExpressionNode postJoinWhereClause;
     private ExpressionNode sampleBy;
     private ExpressionNode sampleByFrom;
@@ -467,6 +473,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         fillStride = null;
         fillValues = null;
         skipped = false;
+        pivotColumns = null;
+        pivotFor = null;
+        unpivotColumns = null;
+        unpivotFor = null;
         allowPropagationOfOrderByAdvice = true;
         decls.clear();
     }
@@ -680,7 +690,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && Objects.equals(updateTableToken, that.updateTableToken)
                 && skipped == that.skipped
                 && allowPropagationOfOrderByAdvice == that.allowPropagationOfOrderByAdvice
-                && Objects.equals(decls, that.decls);
+                && Objects.equals(decls, that.decls)
+                && Objects.equals(pivotColumns, that.pivotColumns)
+                && Objects.equals(pivotFor, that.pivotFor);
     }
 
     public QueryColumn findBottomUpColumnByAst(ExpressionNode node) {
@@ -915,6 +927,50 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return parsedWhere;
     }
 
+    public @Nullable ObjList<QueryColumn> getPivotColumns() {
+        return pivotColumns;
+    }
+
+    public @Nullable ObjList<QueryColumn> getUnpivotColumns() {
+        return unpivotColumns;
+    }
+
+    public void addPivotColumn(QueryColumn column) {
+        if (pivotColumns == null) {
+            pivotColumns = new ObjList<>();
+        }
+        pivotColumns.add(column);
+    }
+
+    public void addUnpivotColumn(QueryColumn column) {
+        if (unpivotColumns == null) {
+            unpivotColumns = new ObjList<>();
+        }
+        unpivotColumns.add(column);
+    }
+
+    public @Nullable ObjList<ExpressionNode> getPivotFor() {
+        return pivotFor;
+    }
+
+    public @Nullable ObjList<ExpressionNode> getUnpivotFor() {
+        return unpivotFor;
+    }
+
+    public void addPivotFor(ExpressionNode _for) {
+        if (pivotFor == null) {
+            pivotFor = new ObjList<>();
+        }
+        pivotFor.add(_for);
+    }
+
+    public void addUnpivotFor(ExpressionNode _for) {
+        if (unpivotFor == null) {
+            unpivotFor = new ObjList<>();
+        }
+        unpivotFor.add(_for);
+    }
+
     public ExpressionNode getPostJoinWhereClause() {
         return postJoinWhereClause;
     }
@@ -1056,7 +1112,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 distinct, unionModel, setOperationType,
                 modelPosition, orderByAdviceMnemonic, tableId,
                 isUpdateModel, modelType, updateTableModel,
-                updateTableToken, artificialStar, fillFrom, fillStride, fillTo, fillValues, decls
+                updateTableToken, artificialStar, fillFrom, fillStride, fillTo, fillValues, decls,
+                allowPropagationOfOrderByAdvice,
+                pivotColumns, pivotFor
         );
     }
 
