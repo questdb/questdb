@@ -6392,6 +6392,7 @@ public class SqlOptimiser implements Mutable {
             enumerateTableColumns(rewrittenModel, sqlExecutionContext, sqlParserCallback);
             rewriteTopLevelLiteralsToFunctions(rewrittenModel);
             rewrittenModel = rewritePivot(rewrittenModel);
+            rewrittenModel = rewriteUnpivot(rewrittenModel);
             rewriteSampleByFromTo(rewrittenModel);
             rewrittenModel = rewriteSampleBy(rewrittenModel);
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
@@ -6441,7 +6442,34 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * Rewrite Pivot statements.
+     * Rewrite UNPIVOT statements.
+     * FROM monthly_sales UNPIVOT (
+     *     sales
+     *     FOR month IN (jan, feb, mar, apr, may, jun)
+     *  );
+     *  -- becomes
+     * SELECT empid, dept, 'jan' as month, jan as sales FROM monthly_sales
+     * UNION
+     * SELECT empid, dept, 'feb' as month, feb as sales FROM monthly_sales
+     * UNION
+     * SELECT empid, dept, 'mar' as month, mar as sales FROM monthly_sales
+     * UNION
+     * SELECT empid, dept, 'apr' as month, apr as sales FROM monthly_sales
+     * UNION
+     * SELECT empid, dept, 'may' as month, may as sales FROM monthly_sales
+     * UNION
+     * SELECT empid, dept, 'jun' as month, jun as sales FROM monthly_sales;
+     */
+    QueryModel rewriteUnpivot(QueryModel model) throws SqlException {
+        if (model == null) {
+            return null;
+        }
+
+        return model;
+    };
+
+    /**
+     * Rewrite PIVOT statements.
      * SELECT *
      * FROM cities
      * PIVOT (

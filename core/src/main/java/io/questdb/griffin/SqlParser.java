@@ -2287,11 +2287,8 @@ public class SqlParser {
         //      FOR month IN (jan, feb, mar, apr, may, jun)
         lexer.unparseLast();
 
-        CharSequence tok = optTok(lexer);
-
-        if (tok == null || !isUnpivotKeyword(tok)) {
-            throw SqlException.$(lexer.lastTokenPosition(), "expected UNPIVOT keyword");
-        }
+        CharSequence tok = null;
+        expectTok(lexer, "unpivot");
 
         tok = optTok(lexer);
 
@@ -2345,11 +2342,8 @@ public class SqlParser {
     private CharSequence parsePivot(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
         lexer.unparseLast();
 
-        CharSequence tok = optTok(lexer);
-
-        if (tok == null || !isPivotKeyword(tok)) {
-            throw SqlException.$(lexer.lastTokenPosition(), "expected PIVOT keyword");
-        }
+        CharSequence tok = null;
+        expectTok(lexer, "pivot");
 
         tok = optTok(lexer);
 
@@ -2382,7 +2376,6 @@ public class SqlParser {
             tok = optTok(lexer);
 
             QueryColumn col;
-            final int colPosition = expr.position;
 
             col = queryColumnPool.next().of(null, expr);
 
@@ -2425,10 +2418,13 @@ public class SqlParser {
 
             model.addPivotColumn(col);
 
+            if (tok != null) {
+
+            }
             if (isForKeyword(tok)) {
                 break;
             } else if (Chars.equals(tok, ",")) {
-                tok = optTok(lexer);
+               optTok(lexer);
             } else {
                 lexer.unparseLast();
             }
