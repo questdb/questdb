@@ -309,17 +309,14 @@ public class MetadataCache implements QuietCloseable {
             final long capacityOffset = SymbolMapWriter.HEADER_CAPACITY;
             final int capacity;
             final byte isCached;
-            long fd = -1;
+            final var offsetFileName = TableUtils.offsetFileName(path.trimTo(rootLen), columnName, columnNameTxn);
+            long fd = TableUtils.openRO(ff, offsetFileName, LOG);
             try {
                 // use txn to find correct symbol entry
-                final var offsetFileName = TableUtils.offsetFileName(path.trimTo(rootLen), columnName, columnNameTxn);
-                fd = TableUtils.openRO(ff, offsetFileName, LOG);
                 capacity = ff.readNonNegativeInt(fd, capacityOffset);
                 isCached = ff.readNonNegativeByte(fd, SymbolMapWriter.HEADER_CACHE_ENABLED);
             } finally {
-                if (fd != -1) {
-                    ff.close(fd);
-                }
+                ff.close(fd);
             }
 
             // get symbol properties

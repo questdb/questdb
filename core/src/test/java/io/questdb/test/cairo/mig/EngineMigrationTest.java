@@ -150,126 +150,118 @@ public class EngineMigrationTest extends AbstractCairoTest {
 
     @Test
     @Ignore
-    public void testGenerateTables() throws Exception {
-        assertMemoryLeak(() -> {
-            generateMigrationTables();
-            engine.releaseAllWriters();
-            assertData(true, true, true, true);
-        });
+    public void testGenerateTables() throws SqlException, NumericException {
+        generateMigrationTables();
+        engine.releaseAllWriters();
+        assertData(true, true, true, true);
     }
 
     @Test
-    public void testMig702HandlesMissingTxn() throws Exception {
-        assertMemoryLeak(() -> {
-            node1.setProperty(PropertyKey.CAIRO_REPEAT_MIGRATION_FROM_VERSION, 426);
+    public void testMig702HandlesMissingTxn() throws SqlException {
+        node1.setProperty(PropertyKey.CAIRO_REPEAT_MIGRATION_FROM_VERSION, 426);
 
-            execute("create table abc (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
-            execute("create table def (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
-            TableToken tokenAbc = engine.verifyTableName("abc");
-            TableToken tokenDef = engine.verifyTableName("def");
+        execute("create table abc (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
+        execute("create table def (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
+        TableToken tokenAbc = engine.verifyTableName("abc");
+        TableToken tokenDef = engine.verifyTableName("def");
 
-            engine.releaseInactive();
+        engine.releaseInactive();
 
-            CairoConfiguration config = engine.getConfiguration();
-            FilesFacade ff = config.getFilesFacade();
+        CairoConfiguration config = engine.getConfiguration();
+        FilesFacade ff = config.getFilesFacade();
 
-            // Make abc _txn too short
-            Path abcTxnPath = Path.getThreadLocal(config.getRoot()).concat(tokenAbc).concat(TableUtils.TXN_FILE_NAME);
-            long fd = TableUtils.openRW(ff, abcTxnPath.$(), LOG, config.getWriterFileOpenOpts());
-            Assert.assertTrue(ff.truncate(fd, 50));
-            ff.close(fd);
+        // Make abc _txn too short
+        Path abcTxnPath = Path.getThreadLocal(config.getRoot()).concat(tokenAbc).concat(TableUtils.TXN_FILE_NAME);
+        long fd = TableUtils.openRW(ff, abcTxnPath.$(), LOG, config.getWriterFileOpenOpts());
+        Assert.assertTrue(ff.truncate(fd, 50));
+        ff.close(fd);
 
-            // Mess, run migration and check
-            TestUtils.messTxnUnallocated(ff, Path.getThreadLocal(config.getRoot()), new Rnd(), tokenDef);
-            EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, true);
-            checkTxnFile(ff, config, tokenDef, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE);
+        // Mess, run migration and check
+        TestUtils.messTxnUnallocated(ff, Path.getThreadLocal(config.getRoot()), new Rnd(), tokenDef);
+        EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, true);
+        checkTxnFile(ff, config, tokenDef, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE);
 
-            // Remove _txn file for table abc
-            abcTxnPath = Path.getThreadLocal(config.getRoot()).concat(tokenAbc).concat(TableUtils.TXN_FILE_NAME);
-            Assert.assertTrue(ff.removeQuiet(abcTxnPath.$()));
+        // Remove _txn file for table abc
+        abcTxnPath = Path.getThreadLocal(config.getRoot()).concat(tokenAbc).concat(TableUtils.TXN_FILE_NAME);
+        Assert.assertTrue(ff.removeQuiet(abcTxnPath.$()));
 
-            // Mess, run migration and check
-            TestUtils.messTxnUnallocated(ff, Path.getThreadLocal(config.getRoot()), new Rnd(), tokenDef);
-            EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, true);
-            checkTxnFile(ff, config, tokenDef, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE);
-        });
+        // Mess, run migration and check
+        TestUtils.messTxnUnallocated(ff, Path.getThreadLocal(config.getRoot()), new Rnd(), tokenDef);
+        EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, true);
+        checkTxnFile(ff, config, tokenDef, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE);
     }
 
     @Test
-    public void testMig702NonRepeatable() throws Exception {
-        assertMemoryLeak(() -> {
-            node1.setProperty(PropertyKey.CAIRO_REPEAT_MIGRATION_FROM_VERSION, -1);
-            // Run migration
-            EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, true);
+    public void testMig702NonRepeatable() throws SqlException {
+        node1.setProperty(PropertyKey.CAIRO_REPEAT_MIGRATION_FROM_VERSION, -1);
+        // Run migration
+        EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, true);
 
-            execute("create table abc (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
-            TableToken token = engine.verifyTableName("abc");
-            CairoConfiguration config = engine.getConfiguration();
+        execute("create table abc (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
+        TableToken token = engine.verifyTableName("abc");
+        CairoConfiguration config = engine.getConfiguration();
 
-            TestUtils.messTxnUnallocated(
-                    config.getFilesFacade(),
-                    Path.getThreadLocal(config.getRoot()),
-                    new Rnd(123, 123),
-                    token
-            );
+        TestUtils.messTxnUnallocated(
+                config.getFilesFacade(),
+                Path.getThreadLocal(config.getRoot()),
+                new Rnd(123, 123),
+                token
+        );
 
-            // Run migration
-            EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
+        // Run migration
+        EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
 
-            // Check txn file is upgraded
-            try (TxReader txReader = new TxReader(config.getFilesFacade())) {
-                Path p = Path.getThreadLocal(config.getRoot());
-                txReader.ofRO(p.concat(token).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
-                txReader.unsafeLoadAll();
+        // Check txn file is upgraded
+        try (TxReader txReader = new TxReader(config.getFilesFacade())) {
+            Path p = Path.getThreadLocal(config.getRoot());
+            txReader.ofRO(p.concat(token).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
+            txReader.unsafeLoadAll();
 
-                Assert.assertNotEquals(0, txReader.getLagRowCount());
-                Assert.assertNotEquals(0, txReader.getLagTxnCount());
-                Assert.assertNotEquals(0L, txReader.getLagMinTimestamp());
-                Assert.assertNotEquals(0L, txReader.getLagMaxTimestamp());
-            }
-        });
+            Assert.assertNotEquals(0, txReader.getLagRowCount());
+            Assert.assertNotEquals(0, txReader.getLagTxnCount());
+            Assert.assertNotEquals(0L, txReader.getLagMinTimestamp());
+            Assert.assertNotEquals(0L, txReader.getLagMaxTimestamp());
+        }
     }
 
     @Test
-    public void testMig702Repeatable() throws Exception {
-        assertMemoryLeak(() -> {
-            node1.setProperty(PropertyKey.CAIRO_REPEAT_MIGRATION_FROM_VERSION, 426);
+    public void testMig702Repeatable() throws SqlException, NumericException {
+        node1.setProperty(PropertyKey.CAIRO_REPEAT_MIGRATION_FROM_VERSION, 426);
 
-            execute("create table abc (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
-            TableToken token = engine.verifyTableName("abc");
+        execute("create table abc (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
+        TableToken token = engine.verifyTableName("abc");
 
-            CairoConfiguration config = engine.getConfiguration();
-            try (TxWriter txWriter = new TxWriter(config.getFilesFacade(), config)) {
-                Path p = Path.getThreadLocal(config.getRoot());
-                txWriter.ofRW(p.concat(token).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
+        CairoConfiguration config = engine.getConfiguration();
+        try (TxWriter txWriter = new TxWriter(config.getFilesFacade(), config)) {
+            Path p = Path.getThreadLocal(config.getRoot());
+            txWriter.ofRW(p.concat(token).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
 
-                txWriter.setLagRowCount(100);
-                txWriter.setLagTxnCount(1);
-                txWriter.setLagMinTimestamp(IntervalUtils.parseFloorPartialTimestamp("2022-02-24"));
-                txWriter.setLagMaxTimestamp(IntervalUtils.parseFloorPartialTimestamp("2023-03-20"));
+            txWriter.setLagRowCount(100);
+            txWriter.setLagTxnCount(1);
+            txWriter.setLagMinTimestamp(IntervalUtils.parseFloorPartialTimestamp("2022-02-24"));
+            txWriter.setLagMaxTimestamp(IntervalUtils.parseFloorPartialTimestamp("2023-03-20"));
 
-                txWriter.commit(new ObjList<>());
-            }
+            txWriter.commit(new ObjList<>());
+        }
 
-            // Run migration
-            EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
+        // Run migration
+        EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
 
-            // Check txn file not upgraded
-            checkTxnFile(config.getFilesFacade(), config, token, 100, 1, IntervalUtils.parseFloorPartialTimestamp("2022-02-24"), IntervalUtils.parseFloorPartialTimestamp("2023-03-20"));
+        // Check txn file not upgraded
+        checkTxnFile(config.getFilesFacade(), config, token, 100, 1, IntervalUtils.parseFloorPartialTimestamp("2022-02-24"), IntervalUtils.parseFloorPartialTimestamp("2023-03-20"));
 
-            TestUtils.messTxnUnallocated(
-                    config.getFilesFacade(),
-                    Path.getThreadLocal(config.getRoot()),
-                    new Rnd(),
-                    token
-            );
+        TestUtils.messTxnUnallocated(
+                config.getFilesFacade(),
+                Path.getThreadLocal(config.getRoot()),
+                new Rnd(),
+                token
+        );
 
-            // Run migration
-            EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
+        // Run migration
+        EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
 
-            // Check txn file is upgraded
-            checkTxnFile(config.getFilesFacade(), config, token, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE);
-        });
+        // Check txn file is upgraded
+        checkTxnFile(config.getFilesFacade(), config, token, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE);
     }
 
     private static void assertCairoMetadata(CharSequence expected, String tableName, boolean ignoreMaxLag) {
@@ -526,67 +518,64 @@ public class EngineMigrationTest extends AbstractCairoTest {
     private void assertAppendedData(boolean withColTopO3, boolean withWalTxn) throws SqlException {
         engine.releaseAllReaders();
         engine.releaseAllWriters();
-        assertSql(
-                "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts\n" +
-                        "109\tP\t-12455\t263934\t49960\t0.6793\t0.09831693674866282\t1977-08-08T19:44:03.856Z\t1969-12-31T23:59:55.049605Z\tHQBJP\tc\tfalse\taaa\t0xbe15104d1d36d615cac36ab298393e52b06836c8abd67a44787ce11d6fc88eab\t00000000 37 58 2c 0d b0 d0 9c 57 02 75\t2096-10-02T07:10:00.000000Z\n" +
-                        "73\tB\t-1271\t-47644\t4999\t0.8584\t0.12392055368261845\t1975-06-03T19:26:19.012Z\t1969-12-31T23:59:55.604499Z\t\tc\ttrue\taaa\t0x4f669e76b0311ac3438ec9cc282caa7043a05a3edd41f45aa59f873d1c729128\t00000000 34 01 0e 4d 2b 00 fa 34\t2103-02-04T02:43:20.000000Z\n" +
-                        "83\tL\t-32289\t127321\t40837\t0.1335\t0.515824820198022\t\t1969-12-31T23:59:53.582959Z\tKFMO\taaa\tfalse\t\t0x8131875cd498c4b888762e985137f4e843b8167edcd59cf345c105202f875495\t\t2109-06-06T22:16:40.000000Z\n" +
-                        "51\tS\t-28311\tnull\t-72973\t0.5957\t0.20897460269739654\t1973-03-28T21:58:08.545Z\t1969-12-31T23:59:54.332988Z\t\tc\tfalse\taaa\t0x50113ffcc219fb1a9bc4f6389de1764097e7bcd897ae8a54aa2883a41581608f\t00000000 83 94 b5\t2115-10-08T17:50:00.000000Z\n" +
-                        "49\tN\t-11147\t392567\t-9830\t0.5248\t0.1095692511246914\t\t1969-12-31T23:59:56.849475Z\tIFBE\tc\tfalse\taaa\t0x36055358bd232c9d775e2e80754e5fcda2353931c7033ad5c38c294e9227895a\t\t2122-02-08T13:23:20.000000Z\n" +
-                        "57\tI\t-22903\t874980\t-28069\tnull\t0.016793228004843286\t1975-09-29T05:10:33.275Z\t1969-12-31T23:59:55.690794Z\tBZSM\t\ttrue\tc\t0xa2c84382c65eb07087cf6cb291b2c3e7a9ffe8560d2cec518dea50b88b87fe43\t00000000 b9 c4 18 2b aa 3d\t2128-06-11T08:56:40.000000Z\n" +
-                        "127\tW\t-16809\t288758\t-22272\t0.0535\t0.5855510665931698\t\t1969-12-31T23:59:52.689490Z\t\taaa\tfalse\tc\t0x918ae2d78481070577c7d4c3a758a5ea3dd771714ac964ab4b350afc9b599b28\t\t2134-10-13T04:30:00.000000Z\n" +
-                        "20\tM\t-7043\t251501\t-85499\t0.9403\t0.9135840078861264\t1977-05-12T19:20:06.113Z\t1969-12-31T23:59:54.045277Z\tHOXL\tbbbbbb\tfalse\tbbbbbb\t0xc3b0de059fff72dbd7b99af08ac0d1cddb2990725a3338e377155edb531cb644\t\t2141-02-13T00:03:20.000000Z\n" +
-                        "26\tG\t-24830\t-56840\t-32956\t0.8282\t0.017280895313585898\t1982-07-16T03:52:53.454Z\t1969-12-31T23:59:54.115165Z\tJEJH\taaa\tfalse\tbbbbbb\t0x16f70de9c6af11071d35d9faec5d18fd1cf3bbbc825b72a92ecb8ff0286bf649\t00000000 c2 62 f8 53 7d 05 65\t2147-06-16T19:36:40.000000Z\n" +
-                        "127\tY\t19592\t224361\t37963\t0.6930\t0.006817672510656014\t1975-11-29T09:47:45.706Z\t1969-12-31T23:59:56.186242Z\t\t\ttrue\taaa\t0x88926dd483caaf4031096402997f21c833b142e887fa119e380dc9b54493ff70\t00000000 23 c3 9d 75 26 f2 0d b5 7a 3f\t2153-10-17T15:10:00.000000Z\n", "select * FROM t_year LIMIT -10"
+        assertSql("a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts\n" +
+                "109\tP\t-12455\t263934\t49960\t0.6793\t0.09831693674866282\t1977-08-08T19:44:03.856Z\t1969-12-31T23:59:55.049605Z\tHQBJP\tc\tfalse\taaa\t0xbe15104d1d36d615cac36ab298393e52b06836c8abd67a44787ce11d6fc88eab\t00000000 37 58 2c 0d b0 d0 9c 57 02 75\t2096-10-02T07:10:00.000000Z\n" +
+                "73\tB\t-1271\t-47644\t4999\t0.8584\t0.12392055368261845\t1975-06-03T19:26:19.012Z\t1969-12-31T23:59:55.604499Z\t\tc\ttrue\taaa\t0x4f669e76b0311ac3438ec9cc282caa7043a05a3edd41f45aa59f873d1c729128\t00000000 34 01 0e 4d 2b 00 fa 34\t2103-02-04T02:43:20.000000Z\n" +
+                "83\tL\t-32289\t127321\t40837\t0.1335\t0.515824820198022\t\t1969-12-31T23:59:53.582959Z\tKFMO\taaa\tfalse\t\t0x8131875cd498c4b888762e985137f4e843b8167edcd59cf345c105202f875495\t\t2109-06-06T22:16:40.000000Z\n" +
+                "51\tS\t-28311\tnull\t-72973\t0.5957\t0.20897460269739654\t1973-03-28T21:58:08.545Z\t1969-12-31T23:59:54.332988Z\t\tc\tfalse\taaa\t0x50113ffcc219fb1a9bc4f6389de1764097e7bcd897ae8a54aa2883a41581608f\t00000000 83 94 b5\t2115-10-08T17:50:00.000000Z\n" +
+                "49\tN\t-11147\t392567\t-9830\t0.5248\t0.1095692511246914\t\t1969-12-31T23:59:56.849475Z\tIFBE\tc\tfalse\taaa\t0x36055358bd232c9d775e2e80754e5fcda2353931c7033ad5c38c294e9227895a\t\t2122-02-08T13:23:20.000000Z\n" +
+                "57\tI\t-22903\t874980\t-28069\tnull\t0.016793228004843286\t1975-09-29T05:10:33.275Z\t1969-12-31T23:59:55.690794Z\tBZSM\t\ttrue\tc\t0xa2c84382c65eb07087cf6cb291b2c3e7a9ffe8560d2cec518dea50b88b87fe43\t00000000 b9 c4 18 2b aa 3d\t2128-06-11T08:56:40.000000Z\n" +
+                "127\tW\t-16809\t288758\t-22272\t0.0535\t0.5855510665931698\t\t1969-12-31T23:59:52.689490Z\t\taaa\tfalse\tc\t0x918ae2d78481070577c7d4c3a758a5ea3dd771714ac964ab4b350afc9b599b28\t\t2134-10-13T04:30:00.000000Z\n" +
+                "20\tM\t-7043\t251501\t-85499\t0.9403\t0.9135840078861264\t1977-05-12T19:20:06.113Z\t1969-12-31T23:59:54.045277Z\tHOXL\tbbbbbb\tfalse\tbbbbbb\t0xc3b0de059fff72dbd7b99af08ac0d1cddb2990725a3338e377155edb531cb644\t\t2141-02-13T00:03:20.000000Z\n" +
+                "26\tG\t-24830\t-56840\t-32956\t0.8282\t0.017280895313585898\t1982-07-16T03:52:53.454Z\t1969-12-31T23:59:54.115165Z\tJEJH\taaa\tfalse\tbbbbbb\t0x16f70de9c6af11071d35d9faec5d18fd1cf3bbbc825b72a92ecb8ff0286bf649\t00000000 c2 62 f8 53 7d 05 65\t2147-06-16T19:36:40.000000Z\n" +
+                "127\tY\t19592\t224361\t37963\t0.6930\t0.006817672510656014\t1975-11-29T09:47:45.706Z\t1969-12-31T23:59:56.186242Z\t\t\ttrue\taaa\t0x88926dd483caaf4031096402997f21c833b142e887fa119e380dc9b54493ff70\t00000000 23 c3 9d 75 26 f2 0d b5 7a 3f\t2153-10-17T15:10:00.000000Z\n", "select * FROM t_year LIMIT -10"
         );
 
         if (withColTopO3) {
-            assertSql(
-                    "x\tm\tts\tдень\tstr\n" +
-                            "1\t\t1970-01-01T01:27:00.000000Z\ta\tTLQZSLQ\n" +
-                            "6\tc\t1970-01-01T06:30:00.000000Z\ta\tSFCI\n" +
-                            "12\ta\t1970-01-01T12:30:00.000000Z\ta\tJNOXB\n" +
-                            "14\t\t1970-01-01T14:30:00.000000Z\ta\tLJYFXSBNVN\n" +
-                            "16\tb\t1970-01-01T16:30:00.000000Z\ta\tTPUL\n" +
-                            "19\tb\t1970-01-01T19:27:00.000000Z\ta\tTZODWKOCPF\n" +
-                            "21\tb\t1970-01-01T21:30:00.000000Z\ta\tGQWSZMUMXM\n" +
-                            "24\t\t1970-01-02T00:30:00.000000Z\ta\tNTPYXUB\n" +
-                            "31\ta\t1970-01-02T07:27:00.000000Z\ta\tGFI\n" +
-                            "32\ta\t1970-01-02T08:27:00.000000Z\ta\tVZWEV\n" +
-                            "33\tb\t1970-01-02T09:30:00.000000Z\ta\tFLNGCEFBTD\n" +
-                            "34\tb\t1970-01-02T10:30:00.000000Z\ta\tTIGUTKI\n" +
-                            "35\t\t1970-01-02T11:27:00.000000Z\ta\tPTYXYGYFUX\n" +
-                            "1\t\t1970-01-05T02:30:00.000000Z\ta\tHQJHN\n" +
-                            "4\tc\t1970-01-05T05:30:00.000000Z\ta\tXRGUOXFH\n" +
-                            "5\t\t1970-01-05T06:30:00.000000Z\ta\tFVFFOB\n" +
-                            "7\tb\t1970-01-05T10:25:00.000000Z\ta\tHFLPBNH\n" +
-                            "9\tc\t1970-01-05T10:30:00.000000Z\ta\tLEQD\n" +
-                            "8\t\t1970-01-05T11:25:00.000000Z\ta\tCCNGTNLE\n" +
-                            "10\t\t1970-01-05T11:30:00.000000Z\ta\tKNHV\n" +
-                            "9\ta\t1970-01-05T12:25:00.000000Z\ta\tHIUG\n", "t_col_top_ooo_day where день = 'a'"
+            assertSql("x\tm\tts\tдень\tstr\n" +
+                    "1\t\t1970-01-01T01:27:00.000000Z\ta\tTLQZSLQ\n" +
+                    "6\tc\t1970-01-01T06:30:00.000000Z\ta\tSFCI\n" +
+                    "12\ta\t1970-01-01T12:30:00.000000Z\ta\tJNOXB\n" +
+                    "14\t\t1970-01-01T14:30:00.000000Z\ta\tLJYFXSBNVN\n" +
+                    "16\tb\t1970-01-01T16:30:00.000000Z\ta\tTPUL\n" +
+                    "19\tb\t1970-01-01T19:27:00.000000Z\ta\tTZODWKOCPF\n" +
+                    "21\tb\t1970-01-01T21:30:00.000000Z\ta\tGQWSZMUMXM\n" +
+                    "24\t\t1970-01-02T00:30:00.000000Z\ta\tNTPYXUB\n" +
+                    "31\ta\t1970-01-02T07:27:00.000000Z\ta\tGFI\n" +
+                    "32\ta\t1970-01-02T08:27:00.000000Z\ta\tVZWEV\n" +
+                    "33\tb\t1970-01-02T09:30:00.000000Z\ta\tFLNGCEFBTD\n" +
+                    "34\tb\t1970-01-02T10:30:00.000000Z\ta\tTIGUTKI\n" +
+                    "35\t\t1970-01-02T11:27:00.000000Z\ta\tPTYXYGYFUX\n" +
+                    "1\t\t1970-01-05T02:30:00.000000Z\ta\tHQJHN\n" +
+                    "4\tc\t1970-01-05T05:30:00.000000Z\ta\tXRGUOXFH\n" +
+                    "5\t\t1970-01-05T06:30:00.000000Z\ta\tFVFFOB\n" +
+                    "7\tb\t1970-01-05T10:25:00.000000Z\ta\tHFLPBNH\n" +
+                    "9\tc\t1970-01-05T10:30:00.000000Z\ta\tLEQD\n" +
+                    "8\t\t1970-01-05T11:25:00.000000Z\ta\tCCNGTNLE\n" +
+                    "10\t\t1970-01-05T11:30:00.000000Z\ta\tKNHV\n" +
+                    "9\ta\t1970-01-05T12:25:00.000000Z\ta\tHIUG\n", "t_col_top_ooo_day where день = 'a'"
             );
         }
 
         if (withWalTxn) {
-            assertSql(
-                    "x\tm\tts\tдень\tstr\n" +
-                            "3\tc\t1970-01-05T04:30:00.000000Z\ta\tBLJTFSDQIE\n" +
-                            "2\ta\t1970-01-05T05:25:00.000000Z\tc\tXHFVWSWSR\n" +
-                            "4\t\t1970-01-05T05:30:00.000000Z\ta\tNEL\n" +
-                            "3\tc\t1970-01-05T06:25:00.000000Z\t\tFCLTJC\n" +
-                            "5\tc\t1970-01-05T06:30:00.000000Z\t\tGOFBJEB\n" +
-                            "4\tc\t1970-01-05T07:25:00.000000Z\tb\tNTO\n" +
-                            "6\tc\t1970-01-05T07:30:00.000000Z\tb\tKPXZEW\n" +
-                            "5\tb\t1970-01-05T08:25:00.000000Z\tc\tKLGMXS\n" +
-                            "7\ta\t1970-01-05T08:30:00.000000Z\ta\tFWMLBWUYKD\n" +
-                            "6\tb\t1970-01-05T09:25:00.000000Z\t\tYOPHNIMYFF\n" +
-                            "8\tb\t1970-01-05T09:30:00.000000Z\ta\tYQZ\n" +
-                            "7\tb\t1970-01-05T10:25:00.000000Z\ta\tHFLPBNH\n" +
-                            "9\tb\t1970-01-05T10:30:00.000000Z\tb\tOQMEYOJYZ\n" +
-                            "8\t\t1970-01-05T11:25:00.000000Z\ta\tCCNGTNLE\n" +
-                            "10\tc\t1970-01-05T11:30:00.000000Z\tb\tGQY\n" +
-                            "9\ta\t1970-01-05T12:25:00.000000Z\ta\tHIUG\n" +
-                            "10\ta\t1970-01-05T13:25:00.000000Z\t\tRZLCBDMIGQ\n", "t_col_top_ooo_day_wal where ts > '1970-01-05T04:25'"
+            assertSql("x\tm\tts\tдень\tstr\n" +
+                    "3\tc\t1970-01-05T04:30:00.000000Z\ta\tBLJTFSDQIE\n" +
+                    "2\ta\t1970-01-05T05:25:00.000000Z\tc\tXHFVWSWSR\n" +
+                    "4\t\t1970-01-05T05:30:00.000000Z\ta\tNEL\n" +
+                    "3\tc\t1970-01-05T06:25:00.000000Z\t\tFCLTJC\n" +
+                    "5\tc\t1970-01-05T06:30:00.000000Z\t\tGOFBJEB\n" +
+                    "4\tc\t1970-01-05T07:25:00.000000Z\tb\tNTO\n" +
+                    "6\tc\t1970-01-05T07:30:00.000000Z\tb\tKPXZEW\n" +
+                    "5\tb\t1970-01-05T08:25:00.000000Z\tc\tKLGMXS\n" +
+                    "7\ta\t1970-01-05T08:30:00.000000Z\ta\tFWMLBWUYKD\n" +
+                    "6\tb\t1970-01-05T09:25:00.000000Z\t\tYOPHNIMYFF\n" +
+                    "8\tb\t1970-01-05T09:30:00.000000Z\ta\tYQZ\n" +
+                    "7\tb\t1970-01-05T10:25:00.000000Z\ta\tHFLPBNH\n" +
+                    "9\tb\t1970-01-05T10:30:00.000000Z\tb\tOQMEYOJYZ\n" +
+                    "8\t\t1970-01-05T11:25:00.000000Z\ta\tCCNGTNLE\n" +
+                    "10\tc\t1970-01-05T11:30:00.000000Z\tb\tGQY\n" +
+                    "9\ta\t1970-01-05T12:25:00.000000Z\ta\tHIUG\n" +
+                    "10\ta\t1970-01-05T13:25:00.000000Z\t\tRZLCBDMIGQ\n", "t_col_top_ooo_day_wal where ts > '1970-01-05T04:25'"
             );
         }
     }
@@ -632,116 +621,110 @@ public class EngineMigrationTest extends AbstractCairoTest {
         assertSql(part1Expected, "t_col_top_none where y = null");
         assertSql(part2Expected, "t_col_top_none where y != null");
 
-        assertSql(
-                "x\tm\tts\tдень\n" +
-                        "1\tc\t1970-01-01T00:33:20.000000Z\tnull\n" +
-                        "2\tb\t1970-01-01T06:06:40.000000Z\tnull\n" +
-                        "3\tb\t1970-01-01T11:40:00.000000Z\tnull\n" +
-                        "4\tc\t1970-01-01T17:13:20.000000Z\tnull\n" +
-                        "5\tc\t1970-01-01T22:46:40.000000Z\tnull\n" +
-                        "6\tc\t1970-01-02T04:20:00.000000Z\tnull\n" +
-                        "7\tb\t1970-01-02T09:53:20.000000Z\tnull\n" +
-                        "8\t\t1970-01-02T15:26:40.000000Z\tnull\n" +
-                        "9\t\t1970-01-02T21:00:00.000000Z\tnull\n" +
-                        "10\tc\t1970-01-03T02:33:20.000000Z\tnull\n" +
-                        "11\tb\t1970-01-03T08:06:40.000000Z\tnull\n" +
-                        "12\tb\t1970-01-03T13:40:00.000000Z\tnull\n" +
-                        "13\tb\t1970-01-03T19:13:20.000000Z\tnull\n" +
-                        "14\tb\t1970-01-04T00:46:40.000000Z\tnull\n" +
-                        "15\t\t1970-01-04T06:20:00.000000Z\tnull\n", "t_col_top_день where день = null"
+        assertSql("x\tm\tts\tдень\n" +
+                "1\tc\t1970-01-01T00:33:20.000000Z\tnull\n" +
+                "2\tb\t1970-01-01T06:06:40.000000Z\tnull\n" +
+                "3\tb\t1970-01-01T11:40:00.000000Z\tnull\n" +
+                "4\tc\t1970-01-01T17:13:20.000000Z\tnull\n" +
+                "5\tc\t1970-01-01T22:46:40.000000Z\tnull\n" +
+                "6\tc\t1970-01-02T04:20:00.000000Z\tnull\n" +
+                "7\tb\t1970-01-02T09:53:20.000000Z\tnull\n" +
+                "8\t\t1970-01-02T15:26:40.000000Z\tnull\n" +
+                "9\t\t1970-01-02T21:00:00.000000Z\tnull\n" +
+                "10\tc\t1970-01-03T02:33:20.000000Z\tnull\n" +
+                "11\tb\t1970-01-03T08:06:40.000000Z\tnull\n" +
+                "12\tb\t1970-01-03T13:40:00.000000Z\tnull\n" +
+                "13\tb\t1970-01-03T19:13:20.000000Z\tnull\n" +
+                "14\tb\t1970-01-04T00:46:40.000000Z\tnull\n" +
+                "15\t\t1970-01-04T06:20:00.000000Z\tnull\n", "t_col_top_день where день = null"
         );
 
-        assertSql(
-                "x\tm\tts\tдень\n" +
-                        "16\te\t1970-01-03T07:36:40.000000Z\t16\n" +
-                        "17\tf\t1970-01-03T08:10:00.000000Z\t17\n" +
-                        "18\te\t1970-01-03T08:43:20.000000Z\t18\n" +
-                        "19\t\t1970-01-03T09:16:40.000000Z\t19\n" +
-                        "20\te\t1970-01-03T09:50:00.000000Z\t20\n" +
-                        "21\td\t1970-01-03T10:23:20.000000Z\t21\n" +
-                        "22\td\t1970-01-03T10:56:40.000000Z\t22\n" +
-                        "23\tf\t1970-01-03T11:30:00.000000Z\t23\n" +
-                        "24\t\t1970-01-03T12:03:20.000000Z\t24\n" +
-                        "25\td\t1970-01-03T12:36:40.000000Z\t25\n" +
-                        "26\te\t1970-01-03T13:10:00.000000Z\t26\n" +
-                        "27\te\t1970-01-03T13:43:20.000000Z\t27\n" +
-                        "28\tf\t1970-01-03T14:16:40.000000Z\t28\n" +
-                        "29\te\t1970-01-03T14:50:00.000000Z\t29\n" +
-                        "30\td\t1970-01-03T15:23:20.000000Z\t30\n", "t_col_top_день where день != null"
+        assertSql("x\tm\tts\tдень\n" +
+                "16\te\t1970-01-03T07:36:40.000000Z\t16\n" +
+                "17\tf\t1970-01-03T08:10:00.000000Z\t17\n" +
+                "18\te\t1970-01-03T08:43:20.000000Z\t18\n" +
+                "19\t\t1970-01-03T09:16:40.000000Z\t19\n" +
+                "20\te\t1970-01-03T09:50:00.000000Z\t20\n" +
+                "21\td\t1970-01-03T10:23:20.000000Z\t21\n" +
+                "22\td\t1970-01-03T10:56:40.000000Z\t22\n" +
+                "23\tf\t1970-01-03T11:30:00.000000Z\t23\n" +
+                "24\t\t1970-01-03T12:03:20.000000Z\t24\n" +
+                "25\td\t1970-01-03T12:36:40.000000Z\t25\n" +
+                "26\te\t1970-01-03T13:10:00.000000Z\t26\n" +
+                "27\te\t1970-01-03T13:43:20.000000Z\t27\n" +
+                "28\tf\t1970-01-03T14:16:40.000000Z\t28\n" +
+                "29\te\t1970-01-03T14:50:00.000000Z\t29\n" +
+                "30\td\t1970-01-03T15:23:20.000000Z\t30\n", "t_col_top_день where день != null"
         );
     }
 
     private void assertColTopsO3() throws SqlException {
-        assertSql(
-                "x\tm\tts\tдень\tstr\n" +
-                        "6\tc\t1970-01-01T06:30:00.000000Z\ta\tSFCI\n" +
-                        "4\tc\t1970-01-05T05:30:00.000000Z\ta\tXRGUOXFH\n" +
-                        "9\tc\t1970-01-05T10:30:00.000000Z\ta\tLEQD\n", "t_col_top_ooo_day where m = 'c' and день = 'a'"
+        assertSql("x\tm\tts\tдень\tstr\n" +
+                "6\tc\t1970-01-01T06:30:00.000000Z\ta\tSFCI\n" +
+                "4\tc\t1970-01-05T05:30:00.000000Z\ta\tXRGUOXFH\n" +
+                "9\tc\t1970-01-05T10:30:00.000000Z\ta\tLEQD\n", "t_col_top_ooo_day where m = 'c' and день = 'a'"
         );
 
-        assertSql(
-                "x\tm\tts\tдень\tstr\n" +
-                        "81\tc\t1970-01-04T09:00:00.000000Z\t\t\n" +
-                        "82\tc\t1970-01-04T10:00:00.000000Z\t\t\n" +
-                        "84\ta\t1970-01-04T12:00:00.000000Z\t\t\n" +
-                        "85\tb\t1970-01-04T13:00:00.000000Z\t\t\n" +
-                        "86\tb\t1970-01-04T14:00:00.000000Z\t\t\n" +
-                        "87\tb\t1970-01-04T15:00:00.000000Z\t\t\n" +
-                        "88\tc\t1970-01-04T16:00:00.000000Z\t\t\n" +
-                        "89\tc\t1970-01-04T17:00:00.000000Z\t\t\n" +
-                        "90\ta\t1970-01-04T18:00:00.000000Z\t\t\n" +
-                        "92\ta\t1970-01-04T20:00:00.000000Z\t\t\n" +
-                        "93\tb\t1970-01-04T21:00:00.000000Z\t\t\n" +
-                        "94\ta\t1970-01-04T22:00:00.000000Z\t\t\n" +
-                        "96\ta\t1970-01-05T00:00:00.000000Z\t\t\n" +
-                        "2\ta\t1970-01-05T03:30:00.000000Z\tc\tWTBBMMDB\n" +
-                        "3\tb\t1970-01-05T04:30:00.000000Z\tc\tGXIID\n" +
-                        "4\tc\t1970-01-05T05:30:00.000000Z\ta\tXRGUOXFH\n" +
-                        "6\ta\t1970-01-05T07:30:00.000000Z\tc\tQYDQVLY\n" +
-                        "7\tc\t1970-01-05T08:30:00.000000Z\t\tGNVZWJR\n" +
-                        "8\tb\t1970-01-05T09:30:00.000000Z\tc\tMLMGICUW\n" +
-                        "9\tc\t1970-01-05T10:30:00.000000Z\ta\tLEQD\n", "t_col_top_ooo_day where m != null limit -20"
+        assertSql("x\tm\tts\tдень\tstr\n" +
+                "81\tc\t1970-01-04T09:00:00.000000Z\t\t\n" +
+                "82\tc\t1970-01-04T10:00:00.000000Z\t\t\n" +
+                "84\ta\t1970-01-04T12:00:00.000000Z\t\t\n" +
+                "85\tb\t1970-01-04T13:00:00.000000Z\t\t\n" +
+                "86\tb\t1970-01-04T14:00:00.000000Z\t\t\n" +
+                "87\tb\t1970-01-04T15:00:00.000000Z\t\t\n" +
+                "88\tc\t1970-01-04T16:00:00.000000Z\t\t\n" +
+                "89\tc\t1970-01-04T17:00:00.000000Z\t\t\n" +
+                "90\ta\t1970-01-04T18:00:00.000000Z\t\t\n" +
+                "92\ta\t1970-01-04T20:00:00.000000Z\t\t\n" +
+                "93\tb\t1970-01-04T21:00:00.000000Z\t\t\n" +
+                "94\ta\t1970-01-04T22:00:00.000000Z\t\t\n" +
+                "96\ta\t1970-01-05T00:00:00.000000Z\t\t\n" +
+                "2\ta\t1970-01-05T03:30:00.000000Z\tc\tWTBBMMDB\n" +
+                "3\tb\t1970-01-05T04:30:00.000000Z\tc\tGXIID\n" +
+                "4\tc\t1970-01-05T05:30:00.000000Z\ta\tXRGUOXFH\n" +
+                "6\ta\t1970-01-05T07:30:00.000000Z\tc\tQYDQVLY\n" +
+                "7\tc\t1970-01-05T08:30:00.000000Z\t\tGNVZWJR\n" +
+                "8\tb\t1970-01-05T09:30:00.000000Z\tc\tMLMGICUW\n" +
+                "9\tc\t1970-01-05T10:30:00.000000Z\ta\tLEQD\n", "t_col_top_ooo_day where m != null limit -20"
         );
 
-        assertSql(
-                "x\tm\tts\tдень\tstr\n" +
-                        "71\tc\t1970-01-03T23:00:00.000000Z\t\t\n" +
-                        "72\tb\t1970-01-04T00:00:00.000000Z\t\t\n" +
-                        "76\tc\t1970-01-04T04:00:00.000000Z\t\t\n" +
-                        "77\tc\t1970-01-04T05:00:00.000000Z\t\t\n" +
-                        "78\tb\t1970-01-04T06:00:00.000000Z\t\t\n" +
-                        "79\ta\t1970-01-04T07:00:00.000000Z\t\t\n" +
-                        "81\tc\t1970-01-04T09:00:00.000000Z\t\t\n" +
-                        "82\tc\t1970-01-04T10:00:00.000000Z\t\t\n" +
-                        "84\ta\t1970-01-04T12:00:00.000000Z\t\t\n" +
-                        "85\tb\t1970-01-04T13:00:00.000000Z\t\t\n" +
-                        "86\tb\t1970-01-04T14:00:00.000000Z\t\t\n" +
-                        "87\tb\t1970-01-04T15:00:00.000000Z\t\t\n" +
-                        "88\tc\t1970-01-04T16:00:00.000000Z\t\t\n" +
-                        "89\tc\t1970-01-04T17:00:00.000000Z\t\t\n" +
-                        "90\ta\t1970-01-04T18:00:00.000000Z\t\t\n" +
-                        "92\ta\t1970-01-04T20:00:00.000000Z\t\t\n" +
-                        "93\tb\t1970-01-04T21:00:00.000000Z\t\t\n" +
-                        "94\ta\t1970-01-04T22:00:00.000000Z\t\t\n" +
-                        "96\ta\t1970-01-05T00:00:00.000000Z\t\t\n" +
-                        "7\tc\t1970-01-05T08:30:00.000000Z\t\tGNVZWJR\n", "t_col_top_ooo_day where день = null and m != null limit -20"
+        assertSql("x\tm\tts\tдень\tstr\n" +
+                "71\tc\t1970-01-03T23:00:00.000000Z\t\t\n" +
+                "72\tb\t1970-01-04T00:00:00.000000Z\t\t\n" +
+                "76\tc\t1970-01-04T04:00:00.000000Z\t\t\n" +
+                "77\tc\t1970-01-04T05:00:00.000000Z\t\t\n" +
+                "78\tb\t1970-01-04T06:00:00.000000Z\t\t\n" +
+                "79\ta\t1970-01-04T07:00:00.000000Z\t\t\n" +
+                "81\tc\t1970-01-04T09:00:00.000000Z\t\t\n" +
+                "82\tc\t1970-01-04T10:00:00.000000Z\t\t\n" +
+                "84\ta\t1970-01-04T12:00:00.000000Z\t\t\n" +
+                "85\tb\t1970-01-04T13:00:00.000000Z\t\t\n" +
+                "86\tb\t1970-01-04T14:00:00.000000Z\t\t\n" +
+                "87\tb\t1970-01-04T15:00:00.000000Z\t\t\n" +
+                "88\tc\t1970-01-04T16:00:00.000000Z\t\t\n" +
+                "89\tc\t1970-01-04T17:00:00.000000Z\t\t\n" +
+                "90\ta\t1970-01-04T18:00:00.000000Z\t\t\n" +
+                "92\ta\t1970-01-04T20:00:00.000000Z\t\t\n" +
+                "93\tb\t1970-01-04T21:00:00.000000Z\t\t\n" +
+                "94\ta\t1970-01-04T22:00:00.000000Z\t\t\n" +
+                "96\ta\t1970-01-05T00:00:00.000000Z\t\t\n" +
+                "7\tc\t1970-01-05T08:30:00.000000Z\t\tGNVZWJR\n", "t_col_top_ooo_day where день = null and m != null limit -20"
         );
 
-        assertSql(
-                "x\tm\tts\tдень\tstr\n" +
-                        "6\tc\t1970-01-01T06:30:00.000000Z\ta\tSFCI\n" +
-                        "12\ta\t1970-01-01T12:30:00.000000Z\ta\tJNOXB\n" +
-                        "14\t\t1970-01-01T14:30:00.000000Z\ta\tLJYFXSBNVN\n" +
-                        "16\tb\t1970-01-01T16:30:00.000000Z\ta\tTPUL\n" +
-                        "21\tb\t1970-01-01T21:30:00.000000Z\ta\tGQWSZMUMXM\n" +
-                        "24\t\t1970-01-02T00:30:00.000000Z\ta\tNTPYXUB\n" +
-                        "33\tb\t1970-01-02T09:30:00.000000Z\ta\tFLNGCEFBTD\n" +
-                        "34\tb\t1970-01-02T10:30:00.000000Z\ta\tTIGUTKI\n" +
-                        "1\t\t1970-01-05T02:30:00.000000Z\ta\tHQJHN\n" +
-                        "4\tc\t1970-01-05T05:30:00.000000Z\ta\tXRGUOXFH\n" +
-                        "5\t\t1970-01-05T06:30:00.000000Z\ta\tFVFFOB\n" +
-                        "9\tc\t1970-01-05T10:30:00.000000Z\ta\tLEQD\n" +
-                        "10\t\t1970-01-05T11:30:00.000000Z\ta\tKNHV\n", "t_col_top_ooo_day where день = 'a'"
+        assertSql("x\tm\tts\tдень\tstr\n" +
+                "6\tc\t1970-01-01T06:30:00.000000Z\ta\tSFCI\n" +
+                "12\ta\t1970-01-01T12:30:00.000000Z\ta\tJNOXB\n" +
+                "14\t\t1970-01-01T14:30:00.000000Z\ta\tLJYFXSBNVN\n" +
+                "16\tb\t1970-01-01T16:30:00.000000Z\ta\tTPUL\n" +
+                "21\tb\t1970-01-01T21:30:00.000000Z\ta\tGQWSZMUMXM\n" +
+                "24\t\t1970-01-02T00:30:00.000000Z\ta\tNTPYXUB\n" +
+                "33\tb\t1970-01-02T09:30:00.000000Z\ta\tFLNGCEFBTD\n" +
+                "34\tb\t1970-01-02T10:30:00.000000Z\ta\tTIGUTKI\n" +
+                "1\t\t1970-01-05T02:30:00.000000Z\ta\tHQJHN\n" +
+                "4\tc\t1970-01-05T05:30:00.000000Z\ta\tXRGUOXFH\n" +
+                "5\t\t1970-01-05T06:30:00.000000Z\ta\tFVFFOB\n" +
+                "9\tc\t1970-01-05T10:30:00.000000Z\ta\tLEQD\n" +
+                "10\t\t1970-01-05T11:30:00.000000Z\ta\tKNHV\n", "t_col_top_ooo_day where день = 'a'"
         );
     }
 
@@ -1087,8 +1070,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
 
     private void assertMetadataCache(boolean withO3, boolean withColTops, boolean withColTopO3, boolean withWalTxn, boolean ignoreMaxLag) {
 
-        assertTableMeta(
-                ignoreMaxLag,
+        assertTableMeta(ignoreMaxLag,
                 "t_none_nts", "NONE_NTS",
                 "t_none", "NONE",
                 "t_day", "DAY",
@@ -1097,8 +1079,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
         );
 
         if (withO3) {
-            assertTableMeta(
-                    ignoreMaxLag,
+            assertTableMeta(ignoreMaxLag,
                     "t_day_ooo", "DAY",
                     "t_month_ooo", "MONTH",
                     "t_year_ooo", "YEAR"
@@ -1106,22 +1087,19 @@ public class EngineMigrationTest extends AbstractCairoTest {
         }
 
         if (withColTops) {
-            assertShortTableMeta(
-                    ignoreMaxLag,
+            assertShortTableMeta(ignoreMaxLag,
                     "t_col_top_none", "NONE"
             );
         }
 
         if (withColTopO3) {
-            assertShort2TableMeta(
-                    ignoreMaxLag,
+            assertShort2TableMeta(ignoreMaxLag,
                     "t_col_top_ooo_day", "DAY"
             );
         }
 
         if (withWalTxn) {
-            assertShortWalTableMeta(
-                    ignoreMaxLag,
+            assertShortWalTableMeta(ignoreMaxLag,
                     "t_col_top_ooo_day_wal", "DAY"
             );
         }
@@ -1556,19 +1534,11 @@ public class EngineMigrationTest extends AbstractCairoTest {
                 " rnd_bin(2,10, 2) o";
     }
 
-    private void doMigration(
-            String dataZip,
-            boolean freeTableId,
-            boolean withO3,
-            boolean withColTops,
-            boolean withColTopO3,
-            boolean withWalTxn,
-            boolean ignoreMaxLag
-    ) throws Exception {
+    private void doMigration(String dataZip, boolean freeTableId, boolean withO3, boolean withColTops, boolean withColTopO3, boolean withWalTxn, boolean ignoreMaxLag) throws Exception {
+        if (freeTableId) {
+            engine.getTableIdGenerator().close();
+        }
         assertMemoryLeak(() -> {
-            if (freeTableId) {
-                engine.getTableIdGenerator().close();
-            }
             replaceDbContent(dataZip);
             EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, true);
             engine.reloadTableNames();
@@ -1760,15 +1730,13 @@ public class EngineMigrationTest extends AbstractCairoTest {
                 " from long_sequence(15)"
         );
 
-        createTableWithColumnTops(
-                "create table t_col_top_ooo_day as (" +
-                        "select " +
-                        " x" +
-                        ", rnd_symbol('a', 'b', 'c', null) m" +
-                        ", timestamp_sequence('1970-01-01T01', " + Timestamps.HOUR_MICROS + "L) ts" +
-                        " from long_sequence(96)," +
-                        "), index(m) timestamp(ts) partition by DAY", "t_col_top_ooo_day"
-        );
+        createTableWithColumnTops("create table t_col_top_ooo_day as (" +
+                "select " +
+                " x" +
+                ", rnd_symbol('a', 'b', 'c', null) m" +
+                ", timestamp_sequence('1970-01-01T01', " + Timestamps.HOUR_MICROS + "L) ts" +
+                " from long_sequence(96)," +
+                "), index(m) timestamp(ts) partition by DAY", "t_col_top_ooo_day");
 
         createTableWithColumnTops(
                 "create table t_col_top_ooo_day_wal as (" +
