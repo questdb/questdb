@@ -122,7 +122,6 @@ jobs:
           submodules: true
       - name: Increase file count and install tooling
         run: |
-          sudo sysctl -w fs.file-max=500000
           yum update -y
           yum install wget nasm -y
       - name: Install JDK17 (for jni.h)
