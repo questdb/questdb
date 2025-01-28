@@ -143,6 +143,7 @@ jobs:
           cp target/classes/io/questdb/bin-local/libjemalloc.so src/main/bin/linux-aarch64/
       - name: Check git status
         run: |
+          git config --global --add safe.directory /__w/questdb/questdb
           git status
       - name: Save linux-aarch64 Libraries to Cache
         uses: actions/cache/save@v3
