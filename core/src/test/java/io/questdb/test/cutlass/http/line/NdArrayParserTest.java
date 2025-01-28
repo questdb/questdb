@@ -24,8 +24,8 @@
 
 package io.questdb.test.cutlass.http.line;
 
-import io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode;
 import io.questdb.cutlass.line.tcp.NdArrayParser;
+import io.questdb.cutlass.line.tcp.NdArrayParser.ParseException;
 import io.questdb.std.DirectIntSlice;
 import io.questdb.std.ndarr.NdArrayValuesSlice;
 import io.questdb.std.ndarr.NdArrayView;
@@ -56,79 +56,53 @@ public class NdArrayParserTest {
     }
 
     @Test
-    public void testDoubleSingleDecimal() {
-        testDoubleLiteral("{6f1.1}", new int[]{1}, new double[]{1.1});
-    }
-
-    @Test
-    public void testDoubleSingleInt() {
+    public void testDouble1d() throws ParseException {
         testDoubleLiteral("{6f1}", new int[]{1}, new double[]{1.0});
-    }
-
-    @Test
-    public void testDoubleTwoDecimals() {
+        testDoubleLiteral("{6f1.1}", new int[]{1}, new double[]{1.1});
         testDoubleLiteral("{6f1.1,2.2}", new int[]{2}, new double[]{1.1, 2.2});
+        testDoubleLiteral("{6f1.1,2.2,3.3}", new int[]{3}, new double[]{1.1, 2.2, 3.3});
     }
 
     @Test
-    public void testFloatSingleDecimal() {
-        testFloatLiteral("{5f1.1}", new int[]{1}, new float[]{1.1f});
-    }
-
-    @Test
-    public void testFloatSingleInt() {
+    public void testFloat1d() throws ParseException {
         testFloatLiteral("{5f1}", new int[]{1}, new float[]{1f});
-    }
-
-    @Test
-    public void testFloatTwoDecimal() {
+        testFloatLiteral("{5f1.1}", new int[]{1}, new float[]{1.1f});
         testFloatLiteral("{5f1.1,2.2}", new int[]{2}, new float[]{1.1f, 2.2f});
+        testFloatLiteral("{5f1.1,2.2,3.3}", new int[]{3}, new float[]{1.1f, 2.2f, 3.3f});
     }
 
     @Test
-    public void testInt2d() {
-        testIntLiteral("{5i{1},{2}}", new int[]{2, 1}, new int[]{1, 2});
-    }
-
-    @Test
-    public void testIntSingle() {
+    public void testInt1d() throws ParseException {
         testIntLiteral("{5i1}", new int[]{1}, new int[]{1});
-    }
-
-    @Test
-    public void testIntThree() {
+        testIntLiteral("{5i1,2}", new int[]{2}, new int[]{1, 2});
         testIntLiteral("{5i1,2,3}", new int[]{3}, new int[]{1, 2, 3});
     }
 
     @Test
-    public void testIntTwo() {
-        testIntLiteral("{5i1,2}", new int[]{2}, new int[]{1, 2});
+    public void testInt2d() throws ParseException {
+        testIntLiteral("{5i{1},{2}}", new int[]{2, 1}, new int[]{1, 2});
     }
 
     @Test
-    public void testLongSingle() {
+    public void testLong1d() throws ParseException {
         testLongLiteral("{6i1}", new int[]{1}, new long[]{1});
-    }
-
-    @Test
-    public void testLongTwo() {
         testLongLiteral("{6i1,2}", new int[]{2}, new long[]{1, 2});
+        testLongLiteral("{6i1,2,3}", new int[]{3}, new long[]{1, 2, 3});
     }
 
     private void assertSliceEquals(DirectIntSlice actual, int[] expected) {
         assertArrayEquals(expected, actual.toArray());
     }
 
-    private NdArrayValuesSlice parseAndGetValues(String literal, int[] expectedShape) {
+    private NdArrayValuesSlice parseAndGetValues(String literal, int[] expectedShape) throws ParseException {
         DirectUtf8String arrayStr = utf8String(sink, literal);
-        ErrorCode errCode = parser.parse(arrayStr);
-        assertEquals(ErrorCode.NONE, errCode);
+        parser.parse(arrayStr);
         NdArrayView view = parser.getView();
         assertSliceEquals(view.getShape(), expectedShape);
         return view.getValues();
     }
 
-    private void testDoubleLiteral(String literal, int[] expectedShape, double[] expectedValues) {
+    private void testDoubleLiteral(String literal, int[] expectedShape, double[] expectedValues) throws ParseException {
         NdArrayValuesSlice values = parseAndGetValues(literal, expectedShape);
         assertEquals("values don't have the expected size",
                 Double.BYTES * expectedValues.length, values.size());
@@ -137,7 +111,7 @@ public class NdArrayParserTest {
         }
     }
 
-    private void testFloatLiteral(String literal, int[] expectedShape, float[] expectedValues) {
+    private void testFloatLiteral(String literal, int[] expectedShape, float[] expectedValues) throws ParseException {
         NdArrayValuesSlice values = parseAndGetValues(literal, expectedShape);
         assertEquals("values don't have the expected size",
                 Float.BYTES * expectedValues.length, values.size());
@@ -146,7 +120,7 @@ public class NdArrayParserTest {
         }
     }
 
-    private void testIntLiteral(String literal, int[] expectedShape, int[] expectedValues) {
+    private void testIntLiteral(String literal, int[] expectedShape, int[] expectedValues) throws ParseException {
         NdArrayValuesSlice values = parseAndGetValues(literal, expectedShape);
         assertEquals("values don't have the expected size",
                 Integer.BYTES * expectedValues.length, values.size());
@@ -155,7 +129,7 @@ public class NdArrayParserTest {
         }
     }
 
-    private void testLongLiteral(String literal, int[] expectedShape, long[] expectedValues) {
+    private void testLongLiteral(String literal, int[] expectedShape, long[] expectedValues) throws ParseException {
         NdArrayValuesSlice values = parseAndGetValues(literal, expectedShape);
         assertEquals("values don't have the expected size",
                 Long.BYTES * expectedValues.length, values.size());
