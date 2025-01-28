@@ -413,7 +413,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final BitSet writeSymbolAsString = new BitSet();
     private boolean enableJitNullChecks = true;
     private boolean fullFatJoins = false;
-    private boolean validateSampleByFillType;
+    private final boolean validateSampleByFillType;
 
     public SqlCodeGenerator(
             CairoEngine engine,
@@ -732,10 +732,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private static boolean isGeoType(int colType) {
         return colType >= ColumnType.GEOBYTE && colType <= ColumnType.GEOLONG;
-    }
-
-    private static boolean isParseableType(int colType) {
-        return colType == ColumnType.TIMESTAMP || colType == ColumnType.LONG256;
     }
 
     private static boolean isSingleColumnFunction(ExpressionNode ast, CharSequence name) {

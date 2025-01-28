@@ -196,6 +196,7 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
         auxMem.ofOffset(
                 ff,
                 fd,
+                false,
                 fileName,
                 ND_ARRAY_AUX_WIDTH_BYTES * rowLo,
                 ND_ARRAY_AUX_WIDTH_BYTES * rowHi,
@@ -216,6 +217,7 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
         dataMem.ofOffset(
                 ff,
                 dataFd,
+                false,
                 fileName,
                 lo,
                 hi,
