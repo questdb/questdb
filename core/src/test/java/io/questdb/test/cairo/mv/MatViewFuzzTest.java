@@ -287,7 +287,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             try {
                 MatViewRefreshJob refreshJob = new MatViewRefreshJob(i, engine);
                 while (!stop.get()) {
-                    refreshJob.run(0);
+                    refreshJob.run(i);
                     Os.sleep(rnd.nextInt(1000));
                 }
 
@@ -295,7 +295,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
                     do {
                         drainWalQueue(walApplyJob);
-                    } while (refreshJob.run(0));
+                    } while (refreshJob.run(i));
                 }
             } catch (Throwable throwable) {
                 LOG.error().$("Refresh job failed: ").$(throwable).$();
