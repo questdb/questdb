@@ -167,6 +167,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_O3_MIN_LAG("cairo.o3.min.lag"),
     CAIRO_SQL_BACKUP_ROOT("cairo.sql.backup.root"),
     CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS("cairo.sql.max.recompile.attempts"),
+    CAIRO_MAT_VIEW_ENABLED("cairo.mat.view.enabled"),
+    CAIRO_MAT_VIEW_MAX_RECOMPILE_ATTEMPTS("cairo.mat.view.sql.max.recompile.attempts"),
     CAIRO_ATTACH_PARTITION_SUFFIX("cairo.attach.partition.suffix"),
     CAIRO_ATTACH_PARTITION_COPY("cairo.attach.partition.copy"),
     CAIRO_COMMIT_LATENCY("cairo.commit.latency"),
@@ -529,7 +531,14 @@ public enum PropertyKey implements ConfigPropertyKey {
     HTTP_CONTEXT_SETTINGS("http.context.settings"),
     HTTP_CONTEXT_WARNINGS("http.context.warnings"),
     HTTP_CONTEXT_TABLE_STATUS("http.context.table.status"),
-    HTTP_CONTEXT_EXECUTE("http.context.execute");
+    HTTP_CONTEXT_EXECUTE("http.context.execute"),
+    MAT_VIEW_REFRESH_WORKER_COUNT("mat.view.refresh.worker.count"),
+    MAT_VIEW_REFRESH_WORKER_AFFINITY("mat.view.refresh.worker.affinity"),
+    MAT_VIEW_REFRESH_WORKER_HALT_ON_ERROR("mat.view.refresh.worker.haltOnError"),
+    MAT_VIEW_REFRESH_WORKER_NAP_THRESHOLD("mat.view.refresh.worker.nap.threshold"),
+    MAT_VIEW_REFRESH_WORKER_SLEEP_THRESHOLD("mat.view.refresh.worker.sleep.threshold"),
+    MAT_VIEW_REFRESH_WORKER_SLEEP_TIMEOUT("mat.view.refresh.worker.sleep.timeout"),
+    MAT_VIEW_REFRESH_WORKER_YIELD_THRESHOLD("mat.view.refresh.worker.yield.threshold");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;

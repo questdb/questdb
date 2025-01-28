@@ -100,6 +100,11 @@ public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
     }
 
     @Override
+    public boolean isMatViewEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean mangleTableDirNames() {
         return true;
     }

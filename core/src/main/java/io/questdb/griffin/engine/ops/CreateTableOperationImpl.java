@@ -624,5 +624,4 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private int getLowAt(int index) {
         return Numbers.decodeLowInt(columnBits.getQuick(index));
     }
-
 }

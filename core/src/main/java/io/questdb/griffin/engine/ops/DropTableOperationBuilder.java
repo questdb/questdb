@@ -5,19 +5,19 @@ import io.questdb.std.Mutable;
 import org.jetbrains.annotations.NotNull;
 
 public class DropTableOperationBuilder implements Mutable {
-    private int entityNamePosition;
     private boolean ifExists;
     private CharSequence sqlText;
     private String tableName;
+    private int tableNamePosition;
 
     public DropTableOperation build() {
-        return new DropTableOperation(Chars.toString(sqlText), tableName, entityNamePosition, ifExists);
+        return new DropTableOperation(Chars.toString(sqlText), tableName, tableNamePosition, ifExists);
     }
 
     @Override
     public void clear() {
         this.tableName = null;
-        this.entityNamePosition = -1;
+        this.tableNamePosition = -1;
         this.ifExists = false;
     }
 
@@ -27,7 +27,7 @@ public class DropTableOperationBuilder implements Mutable {
 
     public void of(@NotNull String tableName, int tableNamePosition, boolean ifExists) {
         this.tableName = tableName;
-        this.entityNamePosition = tableNamePosition;
+        this.tableNamePosition = tableNamePosition;
         this.ifExists = ifExists;
     }
 

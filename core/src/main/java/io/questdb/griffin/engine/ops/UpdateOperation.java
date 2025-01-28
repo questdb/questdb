@@ -38,7 +38,6 @@ import org.jetbrains.annotations.NotNull;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class UpdateOperation extends AbstractOperation {
-
     public static final String CMD_NAME = "UPDATE";
     public static final int SENDER_CLOSED_INCREMENT = 7;
     public static final int WRITER_CLOSED_INCREMENT = 10;
@@ -115,6 +114,11 @@ public class UpdateOperation extends AbstractOperation {
 
     public boolean isWriterClosePending() {
         return executingAsync && closeState.get() != WRITER_CLOSED_INCREMENT;
+    }
+
+    @Override
+    public boolean requiresMatViewInvalidation() {
+        return true;
     }
 
     @Override

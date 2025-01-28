@@ -37,15 +37,13 @@ import io.questdb.mp.MCSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rnd;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
-import java.io.Closeable;
-
-public class PageFrameReduceJob implements Job, Closeable {
-
+public class PageFrameReduceJob implements Job, QuietCloseable {
     private final static Log LOG = LogFactory.getLog(PageFrameReduceJob.class);
     private final MessageBus messageBus;
     private final int shardCount;

@@ -70,4 +70,6 @@ public interface Operation extends QuietCloseable {
      * @see io.questdb.cairo.OperationCodes
      */
     int getOperationCode();
+
+    OperationFuture getOperationFuture();
 }

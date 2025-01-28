@@ -417,6 +417,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getMatViewMaxRecompileAttempts() {
+        return getDelegate().getMatViewMaxRecompileAttempts();
+    }
+
+    @Override
     public int getMaxCrashFiles() {
         return getDelegate().getMaxCrashFiles();
     }
@@ -1149,6 +1154,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isIOURingEnabled() {
         return getDelegate().isIOURingEnabled();
+    }
+
+    @Override
+    public boolean isMatViewEnabled() {
+        return getDelegate().isMatViewEnabled();
     }
 
     @Override

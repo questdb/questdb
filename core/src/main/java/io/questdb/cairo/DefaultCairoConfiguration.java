@@ -444,6 +444,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getMatViewMaxRecompileAttempts() {
+        return 20;
+    }
+
+    @Override
     public int getMaxCrashFiles() {
         return 1;
     }
@@ -1168,6 +1173,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean isIOURingEnabled() {
         return true;
+    }
+
+    @Override
+    public boolean isMatViewEnabled() {
+        return false;
     }
 
     @Override

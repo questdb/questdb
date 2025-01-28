@@ -39,6 +39,7 @@ import static io.questdb.std.Numbers.hexDigits;
  * </ul>
  */
 public interface Utf16Sink extends CharSink<Utf16Sink> {
+
     @Override
     default int getEncoding() {
         return CharSinkEncoding.UTF16;
