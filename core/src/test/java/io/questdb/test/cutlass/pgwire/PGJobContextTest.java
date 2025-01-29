@@ -11959,7 +11959,6 @@ create table tab as (
                 ts.setNanos((int) ((micros % 1_000_000) * 1000));
                 statement.setTimestamp(1, ts);
                 statement.setTimestamp(2, ts);
-                statement.executeQuery();
                 rs = statement.executeQuery();
 
                 long finalMicros = micros;
