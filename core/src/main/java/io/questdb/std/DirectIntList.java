@@ -39,11 +39,11 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
     private static final Log LOG = LogFactory.getLog(DirectIntList.class);
     private final long initialCapacity;
     private final int memoryTag;
+    private final DirectIntSlice slice = new DirectIntSlice();
     private long address;
     private long capacity;
     private long limit;
     private long pos;
-    private DirectIntSlice slice = new DirectIntSlice();
 
     public DirectIntList(long capacity, int memoryTag) {
         assert capacity >= 0;
