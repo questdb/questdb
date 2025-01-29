@@ -71,7 +71,7 @@ public class NdArrayParser implements QuietCloseable {
     // of the element just being closed must match that; otherwise we're parsing a
     // jagged array, which is not allowed.
     private final NdArrayBuffers bufs = new NdArrayBuffers();
-    private final DirectUtf8String parsing = new DirectUtf8String();
+    private final DirectUtf8String input = new DirectUtf8String();
 
     private final NdArrayView view = new NdArrayView();
     /**
@@ -115,7 +115,7 @@ public class NdArrayParser implements QuietCloseable {
         }
 
         baseLo = value.lo();
-        parsing.of(value);
+        input.of(value);
 
         parseOpenBrace();
         parseDataType();
@@ -128,7 +128,7 @@ public class NdArrayParser implements QuietCloseable {
      * relative to the start of the input passed to {@link #parse(DirectUtf8String)}.
      */
     public int position() {
-        return (int) (parsing.lo() - baseLo);
+        return (int) (input.lo() - baseLo);
     }
 
     private void elementsPutByte(byte n) {
@@ -157,7 +157,7 @@ public class NdArrayParser implements QuietCloseable {
     }
 
     private void parseDataType() throws ParseException {
-        if (parsing.size() < 3) {
+        if (input.size() < 3) {
             throw ParseException.prematureEnd(position());
         }
 
@@ -190,7 +190,7 @@ public class NdArrayParser implements QuietCloseable {
         }
 
         bufs.type = arrayType;
-        parsing.advance();
+        input.advance();
     }
 
     private void parseElement(char typeClass, int bitSize, int tokenLimit) throws ParseException {
@@ -199,10 +199,10 @@ public class NdArrayParser implements QuietCloseable {
                 case 'i':
                     switch (bitSize) {
                         case 32:
-                            elementsPutInt(Numbers.parseInt(parsing, 0, tokenLimit));
+                            elementsPutInt(Numbers.parseInt(input, 0, tokenLimit));
                             break;
                         case 64:
-                            elementsPutLong(Numbers.parseLong(parsing, 0, tokenLimit));
+                            elementsPutLong(Numbers.parseLong(input, 0, tokenLimit));
                             break;
                         default:
                             throw new AssertionError("Unexpected signed element size");
@@ -210,7 +210,7 @@ public class NdArrayParser implements QuietCloseable {
                     break;
                 case 'u':
                     assert bitSize == 1 : "Unexpected unsigned element size";
-                    int n = Numbers.parseInt(parsing, 0, tokenLimit);
+                    int n = Numbers.parseInt(input, 0, tokenLimit);
                     if (n != 0 && n != 1) {
                         throw ParseException.unexpectedToken(position());
                     }
@@ -219,10 +219,10 @@ public class NdArrayParser implements QuietCloseable {
                 case 'f':
                     switch (bitSize) {
                         case 32:
-                            elementsPutFloat(Numbers.parseFloat(parsing.ptr(), tokenLimit));
+                            elementsPutFloat(Numbers.parseFloat(input.ptr(), tokenLimit));
                             break;
                         case 64:
-                            elementsPutDouble(Numbers.parseDouble(parsing.ptr(), tokenLimit));
+                            elementsPutDouble(Numbers.parseDouble(input.ptr(), tokenLimit));
                             break;
                         default:
                             throw new AssertionError("Unexpected floating-point element size");
@@ -253,11 +253,11 @@ public class NdArrayParser implements QuietCloseable {
         int shapeSize = 0;
         int level = 0;
         boolean commaWelcome = false;
-        while (parsing.size() > 0) {
+        while (input.size() > 0) {
             if (level < 0) {
                 throw ParseException.unexpectedToken(position());
             }
-            byte b = parsing.byteAt(0);
+            byte b = input.byteAt(0);
             switch (b) {
                 case '{': {
                     assert level < currCoords.size() : "Nesting level is too much";
@@ -275,7 +275,7 @@ public class NdArrayParser implements QuietCloseable {
                         assert level == currCoords.size() : "Nesting level sudden jump";
                         currCoords.add(0);
                     }
-                    parsing.advance();
+                    input.advance();
                     continue;
                 }
                 case '}': {
@@ -300,7 +300,7 @@ public class NdArrayParser implements QuietCloseable {
                         }
                     }
                     level--;
-                    parsing.advance();
+                    input.advance();
                     continue;
                 }
                 case ',': {
@@ -308,7 +308,7 @@ public class NdArrayParser implements QuietCloseable {
                         throw ParseException.unexpectedToken(position());
                     }
                     commaWelcome = false;
-                    parsing.advance();
+                    input.advance();
                     continue;
                 }
                 default: {
@@ -318,42 +318,42 @@ public class NdArrayParser implements QuietCloseable {
                     }
                     currCoords.set(level, currCoords.get(level) + 1);
                     int tokenLimit = 0;
-                    for (int n = Math.min(parsing.size(), LEAF_LENGTH_LIMIT), i = 1; i < n; i++) {
-                        b = parsing.byteAt(i);
+                    for (int n = Math.min(input.size(), LEAF_LENGTH_LIMIT), i = 1; i < n; i++) {
+                        b = input.byteAt(i);
                         if (b == ',' || b == '}') {
                             tokenLimit = i;
                             break;
                         }
                     }
                     if (tokenLimit == 0) {
-                        throw (parsing.size() < LEAF_LENGTH_LIMIT)
+                        throw (input.size() < LEAF_LENGTH_LIMIT)
                                 ? ParseException.prematureEnd(position())
                                 : ParseException.unexpectedToken(position());
                     }
                     parseElement(elementType, elementBitSize, tokenLimit);
                     commaWelcome = true;
-                    parsing.advance(tokenLimit);
+                    input.advance(tokenLimit);
                 }
             }
         }
     }
 
     private void parseOpenBrace() throws ParseException {
-        if (parsing.size() == 0) {
+        if (input.size() == 0) {
             throw ParseException.prematureEnd(position());
         }
-        final byte b = parsing.byteAt(0);
+        final byte b = input.byteAt(0);
         if (b != (byte) '{') {
             throw ParseException.unexpectedToken(position());
         }
-        parsing.advance();
+        input.advance();
     }
 
     /**
      * Parse number class: i -> signed, u -> unsigned, f -> floating point
      */
     private char parseTypeClass() throws ParseException {
-        final char ch = (char) parsing.byteAt(0);
+        final char ch = (char) input.byteAt(0);
         switch (ch) {
             case 'i':
             case 'u':
@@ -368,11 +368,11 @@ public class NdArrayParser implements QuietCloseable {
      * Power of 2, number of bits: e.g. 0 -> bool, 1 -> int2, ..., 5 -> int32, 6 -> int64
      */
     private byte parseTypePrecision() throws ParseException {
-        final char ch = (char) parsing.byteAt(0);
+        final char ch = (char) input.byteAt(0);
         if (ch < '0' || ch > '6') {
             throw ParseException.invalidType(position());
         }
-        parsing.advance();
+        input.advance();
         return (byte) (ch - '0');  // parse the single digit
     }
 
