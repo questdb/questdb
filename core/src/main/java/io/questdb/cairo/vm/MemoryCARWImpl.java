@@ -198,10 +198,12 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
 
     private long getNewPageCount(long requiredSize, long oldSize) {
         final long minPageCount = requiredSize > 0 ? ((requiredSize - 1) >>> sizeMsb) + 1 : 1;
-        if (oldSize > 0 && requiredSize > 0 && minPageCount * 2 < maxPages) {
-            // double the page count on each resize to avoid frequent resizes, unless this is
-            // a request to downsize the memory or aggressive resize will throw us over the limit
-            return minPageCount * 2;
+        final long oldPageCount = oldSize > 0 ? ((oldSize - 1) >>> sizeMsb) + 1 : 1;
+
+        // double the page count on each resize to avoid frequent resizes, unless this is
+        // a request to downsize the memory or aggressive resize will throw us over the limit
+        if (minPageCount > oldPageCount) {
+            return Math.max(Math.min(oldPageCount * 2, maxPages / 2), minPageCount);
         }
         return minPageCount;
     }

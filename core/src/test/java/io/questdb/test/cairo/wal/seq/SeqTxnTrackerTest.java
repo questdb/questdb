@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.wal.seq;
 
+import io.questdb.cairo.wal.seq.TableWriterPressureControlImpl;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -169,32 +170,32 @@ public class SeqTxnTrackerTest {
     public void testMemoryPressureLevels() {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         final String tableName = "table1";
-        final SeqTxnTracker tracker = new SeqTxnTracker();
-        assertEquals("initial memory pressure level", 0, tracker.getMemoryPressureLevel());
-        tracker.updateInflightPartitions(2);
-        tracker.onOutOfMemory(0, tableName, rnd);
-        assertEquals("memory pressure level after one OOM", 1, tracker.getMemoryPressureLevel());
-        tracker.onOutOfMemory(0, tableName, rnd);
-        assertEquals("memory pressure level after two OOMs", 2, tracker.getMemoryPressureLevel());
+        final var pressureControl = new TableWriterPressureControlImpl();
+        assertEquals("initial memory pressure level", 0, pressureControl.getMemoryPressureLevel());
+        pressureControl.updateInflightPartitions(2);
+        pressureControl.onOutOfMemory();
+        assertEquals("memory pressure level after one OOM", 1, pressureControl.getMemoryPressureLevel());
+        pressureControl.onOutOfMemory();
+        assertEquals("memory pressure level after two OOMs", 2, pressureControl.getMemoryPressureLevel());
     }
 
     @Test
     public void testMemoryPressureRegulationEasesOffOnSuccess() {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         final String tableName = "table1";
-        final SeqTxnTracker tracker = new SeqTxnTracker();
+        final var pressureControl = new TableWriterPressureControlImpl();
         int expectedParallelism = 16;
-        tracker.updateInflightPartitions(expectedParallelism);
-        tracker.onOutOfMemory(0, tableName, rnd);
+        pressureControl.updateInflightPartitions(expectedParallelism);
+        pressureControl.onOutOfMemory();
         expectedParallelism /= 2;
-        assertEquals(expectedParallelism, tracker.getMaxO3MergeParallelism());
+        assertEquals(expectedParallelism, pressureControl.getMemoryPressureRegulationValue());
         expectedParallelism *= 2;
         int maxSuccessToEaseOff = 100;
         retryBlock:
         {
             for (int i = 0; i < maxSuccessToEaseOff; i++) {
-                tracker.hadEnoughMemory(tableName, rnd);
-                if (tracker.getMaxO3MergeParallelism() == expectedParallelism) {
+                pressureControl.onEnoughMemory();
+                if (pressureControl.getMemoryPressureRegulationValue() == expectedParallelism) {
                     break retryBlock;
                 }
             }
@@ -206,44 +207,43 @@ public class SeqTxnTrackerTest {
     public void testMemoryPressureRegulationGivesUpEventually() {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         final String tableName = "table1";
-        final SeqTxnTracker tracker = new SeqTxnTracker();
+        final var pressureControl = new TableWriterPressureControlImpl();
         int maxFailuresToGiveUp = 10;
-        retryBlock:
-        {
-            for (int i = 0; i < maxFailuresToGiveUp; i++) {
-                if (!tracker.onOutOfMemory(0, tableName, rnd)) {
-                    break retryBlock;
-                }
+
+        for (int i = 0; i < maxFailuresToGiveUp; i++) {
+            pressureControl.onOutOfMemory();
+            if (!pressureControl.isReadyToProcess()) {
+                return;
             }
-            fail("Did not signal to give up even after " + maxFailuresToGiveUp + " failures");
         }
+        fail("Did not signal to give up even after " + maxFailuresToGiveUp + " failures");
     }
 
     @Test
     public void testMemoryPressureRegulationIntroducesBackoff() {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         final String tableName = "table1";
-        final SeqTxnTracker tracker = new SeqTxnTracker();
+        final var pressureControl = new TableWriterPressureControlImpl();
 
-        tracker.onOutOfMemory(0, tableName, rnd);
-        assertTrue(tracker.shouldBackOffDueToMemoryPressure(0));
+        pressureControl.onOutOfMemory();
+        assertFalse(pressureControl.isReadyToProcess());
     }
 
     @Test
     public void testMemoryPressureRegulationReducesParallelism() {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         final String tableName = "table1";
-        final SeqTxnTracker tracker = new SeqTxnTracker();
+        final var tracker = new TableWriterPressureControlImpl();
         int expectedParallelism = 16;
         tracker.updateInflightPartitions(expectedParallelism);
         while (true) {
-            tracker.onOutOfMemory(0, tableName, rnd);
+            tracker.onOutOfMemory();
             expectedParallelism /= 2;
             if (expectedParallelism < 1) {
                 break;
             }
             tracker.updateInflightPartitions(expectedParallelism);
-            assertEquals(expectedParallelism, tracker.getMaxO3MergeParallelism());
+            assertEquals(expectedParallelism, tracker.getMemoryPressureRegulationValue());
         }
     }
 }

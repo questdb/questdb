@@ -52,7 +52,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
@@ -257,7 +256,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             OperationExecutor operationExecutor,
             Path tempPath,
             RunStatus runStatus,
-            O3JobParallelismRegulator regulator
+            TableWriterPressureControl pressureControl
     ) {
         final TableSequencerAPI tableSequencerAPI = engine.getTableSequencerAPI();
         boolean isTerminating;
@@ -380,7 +379,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                         operationExecutor,
                                         seqTxn,
                                         commitTimestamp,
-                                        regulator
+                                        pressureControl
                                 );
                                 assert txnCommitted != 0;
 
@@ -460,11 +459,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         if (throwable instanceof CairoException) {
             CairoException cairoException = (CairoException) throwable;
             if (cairoException.isOutOfMemory()) {
-                if (txnTracker != null && txnTracker.onOutOfMemory(
-                        MicrosecondClockImpl.INSTANCE.getTicks(), tableToken.getTableName(), rnd)
-                ) {
-                    engine.notifyWalTxnRepublisher(tableToken);
-                    return;
+                if (txnTracker != null) {
+                    txnTracker.getMemPressureControl().onOutOfMemory();
+                    if (txnTracker.getMemPressureControl().isReadyToProcess()) {
+                        engine.notifyWalTxnRepublisher(tableToken);
+                        return;
+                    } else {
+                        LOG.info().$("high memory pressure, table is backed off from processing WAL transactions [table=").$(tableToken).I$();
+                    }
                 }
                 errorTag = OUT_OF_MEMORY;
             } else {
@@ -498,7 +500,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             OperationExecutor operationExecutor,
             long seqTxn,
             long commitTimestamp,
-            O3JobParallelismRegulator regulator
+            TableWriterPressureControl pressureControl
     ) {
         WalTxnDetails txnDetails = writer.getWalTnxDetails();
         final byte walTxnType = txnDetails.getWalTxnType(seqTxn);
@@ -511,7 +513,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     writer.commitWalInsertTransactions(
                             walPath,
                             seqTxn,
-                            regulator
+                            pressureControl
                     );
                     final long latency = microClock.getTicks() - start;
                     long totalPhysicalRowCount = writer.getPhysicallyWrittenRowsSinceLastCommit();
@@ -656,16 +658,20 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             } else {
                 long writerTxn, dirtyWriterTxn;
                 txnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+                TableWriterPressureControl pressureControl = txnTracker.getMemPressureControl();
                 TableWriter writer = null;
                 try {
                     writer = engine.getWriterUnsafe(updatedToken, WAL_2_TABLE_WRITE_REASON);
                     assert writer.getMetadata().getTableId() == tableToken.getTableId();
-                    if (txnTracker.shouldBackOffDueToMemoryPressure(MicrosecondClockImpl.INSTANCE.getTicks())) {
+                    if (!pressureControl.isReadyToProcess()) {
                         // rely on CheckWalTransactionsJob to notify us when to apply transactions
                         return;
                     }
-                    applyOutstandingWalTransactions(tableToken, writer, engine, operationExecutor, tempPath, runStatus, txnTracker);
-                    txnTracker.hadEnoughMemory(tableToken.getTableName(), rnd);
+                    applyOutstandingWalTransactions(tableToken, writer, engine, operationExecutor, tempPath, runStatus, pressureControl);
+                    if (pressureControl.onEnoughMemory()) {
+                        LOG.info().$("table writing memory pressure is easing up [table").$(tableToken)
+                                .$(", parallelMemoryLimit=").$(pressureControl.getMemoryPressureRegulationValue()).I$();
+                    }
                     writerTxn = writer.getSeqTxn();
                     dirtyWriterTxn = writer.getAppliedSeqTxn();
                 } catch (EntryUnavailableException tableBusy) {

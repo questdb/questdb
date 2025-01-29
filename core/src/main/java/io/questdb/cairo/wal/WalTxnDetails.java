@@ -182,9 +182,9 @@ public class WalTxnDetails implements QuietCloseable {
         return outMem.getAppendOffset() > (txnCount << 3);
     }
 
-    public int calculateInsertTransactionBlock(long seqTxn, long maxBlockRecordCount) {
+    public int calculateInsertTransactionBlock(long seqTxn, TableWriterPressureControl pressureControl, long maxBlockRecordCount) {
         int blockSize = 1;
-        long lastSeqTxn = getLastSeqTxn();
+        long lastSeqTxn = Math.min(getLastSeqTxn(), seqTxn + pressureControl.getMaxTransactionCount() - 1);
         long totalRowCount = 0;
         for (long nextTxn = seqTxn; nextTxn < lastSeqTxn; nextTxn++) {
             if (getCommitToTimestamp(nextTxn) == FORCE_FULL_COMMIT || totalRowCount > maxBlockRecordCount) {

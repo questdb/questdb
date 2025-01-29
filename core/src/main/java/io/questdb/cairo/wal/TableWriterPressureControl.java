@@ -24,23 +24,61 @@
 
 package io.questdb.cairo.wal;
 
-public interface O3JobParallelismRegulator {
-    O3JobParallelismRegulator EMPTY = new EmptyO3JobParallelismRegulator();
+public interface TableWriterPressureControl {
+    TableWriterPressureControl EMPTY = new NoPressureControl();
 
-    int getMaxO3MergeParallelism();
+    int getMaxTransactionCount();
 
     void updateInflightPartitions(int count);
 
-    class EmptyO3JobParallelismRegulator implements O3JobParallelismRegulator {
+    int getMemoryPressureLevel();
 
+    int getMemoryPressureRegulationValue();
+
+    boolean isReadyToProcess();
+
+    boolean onEnoughMemory();
+
+    void onOutOfMemory();
+
+    void updateInflightTransactions(int count);
+
+    class NoPressureControl implements TableWriterPressureControl {
         @Override
-        public int getMaxO3MergeParallelism() {
+        public int getMaxTransactionCount() {
             return Integer.MAX_VALUE;
         }
 
         @Override
+        public int getMemoryPressureLevel() {
+            return 0;
+        }
+
+        @Override
+        public int getMemoryPressureRegulationValue() {
+            return Integer.MAX_VALUE;
+        }
+
+        @Override
+        public boolean isReadyToProcess() {
+            return true;
+        }
+
+        @Override
+        public boolean onEnoughMemory() {
+            return true;
+        }
+
+        @Override
+        public void onOutOfMemory() {
+        }
+
+        @Override
         public void updateInflightPartitions(int count) {
-            // do nothing
+        }
+
+        @Override
+        public void updateInflightTransactions(int count) {
         }
     }
 }
