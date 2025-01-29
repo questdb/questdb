@@ -98,6 +98,7 @@ $ echo "{6s{100,-10,1},{200,-20,2}}" | ./core/src/main/java/io/questdb/cutlass/l
 """
 
 import sys
+
 sys.dont_write_bytecode = True  # must be second line!
 
 from parsimonious.grammar import Grammar
@@ -110,7 +111,6 @@ array_def   = "{" elements "}"
 outer_def   = "{" type elements "}"
 flat_arr    = "{" number ("," number)* "}"
 null        = "{}"
-ws          = ~r"\s*"
 number      = long / double
 double      = sign? digits "." digits exponent?
 long        = sign? digits
@@ -118,9 +118,10 @@ exponent    = ("e" / "E") sign? digits
 sign        = "+" / "-"
 digits      = ~r"\d+"
 precision   = "0" / "1" / "2" / "3" / "4" / "5" / "6"
-class       = "u" / "s" / "f"
+class       = "u" / "i" / "f"
 type        = precision class
 """
+
 
 def parse(nd_arr_str):
     grammar = Grammar(GRAMMAR)
