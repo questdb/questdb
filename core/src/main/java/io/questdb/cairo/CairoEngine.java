@@ -1382,7 +1382,7 @@ public class CairoEngine implements Closeable, WriterSource {
                                     .I$();
                         } else {
                             matViewGraph.createView(baseTableToken, matViewDefinition);
-                            matViewGraph.refresh(tableToken);
+                            matViewGraph.refresh(tableToken, MatViewRefreshTask.INCREMENTAL_REFRESH);
                         }
                     } catch (CairoException e) {
                         LOG.error().$("could not load materialized view definition [view=").utf8(tableToken.getTableName())

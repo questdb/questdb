@@ -178,12 +178,13 @@ public class MatViewGraph implements QuietCloseable {
         }
     }
 
-    public void refresh(TableToken viewTableToken) {
+    public void refresh(TableToken viewTableToken, int operation) {
         final MatViewRefreshState state = refreshStateByTableDirName.get(viewTableToken.getDirName());
         if (state != null && !state.isDropped()) {
             final MatViewRefreshTask task = taskHolder.get();
             task.baseTableToken = state.getViewDefinition().getMatViewToken();
             task.viewToken = viewTableToken;
+            task.operation = operation;
             refreshTaskQueue.enqueue(task);
         }
     }

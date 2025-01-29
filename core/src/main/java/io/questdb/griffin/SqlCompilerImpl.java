@@ -59,6 +59,7 @@ import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.VacuumColumnVersions;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
+import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
@@ -1991,7 +1992,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         final MatViewGraph matViewGraph = engine.getMatViewGraph();
-        matViewGraph.refresh(tableToken);
+        // TODO: only INCREMENTAL refresh for now
+        matViewGraph.refresh(tableToken, MatViewRefreshTask.INCREMENTAL_REFRESH);
         compiledQuery.ofRefreshMatView();
     }
 
