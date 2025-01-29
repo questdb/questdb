@@ -124,6 +124,14 @@ public class NdArrayParserTest {
     }
 
     @Test
+    public void testInvalidJagged() {
+        testInvalidLiteral("{5i{1},{1,2}}", ErrorCode.ND_ARR_IRREGULAR_SHAPE);
+        testInvalidLiteral("{5i{1,2},{1}}", ErrorCode.ND_ARR_IRREGULAR_SHAPE);
+        testInvalidLiteral("{5i{{1,2},{1}}}", ErrorCode.ND_ARR_IRREGULAR_SHAPE);
+        testInvalidLiteral("{5i{{1},{2}},{{3},{4},{5}}}", ErrorCode.ND_ARR_IRREGULAR_SHAPE);
+    }
+
+    @Test
     public void testLong1d() throws ParseException {
         testLongLiteral("{6i1}", new int[]{1}, new long[]{1});
         testLongLiteral("{6i1,2}", new int[]{2}, new long[]{1, 2});
