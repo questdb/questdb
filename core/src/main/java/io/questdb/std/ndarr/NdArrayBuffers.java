@@ -49,6 +49,7 @@ public class NdArrayBuffers implements QuietCloseable {
 
     @Override
     public void close() {
+        Misc.free(currCoords);
         Misc.free(shape);
         Misc.free(strides);
         Misc.free(values);
@@ -56,6 +57,7 @@ public class NdArrayBuffers implements QuietCloseable {
 
     public void reset() {
         type = ColumnType.UNDEFINED;
+        currCoords.clear();
         shape.clear();
         strides.clear();
         values.clear();

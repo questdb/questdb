@@ -80,7 +80,17 @@ public class NdArrayParserTest {
 
     @Test
     public void testInt2d() throws ParseException {
+        testIntLiteral("{5i{1}}", new int[]{1, 1}, new int[]{1});
         testIntLiteral("{5i{1},{2}}", new int[]{2, 1}, new int[]{1, 2});
+        testIntLiteral("{5i{1,2},{3,4}}", new int[]{2, 2}, new int[]{1, 2, 3, 4});
+    }
+
+    @Test
+    public void testInt3d() throws ParseException {
+        testIntLiteral("{5i{{1}}}", new int[]{1, 1, 1}, new int[]{1});
+        testIntLiteral("{5i{{1},{2}}}", new int[]{1, 2, 1}, new int[]{1, 2});
+        testIntLiteral("{5i{{1,2},{3,4}}}", new int[]{1, 2, 2}, new int[]{1, 2, 3, 4});
+        testIntLiteral("{5i{{1,2},{3,4}},{{5,6},{7,8}}}", new int[]{2, 2, 2}, new int[]{1, 2, 3, 4, 5, 6, 7, 8});
     }
 
     @Test
@@ -139,6 +149,7 @@ public class NdArrayParserTest {
     }
 
     private DirectUtf8String utf8String(DirectUtf8Sink sink, String literal) {
+        sink.clear();
         sink.putAscii(literal);
         return new DirectUtf8String().of(sink.ptr(), sink.ptr() + sink.size(), true);
     }

@@ -33,7 +33,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.ndarr.NdArrayBuffer;
+import io.questdb.std.ndarr.NdArrayBuffers;
 import io.questdb.std.ndarr.NdArrayMeta;
 import io.questdb.std.ndarr.NdArrayView;
 import io.questdb.std.str.DirectUtf8String;
@@ -58,22 +58,17 @@ import org.jetbrains.annotations.NotNull;
  */
 public class NdArrayParser implements QuietCloseable {
 
-    /**
-     * Mutable array buffers.
-     * <p>The <code>bufs.shape</code> list is treated special: It is a stack-like state that can go negative.</p>
-     * <ul>
-     *     <li>Each dimension is stored as a level.</li>
-     *     <li>Each dimension can be either known, or unknown.</li>
-     * </ul>
-     * <p>Initially during parsing we don't know how many elements we will have:</p>
-     * <ul>
-     *     <li>As we start parsing, we start *DECREMENTING* the latest value each time we find a new value.</li>
-     *     <li>At some point during parsing, once a `}` closing brace is encountered, the dimension is locked and its sign
-     *     is flipped to positive.</li>
-     * </ul>
-     * <p>In short, negative (uncertain) dimensions are counted down, positive (determined) dimensions validate future data.</p>
-     */
-    private final NdArrayBuffer arrayBuf = new NdArrayBuffer();
+    private static final int LEAF_LENGTH_LIMIT = 100;
+
+    // bufs.shape is populated gradually during the parsing process. When we reach the
+    // first occurrence of `}`, we know the size of the leaf dimension (rightmost in
+    // the shape, deepest-nested). At that point we initialize shape to the number of
+    // elements we encountered at the leaf dimension, and -1 ("not yet determined") for
+    // all the upper dims. Later on, when we encounter further `}`, we check whether
+    // the size of the current dimension has already been determined. If so, the size
+    // of the element just being closed must match that; otherwise we're parsing a
+    // jagged array, which is not allowed.
+    private final NdArrayBuffers bufs = new NdArrayBuffers();
     private final DirectUtf8String parsing = new DirectUtf8String();
 
     private final NdArrayView view = new NdArrayView();
@@ -92,7 +87,7 @@ public class NdArrayParser implements QuietCloseable {
 
     @Override
     public void close() {
-        Misc.free(arrayBuf);
+        Misc.free(bufs);
     }
 
     /**
@@ -135,27 +130,27 @@ public class NdArrayParser implements QuietCloseable {
     }
 
     private void elementsPutByte(byte n) {
-        arrayBuf.values.putByte(n);
+        bufs.values.putByte(n);
         ++numValues;
     }
 
     private void elementsPutDouble(double n) {
-        arrayBuf.values.putDouble(n);
+        bufs.values.putDouble(n);
         ++numValues;
     }
 
     private void elementsPutFloat(float n) {
-        arrayBuf.values.putFloat(n);
+        bufs.values.putFloat(n);
         ++numValues;
     }
 
     private void elementsPutInt(int n) {
-        arrayBuf.values.putInt(n);
+        bufs.values.putInt(n);
         ++numValues;
     }
 
     private void elementsPutLong(long n) {
-        arrayBuf.values.putLong(n);
+        bufs.values.putLong(n);
         ++numValues;
     }
 
@@ -192,7 +187,7 @@ public class NdArrayParser implements QuietCloseable {
             throw ParseException.invalidType();
         }
 
-        arrayBuf.type = arrayType;
+        bufs.type = arrayType;
         parsing.advance();
     }
 
@@ -247,28 +242,39 @@ public class NdArrayParser implements QuietCloseable {
      * <p>Note that by the time we call this function, the opening left brace and type have already been parsed.</p>
      */
     private void parseElements() throws ParseException {
-        final char elementType = ColumnType.getNdArrayElementTypeClass(arrayBuf.type);
-        final int elementBitSize = 1 << ColumnType.getNdArrayElementTypePrecision(arrayBuf.type);
-        final DirectIntList shape = arrayBuf.shape;
+        final char elementType = ColumnType.getNdArrayElementTypeClass(bufs.type);
+        final int elementBitSize = 1 << ColumnType.getNdArrayElementTypePrecision(bufs.type);
+        final DirectIntList shape = bufs.shape;
+        final DirectIntList currCoords = bufs.currCoords;
+        currCoords.add(0);
 
         int shapeSize = 0;
         int level = 0;
-        int countAtCurrLevel = 0;
         while (parsing.size() > 0) {
-            if (level == -1) {
+            if (level < 0) {
                 throw ParseException.unexpectedToken();
             }
             byte b = parsing.byteAt(0);
             switch (b) {
-                case '{':
+                case '{': {
+                    assert level < currCoords.size() : "Level is too much";
+                    currCoords.set(level, currCoords.get(level) + 1);
                     level++;
-                    if (shapeSize > 0 && level + 1 > shapeSize) {
+                    if (shapeSize > 0 && level >= shapeSize) {
                         throw ParseException.irregularShape();
                     }
-                    countAtCurrLevel = 0;
+                    if (level < currCoords.size()) {
+                        currCoords.set(level, 0);
+                    } else {
+                        assert level == currCoords.size() : "Nesting level sudden jump";
+                        currCoords.add(0);
+                    }
                     parsing.advance();
                     continue;
-                case '}':
+                }
+                case '}': {
+                    assert shapeSize == 0 || level < shapeSize : "Nesting level beyond shape size";
+                    int countAtCurrLevel = currCoords.get(level);
                     if (shapeSize == 0) {
                         shapeSize = level + 1;
                         shape.setCapacity(shapeSize);
@@ -277,24 +283,25 @@ public class NdArrayParser implements QuietCloseable {
                         shape.setPos(level);
                         shape.add(countAtCurrLevel);
                     } else {
-                        int determinedLevelSize = shape.get(level);
-                        if (determinedLevelSize == IntList.NO_ENTRY_VALUE) {
+                        int dimSize = shape.get(level);
+                        if (dimSize == IntList.NO_ENTRY_VALUE) {
                             shape.set(level, countAtCurrLevel);
-                        } else if (countAtCurrLevel != determinedLevelSize) {
+                        } else if (countAtCurrLevel != dimSize) {
                             throw ParseException.irregularShape();
                         }
                     }
                     level--;
-                    countAtCurrLevel = 0;
                     parsing.advance();
                     continue;
+                }
                 case ',':
                     parsing.advance();
                     continue;
                 default:
-                    countAtCurrLevel++;
+                    assert level < currCoords.size() : "Level shot up while parsing leaves";
+                    currCoords.set(level, currCoords.get(level) + 1);
                     int tokenLimit = 0;
-                    for (int n = parsing.size(), i = 1; i < n; i++) {
+                    for (int n = Math.min(parsing.size(), LEAF_LENGTH_LIMIT), i = 1; i < n; i++) {
                         b = parsing.byteAt(i);
                         if (b == ',' || b == '}') {
                             tokenLimit = i;
@@ -302,7 +309,9 @@ public class NdArrayParser implements QuietCloseable {
                         }
                     }
                     if (tokenLimit == 0) {
-                        throw ParseException.prematureEnd();
+                        throw (parsing.size() < LEAF_LENGTH_LIMIT)
+                                ? ParseException.prematureEnd()
+                                : ParseException.unexpectedToken();
                     }
                     parseElement(elementType, elementBitSize, tokenLimit);
                     parsing.advance(tokenLimit);
@@ -350,14 +359,14 @@ public class NdArrayParser implements QuietCloseable {
 
     private void reset() {
         view.reset();
-        arrayBuf.reset();
+        bufs.reset();
         numValues = 0;
         baseLo = 0;
     }
 
     private void setArray() throws ParseException {
-        NdArrayMeta.setDefaultStrides(arrayBuf.shape.asSlice(), arrayBuf.strides);
-        arrayBuf.updateView(view);
+        NdArrayMeta.setDefaultStrides(bufs.shape.asSlice(), bufs.strides);
+        bufs.updateView(view);
     }
 
     public static class ParseException extends Exception {
