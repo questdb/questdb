@@ -835,7 +835,7 @@ public class LineTcpParser implements QuietCloseable {
                         errorCode = ErrorCode.NONE;
                         return true;
                     } catch (ParseException e) {
-                        errorCode = e.errorCode;
+                        errorCode = e.errorCode();
                         return false;
                     }
                 }

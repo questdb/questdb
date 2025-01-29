@@ -40,6 +40,8 @@ import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 
+import static io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode.*;
+
 /**
  * Parse N-dimensional arrays for ILP input.
  * <p>Here are a few examples:</p>
@@ -156,7 +158,7 @@ public class NdArrayParser implements QuietCloseable {
 
     private void parseDataType() throws ParseException {
         if (parsing.size() < 3) {
-            throw ParseException.prematureEnd();
+            throw ParseException.prematureEnd(position());
         }
 
         final byte typePrecision = parseTypePrecision();
@@ -170,12 +172,12 @@ public class NdArrayParser implements QuietCloseable {
                     case 64:
                         break;
                     default:
-                        throw ParseException.invalidType();
+                        throw ParseException.invalidType(position());
                 }
                 break;
             case 'u':
                 if (elementSize != 1) {
-                    throw ParseException.invalidType();
+                    throw ParseException.invalidType(position());
                 }
                 break;
             default:
@@ -184,7 +186,7 @@ public class NdArrayParser implements QuietCloseable {
 
         final int arrayType = ColumnType.buildNdArrayType(typeClass, typePrecision);
         if (arrayType == -1) {
-            throw ParseException.invalidType();
+            throw ParseException.invalidType(position());
         }
 
         bufs.type = arrayType;
@@ -210,7 +212,7 @@ public class NdArrayParser implements QuietCloseable {
                     assert bitSize == 1 : "Unexpected unsigned element size";
                     int n = Numbers.parseInt(parsing, 0, tokenLimit);
                     if (n != 0 && n != 1) {
-                        throw ParseException.unexpectedToken();
+                        throw ParseException.unexpectedToken(position());
                     }
                     elementsPutByte((byte) n);
                     break;
@@ -228,7 +230,7 @@ public class NdArrayParser implements QuietCloseable {
                     break;
             }
         } catch (NumericException e) {
-            throw ParseException.unexpectedToken();
+            throw ParseException.unexpectedToken(position());
         }
     }
 
@@ -253,19 +255,19 @@ public class NdArrayParser implements QuietCloseable {
         boolean commaWelcome = false;
         while (parsing.size() > 0) {
             if (level < 0) {
-                throw ParseException.unexpectedToken();
+                throw ParseException.unexpectedToken(position());
             }
             byte b = parsing.byteAt(0);
             switch (b) {
                 case '{': {
                     assert level < currCoords.size() : "Nesting level is too much";
                     if (commaWelcome) {
-                        throw ParseException.unexpectedToken();
+                        throw ParseException.unexpectedToken(position());
                     }
                     currCoords.set(level, currCoords.get(level) + 1);
                     level++;
                     if (shapeSize > 0 && level >= shapeSize) {
-                        throw ParseException.irregularShape();
+                        throw ParseException.irregularShape(position());
                     }
                     if (level < currCoords.size()) {
                         currCoords.set(level, 0);
@@ -280,7 +282,7 @@ public class NdArrayParser implements QuietCloseable {
                     assert shapeSize == 0 || level < shapeSize : "Nesting level beyond shape size";
                     int countAtCurrLevel = currCoords.get(level);
                     if (!commaWelcome) {
-                        throw ParseException.unexpectedToken();
+                        throw ParseException.unexpectedToken(position());
                     }
                     if (shapeSize == 0) {
                         shapeSize = level + 1;
@@ -294,7 +296,7 @@ public class NdArrayParser implements QuietCloseable {
                         if (dimSize == IntList.NO_ENTRY_VALUE) {
                             shape.set(level, countAtCurrLevel);
                         } else if (countAtCurrLevel != dimSize) {
-                            throw ParseException.irregularShape();
+                            throw ParseException.irregularShape(position());
                         }
                     }
                     level--;
@@ -303,7 +305,7 @@ public class NdArrayParser implements QuietCloseable {
                 }
                 case ',': {
                     if (!commaWelcome) {
-                        throw ParseException.unexpectedToken();
+                        throw ParseException.unexpectedToken(position());
                     }
                     commaWelcome = false;
                     parsing.advance();
@@ -312,7 +314,7 @@ public class NdArrayParser implements QuietCloseable {
                 default: {
                     assert level < currCoords.size() : "Level shot up while parsing leaves";
                     if (commaWelcome) {
-                        throw ParseException.unexpectedToken();
+                        throw ParseException.unexpectedToken(position());
                     }
                     currCoords.set(level, currCoords.get(level) + 1);
                     int tokenLimit = 0;
@@ -325,8 +327,8 @@ public class NdArrayParser implements QuietCloseable {
                     }
                     if (tokenLimit == 0) {
                         throw (parsing.size() < LEAF_LENGTH_LIMIT)
-                                ? ParseException.prematureEnd()
-                                : ParseException.unexpectedToken();
+                                ? ParseException.prematureEnd(position())
+                                : ParseException.unexpectedToken(position());
                     }
                     parseElement(elementType, elementBitSize, tokenLimit);
                     commaWelcome = true;
@@ -338,11 +340,11 @@ public class NdArrayParser implements QuietCloseable {
 
     private void parseOpenBrace() throws ParseException {
         if (parsing.size() == 0) {
-            throw ParseException.prematureEnd();
+            throw ParseException.prematureEnd(position());
         }
         final byte b = parsing.byteAt(0);
         if (b != (byte) '{') {
-            throw ParseException.unexpectedToken();
+            throw ParseException.unexpectedToken(position());
         }
         parsing.advance();
     }
@@ -358,7 +360,7 @@ public class NdArrayParser implements QuietCloseable {
             case 'f':
                 return ch;
             default:
-                throw ParseException.invalidType();
+                throw ParseException.invalidType(position());
         }
     }
 
@@ -368,7 +370,7 @@ public class NdArrayParser implements QuietCloseable {
     private byte parseTypePrecision() throws ParseException {
         final char ch = (char) parsing.byteAt(0);
         if (ch < '0' || ch > '6') {
-            throw ParseException.invalidType();
+            throw ParseException.invalidType(position());
         }
         parsing.advance();
         return (byte) (ch - '0');  // parse the single digit
@@ -388,38 +390,39 @@ public class NdArrayParser implements QuietCloseable {
 
     public static class ParseException extends Exception {
         private static final ThreadLocal<ParseException> tlException = new ThreadLocal<>(ParseException::new);
-        ErrorCode errorCode;
+        private ErrorCode errorCode;
+        private int position;
 
-        public static @NotNull ParseException invalidShape() {
-            return instance().errorCode(ErrorCode.ND_ARR_INVALID_SHAPE);
+        public static @NotNull ParseException invalidShape(int position) {
+            return instance().errorCode(ND_ARR_INVALID_SHAPE).position(position);
         }
 
-        public static @NotNull ParseException invalidType() {
-            return instance().errorCode(ErrorCode.ND_ARR_INVALID_TYPE);
+        public static @NotNull ParseException invalidType(int position) {
+            return instance().errorCode(ND_ARR_INVALID_TYPE).position(position);
         }
 
-        public static @NotNull ParseException invalidValuesSize() {
-            return instance().errorCode(ErrorCode.ND_ARR_INVALID_VALUES_SIZE);
+        public static @NotNull ParseException invalidValuesSize(int position) {
+            return instance().errorCode(ND_ARR_INVALID_VALUES_SIZE).position(position);
         }
 
-        public static @NotNull ParseException irregularShape() {
-            return instance().errorCode(ErrorCode.ND_ARR_IRREGULAR_SHAPE);
+        public static @NotNull ParseException irregularShape(int position) {
+            return instance().errorCode(ND_ARR_IRREGULAR_SHAPE).position(position);
         }
 
-        public static @NotNull ParseException malformed() {
-            return instance().errorCode(ErrorCode.ND_ARR_MALFORMED);
+        public static @NotNull ParseException malformed(int position) {
+            return instance().errorCode(ErrorCode.ND_ARR_MALFORMED).position(position);
         }
 
-        public static @NotNull ParseException prematureEnd() {
-            return instance().errorCode(ErrorCode.ND_ARR_PREMATURE_END);
+        public static @NotNull ParseException prematureEnd(int position) {
+            return instance().errorCode(ND_ARR_PREMATURE_END).position(position);
         }
 
-        public static @NotNull ParseException shapeStridesMismatch() {
-            return instance().errorCode(ErrorCode.ND_ARR_SHAPE_STRIDES_MISMATCH);
+        public static @NotNull ParseException shapeStridesMismatch(int position) {
+            return instance().errorCode(ND_ARR_SHAPE_STRIDES_MISMATCH).position(position);
         }
 
-        public static @NotNull ParseException unexpectedToken() {
-            return instance().errorCode(ErrorCode.ND_ARR_UNEXPECTED);
+        public static @NotNull ParseException unexpectedToken(int position) {
+            return instance().errorCode(ND_ARR_UNEXPECTED).position(position);
         }
 
         public ParseException errorCode(ErrorCode errorCode) {
@@ -429,6 +432,15 @@ public class NdArrayParser implements QuietCloseable {
 
         public ErrorCode errorCode() {
             return errorCode;
+        }
+
+        public @NotNull ParseException position(int position) {
+            this.position = position;
+            return this;
+        }
+
+        public int position() {
+            return position;
         }
 
         private static ParseException instance() {

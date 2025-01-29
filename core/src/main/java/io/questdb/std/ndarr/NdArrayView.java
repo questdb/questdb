@@ -220,19 +220,19 @@ public class NdArrayView {
         boolean complete = false;
         try {
             if (!ColumnType.isNdArray(type)) {
-                throw ParseException.invalidType();
+                throw ParseException.invalidType(0);
             }
             if (shapeLength != stridesLength) {
-                throw ParseException.shapeStridesMismatch();
+                throw ParseException.shapeStridesMismatch(0);
             }
             this.type = type;
             this.shape.of(shapePtr, shapeLength);
             if (!NdArrayMeta.validShape(this.shape)) {
-                throw ParseException.invalidShape();
+                throw ParseException.invalidShape(0);
             }
             final int valuesLength = NdArrayMeta.flatLength(shape);
             if (!validValuesSize(type, valuesOffset, valuesLength, valuesSize)) {
-                throw ParseException.invalidValuesSize();
+                throw ParseException.invalidValuesSize(0);
             }
             this.strides.of(stridesPtr, stridesLength);
             this.values.of(valuesPtr, valuesSize);
