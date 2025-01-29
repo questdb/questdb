@@ -136,6 +136,11 @@ public class SecurityTest extends AbstractCairoTest {
             }
 
             @Override
+            public AtomicBoolean getCancelledFlag() {
+                return null;
+            }
+
+            @Override
             public SqlExecutionCircuitBreakerConfiguration getConfiguration() {
                 return null;
             }

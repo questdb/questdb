@@ -26,6 +26,7 @@ package io.questdb.cairo.sql;
 
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -38,11 +39,28 @@ import java.util.concurrent.atomic.AtomicBoolean;
 // However, the `delegate` circuit breaker instance referenced by the wrapper has to be thread-safe
 // if it is used by multiple threads (i.e. set as a delegate in multiple wrappers at the same time).
 public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBreaker, Closeable {
+    private final State state = new State();
+    private State backup;
     private SqlExecutionCircuitBreaker delegate;
     private NetworkSqlExecutionCircuitBreaker networkSqlExecutionCircuitBreaker;
 
     public SqlExecutionCircuitBreakerWrapper(@NotNull SqlExecutionCircuitBreakerConfiguration configuration) {
         networkSqlExecutionCircuitBreaker = new NetworkSqlExecutionCircuitBreaker(configuration, MemoryTag.NATIVE_CB2);
+    }
+
+    public void backup() {
+        state.clear();
+        backup = null;
+        if (delegate != null) {
+            backup = state;
+            if (delegate.isThreadsafe()) {
+                state.threadSafeDelegate = delegate;
+            } else { // this should have been the network CB
+                state.networkFd = delegate.getFd();
+                state.networkTimeout = delegate.getTimeout();
+                state.networkCancelledFlag = delegate.getCancelledFlag();
+            }
+        }
     }
 
     @Override
@@ -64,6 +82,11 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
     public void close() {
         networkSqlExecutionCircuitBreaker = Misc.free(networkSqlExecutionCircuitBreaker);
         delegate = null;
+    }
+
+    @Override
+    public AtomicBoolean getCancelledFlag() {
+        return delegate.getCancelledFlag();
     }
 
     @Override
@@ -96,20 +119,20 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
         return delegate.getTimeout();
     }
 
-    public SqlExecutionCircuitBreaker init(SqlExecutionCircuitBreakerWrapper wrapper) {
-        return init(wrapper.delegate);
+    public void init(SqlExecutionCircuitBreakerWrapper wrapper) {
+        init(wrapper.delegate);
     }
 
-    public SqlExecutionCircuitBreaker init(SqlExecutionCircuitBreaker executionContextCircuitBreaker) {
-        final SqlExecutionCircuitBreaker oldDelegate = delegate;
+    public void init(SqlExecutionCircuitBreaker executionContextCircuitBreaker) {
         if (executionContextCircuitBreaker.isThreadsafe()) {
             delegate = executionContextCircuitBreaker;
         } else {
-            networkSqlExecutionCircuitBreaker.init(executionContextCircuitBreaker);
+            networkSqlExecutionCircuitBreaker.of(executionContextCircuitBreaker.getFd());
+            networkSqlExecutionCircuitBreaker.setTimeout(executionContextCircuitBreaker.getTimeout());
             networkSqlExecutionCircuitBreaker.resetTimer();
+            networkSqlExecutionCircuitBreaker.setCancelledFlag(executionContextCircuitBreaker.getCancelledFlag());
             delegate = networkSqlExecutionCircuitBreaker;
         }
-        return oldDelegate;
     }
 
     @Override
@@ -125,6 +148,22 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
     @Override
     public void resetTimer() {
         delegate.resetTimer();
+    }
+
+    public void restore() {
+        if (backup != null) {
+            if (backup.threadSafeDelegate != null) {
+                delegate = backup.threadSafeDelegate;
+            } else {
+                networkSqlExecutionCircuitBreaker.of(backup.networkFd);
+                networkSqlExecutionCircuitBreaker.setTimeout(backup.networkTimeout);
+                networkSqlExecutionCircuitBreaker.resetTimer();
+                networkSqlExecutionCircuitBreaker.setCancelledFlag(backup.networkCancelledFlag);
+                delegate = networkSqlExecutionCircuitBreaker;
+            }
+        } else {
+            delegate = null;
+        }
     }
 
     @Override
@@ -150,5 +189,20 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
     @Override
     public void unsetTimer() {
         delegate.unsetTimer();
+    }
+
+    private static class State implements Mutable {
+        AtomicBoolean networkCancelledFlag;
+        long networkFd = -1;
+        long networkTimeout;
+        SqlExecutionCircuitBreaker threadSafeDelegate;
+
+        @Override
+        public void clear() {
+            threadSafeDelegate = null;
+            networkFd = -1;
+            networkTimeout = 0;
+            networkCancelledFlag = null;
+        }
     }
 }

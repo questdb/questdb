@@ -47,6 +47,11 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
         }
 
         @Override
+        public AtomicBoolean getCancelledFlag() {
+            return null;
+        }
+
+        @Override
         public SqlExecutionCircuitBreakerConfiguration getConfiguration() {
             return null;
         }
@@ -118,6 +123,8 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
     void cancel();
 
     boolean checkIfTripped(long millis, long fd);
+
+    AtomicBoolean getCancelledFlag();
 
     @Nullable
     SqlExecutionCircuitBreakerConfiguration getConfiguration();
