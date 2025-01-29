@@ -346,6 +346,70 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHammerWorkStealing() throws Exception {
+        Assume.assumeFalse(convertToParquet);
+        // Here we're stress-testing work stealing, so no shared workers and no reduce jobs.
+        final int threadCount = 4;
+        final int iterations = 1000;
+
+        assertMemoryLeak(() -> {
+            engine.execute(
+                    "CREATE TABLE 'x' (ts timestamp, id long) TIMESTAMP(ts) PARTITION BY DAY;",
+                    sqlExecutionContext
+            );
+            // We want tasks from different queries to interleave within the queue,
+            // so generate only `PAGE_FRAME_COUNT / 2` page frames.
+            engine.execute(
+                    "insert into x select x::timestamp, x from long_sequence(" + ((PAGE_FRAME_COUNT / 2) * PAGE_FRAME_MAX_ROWS) + ")",
+                    sqlExecutionContext
+            );
+
+            final String query = "SELECT count() FROM x WHERE id > 42;";
+
+            final RecordCursorFactory[] factories = new RecordCursorFactory[threadCount];
+            for (int i = 0; i < threadCount; i++) {
+                // Each factory should use a dedicated compiler instance, so that they don't
+                // share the same reduce task local pool in the SqlCodeGenerator.
+                factories[i] = engine.select(query, sqlExecutionContext);
+            }
+
+            final AtomicInteger errors = new AtomicInteger();
+            final CyclicBarrier barrier = new CyclicBarrier(threadCount);
+            final SOCountDownLatch haltLatch = new SOCountDownLatch(threadCount);
+            for (int i = 0; i < threadCount; i++) {
+                final int finalI = i;
+                new Thread(() -> {
+                    TestUtils.await(barrier);
+
+                    final RecordCursorFactory factory = factories[finalI];
+                    try (SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine)) {
+                        // Make sure to use atomic CB instead of the default test no-op.
+                        ctx.setUseSimpleCircuitBreaker(true);
+                        for (int j = 0; j < iterations; j++) {
+                            try (RecordCursor cursor = factory.getCursor(ctx)) {
+                                final Record record = cursor.getRecord();
+                                Assert.assertTrue(cursor.hasNext());
+                                Assert.assertEquals(158, record.getLong(0));
+                                Assert.assertFalse(cursor.hasNext());
+                            } catch (Throwable e) {
+                                e.printStackTrace();
+                                errors.incrementAndGet();
+                            }
+                        }
+                    } finally {
+                        haltLatch.countDown();
+                    }
+                }).start();
+            }
+
+            haltLatch.await();
+
+            Misc.free(factories);
+            Assert.assertEquals(0, errors.get());
+        });
+    }
+
+    @Test
     public void testInAndInTimestampJitDisabled() throws Exception {
         testInAndInTimestamp(SqlJitMode.JIT_MODE_DISABLED);
     }
