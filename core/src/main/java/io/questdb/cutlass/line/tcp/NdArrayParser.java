@@ -58,7 +58,7 @@ import org.jetbrains.annotations.NotNull;
  */
 public class NdArrayParser implements QuietCloseable {
 
-    private static final int LEAF_LENGTH_LIMIT = 100;
+    public static final int LEAF_LENGTH_LIMIT = 100;
 
     // bufs.shape is populated gradually during the parsing process. When we reach the
     // first occurrence of `}`, we know the size of the leaf dimension (rightmost in

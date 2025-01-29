@@ -37,6 +37,7 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
+import static java.util.Collections.nCopies;
 import static org.junit.Assert.*;
 
 public class NdArrayParserTest {
@@ -94,6 +95,10 @@ public class NdArrayParserTest {
         testInvalidLiteral(String.format("{5i%d}", tooPositive), ErrorCode.ND_ARR_UNEXPECTED);
         long tooNegative = Integer.MIN_VALUE - 1L;
         testInvalidLiteral(String.format("{5i%d}", tooNegative), ErrorCode.ND_ARR_UNEXPECTED);
+        String veryLongInt = String.join("", nCopies(NdArrayParser.LEAF_LENGTH_LIMIT - 1, "1"));
+        testInvalidLiteral(String.format("{5i%s", veryLongInt), ErrorCode.ND_ARR_PREMATURE_END);
+        String dosAttack = veryLongInt + "1";
+        testInvalidLiteral(String.format("{5i%s", dosAttack), ErrorCode.ND_ARR_UNEXPECTED);
     }
 
     @Test
