@@ -62,6 +62,10 @@ public class NdArrayParserTest {
     public void testDouble1d() throws ParseException {
         testDoubleLiteral("{6f1}", new int[]{1}, new double[]{1.0});
         testDoubleLiteral("{6f1.1}", new int[]{1}, new double[]{1.1});
+        testDoubleLiteral("{6f1e1}", new int[]{1}, new double[]{1e1});
+        testDoubleLiteral("{6f1.1e1}", new int[]{1}, new double[]{1.1e1});
+        testDoubleLiteral("{6f1.1e-1}", new int[]{1}, new double[]{1.1e-1});
+        testDoubleLiteral("{6f-1.1e-1}", new int[]{1}, new double[]{-1.1e-1});
         testDoubleLiteral("{6f1.1,2.2}", new int[]{2}, new double[]{1.1, 2.2});
         testDoubleLiteral("{6f1.1,2.2,3.3}", new int[]{3}, new double[]{1.1, 2.2, 3.3});
     }
@@ -69,6 +73,10 @@ public class NdArrayParserTest {
     @Test
     public void testFloat1d() throws ParseException {
         testFloatLiteral("{5f1}", new int[]{1}, new float[]{1f});
+        testFloatLiteral("{5f1e1}", new int[]{1}, new float[]{1e1f});
+        testFloatLiteral("{5f1.1e1}", new int[]{1}, new float[]{1.1e1f});
+        testFloatLiteral("{5f1.1e-1}", new int[]{1}, new float[]{1.1e-1f});
+        testFloatLiteral("{5f-1.1e-1}", new int[]{1}, new float[]{-1.1e-1f});
         testFloatLiteral("{5f1.1}", new int[]{1}, new float[]{1.1f});
         testFloatLiteral("{5f1.1,2.2}", new int[]{2}, new float[]{1.1f, 2.2f});
         testFloatLiteral("{5f1.1,2.2,3.3}", new int[]{3}, new float[]{1.1f, 2.2f, 3.3f});
@@ -161,7 +169,7 @@ public class NdArrayParserTest {
         assertEquals("values don't have the expected size",
                 Double.BYTES * expectedValues.length, values.size());
         for (int i = 0; i < expectedValues.length; i++) {
-            assertEquals(0.0, expectedValues[i], values.getDouble(i));
+            assertEquals(expectedValues[i], values.getDouble(i), 0.0);
         }
     }
 
@@ -170,7 +178,7 @@ public class NdArrayParserTest {
         assertEquals("values don't have the expected size",
                 Float.BYTES * expectedValues.length, values.size());
         for (int i = 0; i < expectedValues.length; i++) {
-            assertEquals(0.0, expectedValues[i], values.getFloat(i));
+            assertEquals(expectedValues[i], values.getFloat(i), 0.0);
         }
     }
 
