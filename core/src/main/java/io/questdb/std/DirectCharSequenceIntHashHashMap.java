@@ -27,9 +27,11 @@ package io.questdb.std;
 import io.questdb.std.str.DirectUtf16Sink;
 import org.jetbrains.annotations.NotNull;
 
+import java.io.Closeable;
+import java.io.IOException;
 import java.util.Arrays;
 
-public class DirectCharSequenceIntHashHashMap extends AbstractCharSequenceIntHashMap {
+public class DirectCharSequenceIntHashHashMap extends AbstractCharSequenceIntHashMap implements Closeable {
 
     public DirectCharSequenceIntHashHashMap() {
         this(8);
@@ -114,6 +116,13 @@ public class DirectCharSequenceIntHashHashMap extends AbstractCharSequenceIntHas
     private void closeDirectMemory(CharSequence key) {
         if (key != noEntryKey) {
             ((DirectUtf16Sink) key).close();
+        }
+    }
+
+    @Override
+    public void close() {
+        for (int i = 0; i < keys.length; i++) {
+            closeDirectMemory(keys[i]);
         }
     }
 }

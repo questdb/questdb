@@ -31,11 +31,16 @@ import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.AbstractTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public abstract class AbstractCharSequenceIntHashMapTest {
+import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
+
+public abstract class AbstractCharSequenceIntHashMapTest extends AbstractTest {
     protected abstract AbstractCharSequenceIntHashMap createInstance();
+    protected abstract void closeInstance(AbstractCharSequenceIntHashMap instance);
 
     @Test
     public void testAll() {
@@ -91,7 +96,6 @@ public abstract class AbstractCharSequenceIntHashMapTest {
             if (rnd2.nextPositiveInt() % 16 == 0) {
                 Assert.assertTrue(map.excludes(cs));
             } else {
-                System.out.println(cs);
                 Assert.assertFalse(map.excludes(cs));
 
                 int index = map.keyIndex(cs);
@@ -192,6 +196,9 @@ public abstract class AbstractCharSequenceIntHashMapTest {
                 Assert.assertEquals(value1, map.get(cs));
             }
         }
+
+        closeInstance(map);
+        closeInstance(map2);
     }
 
     @Test
@@ -218,28 +225,21 @@ public abstract class AbstractCharSequenceIntHashMapTest {
             CharSequence cs = rnd.nextString(10);
             Assert.assertFalse(map.excludes(cs, 1, 9));
         }
+
+        closeInstance(map);
     }
 
     @Test
-    public void testPutMutableCharSequence() {
-        final LowerCaseCharSequenceIntHashMap lowerCaseMap = new LowerCaseCharSequenceIntHashMap();
-
-        StringSink ss = new StringSink();
-        ss.put("a");
-
-        lowerCaseMap.putIfAbsent(ss, 1);
-
-        ss.clear();
-        ss.put("bb");
-
-        lowerCaseMap.putIfAbsent(ss, 2);
-
-        Assert.assertEquals(1, lowerCaseMap.get("a"));
-        Assert.assertEquals(2, lowerCaseMap.get("bb"));
-
-        ObjList<CharSequence> keys = lowerCaseMap.keys();
-        Assert.assertEquals(2, keys.size());
-        Assert.assertEquals("a", keys.get(0));
-        Assert.assertEquals("bb", keys.get(1));
+    public void testMemoryLeak() throws Exception {
+        assertMemoryLeak(() -> {
+            Rnd rnd = new Rnd();
+            AbstractCharSequenceIntHashMap map = createInstance();
+            final int N = 1000;
+            for (int i = 0; i < N; i++) {
+                CharSequence cs = rnd.nextChars(15);
+                boolean b = map.put(cs, rnd.nextInt());
+            }
+            closeInstance(map);
+        });
     }
 }

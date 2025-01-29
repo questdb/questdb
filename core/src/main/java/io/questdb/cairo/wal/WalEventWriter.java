@@ -53,7 +53,7 @@ class WalEventWriter implements Closeable {
     private long startOffset = 0;
     private BoolList symbolMapNullFlags;
     private int txn = 0;
-    private ObjList<CharSequenceIntHashMap> txnSymbolMaps;
+    private ObjList<DirectCharSequenceIntHashHashMap> txnSymbolMaps;
 
     WalEventWriter(CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -190,7 +190,7 @@ class WalEventWriter implements Closeable {
     private void writeSymbolMapDiffs() {
         final int columns = txnSymbolMaps.size();
         for (int i = 0; i < columns; i++) {
-            final CharSequenceIntHashMap symbolMap = txnSymbolMaps.getQuick(i);
+            final DirectCharSequenceIntHashHashMap symbolMap = txnSymbolMaps.getQuick(i);
             if (symbolMap != null) {
                 final int initialCount = initialSymbolCounts.get(i);
                 if (initialCount > 0 || (initialCount == 0 && symbolMap.size() > 0)) {
@@ -265,7 +265,7 @@ class WalEventWriter implements Closeable {
         return txn++;
     }
 
-    void of(ObjList<CharSequenceIntHashMap> txnSymbolMaps, AtomicIntList initialSymbolCounts, BoolList symbolMapNullFlags) {
+    void of(ObjList<DirectCharSequenceIntHashHashMap> txnSymbolMaps, AtomicIntList initialSymbolCounts, BoolList symbolMapNullFlags) {
         this.txnSymbolMaps = txnSymbolMaps;
         this.initialSymbolCounts = initialSymbolCounts;
         this.symbolMapNullFlags = symbolMapNullFlags;

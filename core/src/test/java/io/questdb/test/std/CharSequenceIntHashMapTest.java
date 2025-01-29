@@ -32,4 +32,8 @@ public class CharSequenceIntHashMapTest extends AbstractCharSequenceIntHashMapTe
     protected AbstractCharSequenceIntHashMap createInstance() {
         return new CharSequenceIntHashMap();
     }
+
+    @Override
+    protected void closeInstance(AbstractCharSequenceIntHashMap instance) {
+    }
 }

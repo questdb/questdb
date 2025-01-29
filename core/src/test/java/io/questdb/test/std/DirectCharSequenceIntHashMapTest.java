@@ -33,4 +33,9 @@ public class DirectCharSequenceIntHashMapTest extends AbstractCharSequenceIntHas
     protected AbstractCharSequenceIntHashMap createInstance() {
         return new DirectCharSequenceIntHashHashMap();
     }
+
+    @Override
+    protected void closeInstance(AbstractCharSequenceIntHashMap instance) {
+        ((DirectCharSequenceIntHashHashMap) instance).close();
+    }
 }
