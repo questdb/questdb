@@ -234,7 +234,7 @@ public class NdArrayParser implements QuietCloseable {
 
     /**
      * Parse the outermost level of a row-major array.
-     * <p>Generally, this would look something like so:</p>
+     * <p>Generally, this would look something like this:</p>
      * <pre>
      *     {5f2.5,1.0,NaN}
      *        ^_____________ we start here!
@@ -258,7 +258,7 @@ public class NdArrayParser implements QuietCloseable {
             byte b = parsing.byteAt(0);
             switch (b) {
                 case '{': {
-                    assert level < currCoords.size() : "Level is too much";
+                    assert level < currCoords.size() : "Nesting level is too much";
                     if (commaWelcome) {
                         throw ParseException.unexpectedToken();
                     }
@@ -301,14 +301,15 @@ public class NdArrayParser implements QuietCloseable {
                     parsing.advance();
                     continue;
                 }
-                case ',':
+                case ',': {
                     if (!commaWelcome) {
                         throw ParseException.unexpectedToken();
                     }
                     commaWelcome = false;
                     parsing.advance();
                     continue;
-                default:
+                }
+                default: {
                     assert level < currCoords.size() : "Level shot up while parsing leaves";
                     if (commaWelcome) {
                         throw ParseException.unexpectedToken();
@@ -330,6 +331,7 @@ public class NdArrayParser implements QuietCloseable {
                     parseElement(elementType, elementBitSize, tokenLimit);
                     commaWelcome = true;
                     parsing.advance(tokenLimit);
+                }
             }
         }
     }
