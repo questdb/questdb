@@ -48,6 +48,24 @@ inline uint8_t range_bytes(uint64_t range) {
     return (range_bits(range) + 7) >> 3;
 }
 
+inline uint8_t integral_type_bytes(uint8_t bytes) {
+    switch (bytes) {
+        case 1:
+            return 1;
+        case 2:
+            return 2;
+        case 3:
+        case 4:
+            return 4;
+        case 5:
+        case 6:
+        case 7:
+            return 8;
+        default:
+            return 0;
+    }
+}
+
 inline jlong merge_index_format(int64_t row_count, uint8_t reverse_index_item_bytes, uint8_t segment_bytes, uint8_t format) {
     uint8_t encoding_byte = reverse_index_item_bytes << 4 | segment_bytes;
     return static_cast<jlong>(
@@ -80,6 +98,18 @@ inline void* read_reverse_index_ptr(jlong mergeIndexPtr, jlong index_format) {
         return reinterpret_cast<void *>(mergeIndexPtr + row_count * sizeof(index_l) + sizeof (int64_t));
     }
     return nullptr;
+}
+
+inline int64_t read_reverse_index_row_count(jlong mergeIndexPtr, jlong index_format) {
+    auto format = read_format(index_format);
+    if (format == SHUFFLE_INDEX_FORMAT) {
+        return read_row_count(index_format);
+    }
+    if (format == DEDUP_SHUFFLE_INDEX_FORMAT) {
+        auto index_rows = read_row_count(index_format);
+        return (reinterpret_cast<int64_t *>(mergeIndexPtr + index_rows * sizeof(index_l)))[0];
+    }
+    return 0;
 }
 
 

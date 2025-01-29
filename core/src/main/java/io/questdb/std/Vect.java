@@ -155,7 +155,8 @@ public final class Vect {
     public static native void indexReshuffle8Bit(long pSrc, long pDest, long pIndex, long count);
 
     public static boolean isIndexSuccess(long indexFormat) {
-        return (indexFormat >>> 56) != 0;
+        long f = indexFormat >>> 56;
+        return f > 0 && f < 4;
     }
 
     public static native double maxDouble(long pDouble, long count);
@@ -233,7 +234,7 @@ public final class Vect {
 
     public static native void mergeShuffle8Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 
-    public static native int mergeShuffleColumnFromManyAddresses(
+    public static native long mergeShuffleColumnFromManyAddresses(
             int columnSizeBytes,
             long indexFormat,
             long srcAddresses,
@@ -241,11 +242,11 @@ public final class Vect {
             long mergeIndex
     );
 
-    public static native int mergeShuffleStringColumnFromManyAddresses(long indexFormat, int dataLengthBytes, long primaryAddressList, long secondaryAddressList, long outPrimaryAddress, long outSecondaryAddress, long mergeIndex, long destVarOffset);
+    public static native long mergeShuffleStringColumnFromManyAddresses(long indexFormat, int dataLengthBytes, long primaryAddressList, long secondaryAddressList, long outPrimaryAddress, long outSecondaryAddress, long mergeIndex, long destVarOffset);
 
     public static native long mergeShuffleSymbolColumnFromManyAddresses(long indexFormat, long srcAddresses, long dstAddress, long mergeIndex, long txnInfo, long txnCount, long symbolMapAddress, long symbolMapSize);
 
-    public static native int mergeShuffleVarcharColumnFromManyAddresses(long indexFormat, long primaryAddressList, long secondaryAddressList, long outPrimaryAddress, long outSecondaryAddress, long mergeIndex, long destVarOffset);
+    public static native long mergeShuffleVarcharColumnFromManyAddresses(long indexFormat, long primaryAddressList, long secondaryAddressList, long outPrimaryAddress, long outSecondaryAddress, long mergeIndex, long destVarOffset);
 
     public static native long radixSortManySegmentsIndexAsc(
             long tsOutAddr,

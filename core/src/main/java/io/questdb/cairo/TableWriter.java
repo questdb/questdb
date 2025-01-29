@@ -323,8 +323,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private UpdateOperatorImpl updateOperatorImpl;
     private int walFdCacheSize;
     private WalTxnDetails walTxnDetails;
-    private final ColumnTaskHandler cthProcessWalCommitBlockSortWalSegmentTimestampsDispatchColumnSortTasksCthMergeWalColumnManySegments = this::processWalCommitBlockSortWalSegmentTimestampsDispatchColumnSortTasksCthMergeWalColumnManySegments;
-    private final ColumnTaskHandler cthProcessWalCommitBlockSortWalSegmentTimestampsMapSymbols = this::processWalCommitBlockSortWalSegmentTimestampsMapSymbols;
+    private final ColumnTaskHandler cthProcessWalCommitBlockSortWalSegmentTimestampsDispatchColumnSortTasksCthMergeWalColumnManySegments = this::processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks_mergeWalColumnManySegments;
+    private final ColumnTaskHandler cthProcessWalCommitBlockSortWalSegmentTimestampsMapSymbols = this::processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks_mapSymbols;
 
 
     public TableWriter(
@@ -4783,7 +4783,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     DedupColumnCommitAddresses.getAddress(dedupCommitAddr)
             );
 
-            LOG.info().$("WAL dedup sorted commit index [table=").$(tableToken)
+            LOG.info().$("WAL dedup sorted commit index [table=").$(tableToken.getDirName())
                     .$(", totalRows=").$(longIndexLength)
                     .$(", lagRows=").$(lagRows)
                     .$(", dups=")
@@ -7185,15 +7185,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 throw CairoException.nonCritical().put("could not sort WAL segment timestamps");
             }
 
-            assert assertTsIndex(timestampAddr,
-                    minTs,
-                    maxTs,
-                    totalRows);
-
             if (isDeduplicationEnabled()) {
                 if (denseSymbolMapWriters.size() > 0) {
                     // Remap the symbols if there are any
-                    processWalCommitBlockSortWalSegmentTimestampsDispatchColumnSortTasks(
+                    processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks(
                             timestampAddr,
                             totalRows,
                             tsAddresses.getAddress(),
@@ -7204,7 +7199,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     );
                 }
 
-                indexFormat = processWalCommitBlockSortWalSegmentTimestampsDeduplicateSortedIndexFromManyAddresses(
+                indexFormat = processWalCommitBlock_sortWalSegmentTimestamps_deduplicateSortedIndexFromManyAddresses(
                         indexFormat,
                         totalRows,
                         timestampAddr,
@@ -7214,13 +7209,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 if (!Vect.isIndexSuccess(indexFormat)) {
                     // TODO: handle, switch to 1 txn commit
-                    throw CairoException.nonCritical().put("could not sort WAL segment timestamps");
+                    throw CairoException.nonCritical().put("could not dedup WAL segment timestamps");
                 }
 
-                long deduped_row_count = Vect.readIndexResultRowCount(indexFormat);
-                LOG.info().$("WAL dedup sorted commit index [table=").$(tableToken)
+                long dedupedRowCount = Vect.readIndexResultRowCount(indexFormat);
+                LOG.info().$("WAL dedup sorted commit index [table=").$(tableToken.getDirName())
                         .$(", totalRows=").$(totalRows)
-                        .$(", dups=").$(totalRows - deduped_row_count)
+                        .$(", dups=").$(totalRows - dedupedRowCount)
                         .I$();
 
                 // Swap tsMemory and tsMemoryCopy, dedup index result is in o3TimestampMemCpy
@@ -7233,15 +7228,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 o3MemColumns2.set(getPrimaryColumnIndex(timestampIndex), tsMem1);
                 o3TimestampMemCpy = tsMem1;
 
-                timestampAddr = o3TimestampMemCpy.addressOf(0);
-                totalRows = deduped_row_count;
+                timestampAddr = o3TimestampMem.getAddress();
+                totalRows = dedupedRowCount;
             }
 
+            assert assertTsIndex(timestampAddr,
+                    minTs,
+                    maxTs,
+                    totalRows);
+
             // TODO: make debug
-            LOG.info().$("shuffling [table=").$(tableToken.getDirName()).$(", columCount=").$(metadata.getColumnCount() - 1)
+            LOG.info().$("shuffling [table=").$(tableToken.getDirName()).$(", columCount=")
+                    .$(metadata.getColumnCount() - 1)
+                    .$(", rows=").$(totalRows)
                     .$(", indexFormat=").$(indexFormat).I$();
 
-            processWalCommitBlockSortWalSegmentTimestampsDispatchColumnSortTasks(
+            processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks(
                     timestampAddr,
                     totalRows,
                     tsAddresses.getAddress(),
@@ -7269,7 +7271,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private long processWalCommitBlockSortWalSegmentTimestampsDeduplicateSortedIndexFromManyAddresses(
+    private long processWalCommitBlock_sortWalSegmentTimestamps_deduplicateSortedIndexFromManyAddresses(
             long indexFormat,
             long rowCount,
             long srcIndexSrcAddr,
@@ -7281,47 +7283,60 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             if (dedupColumnCommitAddresses.getColumnCount() > 0) {
                 dedupCommitAddr = dedupColumnCommitAddresses.allocateBlock();
-                for (int i = 0; i < metadata.getColumnCount(); i++) {
-                    int columnType = metadata.getColumnType(i);
-                    if (i != metadata.getTimestampIndex() && columnType > 0 && metadata.isDedupKey(i)) {
-                        long dataAddresses;
-                        int valueSizeBytes = ColumnType.isVarSize(columnType) ? -1 : ColumnType.sizeOf(columnType);
+                int columnCount = metadata.getColumnCount();
+                int bytesPerColumn = segmentCopyInfo.getSegmentCount() * Long.BYTES;
 
-                        if (!ColumnType.isSymbol(columnType) || Unsafe.getUnsafe().getLong(columnAddressBufferPrimary) == 0) {
-                            // TODO: remove logging
-                            if (ColumnType.isSymbol(columnType)) {
-                                LOG.info().$("skipping using symbol as int32 for dedup [columnIndex=").$(i).$();
+                for (int i = 0; i < columnCount; i++) {
+                    int columnType = metadata.getColumnType(i);
+                    if (i != metadata.getTimestampIndex() && columnType > 0) {
+                        if (metadata.isDedupKey(i)) {
+                            long dataAddresses;
+                            int valueSizeBytes = ColumnType.isVarSize(columnType) ? -1 : ColumnType.sizeOf(columnType);
+
+                            if (!ColumnType.isSymbol(columnType) || Unsafe.getUnsafe().getLong(columnAddressBufferPrimary) == 0) {
+                                // TODO: remove logging
+                                if (ColumnType.isSymbol(columnType)) {
+                                    LOG.info().$("dedup using symbol as int32 for dedup, assumed no remapping was needed [columnIndex=").$(i).$();
+                                }
+                                segmentCopyInfo.createAddressBuffersPrimary(i, columnCount, walMappedColumns, columnAddressBufferPrimary);
+                                dataAddresses = columnAddressBufferPrimary;
+                            } else {
+                                // TODO: remove logging
+                                LOG.info().$("using remapped symbol for dedup from mem2 [columnIndex=").$(i).$();
+                                // Symbols are already re-mapped and the buffer is in o3ColumnMem2
+                                dataAddresses = o3MemColumns2.get(getPrimaryColumnIndex(i)).addressOf(0);
+                                // Indicate that it's a special case of column type, only one address is supplied
+                                valueSizeBytes = -1;
                             }
-                            segmentCopyInfo.createAddressBuffersPrimary(i, metadata.getColumnCount(), walMappedColumns, columnAddressBufferPrimary);
-                            dataAddresses = columnAddressBufferPrimary;
-                        } else {
-                            // TODO: remove logging
-                            LOG.info().$("using remapped symbol for dedup from mem2 [columnIndex=").$(i).$();
-                            // Symbols are already re-mapped and the buffer is in o3ColumnMem2
-                            dataAddresses = o3MemColumns2.get(getPrimaryColumnIndex(i)).addressOf(0);
-                            // Indicate that it's a special case of column type, only one address is supplied
-                            valueSizeBytes = -1;
+
+                            long addr = DedupColumnCommitAddresses.setColValues(
+                                    dedupCommitAddr,
+                                    dedupKeyIndex++,
+                                    columnType,
+                                    valueSizeBytes,
+                                    0L
+                            );
+
+                            if (!ColumnType.isVarSize(columnType)) {
+                                int shl = ColumnType.pow2SizeOf(columnType);
+                                DedupColumnCommitAddresses.setColAddressValues(addr, dataAddresses);
+                            } else {
+                                long columnAddressBufferSecondary = columnAddressBufferPrimary + bytesPerColumn;
+                                ColumnTypeDriver driver = ColumnType.getDriver(columnType);
+                                segmentCopyInfo.createAddressBuffersPrimary(i, columnCount, walMappedColumns, columnAddressBufferPrimary);
+                                segmentCopyInfo.createAddressBuffersSecondary(i, columnCount, walMappedColumns, columnAddressBufferSecondary, driver);
+
+                                DedupColumnCommitAddresses.setColAddressValues(addr, columnAddressBufferSecondary, columnAddressBufferPrimary, 0L);
+                                DedupColumnCommitAddresses.setO3DataAddressValues(addr, DedupColumnCommitAddresses.NULL, DedupColumnCommitAddresses.NULL, 0);
+                            }
                         }
 
-                        long addr = DedupColumnCommitAddresses.setColValues(
-                                dedupCommitAddr,
-                                dedupKeyIndex++,
-                                columnType,
-                                valueSizeBytes,
-                                0L
-                        );
-
-                        if (!ColumnType.isVarSize(columnType)) {
-                            int shl = ColumnType.pow2SizeOf(columnType);
-                            DedupColumnCommitAddresses.setColAddressValues(addr, dataAddresses);
-                        } else {
-                            long columnAddressBufferSecondary = columnAddressBufferPrimary + (long) Long.BYTES * metadata.getColumnCount();
-                            ColumnTypeDriver driver = ColumnType.getDriver(columnType);
-                            segmentCopyInfo.createAddressBuffersPrimary(i, metadata.getColumnCount(), walMappedColumns, columnAddressBufferPrimary);
-                            segmentCopyInfo.createAddressBuffersSecondary(i, metadata.getColumnCount(), walMappedColumns, columnAddressBufferSecondary, driver);
-
-                            DedupColumnCommitAddresses.setColAddressValues(addr, columnAddressBufferSecondary, columnAddressBufferPrimary, 0L);
-                            DedupColumnCommitAddresses.setO3DataAddressValues(addr, DedupColumnCommitAddresses.NULL, DedupColumnCommitAddresses.NULL, 0);
+                        // Reserve segment address buffers even for non-dedup columns
+                        // They will be re-used on shuffling
+                        columnAddressBufferPrimary += bytesPerColumn;
+                        if (ColumnType.isVarSize(columnType)) {
+                            // For secondary
+                            columnAddressBufferPrimary += bytesPerColumn;
                         }
                     }
                 }
@@ -7339,13 +7354,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void processWalCommitBlockSortWalSegmentTimestampsDispatchColumnSortTasks(
+    private void processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks(
             long timestampAddr,
             long totalRows,
             long columnAddressesBuffer,
             long totalSegmentAddresses,
             long indexFormat,
-            boolean symbolsOnly,
+            boolean dedupSymbolsOnly,
             ColumnTaskHandler taskHandler
     ) {
         final long timestampColumnIndex = metadata.getTimestampIndex();
@@ -7369,9 +7384,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (ColumnType.isVarSize(columnType)) {
                     columnAddressesBuffer += totalSegmentAddressesBytes;
                 }
-                long firstLong = Unsafe.getUnsafe().getLong(mappedAddrBuffPrimary);
-                if (columnType > 0 && (!symbolsOnly || ColumnType.isSymbol(columnType))) {
-                    long cursor = -1;//pubSeq.next();
+
+                if (columnType > 0 && (!dedupSymbolsOnly || (ColumnType.isSymbol(columnType) && metadata.isDedupKey(columnIndex)))) {
+                    long cursor = -1; //pubSeq.next();
 
                     if (cursor > -1) {
                         try {
@@ -7410,141 +7425,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         consumeColumnTasks(queue, queuedCount);
     }
 
-    private void processWalCommitBlockSortWalSegmentTimestampsDispatchColumnSortTasksCthMergeWalColumnManySegments(
-            int columnIndex,
-            int columnType,
-            long timestampColumnIndex,
-            long mergeIndex,
-            long mappedAddrBuffPrimary,
-            long totalRows,
-            long totalSegmentAddressesBytes,
-            long indexFormat
-    ) {
-        boolean varSize = ColumnType.isVarSize(columnType);
-        final int shl = ColumnType.pow2SizeOf(columnType);
-
-        // If this column used for deduplication, the pointers are already created
-        long firstPointer = Unsafe.getUnsafe().getLong(mappedAddrBuffPrimary);
-        boolean pointersNotCreated = firstPointer == 0;
-        if (pointersNotCreated) {
-            segmentCopyInfo.createAddressBuffersPrimary(columnIndex, metadata.getColumnCount(), walMappedColumns, mappedAddrBuffPrimary);
-        } else {
-            // This should only be the case when table already went thought deduplication
-            assert isDeduplicationEnabled();
-        }
-
-        if (!varSize) {
-            if (!ColumnType.isSymbol(columnType)) {
-                // When dedup is enabled, all symbol are already remapped at this point
-                var destinationColumn = o3MemColumns1.get(getPrimaryColumnIndex(columnIndex));
-                destinationColumn.jumpTo(totalRows << shl);
-
-                // TODO: remove logging
-                LOG.info().$("shuffling fixed len [columnIndex=").$(columnIndex).$();
-
-                Vect.mergeShuffleColumnFromManyAddresses(
-                        (1 << shl),
-                        indexFormat,
-                        mappedAddrBuffPrimary,
-                        destinationColumn.getAddress(),
-                        mergeIndex
-                );
-            } else {
-                var destinationColumn = o3MemColumns1.get(getPrimaryColumnIndex(columnIndex));
-                destinationColumn.jumpTo(totalRows << shl);
-
-                // Symbol can be already re-mapped if it's a dedup key, they are stored in o3MemColumn2
-                // and only need to be re-shuffled
-                if (firstPointer == -1) {
-                    // TODO: remove logging
-                    LOG.info().$("shuffling symbol by reverse index from mem2 into mem1 without remap [columnIndex=").$(columnIndex).$();
-
-                    long rowCount = Vect.shuffleSymbolColumnByReverseIndex(
-                            indexFormat,
-                            o3MemColumns2.get(getPrimaryColumnIndex(columnIndex)).getAddress(),
-                            destinationColumn.getAddress(),
-                            mergeIndex
-                    );
-                } else {
-
-                    // Also dedup key symbol can be not re-mapped since re-mapping was not necessary
-                    // but in this case they are not stored in o3MemColumn1 and needs to be shuffled as a 32bit column
-                    boolean needsRemapping = !metadata.isDedupKey(columnIndex) || !isDeduplicationEnabled();
-
-                    // Symbols need remapping. Create mapping from transaction symbol keys to column symbol keys
-                    var mapWriter = symbolMapWriters.get(columnIndex);
-                    int denseSymbolCount = denseSymbolMapWriters.size();
-                    long txnCount = this.segmentCopyInfo.getTxnCount();
-
-                    var symbolMapMem = o3MemColumns2.get(getPrimaryColumnIndex(columnIndex));
-                    symbolMapMem.jumpTo(0);
-                    destinationColumn.jumpTo(totalRows << shl);
-
-                    if (needsRemapping) {
-                        // If there are no new symbols, no remapping needed
-                        needsRemapping = walTxnDetails.buildTxnSymbolMap(segmentCopyInfo, columnIndex, mapWriter, symbolMapMem);
-                    }
-
-                    if (needsRemapping) {
-                        // TODO: remove logging
-                        LOG.info().$("shuffling symbol with remap into mem1 [columnIndex=").$(columnIndex).$();
-
-                        long rowCount = Vect.mergeShuffleSymbolColumnFromManyAddresses(
-                                indexFormat,
-                                mappedAddrBuffPrimary,
-                                destinationColumn.getAddress(),
-                                mergeIndex,
-                                segmentCopyInfo.getTxnInfoAddress(),
-                                txnCount,
-                                symbolMapMem.getAddress(),
-                                symbolMapMem.getAppendOffset()
-                        );
-
-                        assert rowCount == totalRows;
-                    } else {
-                        // TODO: remove logging
-                        LOG.info().$("shuffling symbol as int32, no remap [columnIndex=").$(columnIndex).$();
-
-                        // Shuffle as int32, no new symbols to add
-                        long rowCount = Vect.mergeShuffleColumnFromManyAddresses(
-                                (1 << shl),
-                                indexFormat,
-                                mappedAddrBuffPrimary,
-                                destinationColumn.getAddress(),
-                                mergeIndex
-                        );
-                    }
-
-                    assert assertSymbolValues(destinationColumn.getAddress(), totalRows);
-                }
-            }
-        } else {
-            long mappedAddrBuffSecondary = varSize ? mappedAddrBuffPrimary + totalSegmentAddressesBytes : 0;
-            var destinationColumnSecondary = o3MemColumns1.get(getSecondaryColumnIndex(columnIndex));
-            ColumnTypeDriver driver = ColumnType.getDriver(columnType);
-            long totalVarSize = segmentCopyInfo.createAddressBuffersSecondary(columnIndex, metadata.getColumnCount(), walMappedColumns, mappedAddrBuffSecondary, driver);
-
-            destinationColumnSecondary.jumpTo(driver.getAuxVectorOffset(totalRows));
-            var destinationColumnPrimary = o3MemColumns1.get(getPrimaryColumnIndex(columnIndex));
-            destinationColumnPrimary.jumpTo(totalVarSize);
-
-            // TODO: remove logging
-            LOG.info().$("shuffling varlen [columnIndex=").$(columnIndex).$();
-
-            driver.mergeShuffleColumnFromManyAddresses(
-                    indexFormat,
-                    mappedAddrBuffPrimary,
-                    mappedAddrBuffSecondary,
-                    destinationColumnPrimary.getAddress(),
-                    destinationColumnSecondary.getAddress(),
-                    mergeIndex,
-                    0
-            );
-        }
-    }
-
     // remap symbols column
-    private void processWalCommitBlockSortWalSegmentTimestampsMapSymbols(
+    private void processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks_mapSymbols(
             int columnIndex,
             int columnType,
             long timestampColumnIndex,
@@ -7566,12 +7448,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         if (needsRemapping) {
             long txnCount = this.segmentCopyInfo.getTxnCount();
-            segmentCopyInfo.createAddressBuffersSecondary(columnIndex, metadata.getColumnCount(), walMappedColumns, mappedAddrBuffPrimary, ColumnType.getDriver(columnType));
+            segmentCopyInfo.createAddressBuffersPrimary(columnIndex, metadata.getColumnCount(), walMappedColumns, mappedAddrBuffPrimary);
             var destinationColumn = o3MemColumns2.get(getPrimaryColumnIndex(columnIndex));
             destinationColumn.jumpTo(totalRows << shl);
 
             // TODO: remove logging
-            LOG.info().$("shuffling symbol with remap into mem2 [columnIndex=").$(columnIndex).$();
+            LOG.info().$("symbol remap into mem2 [columnIndex=").$(columnIndex).$(", segmentAddressBuff=").$(mappedAddrBuffPrimary).I$();
 
             long rowCount = Vect.remapSymbolColumnFromManyAddresses(
                     mappedAddrBuffPrimary,
@@ -7589,6 +7471,144 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } else {
             // TODO: remove logging
             LOG.info().$("skipping remapping symbol before dedup [columnIndex=").$(columnIndex).$();
+        }
+    }
+
+    private void processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks_mergeWalColumnManySegments(
+            int columnIndex,
+            int columnType,
+            long timestampColumnIndex,
+            long mergeIndex,
+            long mappedAddrBuffPrimary,
+            long totalRows,
+            long totalSegmentAddressesBytes,
+            long indexFormat
+    ) {
+        boolean varSize = ColumnType.isVarSize(columnType);
+        final int shl = ColumnType.pow2SizeOf(columnType);
+
+        // If this column used for deduplication, the pointers are already created
+        long firstPointer = Unsafe.getUnsafe().getLong(mappedAddrBuffPrimary);
+        boolean pointersNotCreated = firstPointer == 0;
+        if (pointersNotCreated) {
+            segmentCopyInfo.createAddressBuffersPrimary(columnIndex, metadata.getColumnCount(), walMappedColumns, mappedAddrBuffPrimary);
+        } else {
+            // This should only be the case when table already went thought deduplication
+            assert isDeduplicationEnabled() && metadata.isDedupKey(columnIndex);
+        }
+
+        if (!varSize) {
+            if (!ColumnType.isSymbol(columnType)) {
+                // When dedup is enabled, all symbol are already remapped at this point
+                var destinationColumn = o3MemColumns1.get(getPrimaryColumnIndex(columnIndex));
+                destinationColumn.jumpTo(totalRows << shl);
+
+                // TODO: remove logging
+                LOG.info().$("shuffling fixed len [columnIndex=").$(columnIndex).$(", columnType=").$(ColumnType.nameOf(columnType)).I$();
+
+                long rowCount = Vect.mergeShuffleColumnFromManyAddresses(
+                        (1 << shl),
+                        indexFormat,
+                        mappedAddrBuffPrimary,
+                        destinationColumn.getAddress(),
+                        mergeIndex
+                );
+                assert rowCount == totalRows;
+            } else {
+                var destinationColumn = o3MemColumns1.get(getPrimaryColumnIndex(columnIndex));
+                destinationColumn.jumpTo(totalRows << shl);
+
+                // Symbol can be already re-mapped if it's a dedup key, they are stored in o3MemColumn2
+                // and only need to be re-shuffled
+                if (firstPointer == -1) {
+                    assert isDeduplicationEnabled() && metadata.isDedupKey(columnIndex);
+                    // TODO: remove logging
+                    LOG.info().$("shuffling symbol by reverse index from mem2 into mem1 without remap [columnIndex=").$(columnIndex).$();
+
+                    long rowCount = Vect.shuffleSymbolColumnByReverseIndex(
+                            indexFormat,
+                            o3MemColumns2.get(getPrimaryColumnIndex(columnIndex)).getAddress(),
+                            destinationColumn.getAddress(),
+                            mergeIndex
+                    );
+                    assert rowCount >= totalRows;
+                } else {
+
+                    // Also dedup key symbol can be not re-mapped since re-mapping was not necessary
+                    // but in this case they are not stored in o3MemColumn1 and needs to be shuffled as a 32bit column
+                    boolean needsRemapping = !metadata.isDedupKey(columnIndex) || !isDeduplicationEnabled();
+
+                    // Symbols need remapping. Create mapping from transaction symbol keys to column symbol keys
+                    var mapWriter = symbolMapWriters.get(columnIndex);
+                    int denseSymbolCount = denseSymbolMapWriters.size();
+                    long txnCount = this.segmentCopyInfo.getTxnCount();
+
+                    var symbolMapMem = o3MemColumns2.get(getPrimaryColumnIndex(columnIndex));
+                    symbolMapMem.jumpTo(0);
+
+                    if (needsRemapping) {
+                        // If there are no new symbols, no remapping needed
+                        needsRemapping = walTxnDetails.buildTxnSymbolMap(segmentCopyInfo, columnIndex, mapWriter, symbolMapMem);
+                    }
+
+                    if (needsRemapping) {
+                        // TODO: remove logging
+                        LOG.info().$("shuffling symbol with remap into mem1 [columnIndex=").$(columnIndex).$(", columnType=").$(ColumnType.nameOf(columnType)).I$();
+
+                        long rowCount = Vect.mergeShuffleSymbolColumnFromManyAddresses(
+                                indexFormat,
+                                mappedAddrBuffPrimary,
+                                destinationColumn.getAddress(),
+                                mergeIndex,
+                                segmentCopyInfo.getTxnInfoAddress(),
+                                txnCount,
+                                symbolMapMem.getAddress(),
+                                symbolMapMem.getAppendOffset()
+                        );
+
+                        assert rowCount == totalRows || (isDeduplicationEnabled() && rowCount >= totalRows);
+                    } else {
+                        // TODO: remove logging
+                        LOG.info().$("shuffling symbol as int32, no remap [columnIndex=").$(columnIndex).$();
+
+                        // Shuffle as int32, no new symbols to add
+                        long rowCount = Vect.mergeShuffleColumnFromManyAddresses(
+                                (1 << shl),
+                                indexFormat,
+                                mappedAddrBuffPrimary,
+                                destinationColumn.getAddress(),
+                                mergeIndex
+                        );
+
+                        assert rowCount == totalRows;
+                    }
+
+                    assert assertSymbolValues(destinationColumn.getAddress(), totalRows);
+                }
+            }
+        } else {
+            long mappedAddrBuffSecondary = varSize ? mappedAddrBuffPrimary + totalSegmentAddressesBytes : 0;
+            var destinationColumnSecondary = o3MemColumns1.get(getSecondaryColumnIndex(columnIndex));
+            ColumnTypeDriver driver = ColumnType.getDriver(columnType);
+            long totalVarSize = segmentCopyInfo.createAddressBuffersSecondary(columnIndex, metadata.getColumnCount(), walMappedColumns, mappedAddrBuffSecondary, driver);
+
+            destinationColumnSecondary.jumpTo(driver.getAuxVectorOffset(totalRows));
+            var destinationColumnPrimary = o3MemColumns1.get(getPrimaryColumnIndex(columnIndex));
+            destinationColumnPrimary.jumpTo(totalVarSize);
+
+            // TODO: remove logging
+            LOG.info().$("shuffling varlen [columnIndex=").$(columnIndex).$();
+
+            long rowCount = driver.mergeShuffleColumnFromManyAddresses(
+                    indexFormat,
+                    mappedAddrBuffPrimary,
+                    mappedAddrBuffSecondary,
+                    destinationColumnPrimary.getAddress(),
+                    destinationColumnSecondary.getAddress(),
+                    mergeIndex,
+                    0
+            );
+            assert rowCount == totalRows;
         }
     }
 

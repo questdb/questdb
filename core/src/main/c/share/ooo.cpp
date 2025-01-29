@@ -780,7 +780,9 @@ Java_io_questdb_std_Vect_radixSortManySegmentsIndexAsc(
     auto max_ts = __JLONG_REINTERPRET_CAST__(int64_t, maxTimestamp);
     auto lag_row_count = __JLONG_REINTERPRET_CAST__(uint64_t, lagRowCount);
     auto total_row_count = __JLONG_REINTERPRET_CAST__(uint64_t, totalRowCount);
-    auto total_row_count_bytes = range_bytes(total_row_count);
+
+    // Add 1 so since 1 values is needed for deduplication to indicate row not used
+    auto total_row_count_bytes = integral_type_bytes(range_bytes(total_row_count + 1));
 
     auto ts_range_bytes = range_bytes(max_ts - min_ts + 1);
     auto txn_bytes = range_bytes(txn_count);
@@ -810,13 +812,14 @@ Java_io_questdb_std_Vect_radixSortManySegmentsIndexAsc(
             segment_count,
             min_ts,
             total_row_count_bytes,
+            total_row_count,
             result_format
     );
 
     return merge_index_format((int64_t) sorted_count, total_row_count_bytes, segments_range_bytes, result_format);
 }
 
-JNIEXPORT jint JNICALL
+JNIEXPORT jlong JNICALL
 Java_io_questdb_std_Vect_mergeShuffleColumnFromManyAddresses(
         JNIEnv *env,
         jclass cl,
@@ -867,11 +870,9 @@ Java_io_questdb_std_Vect_mergeShuffleColumnFromManyAddresses(
         default:
             return -1;
     }
-
-    return 0;
 }
 
-JNIEXPORT jint JNICALL
+JNIEXPORT jlong JNICALL
 Java_io_questdb_std_Vect_mergeShuffleStringColumnFromManyAddresses(
         JNIEnv *env,
         jclass cl,
@@ -900,21 +901,19 @@ Java_io_questdb_std_Vect_mergeShuffleStringColumnFromManyAddresses(
 
     switch (dataLengthBytes) {
         case 4:
-            merge_shuffle_string_column_from_many_addresses<int32_t, 2u>(
+            return merge_shuffle_string_column_from_many_addresses<int32_t, 2u>(
                     index_segment_encoding_bytes, src_primary,
                     src_secondary, dst_primary, dst_secondary,
                     merge_index_address, row_count,
                     dst_var_offset
             );
-            break;
         case 8:
-            merge_shuffle_string_column_from_many_addresses<int64_t, 1u>(
+            return merge_shuffle_string_column_from_many_addresses<int64_t, 1u>(
                     index_segment_encoding_bytes, src_primary,
                     src_secondary, dst_primary, dst_secondary,
                     merge_index_address, row_count,
                     dst_var_offset
             );
-            break;
         default:
             return -1;
     }
@@ -923,7 +922,7 @@ Java_io_questdb_std_Vect_mergeShuffleStringColumnFromManyAddresses(
 }
 
 
-JNIEXPORT jint JNICALL
+JNIEXPORT jlong JNICALL
 Java_io_questdb_std_Vect_mergeShuffleVarcharColumnFromManyAddresses(
         JNIEnv *env,
         jclass cl,
@@ -992,7 +991,7 @@ Java_io_questdb_std_Vect_mergeShuffleVarcharColumnFromManyAddresses(
             return -1;
     }
 
-    return 0;
+    return row_count;
 }
 
 
@@ -1016,37 +1015,135 @@ Java_io_questdb_std_Vect_mergeShuffleSymbolColumnFromManyAddresses(
     auto symbol_map = reinterpret_cast<const int32_t *>(symbolMap);
     auto row_index_bytes = read_reverse_index_format_bytes(indexFormat);
     auto reverse_index_ptr = read_reverse_index_ptr(mergeIndex, indexFormat);
+    assertm(reverse_index_ptr != nullptr, "reverse index ptr is null, invalid merge index");
     auto format = read_format(indexFormat);
+    int64_t reverse_index_row_count = read_reverse_index_row_count(mergeIndex, indexFormat);
+
+    jlong rows_processed;
 
     if (format == SHUFFLE_INDEX_FORMAT) {
         switch (row_index_bytes) {
             case 1:
-                return merge_shuffle_symbol_column_from_many_addresses<uint8_t, SHUFFLE_INDEX_FORMAT>(
+                rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint8_t, SHUFFLE_INDEX_FORMAT>(
                         src, dst,
                         txn_info_addr, txn_count, symbol_map,
-                        reverse_index_ptr
+                        reverse_index_ptr,
+                        reverse_index_row_count
+                );
+                break;
+            case 2:
+                rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint16_t, SHUFFLE_INDEX_FORMAT>(
+                        src, dst,
+                        txn_info_addr, txn_count, symbol_map,
+                        reverse_index_ptr,
+                        reverse_index_row_count
+                );
+                break;
+            case 4:
+                rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint32_t, SHUFFLE_INDEX_FORMAT>(
+                        src, dst,
+                        txn_info_addr, txn_count, symbol_map,
+                        reverse_index_ptr,
+                        reverse_index_row_count
+                );
+                break;
+            case 8:
+                rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint64_t, SHUFFLE_INDEX_FORMAT>(
+                        src, dst,
+                        txn_info_addr, txn_count, symbol_map,
+                        reverse_index_ptr,
+                        reverse_index_row_count
+                );
+                break;
+            default:
+                return -1;
+        }
+    } else if (format == DEDUP_SHUFFLE_INDEX_FORMAT) {
+        switch (row_index_bytes) {
+            case 1:
+                rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint8_t, DEDUP_SHUFFLE_INDEX_FORMAT>(
+                        src, dst,
+                        txn_info_addr, txn_count, symbol_map,
+                        reverse_index_ptr,
+                        reverse_index_row_count
+                );
+                break;
+            case 2:
+                rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint16_t, DEDUP_SHUFFLE_INDEX_FORMAT>(
+                        src, dst,
+                        txn_info_addr, txn_count, symbol_map,
+                        reverse_index_ptr,
+                        reverse_index_row_count
+                );
+                break;
+            case 4:
+                rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint32_t, DEDUP_SHUFFLE_INDEX_FORMAT>(
+                        src, dst,
+                        txn_info_addr, txn_count, symbol_map,
+                        reverse_index_ptr,
+                        reverse_index_row_count
+                );
+                break;
+            case 8:
+                rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint64_t, DEDUP_SHUFFLE_INDEX_FORMAT>(
+                        src, dst,
+                        txn_info_addr, txn_count, symbol_map,
+                        reverse_index_ptr,
+                        reverse_index_row_count
+                );
+                break;
+            default:
+                return -1;
+        }
+    } else {
+        return -1;
+    }
+
+    assertm(rows_processed <= reverse_index_row_count, "rows processed does not match reverse index row count");
+    return rows_processed;
+}
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_shuffleSymbolColumnByReverseIndex(
+        JNIEnv *env,
+        jclass cl,
+        jlong indexFormat,
+        jlong srcAddresses,
+        jlong dstAddress,
+        jlong mergeIndex
+) {
+    auto src = reinterpret_cast<const int32_t *>(srcAddresses);
+    auto dst = reinterpret_cast<int32_t *>(dstAddress);
+    auto row_index_bytes = read_reverse_index_format_bytes(indexFormat);
+    auto reverse_index_ptr = read_reverse_index_ptr(mergeIndex, indexFormat);
+    auto format = read_format(indexFormat);
+    auto rev_index_row_count = read_reverse_index_row_count(mergeIndex, indexFormat);
+
+    if (format == SHUFFLE_INDEX_FORMAT) {
+        switch (row_index_bytes) {
+            case 1:
+                return merge_shuffle_symbol_column_by_reverse_index<uint8_t, SHUFFLE_INDEX_FORMAT>(
+                        src, dst,
+                        reverse_index_ptr,
+                        rev_index_row_count
                 );
             case 2:
-                return merge_shuffle_symbol_column_from_many_addresses<uint16_t, SHUFFLE_INDEX_FORMAT>(
+                return merge_shuffle_symbol_column_by_reverse_index<uint16_t, SHUFFLE_INDEX_FORMAT>(
                         src, dst,
-                        txn_info_addr, txn_count, symbol_map,
-                        reverse_index_ptr
+                        reverse_index_ptr,
+                        rev_index_row_count
                 );
-            case 3:
             case 4:
-                return merge_shuffle_symbol_column_from_many_addresses<uint32_t, SHUFFLE_INDEX_FORMAT>(
+                return merge_shuffle_symbol_column_by_reverse_index<uint32_t, SHUFFLE_INDEX_FORMAT>(
                         src, dst,
-                        txn_info_addr, txn_count, symbol_map,
-                        reverse_index_ptr
+                        reverse_index_ptr,
+                        rev_index_row_count
                 );
-            case 5:
-            case 6:
-            case 7:
             case 8:
-                return merge_shuffle_symbol_column_from_many_addresses<uint32_t, SHUFFLE_INDEX_FORMAT>(
+                return merge_shuffle_symbol_column_by_reverse_index<uint64_t, SHUFFLE_INDEX_FORMAT>(
                         src, dst,
-                        txn_info_addr, txn_count, symbol_map,
-                        reverse_index_ptr
+                        reverse_index_ptr,
+                        rev_index_row_count
                 );
             default:
                 return -1;
@@ -1054,32 +1151,28 @@ Java_io_questdb_std_Vect_mergeShuffleSymbolColumnFromManyAddresses(
     } else if (format == DEDUP_SHUFFLE_INDEX_FORMAT) {
         switch (row_index_bytes) {
             case 1:
-                return merge_shuffle_symbol_column_from_many_addresses<uint8_t, DEDUP_SHUFFLE_INDEX_FORMAT>(
+                return merge_shuffle_symbol_column_by_reverse_index<uint8_t, DEDUP_SHUFFLE_INDEX_FORMAT>(
                         src, dst,
-                        txn_info_addr, txn_count, symbol_map,
-                        reverse_index_ptr
+                        reverse_index_ptr,
+                        rev_index_row_count
                 );
             case 2:
-                return merge_shuffle_symbol_column_from_many_addresses<uint16_t, DEDUP_SHUFFLE_INDEX_FORMAT>(
+                return merge_shuffle_symbol_column_by_reverse_index<uint16_t, DEDUP_SHUFFLE_INDEX_FORMAT>(
                         src, dst,
-                        txn_info_addr, txn_count, symbol_map,
-                        reverse_index_ptr
+                        reverse_index_ptr,
+                        rev_index_row_count
                 );
-            case 3:
             case 4:
-                return merge_shuffle_symbol_column_from_many_addresses<uint32_t, DEDUP_SHUFFLE_INDEX_FORMAT>(
+                return merge_shuffle_symbol_column_by_reverse_index<uint32_t, DEDUP_SHUFFLE_INDEX_FORMAT>(
                         src, dst,
-                        txn_info_addr, txn_count, symbol_map,
-                        reverse_index_ptr
+                        reverse_index_ptr,
+                        rev_index_row_count
                 );
-            case 5:
-            case 6:
-            case 7:
             case 8:
-                return merge_shuffle_symbol_column_from_many_addresses<uint32_t, DEDUP_SHUFFLE_INDEX_FORMAT>(
+                return merge_shuffle_symbol_column_by_reverse_index<uint64_t, DEDUP_SHUFFLE_INDEX_FORMAT>(
                         src, dst,
-                        txn_info_addr, txn_count, symbol_map,
-                        reverse_index_ptr
+                        reverse_index_ptr,
+                        rev_index_row_count
                 );
             default:
                 return -1;

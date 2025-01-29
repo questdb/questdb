@@ -128,7 +128,7 @@ public interface ColumnTypeDriver {
      *                             Segment index bytes is passed in mergeIndexEncodingSegmentBytes
      * @param destDataOffset       offset in the destination data memory to shift all the records in aux column by
      */
-    void mergeShuffleColumnFromManyAddresses(
+    long mergeShuffleColumnFromManyAddresses(
             long indexFormat,
             long primaryAddressList,
             long secondaryAddressList,

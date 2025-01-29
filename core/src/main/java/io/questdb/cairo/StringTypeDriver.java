@@ -175,7 +175,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public void mergeShuffleColumnFromManyAddresses(
+    public long mergeShuffleColumnFromManyAddresses(
             long indexFormat,
             long primaryAddressList,
             long secondaryAddressList,
@@ -184,7 +184,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
             long mergeIndex,
             long destVarOffset
     ) {
-        int res = Vect.mergeShuffleStringColumnFromManyAddresses(
+        long res = Vect.mergeShuffleStringColumnFromManyAddresses(
                 indexFormat,
                 (int) getDataVectorMinEntrySize(),
                 primaryAddressList,
@@ -194,12 +194,10 @@ public class StringTypeDriver implements ColumnTypeDriver {
                 mergeIndex,
                 destVarOffset
         );
-        if (res == -2) {
+        if (res < 0) {
             throw new IllegalArgumentException("Cannot merge shuffle string column, invalid merge index");
         }
-        if (res != 0) {
-            throw new IllegalArgumentException("Cannot merge shuffle string column, unsupported column type");
-        }
+        return res;
     }
 
     @Override
