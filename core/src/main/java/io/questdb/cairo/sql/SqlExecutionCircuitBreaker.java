@@ -77,7 +77,7 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
         }
 
         @Override
-        public boolean isThreadsafe() {
+        public boolean isThreadSafe() {
             return true;
         }
 
@@ -155,7 +155,7 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
 
     long getTimeout();
 
-    boolean isThreadsafe();
+    boolean isThreadSafe();
 
     /**
      * Checks if timer is due.

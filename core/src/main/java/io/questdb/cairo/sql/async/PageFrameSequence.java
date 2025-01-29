@@ -460,6 +460,19 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         }
     }
 
+    /**
+     * Validates that the work stealing circuit breaker's state matches what's
+     * in the SQL execution context, i.e. it's the same as at the start of query execution.
+     */
+    public void validateWorkStealingCircuitBreaker() {
+        final SqlExecutionCircuitBreaker ownDelegate = workStealCircuitBreaker.getDelegate();
+        if (ownDelegate.isThreadSafe()) {
+            assert ownDelegate == sqlExecutionContext.getCircuitBreaker();
+        } else {
+            assert ownDelegate.getFd() == sqlExecutionContext.getCircuitBreaker().getFd();
+        }
+    }
+
     private void buildAddressCache() {
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {

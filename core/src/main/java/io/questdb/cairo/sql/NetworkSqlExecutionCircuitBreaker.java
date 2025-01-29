@@ -151,7 +151,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
-    public boolean isThreadsafe() {
+    public boolean isThreadSafe() {
         return false;
     }
 

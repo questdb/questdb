@@ -166,7 +166,7 @@ public class SecurityTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean isThreadsafe() {
+            public boolean isThreadSafe() {
                 return true;
             }
 

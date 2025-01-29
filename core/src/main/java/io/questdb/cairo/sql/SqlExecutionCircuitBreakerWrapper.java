@@ -53,7 +53,7 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
         backup = null;
         if (delegate != null) {
             backup = state;
-            if (delegate.isThreadsafe()) {
+            if (delegate.isThreadSafe()) {
                 state.threadSafeDelegate = delegate;
             } else { // this should have been the network CB
                 state.networkFd = delegate.getFd();
@@ -124,7 +124,7 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
     }
 
     public void init(SqlExecutionCircuitBreaker executionContextCircuitBreaker) {
-        if (executionContextCircuitBreaker.isThreadsafe()) {
+        if (executionContextCircuitBreaker.isThreadSafe()) {
             delegate = executionContextCircuitBreaker;
         } else {
             networkSqlExecutionCircuitBreaker.of(executionContextCircuitBreaker.getFd());
@@ -136,8 +136,8 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
     }
 
     @Override
-    public boolean isThreadsafe() {
-        return delegate.isThreadsafe();
+    public boolean isThreadSafe() {
+        return delegate.isThreadSafe();
     }
 
     @Override

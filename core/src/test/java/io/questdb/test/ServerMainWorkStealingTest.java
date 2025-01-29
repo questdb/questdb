@@ -74,18 +74,21 @@ public class ServerMainWorkStealingTest extends AbstractBootstrapTest {
 
     @Test
     public void testServerMainParallelFilterLoadTest() throws Exception {
-        try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
+        try (ServerMain serverMain = new ServerMain(getServerMainArgs())) {
             serverMain.start();
 
             try (Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES)) {
                 try (Statement statement = conn.createStatement()) {
-                    statement.execute("CREATE TABLE tab as ( " +
-                            "  select (x * 86400000)::timestamp ts, ('k' || (x % 5))::symbol key, x:: double price, x::long quantity from long_sequence(10000) " +
-                            ") timestamp (ts) PARTITION BY DAY;");
+                    statement.execute(
+                            "CREATE TABLE tab as ( " +
+                                    "  select (x * 86400000)::timestamp ts, ('k' || (x % 5))::symbol key, x::double price, x::long quantity " +
+                                    "  from long_sequence(10000) " +
+                                    ") timestamp (ts) PARTITION BY DAY;"
+                    );
                 }
             }
 
-            final int nThreads = 6;
+            final int nThreads = 8;
             final int nIterations = 50;
 
             final String query = "SELECT * FROM tab WHERE key = 'k3' LIMIT 10;";

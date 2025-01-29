@@ -197,6 +197,8 @@ public class PageFrameReduceJob implements Job, Closeable {
                             circuitBreaker.backup();
                             circuitBreaker.init(frameSequence.getWorkStealCircuitBreaker());
                             circuitBreakerRestorePending = true;
+                        } else { // workerId == -1 here
+                            frameSequence.validateWorkStealingCircuitBreaker();
                         }
                         reduce(workerId, record, circuitBreaker, task, frameSequence, stealingFrameSequence);
                     }
