@@ -250,6 +250,7 @@ public class NdArrayParser implements QuietCloseable {
 
         int shapeSize = 0;
         int level = 0;
+        boolean commaWelcome = false;
         while (parsing.size() > 0) {
             if (level < 0) {
                 throw ParseException.unexpectedToken();
@@ -258,6 +259,9 @@ public class NdArrayParser implements QuietCloseable {
             switch (b) {
                 case '{': {
                     assert level < currCoords.size() : "Level is too much";
+                    if (commaWelcome) {
+                        throw ParseException.unexpectedToken();
+                    }
                     currCoords.set(level, currCoords.get(level) + 1);
                     level++;
                     if (shapeSize > 0 && level >= shapeSize) {
@@ -275,6 +279,9 @@ public class NdArrayParser implements QuietCloseable {
                 case '}': {
                     assert shapeSize == 0 || level < shapeSize : "Nesting level beyond shape size";
                     int countAtCurrLevel = currCoords.get(level);
+                    if (!commaWelcome) {
+                        throw ParseException.unexpectedToken();
+                    }
                     if (shapeSize == 0) {
                         shapeSize = level + 1;
                         shape.setCapacity(shapeSize);
@@ -295,10 +302,17 @@ public class NdArrayParser implements QuietCloseable {
                     continue;
                 }
                 case ',':
+                    if (!commaWelcome) {
+                        throw ParseException.unexpectedToken();
+                    }
+                    commaWelcome = false;
                     parsing.advance();
                     continue;
                 default:
                     assert level < currCoords.size() : "Level shot up while parsing leaves";
+                    if (commaWelcome) {
+                        throw ParseException.unexpectedToken();
+                    }
                     currCoords.set(level, currCoords.get(level) + 1);
                     int tokenLimit = 0;
                     for (int n = Math.min(parsing.size(), LEAF_LENGTH_LIMIT), i = 1; i < n; i++) {
@@ -314,6 +328,7 @@ public class NdArrayParser implements QuietCloseable {
                                 : ParseException.unexpectedToken();
                     }
                     parseElement(elementType, elementBitSize, tokenLimit);
+                    commaWelcome = true;
                     parsing.advance(tokenLimit);
             }
         }
