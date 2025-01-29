@@ -306,6 +306,27 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testIlpWithHttpContextPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048",
+                    PropertyKey.HTTP_CONTEXT_WEB_CONSOLE.getEnvVarName(), "context1"
+            )) {
+                serverMain.start();
+
+                String tableName = "h2o_feet";
+                int count = 9250;
+
+                sendIlp(tableName, count, serverMain);
+
+                serverMain.awaitTxn(tableName, 2);
+                serverMain.assertSql("SELECT count() FROM h2o_feet", "count\n" + count + "\n");
+                serverMain.assertSql("SELECT sum(water_level) FROM h2o_feet", "sum\n" + (count * (count - 1) / 2) + "\n");
+            }
+        });
+    }
+
+    @Test
     public void testInsertNdArray() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
