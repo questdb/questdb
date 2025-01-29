@@ -1978,8 +1978,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         final CharSequence matViewName = GenericLexer.unquote(tok);
         final TableToken tableToken = executionContext.getTableTokenIfExists(matViewName);
-        if (tableToken == null || !tableToken.isMatView()) {
-            throw SqlException.$(lexer.lastTokenPosition(), "existing materialized view name expected");
+        if (tableToken == null) {
+            throw SqlException.matViewDoesNotExist(lexer.lastTokenPosition(), matViewName);
+        }
+        if (!tableToken.isMatView()) {
+            throw SqlException.$(lexer.lastTokenPosition(), "materialized view expected");
         }
 
         tok = SqlUtil.fetchNext(lexer);

@@ -7712,12 +7712,24 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "REFRESH MATERIALIZED VIEW 'myview';",
                 26,
-                "existing materialized view name expected"
+                "materialized view does not exist [view=myview]"
         );
     }
 
     @Test
     public void testRefreshMatView4() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base_table (ts timestamp, v long) timestamp(ts) partition by day WAL;");
+            assertException(
+                    "REFRESH MATERIALIZED VIEW base_table",
+                    26,
+                    "materialized view expected"
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshMatView5() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
