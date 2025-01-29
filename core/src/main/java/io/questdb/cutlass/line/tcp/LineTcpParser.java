@@ -649,7 +649,7 @@ public class LineTcpParser implements QuietCloseable {
         /**
          * Unexpected early end of input
          */
-        ND_ARR_TOO_SHORT,
+        ND_ARR_PREMATURE_END,
 
         /**
          * Unexpected token found

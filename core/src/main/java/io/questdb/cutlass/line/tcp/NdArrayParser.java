@@ -411,7 +411,7 @@ public class NdArrayParser implements QuietCloseable {
         }
 
         public static @NotNull ParseException prematureEnd() {
-            return instance().errorCode(ErrorCode.ND_ARR_TOO_SHORT);
+            return instance().errorCode(ErrorCode.ND_ARR_PREMATURE_END);
         }
 
         public static @NotNull ParseException shapeStridesMismatch() {
