@@ -37,6 +37,7 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
+import static io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode.*;
 import static java.util.Collections.nCopies;
 import static org.junit.Assert.*;
 
@@ -84,21 +85,21 @@ public class NdArrayParserTest {
 
     @Test
     public void testInt1dInvalid() {
-        testInvalidLiteral("{5i}", ErrorCode.ND_ARR_UNEXPECTED);
-        testInvalidLiteral("{5i,}", ErrorCode.ND_ARR_UNEXPECTED);
-        testInvalidLiteral("{5i},", ErrorCode.ND_ARR_UNEXPECTED);
-        testInvalidLiteral("{5ia}", ErrorCode.ND_ARR_UNEXPECTED);
-        testInvalidLiteral("{5i1.1}", ErrorCode.ND_ARR_UNEXPECTED);
-        testInvalidLiteral("{5i1,,1}", ErrorCode.ND_ARR_UNEXPECTED);
-        testInvalidLiteral("{5i1,}", ErrorCode.ND_ARR_UNEXPECTED);
+        testInvalidLiteral("{5i}", ND_ARR_UNEXPECTED);
+        testInvalidLiteral("{5i,}", ND_ARR_UNEXPECTED);
+        testInvalidLiteral("{5i},", ND_ARR_UNEXPECTED);
+        testInvalidLiteral("{5ia}", ND_ARR_UNEXPECTED);
+        testInvalidLiteral("{5i1.1}", ND_ARR_UNEXPECTED);
+        testInvalidLiteral("{5i1,,1}", ND_ARR_UNEXPECTED);
+        testInvalidLiteral("{5i1,}", ND_ARR_UNEXPECTED);
         long tooPositive = Integer.MAX_VALUE + 1L;
-        testInvalidLiteral(String.format("{5i%d}", tooPositive), ErrorCode.ND_ARR_UNEXPECTED);
         long tooNegative = Integer.MIN_VALUE - 1L;
-        testInvalidLiteral(String.format("{5i%d}", tooNegative), ErrorCode.ND_ARR_UNEXPECTED);
         String veryLongInt = String.join("", nCopies(NdArrayParser.LEAF_LENGTH_LIMIT - 1, "1"));
-        testInvalidLiteral(String.format("{5i%s", veryLongInt), ErrorCode.ND_ARR_PREMATURE_END);
         String dosAttack = veryLongInt + "1";
-        testInvalidLiteral(String.format("{5i%s", dosAttack), ErrorCode.ND_ARR_UNEXPECTED);
+        testInvalidLiteral(String.format("{5i%d}", tooPositive), ND_ARR_UNEXPECTED);
+        testInvalidLiteral(String.format("{5i%d}", tooNegative), ND_ARR_UNEXPECTED);
+        testInvalidLiteral(String.format("{5i%s", veryLongInt), ND_ARR_PREMATURE_END);
+        testInvalidLiteral(String.format("{5i%s", dosAttack), ND_ARR_UNEXPECTED);
     }
 
     @Test
@@ -110,14 +111,14 @@ public class NdArrayParserTest {
 
     @Test
     public void testInt2dInvalid() {
-        testInvalidLiteral("{5i{}}", ErrorCode.ND_ARR_UNEXPECTED);
-        testInvalidLiteral("{5i{,}}", ErrorCode.ND_ARR_UNEXPECTED);
-        testInvalidLiteral("{5i{a}}", ErrorCode.ND_ARR_UNEXPECTED);
-        testInvalidLiteral("{5i{1.1}}", ErrorCode.ND_ARR_UNEXPECTED);
-        testInvalidLiteral("{5i{1,}}", ErrorCode.ND_ARR_UNEXPECTED);
-        testInvalidLiteral("{5i{1},,{1}}", ErrorCode.ND_ARR_UNEXPECTED);
-        testInvalidLiteral("{5i{1,,1}}", ErrorCode.ND_ARR_UNEXPECTED);
-        testInvalidLiteral("{5i{1},}", ErrorCode.ND_ARR_UNEXPECTED);
+        testInvalidLiteral("{5i{}}", ND_ARR_UNEXPECTED);
+        testInvalidLiteral("{5i{,}}", ND_ARR_UNEXPECTED);
+        testInvalidLiteral("{5i{a}}", ND_ARR_UNEXPECTED);
+        testInvalidLiteral("{5i{1.1}}", ND_ARR_UNEXPECTED);
+        testInvalidLiteral("{5i{1,}}", ND_ARR_UNEXPECTED);
+        testInvalidLiteral("{5i{1},,{1}}", ND_ARR_UNEXPECTED);
+        testInvalidLiteral("{5i{1,,1}}", ND_ARR_UNEXPECTED);
+        testInvalidLiteral("{5i{1},}", ND_ARR_UNEXPECTED);
     }
 
     @Test
@@ -130,10 +131,10 @@ public class NdArrayParserTest {
 
     @Test
     public void testInvalidJagged() {
-        testInvalidLiteral("{5i{1},{1,2}}", ErrorCode.ND_ARR_IRREGULAR_SHAPE);
-        testInvalidLiteral("{5i{1,2},{1}}", ErrorCode.ND_ARR_IRREGULAR_SHAPE);
-        testInvalidLiteral("{5i{{1,2},{1}}}", ErrorCode.ND_ARR_IRREGULAR_SHAPE);
-        testInvalidLiteral("{5i{{1},{2}},{{3},{4},{5}}}", ErrorCode.ND_ARR_IRREGULAR_SHAPE);
+        testInvalidLiteral("{5i{1},{1,2}}", ND_ARR_IRREGULAR_SHAPE);
+        testInvalidLiteral("{5i{1,2},{1}}", ND_ARR_IRREGULAR_SHAPE);
+        testInvalidLiteral("{5i{{1,2},{1}}}", ND_ARR_IRREGULAR_SHAPE);
+        testInvalidLiteral("{5i{{1},{2}},{{3},{4},{5}}}", ND_ARR_IRREGULAR_SHAPE);
     }
 
     @Test
