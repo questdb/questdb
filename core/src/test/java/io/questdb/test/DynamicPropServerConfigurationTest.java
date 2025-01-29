@@ -699,11 +699,25 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     private void assertReloadConfig(boolean expectedResult, String user, String password) throws SQLException {
         try (
                 Connection conn = getConnection(user, password);
-                PreparedStatement stmt = conn.prepareStatement("select reload_config();");
-                ResultSet rs = stmt.executeQuery()
+                PreparedStatement stmt = conn.prepareStatement("select reload_config();")
         ) {
-            Assert.assertTrue(rs.next());
-            Assert.assertEquals(expectedResult, rs.getBoolean(1));
+            if (expectedResult) {
+                // on ZFS there might be a delay before the file metadata are updated
+                // thus we give it a few spins if the config is not updates immediately
+                TestUtils.assertEventually(() -> {
+                    try (ResultSet rs = stmt.executeQuery()) {
+                        Assert.assertTrue(rs.next());
+                        Assert.assertTrue(rs.getBoolean(1));
+                    } catch (SQLException e) {
+                        throw new RuntimeException(e);
+                    }
+                });
+            } else {
+                try (ResultSet rs = stmt.executeQuery()) {
+                    Assert.assertTrue(rs.next());
+                    Assert.assertFalse(rs.getBoolean(1));
+                }
+            }
         }
     }
 
