@@ -65,6 +65,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private final ObjList<TableToken> childViewSink = new ObjList<>();
     private final EntityColumnFilter columnFilter = new EntityColumnFilter();
     private final CairoEngine engine;
+    private final int maxRecompileAttempts;
     private final MicrosecondClock microsecondClock;
     private final MatViewRefreshExecutionContext mvRefreshExecutionContext;
     private final MatViewRefreshTask mvRefreshTask = new MatViewRefreshTask();
@@ -77,8 +78,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         this.mvRefreshExecutionContext = new MatViewRefreshExecutionContext(engine, workerCount, sharedWorkerCount);
         this.txnRangeLoader = new WalTxnRangeLoader(engine.getConfiguration().getFilesFacade());
         this.microsecondClock = engine.getConfiguration().getMicrosecondClock();
+        this.maxRecompileAttempts = engine.getConfiguration().getMatViewMaxRecompileAttempts();
     }
-
 
     @TestOnly
     public MatViewRefreshJob(int workerId, CairoEngine engine) {
@@ -204,7 +205,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             factory = state.acquireRecordFactory();
             copier = state.getRecordToRowCopier();
 
-            int maxRecompileAttempts = 10;
             for (int i = 0; i < maxRecompileAttempts; i++) {
                 try {
                     if (factory == null) {

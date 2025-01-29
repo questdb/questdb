@@ -201,7 +201,6 @@ public class FuzzRunner {
                 purgePartitionThread.start();
                 applyThreads.add(purgePartitionThread);
             }
-
         } finally {
             for (int i = 0; i < threads.size(); i++) {
                 int k = i;

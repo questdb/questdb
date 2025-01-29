@@ -59,7 +59,7 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
 
     @Override
     public @NotNull SqlExecutionCircuitBreaker getCircuitBreaker() {
-        return getSimpleCircuitBreaker();
+        return getSimpleCircuitBreaker(); // mat view refresh should use cancellable circuit breaker instead of no-op
     }
 
     @Override

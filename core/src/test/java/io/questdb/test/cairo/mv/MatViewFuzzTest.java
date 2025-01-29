@@ -49,7 +49,6 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         super.setUp();
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
-        setProperty(PropertyKey.CAIRO_MAT_VIEW_MAX_RECOMPILE_ATTEMPTS, String.valueOf(Integer.MAX_VALUE));
     }
 
     @Test
@@ -281,13 +280,13 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         );
     }
 
-    private Thread startRefreshJob(int i, AtomicBoolean stop, Rnd outsideRnd) {
+    private Thread startRefreshJob(int workerId, AtomicBoolean stop, Rnd outsideRnd) {
         Rnd rnd = new Rnd(outsideRnd.nextLong(), outsideRnd.nextLong());
         Thread th = new Thread(() -> {
             try {
-                MatViewRefreshJob refreshJob = new MatViewRefreshJob(i, engine);
+                MatViewRefreshJob refreshJob = new MatViewRefreshJob(workerId, engine);
                 while (!stop.get()) {
-                    refreshJob.run(i);
+                    refreshJob.run(workerId);
                     Os.sleep(rnd.nextInt(1000));
                 }
 
@@ -295,7 +294,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
                     do {
                         drainWalQueue(walApplyJob);
-                    } while (refreshJob.run(i));
+                    } while (refreshJob.run(workerId));
                 }
             } catch (Throwable throwable) {
                 LOG.error().$("Refresh job failed: ").$(throwable).$();
@@ -303,7 +302,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 Path.clearThreadLocals();
                 LOG.info().$("Refresh job stopped").$();
             }
-        });
+        }, "refresh-job" + workerId);
         th.start();
         return th;
     }

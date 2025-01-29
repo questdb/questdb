@@ -42,7 +42,7 @@ class WalApplySqlExecutionContext extends SqlExecutionContextImpl {
 
     @Override
     public @NotNull SqlExecutionCircuitBreaker getCircuitBreaker() {
-        return getSimpleCircuitBreaker();//wal operations should use cancellable circuit breaker instead of noop
+        return getSimpleCircuitBreaker(); // WAL operations should use cancellable circuit breaker instead of no-op
     }
 
     public TableMetadata getMetadataForWrite(TableToken tableToken, long desiredVersion) {

@@ -208,7 +208,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(32, configuration.getCairoConfiguration().getCopyPoolCapacity());
         Assert.assertEquals(5, configuration.getCairoConfiguration().getCreateAsSelectRetryCount());
         Assert.assertFalse(configuration.getCairoConfiguration().isMatViewEnabled());
-        Assert.assertEquals(20, configuration.getCairoConfiguration().getMatViewMaxRecompileAttempts());
+        Assert.assertEquals(10, configuration.getCairoConfiguration().getMatViewMaxRecompileAttempts());
         Assert.assertTrue(configuration.getCairoConfiguration().getDefaultSymbolCacheFlag());
         Assert.assertEquals(256, configuration.getCairoConfiguration().getDefaultSymbolCapacity());
         Assert.assertEquals(30, configuration.getCairoConfiguration().getFileOperationRetryCount());
