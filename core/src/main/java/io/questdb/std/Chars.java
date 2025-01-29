@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.str.TrimType;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf16Sink;
@@ -1076,6 +1077,15 @@ public final class Chars {
 
     public static String toString(CharSequence s) {
         return s == null ? null : s.toString();
+    }
+
+    public static DirectUtf16Sink toDirectUtf16Sink(CharSequence s) {
+        if (s == null) {
+            return null;
+        }
+        DirectUtf16Sink sink = new DirectUtf16Sink(s.length() * 2L);
+        sink.put(s);
+        return sink;
     }
 
     public static String toString(CharSequence cs, int start, int end) {

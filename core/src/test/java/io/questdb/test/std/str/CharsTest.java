@@ -439,6 +439,15 @@ public class CharsTest {
         Assert.assertFalse(Chars.startsWithLowerCase("ABC", "ABC"));
     }
 
+    @Test
+    public void testToDirectUtf16Sink() {
+        String[] testStrings = {"", "Aaaa", "ABC"};
+        for (String testString : testStrings) {
+            DirectUtf16Sink directUtf16Sink = Chars.toDirectUtf16Sink(testString);
+            Assert.assertTrue(Chars.equals(testString, directUtf16Sink));
+        }
+    }
+
     private void assertThat(String expected, ObjList<Path> list) {
         Assert.assertEquals(expected, list.toString());
         for (int i = 0, n = list.size(); i < n; i++) {

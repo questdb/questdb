@@ -24,12 +24,13 @@
 
 package io.questdb.test.std;
 
-import io.questdb.std.AbstractCharSequenceIntHashMap;
-import io.questdb.std.CharSequenceIntHashMap;
 
-public class CharSequenceIntHashMapTest extends AbstractCharSequenceIntHashMapTest {
+import io.questdb.std.AbstractCharSequenceIntHashMap;
+import io.questdb.std.DirectCharSequenceIntHashHashMap;
+
+public class DirectCharSequenceIntHashMapTest extends AbstractCharSequenceIntHashMapTest {
     @Override
     protected AbstractCharSequenceIntHashMap createInstance() {
-        return new CharSequenceIntHashMap();
+        return new DirectCharSequenceIntHashHashMap();
     }
 }

@@ -24,26 +24,30 @@
 
 package io.questdb.std;
 
+import io.questdb.std.str.DirectUtf16Sink;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 
+public class DirectCharSequenceIntHashHashMap extends AbstractCharSequenceIntHashMap {
 
-public class CharSequenceIntHashMap extends AbstractCharSequenceIntHashMap {
-    public CharSequenceIntHashMap() {
+    public DirectCharSequenceIntHashHashMap() {
         this(8);
     }
 
-    public CharSequenceIntHashMap(int initialCapacity) {
+    public DirectCharSequenceIntHashHashMap(int initialCapacity) {
         this(initialCapacity, 0.4, NO_ENTRY_VALUE);
     }
 
-    public CharSequenceIntHashMap(int initialCapacity, double loadFactor, int noEntryValue) {
+    public DirectCharSequenceIntHashHashMap(int initialCapacity, double loadFactor, int noEntryValue) {
         super(initialCapacity, loadFactor, noEntryValue);
     }
 
     @Override
-    public final void clear() {
+    public void clear() {
+        for (int index = 0; index < keys.length; index++) {
+            closeDirectMemory(keys[index]);
+        }
         super.clear();
         list.clear();
         Arrays.fill(values, noEntryValue);
@@ -55,7 +59,7 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceIntHashMap {
         if (index < 0) {
             values[-index - 1] = values[-index - 1] + 1;
         } else {
-            putAt0(index, Chars.toString(key), 0);
+            putAt0(index, Chars.toDirectUtf16Sink(key), 0);
         }
     }
 
@@ -65,9 +69,9 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceIntHashMap {
             values[-index - 1] = value;
             return false;
         }
-        final String keyString = Chars.toString(key);
-        putAt0(index, keyString, value);
-        list.add(keyString);
+        DirectUtf16Sink directUtf16Sink = Chars.toDirectUtf16Sink(key);
+        putAt0(index, directUtf16Sink, value);
+        list.add(directUtf16Sink);
         return true;
     }
 
@@ -75,9 +79,9 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceIntHashMap {
     public void putIfAbsent(@NotNull CharSequence key, int value) {
         int index = keyIndex(key);
         if (index > -1) {
-            String keyString = Chars.toString(key);
-            putAt0(index, keyString, value);
-            list.add(keyString);
+            DirectUtf16Sink directUtf16Sink = Chars.toDirectUtf16Sink(key);
+            putAt0(index, directUtf16Sink, value);
+            list.add(directUtf16Sink);
         }
     }
 
@@ -86,6 +90,7 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceIntHashMap {
         if (index < 0) {
             int index1 = -index - 1;
             CharSequence key = keys[index1];
+            closeDirectMemory(key);
             super.removeAt(index);
             list.remove(key);
         }
@@ -93,6 +98,7 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceIntHashMap {
 
     @Override
     protected void erase(int index) {
+        closeDirectMemory(keys[index]);
         keys[index] = noEntryKey;
         values[index] = noEntryValue;
     }
@@ -101,6 +107,13 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceIntHashMap {
     protected void move(int from, int to) {
         keys[to] = keys[from];
         values[to] = values[from];
-        erase(from);
+        keys[from] = noEntryKey;
+        values[from] = noEntryValue;
+    }
+
+    private void closeDirectMemory(CharSequence key) {
+        if (key != noEntryKey) {
+            ((DirectUtf16Sink) key).close();
+        }
     }
 }
