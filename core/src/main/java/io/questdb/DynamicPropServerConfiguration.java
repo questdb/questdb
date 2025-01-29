@@ -387,6 +387,8 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
                     LOG.info().$("nothing to reload [file=").$(confPath).$(", modifiedAt=").$ts(newLastModified * 1000).I$();
                 } else if (newLastModified == -1) {
                     LOG.critical().$("Server configuration file is inaccessible! This is dangerous as server will likely not boot on restart. Make sure the current user can access the configuration file [path=").$(confPath).I$();
+                } else {
+                    LOG.info().$("Server configuration file has not been modified since last check [file=").$(confPath).$(", modifiedAt=").$ts(newLastModified * 1000).$(", lastCheckedAt=").$ts(lastModified * 1000).I$();
                 }
             }
         }
