@@ -72,12 +72,12 @@ public class NdArrayParser implements QuietCloseable {
     // jagged array, which is not allowed.
     private final NdArrayBuffers bufs = new NdArrayBuffers();
     private final DirectUtf8String input = new DirectUtf8String();
-
     private final NdArrayView view = new NdArrayView();
+
     /**
-     * Starting address first encountered when parsing. Used to calculate the current position.
+     * Address where the input string starts. Used to calculate the current position.
      */
-    private long baseLo = 0;
+    private long inputStartAddr = 0;
 
     /**
      * Count of how many elements we've stored.
@@ -114,7 +114,7 @@ public class NdArrayParser implements QuietCloseable {
             return;
         }
 
-        baseLo = value.lo();
+        inputStartAddr = value.lo();
         input.of(value);
 
         parseOpenBrace();
@@ -128,7 +128,20 @@ public class NdArrayParser implements QuietCloseable {
      * relative to the start of the input passed to {@link #parse(DirectUtf8String)}.
      */
     public int position() {
-        return (int) (input.lo() - baseLo);
+        return (int) (input.lo() - inputStartAddr);
+    }
+
+    private void checkAndIncrementCoord(
+            DirectIntList currCoords, DirectIntList shape, int shapeSize, int level
+    ) throws ParseException {
+        int countSoFarAtCurrLevel = currCoords.get(level);
+        if (shapeSize != 0) {
+            int dimSize = shape.get(level);
+            if (countSoFarAtCurrLevel == dimSize) {
+                throw ParseException.irregularShape(position());
+            }
+        }
+        currCoords.set(level, countSoFarAtCurrLevel + 1);
     }
 
     private void elementsPutByte(byte n) {
@@ -264,7 +277,7 @@ public class NdArrayParser implements QuietCloseable {
                     if (commaWelcome) {
                         throw ParseException.unexpectedToken(position());
                     }
-                    currCoords.set(level, currCoords.get(level) + 1);
+                    checkAndIncrementCoord(currCoords, shape, shapeSize, level);
                     level++;
                     if (shapeSize > 0 && level >= shapeSize) {
                         throw ParseException.irregularShape(position());
@@ -316,7 +329,7 @@ public class NdArrayParser implements QuietCloseable {
                     if (commaWelcome) {
                         throw ParseException.unexpectedToken(position());
                     }
-                    currCoords.set(level, currCoords.get(level) + 1);
+                    checkAndIncrementCoord(currCoords, shape, shapeSize, level);
                     int tokenLimit = 0;
                     for (int n = Math.min(input.size(), LEAF_LENGTH_LIMIT), i = 1; i < n; i++) {
                         b = input.byteAt(i);
@@ -380,7 +393,7 @@ public class NdArrayParser implements QuietCloseable {
         view.reset();
         bufs.reset();
         numValues = 0;
-        baseLo = 0;
+        inputStartAddr = 0;
     }
 
     private void setArray() throws ParseException {
