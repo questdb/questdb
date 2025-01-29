@@ -879,6 +879,17 @@ public final class Numbers {
         return b < '0' || b > '9';
     }
 
+    public static byte parseByte(Utf8Sequence sequence, int p, int lim) throws NumericException {
+        if (sequence == null) {
+            throw NumericException.INSTANCE;
+        }
+        short n = parseShort0(sequence.asAsciiCharSequence(), p, lim);
+        if (n < Byte.MIN_VALUE || n > Byte.MAX_VALUE) {
+            throw NumericException.INSTANCE;
+        }
+        return (byte) n;
+    }
+
     public static double parseDouble(CharSequence sequence) throws NumericException {
         return FastDoubleParser.parseDouble(sequence, true);
     }
@@ -1813,6 +1824,13 @@ public final class Numbers {
             throw NumericException.INSTANCE;
         }
         return parseShort0(sequence.asAsciiCharSequence(), 0, sequence.size());
+    }
+
+    public static short parseShort(Utf8Sequence sequence, int p, int lim) throws NumericException {
+        if (sequence == null) {
+            throw NumericException.INSTANCE;
+        }
+        return parseShort0(sequence.asAsciiCharSequence(), p, lim);
     }
 
     public static short parseShort(CharSequence sequence) throws NumericException {

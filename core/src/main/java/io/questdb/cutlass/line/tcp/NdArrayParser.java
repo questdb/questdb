@@ -144,31 +144,6 @@ public class NdArrayParser implements QuietCloseable {
         currCoords.set(level, countSoFarAtCurrLevel + 1);
     }
 
-    private void elementsPutByte(byte n) {
-        bufs.values.putByte(n);
-        ++numValues;
-    }
-
-    private void elementsPutDouble(double n) {
-        bufs.values.putDouble(n);
-        ++numValues;
-    }
-
-    private void elementsPutFloat(float n) {
-        bufs.values.putFloat(n);
-        ++numValues;
-    }
-
-    private void elementsPutInt(int n) {
-        bufs.values.putInt(n);
-        ++numValues;
-    }
-
-    private void elementsPutLong(long n) {
-        bufs.values.putLong(n);
-        ++numValues;
-    }
-
     private void parseDataType() throws ParseException {
         if (input.size() < 3) {
             throw ParseException.prematureEnd(position());
@@ -179,6 +154,16 @@ public class NdArrayParser implements QuietCloseable {
         int elementSize = 1 << typePrecision;
         switch (typeClass) {
             case 'i':
+                switch (elementSize) {
+                    case 8:
+                    case 16:
+                    case 32:
+                    case 64:
+                        break;
+                    default:
+                        throw ParseException.invalidType(position());
+                }
+                break;
             case 'f':
                 switch (elementSize) {
                     case 32:
@@ -206,47 +191,6 @@ public class NdArrayParser implements QuietCloseable {
         input.advance();
     }
 
-    private void parseElement(char typeClass, int bitSize, int tokenLimit) throws ParseException {
-        try {
-            switch (typeClass) {
-                case 'i':
-                    switch (bitSize) {
-                        case 32:
-                            elementsPutInt(Numbers.parseInt(input, 0, tokenLimit));
-                            break;
-                        case 64:
-                            elementsPutLong(Numbers.parseLong(input, 0, tokenLimit));
-                            break;
-                        default:
-                            throw new AssertionError("Unexpected signed element size");
-                    }
-                    break;
-                case 'u':
-                    assert bitSize == 1 : "Unexpected unsigned element size";
-                    int n = Numbers.parseInt(input, 0, tokenLimit);
-                    if (n != 0 && n != 1) {
-                        throw ParseException.unexpectedToken(position());
-                    }
-                    elementsPutByte((byte) n);
-                    break;
-                case 'f':
-                    switch (bitSize) {
-                        case 32:
-                            elementsPutFloat(Numbers.parseFloat(input.ptr(), tokenLimit));
-                            break;
-                        case 64:
-                            elementsPutDouble(Numbers.parseDouble(input.ptr(), tokenLimit));
-                            break;
-                        default:
-                            throw new AssertionError("Unexpected floating-point element size");
-                    }
-                    break;
-            }
-        } catch (NumericException e) {
-            throw ParseException.unexpectedToken(position());
-        }
-    }
-
     /**
      * Parse the outermost level of a row-major array.
      * <p>Generally, this would look something like this:</p>
@@ -257,8 +201,8 @@ public class NdArrayParser implements QuietCloseable {
      * <p>Note that by the time we call this function, the opening left brace and type have already been parsed.</p>
      */
     private void parseElements() throws ParseException {
-        final char elementType = ColumnType.getNdArrayElementTypeClass(bufs.type);
-        final int elementBitSize = 1 << ColumnType.getNdArrayElementTypePrecision(bufs.type);
+        final char numberType = ColumnType.getNdArrayElementTypeClass(bufs.type);
+        final int numberBitSize = 1 << ColumnType.getNdArrayElementTypePrecision(bufs.type);
         final DirectIntList shape = bufs.shape;
         final DirectIntList currCoords = bufs.currCoords;
         currCoords.add(0);
@@ -343,11 +287,60 @@ public class NdArrayParser implements QuietCloseable {
                                 ? ParseException.prematureEnd(position())
                                 : ParseException.unexpectedToken(position());
                     }
-                    parseElement(elementType, elementBitSize, tokenLimit);
+                    parseLeaf(numberType, numberBitSize, tokenLimit);
+                    numValues++;
                     commaWelcome = true;
                     input.advance(tokenLimit);
                 }
             }
+        }
+    }
+
+    private void parseLeaf(char typeClass, int bitSize, int tokenLimit) throws ParseException {
+        try {
+            switch (typeClass) {
+                case 'i':
+                    switch (bitSize) {
+                        case 8:
+                            bufs.values.putByte(Numbers.parseByte(input, 0, tokenLimit));
+                            break;
+                        case 16:
+                            bufs.values.putShort(Numbers.parseShort(input, 0, tokenLimit));
+                            break;
+                        case 32:
+                            bufs.values.putInt(Numbers.parseInt(input, 0, tokenLimit));
+                            break;
+                        case 64:
+                            bufs.values.putLong(Numbers.parseLong(input, 0, tokenLimit));
+                            break;
+                        default:
+                            throw new AssertionError("Unexpected signed element size");
+                    }
+                    break;
+                case 'u':
+                    assert bitSize == 1 : "Unexpected unsigned element size";
+                    int n = Numbers.parseInt(input, 0, tokenLimit);
+                    if (n != 0 && n != 1) {
+                        throw ParseException.unexpectedToken(position());
+                    }
+                    bufs.values.putByte((byte) n);
+                    ++numValues;
+                    break;
+                case 'f':
+                    switch (bitSize) {
+                        case 32:
+                            bufs.values.putFloat(Numbers.parseFloat(input.ptr(), tokenLimit));
+                            break;
+                        case 64:
+                            bufs.values.putDouble(Numbers.parseDouble(input.ptr(), tokenLimit));
+                            break;
+                        default:
+                            throw new AssertionError("Unexpected floating-point element size");
+                    }
+                    break;
+            }
+        } catch (NumericException e) {
+            throw ParseException.unexpectedToken(position());
         }
     }
 

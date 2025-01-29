@@ -162,7 +162,8 @@ public final class ColumnType {
 //                        (typePrecision == 3 && typeClass == 'f') ||
 //                        (typePrecision == 4 && typeClass == 'f') ||
                         (typePrecision == 5 && typeClass == 'f') ||  // float
-                        (typePrecision == 6 && typeClass == 'f')) {  // double
+                        (typePrecision == 6 && typeClass == 'f')     // double
+        ) {
             final int elementType = (((int) typeClass) << BYTE_BITS) | typePrecision;
             return ND_ARRAY | (elementType << BYTE_BITS);
         } else {

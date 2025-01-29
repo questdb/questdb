@@ -59,6 +59,15 @@ public class NdArrayParserTest {
     }
 
     @Test
+    public void testByte1d() throws ParseException {
+        testByteLiteral("{3i1}", new int[]{1}, new int[]{1});
+        testByteLiteral(String.format("{3i%d}", Byte.MAX_VALUE), new int[]{1}, new int[]{Byte.MAX_VALUE});
+        testByteLiteral(String.format("{3i%d}", Byte.MIN_VALUE), new int[]{1}, new int[]{Byte.MIN_VALUE});
+        testByteLiteral("{3i1,2}", new int[]{2}, new int[]{1, 2});
+        testByteLiteral("{3i1,2,3}", new int[]{3}, new int[]{1, 2, 3});
+    }
+
+    @Test
     public void testDouble1d() throws ParseException {
         testDoubleLiteral("{6f1}", new int[]{1}, new double[]{1.0});
         testDoubleLiteral("{6f1.1}", new int[]{1}, new double[]{1.1});
@@ -99,12 +108,8 @@ public class NdArrayParserTest {
         testInvalidLiteral("{5i1.1}", ND_ARR_UNEXPECTED, 3);
         testInvalidLiteral("{5i1,,1}", ND_ARR_UNEXPECTED, 5);
         testInvalidLiteral("{5i1,}", ND_ARR_UNEXPECTED, 5);
-        long tooPositive = Integer.MAX_VALUE + 1L;
-        long tooNegative = Integer.MIN_VALUE - 1L;
         String veryLongInt = String.join("", nCopies(NdArrayParser.LEAF_LENGTH_LIMIT - 1, "1"));
         String dosAttack = veryLongInt + "1";
-        testInvalidLiteral(String.format("{5i%d}", tooPositive), ND_ARR_UNEXPECTED, 3);
-        testInvalidLiteral(String.format("{5i%d}", tooNegative), ND_ARR_UNEXPECTED, 3);
         testInvalidLiteral(String.format("{5i%s", veryLongInt), ND_ARR_PREMATURE_END, 3);
         testInvalidLiteral(String.format("{5i%s", dosAttack), ND_ARR_UNEXPECTED, 3);
     }
@@ -151,6 +156,27 @@ public class NdArrayParserTest {
         testLongLiteral("{6i1,2,3}", new int[]{3}, new long[]{1, 2, 3});
     }
 
+    @Test
+    public void testShort1d() throws ParseException {
+        testShortLiteral("{4i1}", new int[]{1}, new int[]{1});
+        testShortLiteral(String.format("{4i%d}", Short.MAX_VALUE), new int[]{1}, new int[]{Short.MAX_VALUE});
+        testShortLiteral(String.format("{4i%d}", Short.MIN_VALUE), new int[]{1}, new int[]{Short.MIN_VALUE});
+        testShortLiteral("{4i1,2}", new int[]{2}, new int[]{1, 2});
+        testShortLiteral("{4i1,2,3}", new int[]{3}, new int[]{1, 2, 3});
+    }
+
+    @Test
+    public void testValuesOutOfRange() {
+        testInvalidLiteral(String.format("{3i%d}", Byte.MIN_VALUE - 1), ND_ARR_UNEXPECTED, 3);
+        testInvalidLiteral(String.format("{3i%d}", Byte.MAX_VALUE + 1), ND_ARR_UNEXPECTED, 3);
+        testInvalidLiteral(String.format("{4i%d}", Short.MIN_VALUE - 1), ND_ARR_UNEXPECTED, 3);
+        testInvalidLiteral(String.format("{4i%d}", Short.MAX_VALUE + 1), ND_ARR_UNEXPECTED, 3);
+        testInvalidLiteral(String.format("{5i%d}", Integer.MIN_VALUE - 1L), ND_ARR_UNEXPECTED, 3);
+        testInvalidLiteral(String.format("{5i%d}", Integer.MAX_VALUE + 1L), ND_ARR_UNEXPECTED, 3);
+        testInvalidLiteral("{6i-9223372036854775809}", ND_ARR_UNEXPECTED, 3);
+        testInvalidLiteral("{6i9223372036854775808}", ND_ARR_UNEXPECTED, 3);
+    }
+
     private void assertSliceEquals(DirectIntSlice actual, int[] expected) {
         assertArrayEquals(expected, actual.toArray());
     }
@@ -161,6 +187,14 @@ public class NdArrayParserTest {
         NdArrayView view = parser.getView();
         assertSliceEquals(view.getShape(), expectedShape);
         return view.getValues();
+    }
+
+    private void testByteLiteral(String literal, int[] expectedShape, int[] expectedValues) throws ParseException {
+        NdArrayValuesSlice values = parseAndGetValues(literal, expectedShape);
+        assertEquals("values don't have the expected size", expectedValues.length, values.size());
+        for (int i = 0; i < expectedValues.length; i++) {
+            assertEquals(expectedValues[i], values.getByte(i));
+        }
     }
 
     private void testDoubleLiteral(String literal, int[] expectedShape, double[] expectedValues) throws ParseException {
@@ -206,6 +240,15 @@ public class NdArrayParserTest {
                 Long.BYTES * expectedValues.length, values.size());
         for (int i = 0; i < expectedValues.length; i++) {
             assertEquals(expectedValues[i], values.getLong(i));
+        }
+    }
+
+    private void testShortLiteral(String literal, int[] expectedShape, int[] expectedValues) throws ParseException {
+        NdArrayValuesSlice values = parseAndGetValues(literal, expectedShape);
+        assertEquals("values don't have the expected size",
+                Short.BYTES * expectedValues.length, values.size());
+        for (int i = 0; i < expectedValues.length; i++) {
+            assertEquals(expectedValues[i], values.getShort(i));
         }
     }
 
