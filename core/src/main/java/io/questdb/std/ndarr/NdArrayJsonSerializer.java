@@ -30,12 +30,7 @@ import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
 public class NdArrayJsonSerializer {
-    private NdArrayJsonSerializer() {}
-
-    private static void writeRepeated(@NotNull CharSink<?> sink, int count, char ch) {
-        for (int i = 0; i < count; ++i) {
-            sink.putAscii(ch);
-        }
+    private NdArrayJsonSerializer() {
     }
 
     public static void serialize(
@@ -70,18 +65,18 @@ public class NdArrayJsonSerializer {
                 sink.putAscii(boolVal ? "true" : "false");
                 break;
             case 3:
-                assert typeClass == 's';
+                assert typeClass == 'i';
                 final byte byteVal = array.getByte(coordinates);
                 sink.put(byteVal);
                 break;
             case 4:
-                assert typeClass == 's';
+                assert typeClass == 'i';
                 final short shortVal = array.getShort(coordinates);
                 sink.put(shortVal);
                 break;
             case 5:
                 switch (typeClass) {
-                    case 's':
+                    case 'i':
                         final int intVal = array.getInt(coordinates);
                         sink.put(intVal);
                         break;
@@ -95,7 +90,7 @@ public class NdArrayJsonSerializer {
                 break;
             case 6:
                 switch (typeClass) {
-                    case 's':
+                    case 'i':
                         final long longVal = array.getLong(coordinates);
                         sink.put(longVal);
                         break;
@@ -110,6 +105,12 @@ public class NdArrayJsonSerializer {
 
             default:
                 throw new UnsupportedOperationException("Unsupported type: " + precision + typeClass);
+        }
+    }
+
+    private static void writeRepeated(@NotNull CharSink<?> sink, int count, char ch) {
+        for (int i = 0; i < count; ++i) {
+            sink.putAscii(ch);
         }
     }
 }
