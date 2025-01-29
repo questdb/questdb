@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.http.line;
 
+import io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode;
 import io.questdb.cutlass.line.tcp.NdArrayParser;
 import io.questdb.cutlass.line.tcp.NdArrayParser.ParseException;
 import io.questdb.std.DirectIntSlice;
@@ -31,12 +32,12 @@ import io.questdb.std.ndarr.NdArrayValuesSlice;
 import io.questdb.std.ndarr.NdArrayView;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.DirectUtf8String;
+import org.jetbrains.annotations.NotNull;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
-import static org.junit.Assert.assertArrayEquals;
-import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.*;
 
 public class NdArrayParserTest {
 
@@ -74,8 +75,25 @@ public class NdArrayParserTest {
     @Test
     public void testInt1d() throws ParseException {
         testIntLiteral("{5i1}", new int[]{1}, new int[]{1});
+        testIntLiteral(String.format("{5i%d}", Integer.MAX_VALUE), new int[]{1}, new int[]{Integer.MAX_VALUE});
+        testIntLiteral(String.format("{5i%d}", Integer.MIN_VALUE), new int[]{1}, new int[]{Integer.MIN_VALUE});
         testIntLiteral("{5i1,2}", new int[]{2}, new int[]{1, 2});
         testIntLiteral("{5i1,2,3}", new int[]{3}, new int[]{1, 2, 3});
+    }
+
+    @Test
+    public void testInt1dInvalid() {
+        testInvalidLiteral("{5i}", ErrorCode.ND_ARR_UNEXPECTED);
+        testInvalidLiteral("{5i,}", ErrorCode.ND_ARR_UNEXPECTED);
+        testInvalidLiteral("{5i},", ErrorCode.ND_ARR_UNEXPECTED);
+        testInvalidLiteral("{5ia}", ErrorCode.ND_ARR_UNEXPECTED);
+        testInvalidLiteral("{5i1.1}", ErrorCode.ND_ARR_UNEXPECTED);
+        testInvalidLiteral("{5i1,,1}", ErrorCode.ND_ARR_UNEXPECTED);
+        testInvalidLiteral("{5i1,}", ErrorCode.ND_ARR_UNEXPECTED);
+        long tooPositive = Integer.MAX_VALUE + 1L;
+        testInvalidLiteral(String.format("{5i%d}", tooPositive), ErrorCode.ND_ARR_UNEXPECTED);
+        long tooNegative = Integer.MIN_VALUE - 1L;
+        testInvalidLiteral(String.format("{5i%d}", tooNegative), ErrorCode.ND_ARR_UNEXPECTED);
     }
 
     @Test
@@ -83,6 +101,18 @@ public class NdArrayParserTest {
         testIntLiteral("{5i{1}}", new int[]{1, 1}, new int[]{1});
         testIntLiteral("{5i{1},{2}}", new int[]{2, 1}, new int[]{1, 2});
         testIntLiteral("{5i{1,2},{3,4}}", new int[]{2, 2}, new int[]{1, 2, 3, 4});
+    }
+
+    @Test
+    public void testInt2dInvalid() {
+        testInvalidLiteral("{5i{}}", ErrorCode.ND_ARR_UNEXPECTED);
+        testInvalidLiteral("{5i{,}}", ErrorCode.ND_ARR_UNEXPECTED);
+        testInvalidLiteral("{5i{a}}", ErrorCode.ND_ARR_UNEXPECTED);
+        testInvalidLiteral("{5i{1.1}}", ErrorCode.ND_ARR_UNEXPECTED);
+        testInvalidLiteral("{5i{1,}}", ErrorCode.ND_ARR_UNEXPECTED);
+        testInvalidLiteral("{5i{1},,{1}}", ErrorCode.ND_ARR_UNEXPECTED);
+        testInvalidLiteral("{5i{1,,1}}", ErrorCode.ND_ARR_UNEXPECTED);
+        testInvalidLiteral("{5i{1},}", ErrorCode.ND_ARR_UNEXPECTED);
     }
 
     @Test
@@ -136,6 +166,15 @@ public class NdArrayParserTest {
                 Integer.BYTES * expectedValues.length, values.size());
         for (int i = 0; i < expectedValues.length; i++) {
             assertEquals(expectedValues[i], values.getInt(i));
+        }
+    }
+
+    private void testInvalidLiteral(@NotNull String literal, @NotNull ErrorCode expectedErrorCode) {
+        try {
+            parser.parse(utf8String(sink, literal));
+            fail("Parsing was supposed to fail");
+        } catch (ParseException e) {
+            assertEquals(expectedErrorCode, e.errorCode());
         }
     }
 
