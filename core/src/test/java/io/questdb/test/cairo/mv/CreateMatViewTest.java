@@ -48,6 +48,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.text.ParseException;
@@ -63,12 +64,17 @@ public class CreateMatViewTest extends AbstractCairoTest {
     private static final String TABLE2 = "table2";
     private static final String TABLE3 = "table3";
 
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
+        AbstractCairoTest.setUpStatic();
+    }
+
     @Before
     public void setUp() {
         super.setUp();
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
-        engine.getMatViewGraph().clear();
     }
 
     @Test
@@ -796,7 +802,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
         if (matViewToken == null) {
             return null;
         }
-        return engine.getMatViewGraph().getMatView(matViewToken);
+        return engine.getMatViewGraph().getMatViewDefinition(matViewToken);
     }
 
     private static long mapRO(FilesFacade ff, Path path, MemoryCMR mem, String fileName) {

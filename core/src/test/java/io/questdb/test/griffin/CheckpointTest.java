@@ -84,6 +84,7 @@ public class CheckpointTest extends AbstractCairoTest {
         path = new Path();
         triggerFilePath = new Path();
         ff = testFilesFacade;
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
         AbstractCairoTest.setUpStatic();
     }
 
@@ -100,6 +101,7 @@ public class CheckpointTest extends AbstractCairoTest {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
 
         super.setUp();
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
         ff = testFilesFacade;
         path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory()).slash();
         triggerFilePath.of(configuration.getRoot()).parent().concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME).$();
@@ -214,7 +216,6 @@ public class CheckpointTest extends AbstractCairoTest {
     @Test
     public void testCheckpointPrepareCheckMatViewMetaFiles() throws Exception {
         assertMemoryLeak(() -> {
-            setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
             testCheckpointCreateCheckTableMetadataFiles(
                     "create table base_price (sym varchar, price double, ts timestamp) timestamp(ts) partition by DAY WAL",
                     null,

@@ -48,6 +48,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
+import org.junit.BeforeClass;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -59,6 +60,12 @@ import static io.questdb.test.tools.TestUtils.getSystemTablesCount;
 
 public class SqlParserTest extends AbstractSqlParserTest {
     private static final List<String> frameTypes = Arrays.asList("rows  ", "groups", "range ");
+
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
+        AbstractCairoTest.setUpStatic();
+    }
 
     @Before
     public void setUp() {
@@ -7701,7 +7708,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testRefreshMatView2() throws Exception {
         assertSyntaxError(
-                "REFRESH MATERIALIZED VIEW;",
+                "REFRESH MATERIALIZED VIEW",
                 25,
                 "view name expected"
         );

@@ -272,9 +272,12 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                     }
 
                                     if (tableToken.isMatView()) {
-                                        MatViewDefinition matViewDefinition = engine.getMatViewGraph().getMatView(tableToken);
-                                        assert matViewDefinition != null;
-                                        TableUtils.createMatViewMetaFiles(ff, mem, path, rootLen, matViewDefinition);
+                                        MatViewDefinition matViewDefinition = engine.getMatViewGraph().getMatViewDefinition(tableToken);
+                                        if (matViewDefinition != null) {
+                                            TableUtils.createMatViewMetaFiles(ff, mem, path, rootLen, matViewDefinition);
+                                        } else {
+                                            LOG.info().$("mat view definition not found [view=").$(tableToken).I$();
+                                        }
                                     }
 
                                     LOG.info().$("table included in the checkpoint [table=").$(tableToken).I$();

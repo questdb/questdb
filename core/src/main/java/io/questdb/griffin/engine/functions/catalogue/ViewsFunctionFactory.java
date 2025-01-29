@@ -84,8 +84,8 @@ public class ViewsFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            MatViewGraph viewGraph = executionContext.getCairoEngine().getMatViewGraph();
-            cursor.toTop(viewGraph);
+            MatViewGraph matViewGraph = executionContext.getCairoEngine().getMatViewGraph();
+            cursor.toTop(matViewGraph);
             return cursor;
         }
 
@@ -160,8 +160,8 @@ public class ViewsFunctionFactory implements FunctionFactory {
                 viewIndex = 0;
             }
 
-            public void toTop(MatViewGraph viewGraph) {
-                matViewGraph = viewGraph;
+            public void toTop(MatViewGraph matViewGraph) {
+                this.matViewGraph = matViewGraph;
                 toTop();
             }
 

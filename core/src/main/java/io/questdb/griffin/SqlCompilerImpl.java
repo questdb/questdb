@@ -3820,9 +3820,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         }
 
                         if (tableToken.isMatView()) {
-                            MatViewDefinition matViewDefinition = engine.getMatViewGraph().getMatView(tableToken);
-                            assert matViewDefinition != null;
-                            TableUtils.createMatViewMetaFiles(ff, mem, auxPath, tableRootLen, matViewDefinition);
+                            MatViewDefinition matViewDefinition = engine.getMatViewGraph().getMatViewDefinition(tableToken);
+                            if (matViewDefinition != null) {
+                                TableUtils.createMatViewMetaFiles(ff, mem, auxPath, tableRootLen, matViewDefinition);
+                            } else {
+                                LOG.info().$("mat view definition for backup not found [view=").$(tableToken).I$();
+                            }
                         }
                     } finally {
                         mem.close();
@@ -3867,7 +3870,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     break;
                                 } catch (TableReferenceOutOfDateException ex) {
                                     // Sometimes table can be out of data when a DDL is committed concurrently, we need to retry
-                                    LOG.info().$("retrying backup due to concurrent metadata update [table=").utf8(tableName).$(", ex=").$(ex.getFlyweightMessage()).I$();
+                                    LOG.info().$("retrying backup due to concurrent metadata update [table=").utf8(tableName)
+                                            .$(", ex=").$(ex.getFlyweightMessage())
+                                            .I$();
                                 }
                             }
                         }

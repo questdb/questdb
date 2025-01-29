@@ -32,7 +32,9 @@ import io.questdb.Telemetry;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
+import io.questdb.cairo.mv.MatViewGraphImpl;
 import io.questdb.cairo.mv.MatViewRefreshTask;
+import io.questdb.cairo.mv.NoOpMatViewGraph;
 import io.questdb.cairo.pool.AbstractMultiTenantPool;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ReaderPool;
@@ -196,7 +198,9 @@ public class CairoEngine implements Closeable, WriterSource {
                 enablePartitionOverwriteControl();
             }
             this.metadataCache = new MetadataCache(this);
-            this.matViewGraph = new MatViewGraph();
+            this.matViewGraph = configuration.isMatViewEnabled()
+                    ? new MatViewGraphImpl()
+                    : NoOpMatViewGraph.INSTANCE;
         } catch (Throwable th) {
             close();
             throw th;
