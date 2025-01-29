@@ -93,21 +93,20 @@ public class NdArrayParserTest {
 
     @Test
     public void testInt1dInvalid() {
-        testInvalidLiteral("{5i}", ND_ARR_UNEXPECTED);
-        testInvalidLiteral("{5i,}", ND_ARR_UNEXPECTED);
-        testInvalidLiteral("{5i},", ND_ARR_UNEXPECTED);
-        testInvalidLiteral("{5ia}", ND_ARR_UNEXPECTED);
-        testInvalidLiteral("{5i1.1}", ND_ARR_UNEXPECTED);
-        testInvalidLiteral("{5i1,,1}", ND_ARR_UNEXPECTED);
-        testInvalidLiteral("{5i1,}", ND_ARR_UNEXPECTED);
+        testInvalidLiteral("{5i}", ND_ARR_UNEXPECTED, 3);
+        testInvalidLiteral("{5i,}", ND_ARR_UNEXPECTED, 3);
+        testInvalidLiteral("{5ia}", ND_ARR_UNEXPECTED, 3);
+        testInvalidLiteral("{5i1.1}", ND_ARR_UNEXPECTED, 3);
+        testInvalidLiteral("{5i1,,1}", ND_ARR_UNEXPECTED, 5);
+        testInvalidLiteral("{5i1,}", ND_ARR_UNEXPECTED, 5);
         long tooPositive = Integer.MAX_VALUE + 1L;
         long tooNegative = Integer.MIN_VALUE - 1L;
         String veryLongInt = String.join("", nCopies(NdArrayParser.LEAF_LENGTH_LIMIT - 1, "1"));
         String dosAttack = veryLongInt + "1";
-        testInvalidLiteral(String.format("{5i%d}", tooPositive), ND_ARR_UNEXPECTED);
-        testInvalidLiteral(String.format("{5i%d}", tooNegative), ND_ARR_UNEXPECTED);
-        testInvalidLiteral(String.format("{5i%s", veryLongInt), ND_ARR_PREMATURE_END);
-        testInvalidLiteral(String.format("{5i%s", dosAttack), ND_ARR_UNEXPECTED);
+        testInvalidLiteral(String.format("{5i%d}", tooPositive), ND_ARR_UNEXPECTED, 3);
+        testInvalidLiteral(String.format("{5i%d}", tooNegative), ND_ARR_UNEXPECTED, 3);
+        testInvalidLiteral(String.format("{5i%s", veryLongInt), ND_ARR_PREMATURE_END, 3);
+        testInvalidLiteral(String.format("{5i%s", dosAttack), ND_ARR_UNEXPECTED, 3);
     }
 
     @Test
@@ -119,14 +118,14 @@ public class NdArrayParserTest {
 
     @Test
     public void testInt2dInvalid() {
-        testInvalidLiteral("{5i{}}", ND_ARR_UNEXPECTED);
-        testInvalidLiteral("{5i{,}}", ND_ARR_UNEXPECTED);
-        testInvalidLiteral("{5i{a}}", ND_ARR_UNEXPECTED);
-        testInvalidLiteral("{5i{1.1}}", ND_ARR_UNEXPECTED);
-        testInvalidLiteral("{5i{1,}}", ND_ARR_UNEXPECTED);
-        testInvalidLiteral("{5i{1},,{1}}", ND_ARR_UNEXPECTED);
-        testInvalidLiteral("{5i{1,,1}}", ND_ARR_UNEXPECTED);
-        testInvalidLiteral("{5i{1},}", ND_ARR_UNEXPECTED);
+        testInvalidLiteral("{5i{}}", ND_ARR_UNEXPECTED, 4);
+        testInvalidLiteral("{5i{,}}", ND_ARR_UNEXPECTED, 4);
+        testInvalidLiteral("{5i{a}}", ND_ARR_UNEXPECTED, 4);
+        testInvalidLiteral("{5i{1.1}}", ND_ARR_UNEXPECTED, 4);
+        testInvalidLiteral("{5i{1,}}", ND_ARR_UNEXPECTED, 6);
+        testInvalidLiteral("{5i{1},,{1}}", ND_ARR_UNEXPECTED, 7);
+        testInvalidLiteral("{5i{1,,1}}", ND_ARR_UNEXPECTED, 6);
+        testInvalidLiteral("{5i{1},}", ND_ARR_UNEXPECTED, 7);
     }
 
     @Test
@@ -139,10 +138,10 @@ public class NdArrayParserTest {
 
     @Test
     public void testInvalidJagged() {
-        testInvalidLiteral("{5i{1},{1,2}}", ND_ARR_IRREGULAR_SHAPE);
-        testInvalidLiteral("{5i{1,2},{1}}", ND_ARR_IRREGULAR_SHAPE);
-        testInvalidLiteral("{5i{{1,2},{1}}}", ND_ARR_IRREGULAR_SHAPE);
-        testInvalidLiteral("{5i{{1},{2}},{{3},{4},{5}}}", ND_ARR_IRREGULAR_SHAPE);
+        testInvalidLiteral("{5i{1},{1,2}}", ND_ARR_IRREGULAR_SHAPE, 10);
+        testInvalidLiteral("{5i{1,2},{1}}", ND_ARR_IRREGULAR_SHAPE, 11);
+        testInvalidLiteral("{5i{{1,2},{1}}}", ND_ARR_IRREGULAR_SHAPE, 12);
+        testInvalidLiteral("{5i{{1},{2}},{{3},{4},{5}}}", ND_ARR_IRREGULAR_SHAPE, 22);
     }
 
     @Test
@@ -191,12 +190,13 @@ public class NdArrayParserTest {
         }
     }
 
-    private void testInvalidLiteral(@NotNull String literal, @NotNull ErrorCode expectedErrorCode) {
+    private void testInvalidLiteral(@NotNull String literal, @NotNull ErrorCode expectedErrorCode, int expectedPosition) {
         try {
             parser.parse(utf8String(sink, literal));
             fail("Parsing was supposed to fail");
         } catch (ParseException e) {
             assertEquals(expectedErrorCode, e.errorCode());
+            assertEquals(expectedPosition, e.position());
         }
     }
 
