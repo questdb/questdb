@@ -72,10 +72,6 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
         }
 
         @Override
-        public void init(SqlExecutionCircuitBreaker circuitBreaker) {
-        }
-
-        @Override
         public boolean isThreadsafe() {
             return true;
         }
@@ -151,11 +147,6 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
     int getState(long millis, long fd);
 
     long getTimeout();
-
-    /**
-     * Initializes this circuit breaker from the one passed as a parameter by copying its state
-     */
-    void init(SqlExecutionCircuitBreaker circuitBreaker);
 
     boolean isThreadsafe();
 

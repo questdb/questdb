@@ -96,12 +96,12 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
         return delegate.getTimeout();
     }
 
-    public void init(SqlExecutionCircuitBreakerWrapper wrapper) {
-        init(wrapper.delegate);
+    public SqlExecutionCircuitBreaker init(SqlExecutionCircuitBreakerWrapper wrapper) {
+        return init(wrapper.delegate);
     }
 
-    @Override
-    public void init(SqlExecutionCircuitBreaker executionContextCircuitBreaker) {
+    public SqlExecutionCircuitBreaker init(SqlExecutionCircuitBreaker executionContextCircuitBreaker) {
+        final SqlExecutionCircuitBreaker oldDelegate = delegate;
         if (executionContextCircuitBreaker.isThreadsafe()) {
             delegate = executionContextCircuitBreaker;
         } else {
@@ -109,6 +109,7 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
             networkSqlExecutionCircuitBreaker.resetTimer();
             delegate = networkSqlExecutionCircuitBreaker;
         }
+        return oldDelegate;
     }
 
     @Override

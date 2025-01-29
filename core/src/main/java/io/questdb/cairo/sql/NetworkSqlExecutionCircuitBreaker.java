@@ -145,7 +145,6 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         return timeout;
     }
 
-    @Override
     public void init(SqlExecutionCircuitBreaker circuitBreaker) {
         fd = circuitBreaker.getFd();
         timeout = circuitBreaker.getTimeout();

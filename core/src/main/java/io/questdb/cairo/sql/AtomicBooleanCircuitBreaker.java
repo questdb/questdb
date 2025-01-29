@@ -92,11 +92,6 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     @Override
-    public void init(SqlExecutionCircuitBreaker circuitBreaker) {
-        fd = circuitBreaker.getFd();
-    }
-
-    @Override
     public boolean isThreadsafe() {
         return true;
     }

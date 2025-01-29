@@ -161,10 +161,6 @@ public class SecurityTest extends AbstractCairoTest {
             }
 
             @Override
-            public void init(SqlExecutionCircuitBreaker circuitBreaker) {
-            }
-
-            @Override
             public boolean isThreadsafe() {
                 return true;
             }
