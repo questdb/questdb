@@ -201,30 +201,25 @@ public class NdArrayParser implements QuietCloseable {
         final int numberBitSize = 1 << ColumnType.getNdArrayElementTypePrecision(bufs.type);
         final DirectIntList shape = bufs.shape;
         final DirectIntList levelCounts = bufs.currCoords;
-        levelCounts.add(0);
 
-        final int shapeSize;
+        final int dimCount;
         int level = 0;
         while (true) {
             if (input.size() == 0) {
                 throw ParseException.prematureEnd(position());
             }
+            levelCounts.add(0);
+            shape.add(IntList.NO_ENTRY_VALUE);
             if (input.byteAt(0) == '{') {
                 levelCounts.set(level, 1);
-                levelCounts.add(0);
                 level++;
                 input.advance();
                 continue;
             }
-            shapeSize = (int) levelCounts.size();
-            shape.setCapacity(shapeSize);
-            shape.setPos(shapeSize);
-            shape.clear(IntList.NO_ENTRY_VALUE);
-            // pos is used to calculate shape.size(), so set it to the correct value
-            shape.setPos(shapeSize);
+            dimCount = level + 1;
             break;
         }
-        assert shapeSize > 0 && shape.size() == shapeSize && levelCounts.size() == shapeSize : "Broken shape calculation";
+        assert dimCount > 0 && shape.size() == dimCount && levelCounts.size() == dimCount : "Broken shape calculation";
         boolean commaWelcome = false;
         while (input.size() > 0) {
             if (level < 0) {
@@ -233,13 +228,13 @@ public class NdArrayParser implements QuietCloseable {
             byte b = input.byteAt(0);
             switch (b) {
                 case '{': {
-                    assert level < shapeSize : "Nesting level is too much";
+                    assert level < dimCount : "Nesting level is too much";
                     if (commaWelcome) {
                         throw ParseException.unexpectedToken(position());
                     }
                     checkAndIncrementLevelCount(levelCounts, shape, level);
                     level++;
-                    if (level >= shapeSize) {
+                    if (level >= dimCount) {
                         throw ParseException.irregularShape(position());
                     }
                     levelCounts.set(level, 0);
