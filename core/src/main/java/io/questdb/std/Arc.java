@@ -43,7 +43,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * </ul>
  *
  * <p>
- *
+ * <p>
  * Call the <code>.get()</code> method to access the resource without affecting the refcount.
  *
  * @param <T> The wrapped resource
