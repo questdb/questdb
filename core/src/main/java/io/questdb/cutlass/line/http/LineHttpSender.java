@@ -232,13 +232,7 @@ public final class LineHttpSender implements Sender {
 
     @Override
     public void flush() {
-        System.err.println("ABOUT TO FLUSH: " + client.getDebugBuffer());
         flush0(false);
-    }
-
-    @TestOnly
-    public String getDebugBuffer() {
-        return client.getDebugBuffer();
     }
 
     @Override
