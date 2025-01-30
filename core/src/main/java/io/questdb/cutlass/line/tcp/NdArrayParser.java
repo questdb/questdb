@@ -62,14 +62,14 @@ public class NdArrayParser implements QuietCloseable {
 
     public static final int DIM_COUNT_LIMIT = 8;
     public static final int LEAF_LENGTH_LIMIT = 100;
-    // bufs.shape is populated gradually during the parsing process. When we reach the
-    // first occurrence of `}`, we know the size of the leaf dimension (rightmost in
-    // the shape, deepest-nested). At that point we initialize shape to the number of
-    // elements we encountered at the leaf dimension, and -1 ("not yet determined") for
-    // all the upper dims. Later on, when we encounter further `}`, we check whether
-    // the size of the current dimension has already been determined. If so, the size
-    // of the element just being closed must match that; otherwise we're parsing a
-    // jagged array, which is not allowed.
+    // bufs.shape is populated gradually during the parsing process.
+    // Initially, we determine the number of dimensions by counting the initial `{`
+    // chars, and initialize the size of each dimension to -1 ("not yet determined").
+    // Later on, each time we encounter a `}`, we check whether the size of the
+    // dimension corresponding to the element just being closed has already been
+    // determined. If so, the size of the element must match that; otherwise we're
+    // parsing a jagged array, which is not allowed. If the size hasn't yet been
+    // determined, we set it to the size of the current element.
     private final NdArrayBuffers bufs = new NdArrayBuffers();
     private final DirectUtf8String input = new DirectUtf8String();
     private final NdArrayView view = new NdArrayView();
