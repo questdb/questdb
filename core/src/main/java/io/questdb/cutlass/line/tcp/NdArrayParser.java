@@ -131,17 +131,13 @@ public class NdArrayParser implements QuietCloseable {
         return (int) (input.lo() - inputStartAddr);
     }
 
-    private void checkAndIncrementCoord(
-            DirectIntList currCoords, DirectIntList shape, int shapeSize, int level
-    ) throws ParseException {
-        int countSoFarAtCurrLevel = currCoords.get(level);
-        if (shapeSize != 0) {
-            int dimSize = shape.get(level);
-            if (countSoFarAtCurrLevel == dimSize) {
-                throw ParseException.irregularShape(position());
-            }
+    private void checkAndIncrementLevelCount(DirectIntList levelCounts, DirectIntList shape, int level) throws ParseException {
+        int countSoFarAtCurrLevel = levelCounts.get(level);
+        int dimSize = shape.get(level);
+        if (countSoFarAtCurrLevel == dimSize) {
+            throw ParseException.irregularShape(position());
         }
-        currCoords.set(level, countSoFarAtCurrLevel + 1);
+        levelCounts.set(level, countSoFarAtCurrLevel + 1);
     }
 
     private void parseDataType() throws ParseException {
@@ -204,11 +200,30 @@ public class NdArrayParser implements QuietCloseable {
         final char numberType = ColumnType.getNdArrayElementTypeClass(bufs.type);
         final int numberBitSize = 1 << ColumnType.getNdArrayElementTypePrecision(bufs.type);
         final DirectIntList shape = bufs.shape;
-        final DirectIntList currCoords = bufs.currCoords;
-        currCoords.add(0);
+        final DirectIntList levelCounts = bufs.currCoords;
+        levelCounts.add(0);
 
-        int shapeSize = 0;
+        final int shapeSize;
         int level = 0;
+        while (true) {
+            if (input.size() == 0) {
+                throw ParseException.prematureEnd(position());
+            }
+            if (input.byteAt(0) == '{') {
+                levelCounts.set(level, 1);
+                levelCounts.add(0);
+                level++;
+                input.advance();
+                continue;
+            }
+            shapeSize = (int) levelCounts.size();
+            shape.setCapacity(shapeSize);
+            shape.setPos(shapeSize);
+            shape.clear(IntList.NO_ENTRY_VALUE);
+            shape.setPos(shapeSize);
+            break;
+        }
+        assert shapeSize > 0 && shape.size() == shapeSize && levelCounts.size() == shapeSize : "Broken shape calculation";
         boolean commaWelcome = false;
         while (input.size() > 0) {
             if (level < 0) {
@@ -217,44 +232,29 @@ public class NdArrayParser implements QuietCloseable {
             byte b = input.byteAt(0);
             switch (b) {
                 case '{': {
-                    assert level < currCoords.size() : "Nesting level is too much";
+                    assert level < shapeSize : "Nesting level is too much";
                     if (commaWelcome) {
                         throw ParseException.unexpectedToken(position());
                     }
-                    checkAndIncrementCoord(currCoords, shape, shapeSize, level);
+                    checkAndIncrementLevelCount(levelCounts, shape, level);
                     level++;
-                    if (shapeSize > 0 && level >= shapeSize) {
+                    if (level >= shapeSize) {
                         throw ParseException.irregularShape(position());
                     }
-                    if (level < currCoords.size()) {
-                        currCoords.set(level, 0);
-                    } else {
-                        assert level == currCoords.size() : "Nesting level sudden jump";
-                        currCoords.add(0);
-                    }
+                    levelCounts.set(level, 0);
                     input.advance();
                     continue;
                 }
                 case '}': {
-                    assert shapeSize == 0 || level < shapeSize : "Nesting level beyond shape size";
-                    int countAtCurrLevel = currCoords.get(level);
+                    int countAtCurrLevel = levelCounts.get(level);
                     if (!commaWelcome) {
                         throw ParseException.unexpectedToken(position());
                     }
-                    if (shapeSize == 0) {
-                        shapeSize = level + 1;
-                        shape.setCapacity(shapeSize);
-                        shape.setPos(level);
-                        shape.clear(IntList.NO_ENTRY_VALUE);
-                        shape.setPos(level);
-                        shape.add(countAtCurrLevel);
-                    } else {
-                        int dimSize = shape.get(level);
-                        if (dimSize == IntList.NO_ENTRY_VALUE) {
-                            shape.set(level, countAtCurrLevel);
-                        } else if (countAtCurrLevel != dimSize) {
-                            throw ParseException.irregularShape(position());
-                        }
+                    int dimSize = shape.get(level);
+                    if (dimSize == IntList.NO_ENTRY_VALUE) {
+                        shape.set(level, countAtCurrLevel);
+                    } else if (countAtCurrLevel != dimSize) {
+                        throw ParseException.irregularShape(position());
                     }
                     level--;
                     input.advance();
@@ -269,11 +269,11 @@ public class NdArrayParser implements QuietCloseable {
                     continue;
                 }
                 default: {
-                    assert level < currCoords.size() : "Level shot up while parsing leaves";
+                    assert level < levelCounts.size() : "Level shot up while parsing leaves";
                     if (commaWelcome) {
                         throw ParseException.unexpectedToken(position());
                     }
-                    checkAndIncrementCoord(currCoords, shape, shapeSize, level);
+                    checkAndIncrementLevelCount(levelCounts, shape, level);
                     int tokenLimit = 0;
                     for (int n = Math.min(input.size(), LEAF_LENGTH_LIMIT), i = 1; i < n; i++) {
                         b = input.byteAt(i);
@@ -324,7 +324,6 @@ public class NdArrayParser implements QuietCloseable {
                         throw ParseException.unexpectedToken(position());
                     }
                     bufs.values.putByte((byte) n);
-                    ++numValues;
                     break;
                 case 'f':
                     switch (bitSize) {
