@@ -322,7 +322,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * in a set operation (UNION etc.), providing the desired output type. Since there are many
      * special cases in the conversion logic, we decided to use a matrix of literals instead.
      * The matrix doesn't cover generic types (e.g. geohash) since they have a more complex structure.
-     * Initially, we used the code below to print out the values for the matrix:
      */
     private static final int[][] UNION_CAST_MATRIX = new int[][]{
             { 0, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11,  0}, //  0 = unknown
@@ -406,6 +405,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final ObjList<VectorAggregateFunction> tempVaf = new ObjList<>();
     private final IntList tempVecConstructorArgIndexes = new IntList();
     private final ObjList<VectorAggregateFunctionConstructor> tempVecConstructors = new ObjList<>();
+    private final boolean validateSampleByFillType;
     private final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
     private final WhereClauseParser whereClauseParser = new WhereClauseParser();
     // a bitset of string/symbol columns forced to be serialised as varchar
@@ -414,7 +414,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final BitSet writeSymbolAsString = new BitSet();
     private boolean enableJitNullChecks = true;
     private boolean fullFatJoins = false;
-    private final boolean validateSampleByFillType;
 
     public SqlCodeGenerator(
             CairoEngine engine,
@@ -723,12 +722,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
-    private static boolean isParseableType(int colType) {
-        return colType == ColumnType.TIMESTAMP || colType == ColumnType.LONG256;
-    }
-
     private static boolean isGeoType(int colType) {
         return colType >= ColumnType.GEOBYTE && colType <= ColumnType.GEOLONG;
+    }
+
+    private static boolean isParseableType(int colType) {
+        return colType == ColumnType.TIMESTAMP || colType == ColumnType.LONG256;
     }
 
     private static boolean isSingleColumnFunction(ExpressionNode ast, CharSequence name) {
