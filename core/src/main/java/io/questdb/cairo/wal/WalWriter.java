@@ -1713,8 +1713,7 @@ public class WalWriter implements TableWriterAPI {
                         // Locally added symbols must have a continuous range of keys
                         key = localSymbolIds.postIncrement(columnIndex);
                     }
-                    // Chars.toString used as value is a parser buffer memory slice or mapped memory of symbolMapReader
-                    utf16Map.putAt(index, Chars.toString(utf16Value), key);
+                    utf16Map.putAt(index, utf16Value, key);
                 } else {
                     key = utf16Map.valueAt(index);
                 }
@@ -2450,8 +2449,7 @@ public class WalWriter implements TableWriterAPI {
                         final int initialSymCount = initialSymbolCounts.get(columnIndex);
                         key = initialSymCount + localSymbolIds.postIncrement(columnIndex);
                     }
-                    // Chars.toString used as value is a parser buffer memory slice or mapped memory of symbolMapReader
-                    utf16Map.putAt(index, Chars.toString(utf16Value), key);
+                    utf16Map.putAt(index, utf16Value, key);
                 } else {
                     key = utf16Map.valueAt(index);
                 }
