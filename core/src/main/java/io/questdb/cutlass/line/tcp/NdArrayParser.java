@@ -210,14 +210,13 @@ public class NdArrayParser implements QuietCloseable {
             }
             levelCounts.add(0);
             shape.add(IntList.NO_ENTRY_VALUE);
-            if (input.byteAt(0) == '{') {
-                levelCounts.set(level, 1);
-                level++;
-                input.advance();
-                continue;
+            if (input.byteAt(0) != '{') {
+                dimCount = level + 1;
+                break;
             }
-            dimCount = level + 1;
-            break;
+            levelCounts.set(level, 1);
+            level++;
+            input.advance();
         }
         assert dimCount > 0 && shape.size() == dimCount && levelCounts.size() == dimCount : "Broken shape calculation";
         boolean commaWelcome = false;
