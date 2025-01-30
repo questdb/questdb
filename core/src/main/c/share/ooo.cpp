@@ -831,7 +831,7 @@ Java_io_questdb_std_Vect_mergeShuffleColumnFromManyAddresses(
 ) {
     auto merge_index_address = reinterpret_cast<const index_l *>(mergeIndex);
     auto row_count = read_row_count(indexFormat);
-    auto column_size_bytes = reinterpret_cast<int32_t>(columnSizeBytes);
+    auto column_size_bytes = (int32_t) columnSizeBytes;
     auto index_segment_encoding_bytes = read_segment_bytes(indexFormat);
     auto src_addresses = reinterpret_cast<const void **>(srcAddresses);
     auto dst_address = reinterpret_cast<void *>(dstAddress);
