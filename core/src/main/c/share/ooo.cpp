@@ -771,15 +771,15 @@ Java_io_questdb_std_Vect_radixSortManySegmentsIndexAsc(
     auto **segment_map_addresses = reinterpret_cast<const index_l **>(segmentAddresses);
     auto *lag_ts_addr = reinterpret_cast<const int64_t *>(lagTsAddr);
     auto *txn_info_addr = reinterpret_cast<const txn_info *>(txnInfo);
-    auto txn_count = __JLONG_REINTERPRET_CAST__(uint64_t, txnCount);
+    auto txn_count = __JLONG_REINTERPRET_CAST__(int64_t, txnCount);
     uint8_t result_format = resultFormat;
 
     auto segment_count = (uint32_t) segmentCount;
-    auto max_segment_row_count = __JLONG_REINTERPRET_CAST__(uint64_t, maxSegmentRowCount);
+    auto max_segment_row_count = __JLONG_REINTERPRET_CAST__(int64_t, maxSegmentRowCount);
     auto min_ts = __JLONG_REINTERPRET_CAST__(int64_t, minTimestamp);
     auto max_ts = __JLONG_REINTERPRET_CAST__(int64_t, maxTimestamp);
-    auto lag_row_count = __JLONG_REINTERPRET_CAST__(uint64_t, lagRowCount);
-    auto total_row_count = __JLONG_REINTERPRET_CAST__(uint64_t, totalRowCount);
+    auto lag_row_count = __JLONG_REINTERPRET_CAST__(int64_t, lagRowCount);
+    auto total_row_count = __JLONG_REINTERPRET_CAST__(int64_t, totalRowCount);
 
     // Add 1 so since 1 values is needed for deduplication to indicate row not used
     auto total_row_count_bytes = integral_type_bytes(range_bytes(total_row_count + 1));
@@ -1011,7 +1011,7 @@ Java_io_questdb_std_Vect_mergeShuffleSymbolColumnFromManyAddresses(
     auto src = reinterpret_cast<const int32_t **>(srcAddresses);
     auto dst = reinterpret_cast<int32_t *>(dstAddress);
     auto *txn_info_addr = reinterpret_cast<const txn_info *>(txnInfo);
-    auto txn_count = __JLONG_REINTERPRET_CAST__(uint64_t, txnCount);
+    auto txn_count = __JLONG_REINTERPRET_CAST__(int64_t, txnCount);
     auto symbol_map = reinterpret_cast<const int32_t *>(symbolMap);
     auto row_index_bytes = read_reverse_index_format_bytes(indexFormat);
     auto reverse_index_ptr = read_reverse_index_ptr(mergeIndex, indexFormat);
@@ -1195,7 +1195,7 @@ Java_io_questdb_std_Vect_remapSymbolColumnFromManyAddresses(
     auto src = reinterpret_cast<const int32_t **>(srcAddresses);
     auto dst = reinterpret_cast<int32_t *>(dstAddress);
     auto *txn_info_addr = reinterpret_cast<const txn_info *>(txnInfo);
-    auto txn_count = __JLONG_REINTERPRET_CAST__(uint64_t, txnCount);
+    auto txn_count = __JLONG_REINTERPRET_CAST__(int64_t, txnCount);
     auto symbol_map = reinterpret_cast<const int32_t *>(symbolMap);
 
     return remap_symbol_column_from_many_addresses(src, dst, txn_info_addr, txn_count, symbol_map);
