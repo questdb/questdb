@@ -192,9 +192,6 @@ public class LineTcpParser implements QuietCloseable {
         // Main parsing loop
         int bracketCount = 0;
         while (bufAt < bufHi) {
-            DirectUtf8String soFar = new DirectUtf8String();
-            soFar.of(lineStart, bufAt + 1);
-//            System.err.println("entityHandler=" + entityHandler + ", bracketCount=" + bracketCount + ", soFar=`" + soFar + "`");
             byte b = Unsafe.getUnsafe().getByte(bufAt);
 
             if (nEscapedChars == 0 && !controlBytes[b & 0xff]) {
