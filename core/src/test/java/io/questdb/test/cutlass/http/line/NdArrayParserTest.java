@@ -37,6 +37,8 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.Arrays;
+
 import static io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode.*;
 import static java.util.Collections.nCopies;
 import static org.junit.Assert.*;
@@ -83,6 +85,19 @@ public class NdArrayParserTest {
     }
 
     @Test
+    public void testDimensionalityLimit() throws ParseException {
+        int maxNesting = NdArrayParser.DIM_COUNT_LIMIT - 1;
+        String validArray = String.format("{5i%s1%s}", repeat("{", maxNesting), repeat("}", maxNesting));
+        int[] maxShape = new int[NdArrayParser.DIM_COUNT_LIMIT];
+        Arrays.fill(maxShape, 1);
+        testIntLiteral(validArray, maxShape, new int[]{1});
+
+        int tooMuchNesting = maxNesting + 1;
+        String invalidArray = String.format("{5i%s1%s}", repeat("{", tooMuchNesting), repeat("}", tooMuchNesting));
+        testInvalidLiteral(invalidArray, ND_ARR_UNEXPECTED_TOKEN, 3 + maxNesting);
+    }
+
+    @Test
     public void testDouble1d() throws ParseException {
         testDoubleLiteral("{6f1}", new int[]{1}, new double[]{1.0});
         testDoubleLiteral("{6f1.1}", new int[]{1}, new double[]{1.1});
@@ -123,7 +138,7 @@ public class NdArrayParserTest {
         testInvalidLiteral("{5i1.1}", ND_ARR_UNEXPECTED_TOKEN, 3);
         testInvalidLiteral("{5i1,,1}", ND_ARR_UNEXPECTED_TOKEN, 5);
         testInvalidLiteral("{5i1,}", ND_ARR_UNEXPECTED_TOKEN, 5);
-        String veryLongInt = String.join("", nCopies(NdArrayParser.LEAF_LENGTH_LIMIT - 1, "1"));
+        String veryLongInt = repeat("1", NdArrayParser.LEAF_LENGTH_LIMIT - 1);
         String dosAttack = veryLongInt + "1";
         testInvalidLiteral(String.format("{5i%s", veryLongInt), ND_ARR_PREMATURE_END, 3);
         testInvalidLiteral(String.format("{5i%s", dosAttack), ND_ARR_UNEXPECTED_TOKEN, 3);
@@ -196,6 +211,10 @@ public class NdArrayParserTest {
         testInvalidLiteral(String.format("{5i%d}", Integer.MAX_VALUE + 1L), ND_ARR_UNEXPECTED_TOKEN, 3);
         testInvalidLiteral("{6i-9223372036854775809}", ND_ARR_UNEXPECTED_TOKEN, 3);
         testInvalidLiteral("{6i9223372036854775808}", ND_ARR_UNEXPECTED_TOKEN, 3);
+    }
+
+    private static String repeat(String s, int n) {
+        return String.join("", nCopies(n, s));
     }
 
     private void assertSliceEquals(DirectIntSlice actual, int[] expected) {

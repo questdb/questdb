@@ -60,8 +60,8 @@ import static io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode.*;
  */
 public class NdArrayParser implements QuietCloseable {
 
+    public static final int DIM_COUNT_LIMIT = 8;
     public static final int LEAF_LENGTH_LIMIT = 100;
-
     // bufs.shape is populated gradually during the parsing process. When we reach the
     // first occurrence of `}`, we know the size of the leaf dimension (rightmost in
     // the shape, deepest-nested). At that point we initialize shape to the number of
@@ -216,6 +216,9 @@ public class NdArrayParser implements QuietCloseable {
             }
             levelCounts.set(level, 1);
             level++;
+            if (level == DIM_COUNT_LIMIT) {
+                throw ParseException.unexpectedToken(position());
+            }
             input.advance();
         }
         assert dimCount > 0 && shape.size() == dimCount && levelCounts.size() == dimCount : "Broken shape calculation";
