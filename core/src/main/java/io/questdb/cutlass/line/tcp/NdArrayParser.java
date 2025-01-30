@@ -220,6 +220,7 @@ public class NdArrayParser implements QuietCloseable {
             shape.setCapacity(shapeSize);
             shape.setPos(shapeSize);
             shape.clear(IntList.NO_ENTRY_VALUE);
+            // we won't update shape after this point, but set the pos because it determines the size of DirectIntList
             shape.setPos(shapeSize);
             break;
         }
