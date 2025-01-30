@@ -25,7 +25,7 @@
 package io.questdb.test.mp;
 
 import io.questdb.mp.ConcurrentQueue;
-import io.questdb.mp.QueueValueHolder;
+import io.questdb.mp.ValueHolder;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -173,8 +173,13 @@ public class ConcurrentQueueFuzzTest {
         System.out.println("Processed " + elementsCount + " queue size: " + queue.capacity());
     }
 
-    static class IntHolderQueue implements QueueValueHolder<IntHolderQueue> {
+    static class IntHolderQueue implements ValueHolder<IntHolderQueue> {
         int value;
+
+        @Override
+        public void clear() {
+            value = 0;
+        }
 
         @Override
         public void copyTo(IntHolderQueue intHolder) {

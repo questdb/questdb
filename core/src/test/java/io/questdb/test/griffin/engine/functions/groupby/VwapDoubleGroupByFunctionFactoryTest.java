@@ -95,4 +95,58 @@ public class VwapDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
             );
         });
     }
+
+    @Test
+    public void testVwapInterpolation() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create table with timestamp, price, volume and symbol columns
+            execute("create table trades (" +
+                    "ts timestamp, " +
+                    "price double, " +
+                    "volume double, " +
+                    "ticker symbol" +
+                    ") timestamp(ts)");
+
+            // Insert data with some gaps in the time series
+            execute("insert into trades values " +
+                    "('2024-01-01T00:00:00', 100.0, 50.0, 'AAPL'), " +  // First bucket
+                    "('2024-01-01T00:00:00', 101.0, 30.0, 'AAPL'), " +
+                    "('2024-01-01T00:00:00', 99.0, 20.0, 'GOOGL'), " +
+                    // Skip 01:00
+                    "('2024-01-01T02:00:00', 105.0, 40.0, 'AAPL'), " +  // Third bucket
+                    "('2024-01-01T02:00:00', 102.0, 25.0, 'GOOGL'), " +
+                    // Skip 03:00
+                    "('2024-01-01T04:00:00', 110.0, 60.0, 'AAPL'), " +  // Fifth bucket
+                    "('2024-01-01T04:00:00', 108.0, 35.0, 'GOOGL')");
+
+            // Calculate VWAP with 1-hour buckets and linear interpolation
+            // Expected results:
+            // - First bucket (00:00): Actual calculations
+            // - Second bucket (01:00): Interpolated
+            // - Third bucket (02:00): Actual calculations
+            // - Fourth bucket (03:00): Interpolated
+            // - Fifth bucket (04:00): Actual calculations
+            String expected = "ts\tticker\tvwap\n" +
+                    "2024-01-01T00:00:00.000000Z\tAAPL\t100.375\n" +
+                    "2024-01-01T00:00:00.000000Z\tGOOGL\t99.0\n" +
+                    "2024-01-01T01:00:00.000000Z\tAAPL\t102.6875\n" +  // Interpolated
+                    "2024-01-01T01:00:00.000000Z\tGOOGL\t100.5\n" +    // Interpolated
+                    "2024-01-01T02:00:00.000000Z\tAAPL\t105.0\n" +
+                    "2024-01-01T02:00:00.000000Z\tGOOGL\t102.0\n" +
+                    "2024-01-01T03:00:00.000000Z\tAAPL\t107.5\n" +     // Interpolated
+                    "2024-01-01T03:00:00.000000Z\tGOOGL\t105.0\n" +    // Interpolated
+                    "2024-01-01T04:00:00.000000Z\tAAPL\t110.0\n" +
+                    "2024-01-01T04:00:00.000000Z\tGOOGL\t108.0\n";
+
+            assertQuery(
+                    expected,
+                    "select ts, ticker, vwap(price, volume) " +
+                            "from trades " +
+                            "sample by 1h fill(linear) ",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
 }

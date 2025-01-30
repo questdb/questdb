@@ -30,6 +30,7 @@ import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
+import io.questdb.metrics.QueryTracingJob;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
@@ -37,7 +38,6 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
@@ -169,7 +169,7 @@ public class MetadataCache implements QuietCloseable {
 
             table.setMetadataVersion(Long.MIN_VALUE);
 
-            int metadataVersion = metaMem.getInt(TableUtils.META_OFFSET_METADATA_VERSION);
+            long metadataVersion = metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION);
 
             // make sure we aren't duplicating work
             CairoTable potentiallyExistingTable = tableMap.get(token.getTableName());
@@ -192,25 +192,16 @@ public class MetadataCache implements QuietCloseable {
                     .$(", version=").$(metadataVersion)
                     .I$();
 
+
             table.setPartitionBy(metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY));
             table.setMaxUncommittedRows(metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS));
             table.setO3MaxLag(metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG));
             table.setTimestampIndex(metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX));
-            table.setTtlHoursOrMonths(metaMem.getInt(TableUtils.META_OFFSET_TTL_HOURS_OR_MONTHS));
+            table.setTtlHoursOrMonths(TableUtils.getTtlHoursOrMonths(metaMem));
             table.setIsSoftLink(isSoftLink);
 
             TableUtils.buildWriterOrderMap(metaMem, table.columnOrderMap, metaMem, columnCount);
-
-            // Check that metadata minor version is up-to-date
-            int metadataMinorVersion = metaMem.getInt(TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION);
-            // metadataMinorVersion is 2 shorts
-            // Low short is metadataVersion + column count and it is effectively a signature that changes with every update to _meta.
-            // If Low short mismatches it means we cannot rely on High short value.
-            // High short is TableUtils.META_MINOR_VERSION_LATEST.
-            boolean symbolCapacitiesUpToDate =
-                    Numbers.decodeLowShort(metadataMinorVersion) == Numbers.decodeLowShort(Numbers.decodeLowInt(table.getMetadataVersion()) + columnCount)
-                            && Numbers.decodeHighShort(metadataMinorVersion) >= TableUtils.META_MINOR_VERSION_LATEST;
-
+            boolean isMetaFormatUpToDate = TableUtils.isMetaFormatUpToDate(metaMem);
             // populate columns
             for (int i = 0, n = table.columnOrderMap.size(); i < n; i += 3) {
 
@@ -249,7 +240,7 @@ public class MetadataCache implements QuietCloseable {
                     column.setWriterIndex(writerIndex);
                     column.setIsDesignated(writerIndex == table.getTimestampIndex());
                     if (columnType == ColumnType.SYMBOL) {
-                        if (symbolCapacitiesUpToDate) {
+                        if (isMetaFormatUpToDate) {
                             column.setSymbolCapacity(TableUtils.getSymbolCapacity(metaMem, writerIndex));
                             column.setSymbolCached(TableUtils.isSymbolCached(metaMem, writerIndex));
                         } else {
@@ -314,14 +305,19 @@ public class MetadataCache implements QuietCloseable {
                 columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerIndex);
             }
 
-            // use txn to find correct symbol entry
-            final var offsetFileName = TableUtils.offsetFileName(path.trimTo(rootLen), columnName, columnNameTxn);
-            var fd = TableUtils.openRO(ff, offsetFileName, LOG);
-
             // initialise symbol map memory
             final long capacityOffset = SymbolMapWriter.HEADER_CAPACITY;
-            int capacity = ff.readNonNegativeInt(fd, capacityOffset);
-            byte isCached = ff.readNonNegativeByte(fd, SymbolMapWriter.HEADER_CACHE_ENABLED);
+            final int capacity;
+            final byte isCached;
+            final var offsetFileName = TableUtils.offsetFileName(path.trimTo(rootLen), columnName, columnNameTxn);
+            long fd = TableUtils.openRO(ff, offsetFileName, LOG);
+            try {
+                // use txn to find correct symbol entry
+                capacity = ff.readNonNegativeInt(fd, capacityOffset);
+                isCached = ff.readNonNegativeByte(fd, SymbolMapWriter.HEADER_CACHE_ENABLED);
+            } finally {
+                ff.close(fd);
+            }
 
             // get symbol properties
             if (capacity > 0 && isCached >= 0) {
@@ -393,6 +389,11 @@ public class MetadataCache implements QuietCloseable {
                     && (Chars.equals(tableName, TelemetryTask.TABLE_NAME)
                     || Chars.equals(tableName, TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME))
             ) {
+                return false;
+            }
+
+            // query tracing table
+            if (Chars.equals(tableName, QueryTracingJob.TABLE_NAME)) {
                 return false;
             }
 

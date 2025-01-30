@@ -38,6 +38,7 @@ import io.questdb.ServerMain;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
+import io.questdb.metrics.QueryTracingJob;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.StringSink;
@@ -63,6 +64,7 @@ import java.util.Map;
 import java.util.Properties;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
+import static org.junit.Assert.assertFalse;
 
 public class DynamicPropServerConfigurationTest extends AbstractTest {
     private File serverConf;
@@ -240,6 +242,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
             try (FileWriter w = new FileWriter(serverConf)) {
                 w.write("http.net.bind.to=0.0.0.0:9001\n");
                 w.write("http.send.buffer.size=100\n");
+                w.write("query.tracing.enabled=true\n");
             }
 
             try (ServerMain serverMain = new ServerMain(getBootstrap())) {
@@ -308,7 +311,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 final Metrics metrics = serverMain.getEngine().getMetrics();
 
                 try (Connection conn1 = getConnection("admin", "quest")) {
-                    Assert.assertFalse(conn1.isClosed());
+                    assertFalse(conn1.isClosed());
 
                     try {
                         try (Connection ignore = getConnection("admin", "quest")) {
@@ -336,10 +339,10 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 // we should be able to open two connections eventually
                 TestUtils.assertEventually(() -> {
                     try (Connection conn1 = getConnection("admin", "quest")) {
-                        Assert.assertFalse(conn1.isClosed());
+                        assertFalse(conn1.isClosed());
 
                         try (Connection conn2 = getConnection("admin", "quest")) {
-                            Assert.assertFalse(conn2.isClosed());
+                            assertFalse(conn2.isClosed());
                         }
                     } catch (SQLException e) {
                         throw new RuntimeException(e);
@@ -361,7 +364,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 serverMain.start();
 
                 try (Connection conn = getConnection("steven", "sklar")) {
-                    Assert.assertFalse(conn.isClosed());
+                    assertFalse(conn.isClosed());
                 }
 
                 // Overwrite file to remove props
@@ -372,7 +375,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 assertReloadConfig(true, "steven", "sklar");
 
                 try (Connection conn = getConnection("admin", "quest")) {
-                    Assert.assertFalse(conn.isClosed());
+                    assertFalse(conn.isClosed());
                 }
             }
         });
@@ -390,7 +393,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 serverMain.start();
 
                 try (Connection conn = getConnection("steven", "sklar")) {
-                    Assert.assertFalse(conn.isClosed());
+                    assertFalse(conn.isClosed());
                 }
 
                 try (FileWriter w = new FileWriter(serverConf)) {
@@ -401,7 +404,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 assertReloadConfig(true, "steven", "sklar");
 
                 try (Connection conn = getConnection("nevets", "ralks")) {
-                    Assert.assertFalse(conn.isClosed());
+                    assertFalse(conn.isClosed());
                 }
                 Assert.assertThrows(PSQLException.class, () -> getConnection("admin", "quest"));
             }
@@ -415,7 +418,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 serverMain.start();
 
                 try (Connection conn = getConnection("admin", "quest")) {
-                    Assert.assertFalse(conn.isClosed());
+                    assertFalse(conn.isClosed());
                 }
 
                 Assert.assertTrue(serverConf.delete());
@@ -429,7 +432,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 assertReloadConfig(true);
 
                 try (Connection conn = getConnection("steven", "sklar")) {
-                    Assert.assertFalse(conn.isClosed());
+                    assertFalse(conn.isClosed());
                 }
 
                 Assert.assertThrows(PSQLException.class, () -> getConnection("admin", "quest"));
@@ -444,7 +447,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 serverMain.start();
 
                 try (Connection conn = getConnection("admin", "quest")) {
-                    Assert.assertFalse(conn.isClosed());
+                    assertFalse(conn.isClosed());
                 }
 
                 try (FileWriter w = new FileWriter(serverConf)) {
@@ -455,7 +458,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 assertReloadConfig(true);
 
                 try (Connection conn = getConnection("steven", "sklar")) {
-                    Assert.assertFalse(conn.isClosed());
+                    assertFalse(conn.isClosed());
                 }
 
                 Assert.assertThrows(PSQLException.class, () -> getConnection("admin", "quest"));
@@ -549,6 +552,54 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     }
 
     @Test
+    public void testQueryTracingReload() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                String tableName = QueryTracingJob.TABLE_NAME;
+                try (Connection conn = getConnection("admin", "quest");
+                     PreparedStatement queryTraceStmt = conn.prepareStatement(tableName)
+                ) {
+                    Runnable assertTableEmpty = () -> {
+                        try (ResultSet rs = queryTraceStmt.executeQuery()) {
+                            assertFalse("Query Trace table not empty, but query tracing is disabled", rs.next());
+                        } catch (SQLException e) {
+                            throw new RuntimeException(e);
+                        }
+                    };
+
+                    // this executes a query, and would trigger query tracing (if it was enabled) as a side effect
+                    assertTableEmpty.run();
+                    Thread.sleep(1_000);
+                    // by this time the query_trace table would most likely exist if tracing was enabled
+                    assertTableEmpty.run();
+
+                    try (FileWriter w = new FileWriter(serverConf)) {
+                        w.write("query.tracing.enabled=true\n");
+                    }
+                    // This is also a query. With tracing now on, it triggers creating the query_trace table:
+                    assertReloadConfig(true);
+
+                    int sleepMillis = 100;
+                    while (true) {
+                        Thread.sleep(sleepMillis);
+                        try (ResultSet rs = queryTraceStmt.executeQuery()) {
+                            Assert.assertTrue(rs.next());
+                            break;
+                        } catch (AssertionError | SQLException e) {
+                            if (sleepMillis >= 6400) {
+                                throw e;
+                            }
+                            sleepMillis *= 2;
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testReloadDisabled() throws Exception {
         assertMemoryLeak(() -> {
             try (FileWriter w = new FileWriter(serverConf)) {
@@ -561,7 +612,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 serverMain.start();
 
                 try (Connection conn = getConnection("steven", "sklar")) {
-                    Assert.assertFalse(conn.isClosed());
+                    assertFalse(conn.isClosed());
                 }
 
                 // overwrite file to remove props
@@ -572,7 +623,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 assertReloadConfig(false, "steven", "sklar");
 
                 try (Connection conn = getConnection("steven", "sklar")) {
-                    Assert.assertFalse(conn.isClosed());
+                    assertFalse(conn.isClosed());
                 }
             }
         });

@@ -24,8 +24,18 @@
 
 package io.questdb.test;
 
-import io.questdb.*;
-import io.questdb.cairo.*;
+import io.questdb.BuildInformation;
+import io.questdb.DefaultTelemetryConfiguration;
+import io.questdb.TelemetryConfigLogger;
+import io.questdb.TelemetryConfiguration;
+import io.questdb.TelemetryJob;
+import io.questdb.TelemetrySystemEvent;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -35,6 +45,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
+import io.questdb.tasks.TelemetryWalTask;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -49,34 +60,6 @@ import java.util.concurrent.atomic.AtomicReference;
 public class TelemetryTest extends AbstractCairoTest {
     private static final FilesFacade FF = TestFilesFacadeImpl.INSTANCE;
     private static final String TELEMETRY = TelemetryTask.TABLE_NAME;
-
-    @Test
-    public void testTelemetryCanDeleteTableWhenDisabled() throws Exception {
-        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
-            @Override
-            public @NotNull TelemetryConfiguration getTelemetryConfiguration() {
-                return new DefaultTelemetryConfiguration() {
-                    @Override
-                    public boolean getEnabled() {
-                        return false;
-                    }
-                };
-            }
-        };
-
-        assertMemoryLeak(() -> {
-            try (
-                    CairoEngine engine = new CairoEngine(configuration);
-                    TelemetryJob ignored = new TelemetryJob(engine)
-            ) {
-                assertException(
-                        "drop table telemetry",
-                        11,
-                        "table does not exist [table=" + TELEMETRY + "]"
-                );
-            }
-        });
-    }
 
     @Test
     public void testTelemetryConfigUpgrade() throws Exception {
@@ -118,11 +101,29 @@ public class TelemetryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTelemetryDisabledByDefault() throws Exception {
+    public void testTelemetryDoesntCreateTableWhenDisabled() throws Exception {
+        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+            @Override
+            public @NotNull TelemetryConfiguration getTelemetryConfiguration() {
+                return new DefaultTelemetryConfiguration() {
+                    @Override
+                    public boolean getEnabled() {
+                        return false;
+                    }
+                };
+            }
+        };
+
         assertMemoryLeak(() -> {
-            try (Path path = new Path()) {
-                Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, TableUtils.exists(FF, path, root, TELEMETRY));
-                Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, TableUtils.exists(FF, path, root, TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME));
+            try (
+                    CairoEngine engine = new CairoEngine(configuration);
+                    TelemetryJob ignored = new TelemetryJob(engine)
+            ) {
+                assertException(
+                        "drop table telemetry",
+                        11,
+                        "table does not exist [table=" + TELEMETRY + "]"
+                );
             }
         });
     }
@@ -173,6 +174,31 @@ public class TelemetryTest extends AbstractCairoTest {
                 final String expectedEvent = "100\t1\n" +
                         "101\t1\n";
                 assertEventAndOrigin(expectedEvent);
+            }
+        });
+    }
+
+    @Test
+    public void testTelemetryTableUpgrade() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE " + TelemetryTask.TABLE_NAME + " (" +
+                    "created TIMESTAMP, " +
+                    "event SHORT, " +
+                    "origin SHORT" +
+                    ") TIMESTAMP(created)");
+
+            String showCreateTable = "SHOW CREATE TABLE " + TelemetryTask.TABLE_NAME;
+            String start = "ddl\n" +
+                    "CREATE TABLE '" + TelemetryTask.TABLE_NAME + "' ( \n" +
+                    "\tcreated TIMESTAMP,\n" +
+                    "\tevent SHORT,\n" +
+                    "\torigin SHORT\n" +
+                    ") timestamp(created)";
+            String end = " BYPASS WAL\nWITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n";
+
+            assertSql(start + end, showCreateTable);
+            try (TelemetryJob ignore = new TelemetryJob(engine)) {
+                assertSql(start + " PARTITION BY DAY TTL 1 WEEK" + end, showCreateTable);
             }
         });
     }
@@ -238,6 +264,44 @@ public class TelemetryTest extends AbstractCairoTest {
                             "1.1\t" + os + "\n";
                     TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT version, os FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + " LIMIT -1", sink, expectedSql);
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testTelemetryWalTableUpgrade() throws Exception {
+        String tableName = configuration.getSystemTableNamePrefix() + TelemetryWalTask.TABLE_NAME;
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE '" + tableName + "' (" +
+                    "created TIMESTAMP, " +
+                    "event SHORT, " +
+                    "tableId INT, " +
+                    "walId INT, " +
+                    "seqTxn LONG, " +
+                    "rowCount LONG," +
+                    "physicalRowCount LONG," +
+                    "latency FLOAT" +
+                    ") TIMESTAMP(created) PARTITION BY MONTH BYPASS WAL");
+
+            String showCreateTable = "SHOW CREATE TABLE '" + tableName + "'";
+            String start = "ddl\n" +
+                    "CREATE TABLE '" + tableName + "' ( \n" +
+                    "\tcreated TIMESTAMP,\n" +
+                    "\tevent SHORT,\n" +
+                    "\ttableId INT,\n" +
+                    "\twalId INT,\n" +
+                    "\tseqTxn LONG,\n" +
+                    "\trowCount LONG,\n" +
+                    "\tphysicalRowCount LONG,\n" +
+                    "\tlatency FLOAT\n" +
+                    ") timestamp(created)";
+            String midOld = " PARTITION BY MONTH";
+            String midNew = " PARTITION BY DAY TTL 1 WEEK";
+            String end = " BYPASS WAL\nWITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n";
+
+            assertSql(start + midOld + end, showCreateTable);
+            try (TelemetryJob ignore = new TelemetryJob(engine)) {
+                assertSql(start + midNew + end, showCreateTable);
             }
         });
     }

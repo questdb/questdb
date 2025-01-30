@@ -1177,6 +1177,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isQueryTracingEnabled() {
+        return getDelegate().isQueryTracingEnabled();
+    }
+
+    @Override
     public boolean isReadOnlyInstance() {
         return getDelegate().isReadOnlyInstance();
     }
