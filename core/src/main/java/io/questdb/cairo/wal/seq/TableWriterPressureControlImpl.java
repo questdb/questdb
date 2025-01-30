@@ -37,7 +37,7 @@ public class TableWriterPressureControlImpl implements TableWriterPressureContro
     private static final int TXN_COUNT_SCALE_UP_FACTOR = 1000;
     private int inflightTransactionCount;
     private int maxRecordedInflightPartitions = 1;
-    private int maxTransactionCount;
+    private int maxTransactionCount = Integer.MAX_VALUE;
     // positive int: holds max parallelism
     // negative int: holds backoff counter
     private int memoryPressureRegulationValue = Integer.MAX_VALUE;
@@ -122,6 +122,11 @@ public class TableWriterPressureControlImpl implements TableWriterPressureContro
         walBackoffUntil = -1;
         memoryPressureRegulationValue = maxRecordedInflightPartitions / PARTITION_COUNT_SCALE_DOWN_FACTOR;
         maxRecordedInflightPartitions = 1;
+    }
+
+    @Override
+    public void setMaxTransactionCount(int count) {
+        maxTransactionCount = count;
     }
 
     @Override

@@ -1479,6 +1479,10 @@ public class WalWriterTest extends AbstractCairoTest {
             // Run WAL apply job two times:
             // Tick 1. Put row 2023-08-04T22 into the lag.
             // Tick 2. Instead of putting row 2023-08-04T21 into the lag, we force full commit.
+            // Add memory pressure to switch to 1 by 1 txn commit
+            var pressureControl = engine.getTableSequencerAPI().getTxnTracker(tableToken).getMemPressureControl();
+            pressureControl.setMaxTransactionCount(1);
+
             tickWalQueue(2);
 
             // We expect all, but the last row to be visible.

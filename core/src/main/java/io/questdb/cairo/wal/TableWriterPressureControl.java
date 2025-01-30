@@ -41,6 +41,8 @@ public interface TableWriterPressureControl {
 
     void onOutOfMemory();
 
+    void setMaxTransactionCount(int count);
+
     void updateInflightTransactions(int count);
 
     class NoPressureControl implements TableWriterPressureControl {
@@ -71,6 +73,11 @@ public interface TableWriterPressureControl {
 
         @Override
         public void onOutOfMemory() {
+        }
+
+        @Override
+        public void setMaxTransactionCount(int count) {
+
         }
 
         @Override

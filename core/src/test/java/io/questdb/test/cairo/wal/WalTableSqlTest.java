@@ -1277,9 +1277,9 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
 
             node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
-            runApplyOnce();
-
             TableToken token = engine.verifyTableName(tableName);
+            runApplyOnce(token);
+
             try (TxReader txReader = new TxReader(engine.getConfiguration().getFilesFacade())) {
                 txReader.ofRO(Path.getThreadLocal(root).concat(token).concat(TXN_FILE_NAME).$(), PartitionBy.DAY);
                 txReader.unsafeLoadAll();
@@ -1288,28 +1288,28 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 Assert.assertEquals(0, txReader.getLagRowCount());
                 Assert.assertEquals("2022-02-24T00:00:00.000Z", Timestamps.toString(txReader.getMaxTimestamp()));
 
-                runApplyOnce();
+                runApplyOnce(token);
                 txReader.unsafeLoadAll();
 
                 Assert.assertEquals(0, txReader.getLagTxnCount());
                 Assert.assertEquals(0, txReader.getLagRowCount());
                 Assert.assertEquals("2022-02-24T01:00:00.000Z", Timestamps.toString(txReader.getMaxTimestamp()));
 
-                runApplyOnce();
+                runApplyOnce(token);
                 txReader.unsafeLoadAll();
 
                 Assert.assertEquals(0, txReader.getLagTxnCount());
                 Assert.assertEquals(0, txReader.getLagRowCount());
                 Assert.assertEquals("2022-02-24T02:00:00.000Z", Timestamps.toString(txReader.getMaxTimestamp()));
 
-                runApplyOnce();
+                runApplyOnce(token);
                 txReader.unsafeLoadAll();
 
                 Assert.assertEquals(1, txReader.getLagTxnCount());
                 Assert.assertEquals(1, txReader.getLagRowCount());
                 Assert.assertEquals("2022-02-24T02:00:00.000Z", Timestamps.toString(txReader.getMaxTimestamp()));
 
-                runApplyOnce();
+                runApplyOnce(token);
                 txReader.unsafeLoadAll();
 
                 Assert.assertEquals(0, txReader.getLagTxnCount());
@@ -1651,9 +1651,11 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             Overrides overrides = node1.getConfigurationOverrides();
             overrides.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
-            runApplyOnce();
 
             TableToken token = engine.verifyTableName(tableName);
+            runApplyOnce(token);
+
+
             try (TxReader txReader = new TxReader(engine.getConfiguration().getFilesFacade())) {
                 txReader.ofRO(Path.getThreadLocal(root).concat(token).concat(TXN_FILE_NAME).$(), PartitionBy.DAY);
                 txReader.unsafeLoadAll();
@@ -1664,7 +1666,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 Assert.assertEquals("2022-02-24T01:00:00.000Z", Timestamps.toString(txReader.getLagMinTimestamp()));
                 Assert.assertEquals("2022-02-24T01:00:00.000Z", Timestamps.toString(txReader.getLagMaxTimestamp()));
 
-                runApplyOnce();
+                runApplyOnce(token);
                 txReader.unsafeLoadAll();
 
                 Assert.assertEquals(2, txReader.getLagTxnCount());
@@ -1673,7 +1675,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 Assert.assertEquals(IntervalUtils.parseFloorPartialTimestamp("2022-02-24T00"), txReader.getLagMinTimestamp());
                 Assert.assertEquals(IntervalUtils.parseFloorPartialTimestamp("2022-02-24T01"), txReader.getLagMaxTimestamp());
 
-                runApplyOnce();
+                runApplyOnce(token);
                 txReader.unsafeLoadAll();
 
                 Assert.assertEquals(0, txReader.getLagTxnCount());
@@ -1848,7 +1850,10 @@ public class WalTableSqlTest extends AbstractCairoTest {
         Assert.assertFalse(Utf8s.toString(sysPath), Files.exists(sysPath.$()));
     }
 
-    private void runApplyOnce() {
+    private void runApplyOnce(TableToken token) {
+        var control = engine.getTableSequencerAPI().getTxnTracker(token).getMemPressureControl();
+        control.setMaxTransactionCount(1);
+
         try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
             walApplyJob.run(0);
         }
