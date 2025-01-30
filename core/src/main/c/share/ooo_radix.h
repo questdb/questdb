@@ -274,6 +274,7 @@ radix_copy_segments_index_asc_rev(
                             min_value
                     );
             }
+            break;
 
         case DEDUP_INDEX_FORMAT:
             switch (total_row_count_bytes) {
@@ -298,6 +299,7 @@ radix_copy_segments_index_asc_rev(
                             min_value
                     );
             }
+            break;
     }
     return 0;
 }

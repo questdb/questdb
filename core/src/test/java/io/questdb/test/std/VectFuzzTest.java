@@ -1366,7 +1366,7 @@ public class VectFuzzTest {
 
     @Test
     public void testSortManySegmentsLowNumbers() throws Exception {
-        Rnd rnd = TestUtils.generateRandom(null, 1078792441925583L, 1737657643692L);
+        Rnd rnd = TestUtils.generateRandom(null);
         TestUtils.assertMemoryLeak(() -> {
             int segmentCount = 1 + rnd.nextInt(30);
             int rowsPerCommit = 1 + rnd.nextInt(10);
@@ -1633,8 +1633,9 @@ public class VectFuzzTest {
         Assume.assumeTrue(totalRows < 2E6);
 
         try (DirectLongList segmentAddresses = new DirectLongList(4, MemoryTag.NATIVE_DEFAULT)) {
-            long buf1 = Unsafe.malloc(totalRows * 3L * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            long buf2 = Unsafe.malloc(totalRows * 3L * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            long allocationSize = totalRows * 3L * Long.BYTES + Long.BYTES;
+            long buf1 = Unsafe.malloc(allocationSize, MemoryTag.NATIVE_DEFAULT);
+            long buf2 = Unsafe.malloc(allocationSize, MemoryTag.NATIVE_DEFAULT);
             for (int s = 0; s < segmentCount; s++) {
                 segmentAddresses.add(Unsafe.malloc(rowsPerSegment * 2L * Long.BYTES, MemoryTag.NATIVE_DEFAULT));
             }
@@ -1716,8 +1717,8 @@ public class VectFuzzTest {
                     Unsafe.free(segmentAddresses.get(s), rowsPerSegment * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
                 }
                 Unsafe.free(lagBuf, lagRows * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(buf1, totalRows * 3L * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(buf2, totalRows * 3L * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(buf1, allocationSize, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(buf2, allocationSize, MemoryTag.NATIVE_DEFAULT);
             }
         }
     }

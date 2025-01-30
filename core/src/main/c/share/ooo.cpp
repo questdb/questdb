@@ -788,7 +788,7 @@ Java_io_questdb_std_Vect_radixSortManySegmentsIndexAsc(
     auto txn_bytes = range_bytes(txn_count);
 
     // Check that ts + seq_txn fits 64 bits
-    if (ts_range_bytes + txn_bytes > 8 || ts_range_bytes < 0 || txn_bytes < 0) {
+    if (ts_range_bytes + txn_bytes > 8 || ts_range_bytes < 0) {
         return merge_index_format(-1, 0, 0, 0);
     }
 
@@ -801,7 +801,7 @@ Java_io_questdb_std_Vect_radixSortManySegmentsIndexAsc(
     }
 
     // Check that total rows fits 64 bits
-    if (total_row_count_bytes < 0 || total_row_count_bytes > 8) {
+    if (total_row_count_bytes > 8) {
         return merge_index_format(-3, 0, 0, 0);
     }
 
@@ -890,7 +890,7 @@ Java_io_questdb_std_Vect_mergeShuffleStringColumnFromManyAddresses(
     auto src_secondary = reinterpret_cast<const int64_t **>(srcSecondaryAddresses);
     auto dst_primary = reinterpret_cast<char *>(dstPrimaryAddress);
     auto dst_secondary = reinterpret_cast<int64_t *>(dstSecondaryAddress);
-    auto dst_var_offset = __JLONG_REINTERPRET_CAST__(const int64_t, dstVarOffset);
+    auto dst_var_offset = __JLONG_REINTERPRET_CAST__(int64_t, dstVarOffset);
     auto row_count = read_row_count(indexFormat);
     auto index_segment_encoding_bytes = read_segment_bytes(indexFormat);
     auto format = read_format(indexFormat);
@@ -939,7 +939,7 @@ Java_io_questdb_std_Vect_mergeShuffleVarcharColumnFromManyAddresses(
     auto src_secondary = reinterpret_cast<const int64_t **>(srcSecondaryAddresses);
     auto dst_primary = reinterpret_cast<char *>(dstPrimaryAddress);
     auto dst_secondary = reinterpret_cast<int64_t *>(dstSecondaryAddress);
-    auto dst_var_offset = __JLONG_REINTERPRET_CAST__(const int64_t, dstVarOffset);
+    auto dst_var_offset = __JLONG_REINTERPRET_CAST__(int64_t, dstVarOffset);
     auto row_count = read_row_count(indexFormat);
     auto index_segment_encoding_bytes = read_segment_bytes(indexFormat);
     auto format = read_format(indexFormat);

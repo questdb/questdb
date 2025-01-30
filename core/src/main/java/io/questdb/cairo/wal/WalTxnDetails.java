@@ -186,7 +186,7 @@ public class WalTxnDetails implements QuietCloseable {
         int blockSize = 1;
         long lastSeqTxn = getLastSeqTxn();
         long totalRowCount = 0;
-        maxBlockRecordCount = Math.min(maxBlockRecordCount, pressureControl.getMaxBatchRowCount());
+        maxBlockRecordCount = Math.min(maxBlockRecordCount, pressureControl.getMaxBatchRowCount() - 1);
 
         for (long nextTxn = seqTxn; nextTxn < lastSeqTxn; nextTxn++) {
             long txnRowCount = getSegmentRowHi(nextTxn) - getSegmentRowLo(nextTxn);
