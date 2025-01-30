@@ -955,11 +955,11 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndexManyAddresses(
         jlong indexFromat,
         jlong pIndexIn,
         jlong pIndexTemp,
-        const jint dedupKeyCount,
+        jint dedupKeyCount,
         jlong dedupColBuffs
 ) {
     auto segment_bytes = read_segment_bytes(indexFromat);
-    auto dedup_key_count = reinterpret_cast<const int32_t>(dedupKeyCount);
+    auto dedup_key_count = (int32_t) dedupKeyCount;
     auto format = read_format(indexFromat);
 
     if (format != DEDUP_INDEX_FORMAT) {
