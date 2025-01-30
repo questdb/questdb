@@ -40,6 +40,7 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public abstract class AbstractCharSequenceIntHashMapTest extends AbstractTest {
     protected abstract AbstractCharSequenceIntHashMap createInstance();
+
     protected abstract void closeInstance(AbstractCharSequenceIntHashMap instance);
 
     @Test

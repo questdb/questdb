@@ -70,7 +70,7 @@ public abstract class AbstractCharSequenceIntHashMap extends AbstractCharSequenc
                 put(otherKeys[i], otherValues[i]);
             }
         }
-    };
+    }
 
     public int valueAt(int index) {
         int index1 = -index - 1;
