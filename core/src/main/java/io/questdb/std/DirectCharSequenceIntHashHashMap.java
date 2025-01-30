@@ -61,7 +61,7 @@ public class DirectCharSequenceIntHashHashMap extends AbstractCharSequenceIntHas
         if (index < 0) {
             values[-index - 1] = values[-index - 1] + 1;
         } else {
-            putAt0(index, Chars.toDirectUtf16Sink(key), 0);
+            putAt0(index, toDirectUtf16Sink(key), 0);
         }
     }
 
@@ -71,7 +71,7 @@ public class DirectCharSequenceIntHashHashMap extends AbstractCharSequenceIntHas
             values[-index - 1] = value;
             return false;
         }
-        DirectUtf16Sink directUtf16Sink = Chars.toDirectUtf16Sink(key);
+        DirectUtf16Sink directUtf16Sink = toDirectUtf16Sink(key);
         putAt0(index, directUtf16Sink, value);
         list.add(directUtf16Sink);
         return true;
@@ -81,7 +81,7 @@ public class DirectCharSequenceIntHashHashMap extends AbstractCharSequenceIntHas
     public void putIfAbsent(@NotNull CharSequence key, int value) {
         int index = keyIndex(key);
         if (index > -1) {
-            DirectUtf16Sink directUtf16Sink = Chars.toDirectUtf16Sink(key);
+            DirectUtf16Sink directUtf16Sink = toDirectUtf16Sink(key);
             putAt0(index, directUtf16Sink, value);
             list.add(directUtf16Sink);
         }
@@ -124,5 +124,14 @@ public class DirectCharSequenceIntHashHashMap extends AbstractCharSequenceIntHas
         for (int i = 0; i < keys.length; i++) {
             closeDirectMemory(keys[i]);
         }
+    }
+
+    private static DirectUtf16Sink toDirectUtf16Sink(CharSequence s) {
+        if (s == null) {
+            return null;
+        }
+        DirectUtf16Sink sink = new DirectUtf16Sink(s.length() * 2L);
+        sink.put(s);
+        return sink;
     }
 }

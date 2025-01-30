@@ -1079,15 +1079,6 @@ public final class Chars {
         return s == null ? null : s.toString();
     }
 
-    public static DirectUtf16Sink toDirectUtf16Sink(CharSequence s) {
-        if (s == null) {
-            return null;
-        }
-        DirectUtf16Sink sink = new DirectUtf16Sink(s.length() * 2L);
-        sink.put(s);
-        return sink;
-    }
-
     public static String toString(CharSequence cs, int start, int end) {
         final Utf16Sink b = Misc.getThreadLocalSink();
         b.put(cs, start, end);
