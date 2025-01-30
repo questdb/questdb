@@ -321,7 +321,7 @@ public class NdArrayParser implements QuietCloseable {
                 case 'u':
                     assert bitSize == 1 : "Unexpected unsigned element size";
                     int n = Numbers.parseInt(input, 0, tokenLimit);
-                    if (n != 0 && n != 1) {
+                    if (n != (n & 1)) {
                         throw ParseException.unexpectedToken(position());
                     }
                     bufs.values.putByte((byte) n);

@@ -58,8 +58,8 @@ public class NdArrayMeta {  // TODO(amunra): Rename to `NdArrayMetaUtils`.
      * For a given "flat" element count and nd array type, compute the number of bytes required to store.
      */
     public static int calcRequiredValuesByteSize(int type, int elementsCount) {
-        assert ColumnType.isNdArray(type);
-        final int bitWidth = 1 << ColumnType.getNdArrayElementTypePrecision(type);
+        assert ColumnType.isNdArray(type) : "type class is not NDArray";
+        final int bitWidth = Math.max(8, 1 << ColumnType.getNdArrayElementTypePrecision(type));
         final int requiredBits = elementsCount * bitWidth;
         return (requiredBits + 7) / 8;
     }
@@ -87,11 +87,20 @@ public class NdArrayMeta {  // TODO(amunra): Rename to `NdArrayMetaUtils`.
     }
 
     /**
-     * Set the list to the default strides for a row-major vector of the specified dimensions.
-     * <p>The strides are expressed in element space (not byte space).</p>
+     * Determine if the strides are the default strides.
+     * <p>If they are, the data can be iterated in order simply by accessing the {@link NdArrayView#getValues()} vec.</p>
      */
-    public static void setDefaultStrides(@NotNull DirectIntSlice shape, @NotNull DirectIntList strides) {
-        setDefaultStrides(shape.ptr(), shape.length(), strides);
+    public static boolean isDefaultStrides(DirectIntSlice shape, DirectIntSlice strides) {
+        assert shape.length() == strides.length();
+        int expected = 1;
+        for (int dimIndex = shape.length() - 1; dimIndex >= 0; --dimIndex) {
+            final int actual = strides.get(dimIndex);
+            if (actual != expected) {
+                return false;
+            }
+            expected *= shape.get(dimIndex);
+        }
+        return true;
     }
 
     public static void setDefaultStrides(long shapePtr, int shapeLength, @NotNull DirectIntList strides) {
@@ -115,20 +124,11 @@ public class NdArrayMeta {  // TODO(amunra): Rename to `NdArrayMetaUtils`.
     }
 
     /**
-     * Determine if the strides are the default strides.
-     * <p>If they are, the data can be iterated in order simply by accessing the {@link NdArrayView#getValues()} vec.</p>
+     * Set the list to the default strides for a row-major vector of the specified dimensions.
+     * <p>The strides are expressed in element space (not byte space).</p>
      */
-    public static boolean isDefaultStrides(DirectIntSlice shape, DirectIntSlice strides) {
-        assert shape.length() == strides.length();
-        int expected = 1;
-        for (int dimIndex = shape.length() - 1; dimIndex >= 0; --dimIndex) {
-            final int actual = strides.get(dimIndex);
-            if (actual != expected) {
-                return false;
-            }
-            expected *= shape.get(dimIndex);
-        }
-        return true;
+    public static void setDefaultStrides(@NotNull DirectIntSlice shape, @NotNull DirectIntList strides) {
+        setDefaultStrides(shape.ptr(), shape.length(), strides);
     }
 
     /**
@@ -140,7 +140,9 @@ public class NdArrayMeta {  // TODO(amunra): Rename to `NdArrayMetaUtils`.
         strides.reverse();
     }
 
-    /** Check that each dimension in the shape is &gt;= 0. */
+    /**
+     * Check that each dimension in the shape is &gt;= 0.
+     */
     public static boolean validShape(DirectIntSlice shape) {
         for (int dimIndex = 0, nDims = shape.length(); dimIndex < nDims; ++dimIndex) {
             final int dim = shape.get(dimIndex);

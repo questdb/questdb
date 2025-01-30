@@ -59,6 +59,21 @@ public class NdArrayParserTest {
     }
 
     @Test
+    public void testBoolean1d() throws ParseException {
+        testByteLiteral("{0u1}", new int[]{1}, new int[]{1});
+        testByteLiteral("{0u0,1}", new int[]{2}, new int[]{0, 1});
+        testByteLiteral("{0u1,0,1}", new int[]{3}, new int[]{1, 0, 1});
+    }
+
+    @Test
+    public void testBoolean1dInvalid() {
+        testInvalidLiteral("{0u2}", ND_ARR_UNEXPECTED, 3);
+        testInvalidLiteral("{0u-1}", ND_ARR_UNEXPECTED, 3);
+        testInvalidLiteral("{0u.}", ND_ARR_UNEXPECTED, 3);
+        testInvalidLiteral("{0u0,1,2}", ND_ARR_UNEXPECTED, 7);
+    }
+
+    @Test
     public void testByte1d() throws ParseException {
         testByteLiteral("{3i1}", new int[]{1}, new int[]{1});
         testByteLiteral(String.format("{3i%d}", Byte.MAX_VALUE), new int[]{1}, new int[]{Byte.MAX_VALUE});
