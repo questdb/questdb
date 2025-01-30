@@ -194,7 +194,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         );
     }
 
-    private boolean insertAsSelect(MatViewRefreshState state, MatViewDefinition viewDef, TableWriterAPI tableWriter) throws SqlException {
+    private boolean insertAsSelect(MatViewRefreshState state, MatViewDefinition viewDef, TableWriterAPI tableWriter, long baseTableTxn, long refreshTriggeredTimestamp) throws SqlException {
         assert state.isLocked();
 
         RecordCursorFactory factory = null;
@@ -268,7 +268,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
             rowCount = tableWriter.getUncommittedRowCount();
             tableWriter.commit();
-            state.refreshSuccess(factory, copier, tableWriter.getMetadata().getMetadataVersion(), refreshTimestamp);
+            state.refreshSuccess(factory, copier, tableWriter.getMetadata().getMetadataVersion(), refreshTimestamp, refreshTriggeredTimestamp, baseTableTxn);
         } catch (Throwable th) {
             LOG.error().$("error refreshing materialized view [view=").$(viewDef.getMatViewToken()).$(", error=").$(th).I$();
             Misc.free(factory);
@@ -296,7 +296,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
-    private boolean refreshDependentViews(TableToken baseTableToken, MatViewGraph viewGraph) {
+    private boolean refreshDependentViews(TableToken baseTableToken, MatViewGraph viewGraph, long refreshTriggeredTimestamp) {
         if (!baseTableToken.isWal()) {
             LOG.error().$("found materialized views dependent on non-WAL table that will not be refreshed [parent=").utf8(baseTableToken.getTableName()).I$();
             return false;
@@ -323,7 +323,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     }
 
                     try {
-                        refreshed = refreshView(state, baseTableToken, viewSeqTracker, viewToken, appliedToViewTxn, lastBaseQueryableTxn);
+                        refreshed = refreshView(state, baseTableToken, viewSeqTracker, viewToken, appliedToViewTxn, lastBaseQueryableTxn, refreshTriggeredTimestamp);
                     } catch (Throwable th) {
                         state.refreshFail(microsecondClock.getTicks());
                         // TODO(puzpuzpuz): write error message to telemetry table
@@ -352,12 +352,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             final int operation = mvRefreshTask.operation;
             final TableToken baseTableToken = mvRefreshTask.baseTableToken;
             final TableToken viewToken = mvRefreshTask.viewToken;
+            final long refreshTriggeredTimestamp = mvRefreshTask.refreshTriggeredTimestamp;
 
             if (viewToken == null) {
                 try {
                     engine.verifyTableToken(baseTableToken);
                 } catch (CairoException ce) {
-                    LOG.info().$("materialized view base table has name changed or dropped [table=").$(baseTableToken)
+                    LOG.info().$("materialized view base table is dropped or renamed [table=").$(baseTableToken)
                             .$(", error=").$(ce.getFlyweightMessage())
                             .I$();
                     invalidateDependentViews(baseTableToken, matViewGraph);
@@ -368,9 +369,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             switch (operation) {
                 case MatViewRefreshTask.INCREMENTAL_REFRESH:
                     if (viewToken == null) {
-                        refreshed |= refreshDependentViews(baseTableToken, matViewGraph);
+                        refreshed |= refreshDependentViews(baseTableToken, matViewGraph, refreshTriggeredTimestamp);
                     } else {
-                        refreshed |= refreshView(viewToken, matViewGraph);
+                        refreshed |= refreshView(viewToken, matViewGraph, refreshTriggeredTimestamp);
                     }
                     break;
                 case MatViewRefreshTask.FULL_REFRESH:
@@ -392,7 +393,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return refreshed;
     }
 
-    private boolean refreshView(@NotNull TableToken viewToken, MatViewGraph viewGraph) {
+    private boolean refreshView(@NotNull TableToken viewToken, MatViewGraph viewGraph, long refreshTriggeredTimestamp) {
         final MatViewRefreshState state = viewGraph.getViewRefreshState(viewToken);
         if (state == null || state.isInvalid() || state.isDropped()) {
             return false;
@@ -427,7 +428,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             final SeqTxnTracker viewSeqTracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
             final long appliedToParentTxn = viewSeqTracker.getLastRefreshBaseTxn();
             if (appliedToParentTxn < 0 || appliedToParentTxn < lastBaseQueryableTxn) {
-                return refreshView(state, baseTableToken, viewSeqTracker, viewToken, appliedToParentTxn, lastBaseQueryableTxn);
+                return refreshView(state, baseTableToken, viewSeqTracker, viewToken, appliedToParentTxn, lastBaseQueryableTxn, refreshTriggeredTimestamp);
             }
             return false;
         } catch (Throwable th) {
@@ -448,7 +449,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             @NotNull SeqTxnTracker viewTxnTracker,
             @NotNull TableToken viewToken,
             long fromBaseTxn,
-            long toBaseTxn
+            long toBaseTxn,
+            long refreshTriggeredTimestamp
     ) {
         assert state.isLocked();
 
@@ -487,7 +489,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     toBaseTxn = baseTableReader.getSeqTxn();
 
                     try (TableWriterAPI commitWriter = engine.getTableWriterAPI(viewToken, "Mat View refresh")) {
-                        boolean changed = insertAsSelect(state, viewDef, commitWriter);
+                        boolean changed = insertAsSelect(state, viewDef, commitWriter, toBaseTxn, refreshTriggeredTimestamp);
                         if (changed) {
                             engine.getTableSequencerAPI().setLastRefreshBaseTxn(viewToken, toBaseTxn);
                             viewTxnTracker.setLastRefreshBaseTxn(toBaseTxn);

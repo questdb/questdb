@@ -32,9 +32,12 @@ import io.questdb.std.QuietCloseable;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import static io.questdb.TelemetrySystemEvent.*;
+
 public class MatViewRefreshState implements QuietCloseable {
     // used to avoid concurrent refresh runs
     private final AtomicBoolean latch = new AtomicBoolean(false);
+    private final MatViewTelemetryFacade telemetryFacade;
     private final MatViewDefinition viewDefinition;
     private RecordCursorFactory cursorFactory;
     private volatile boolean dropped;
@@ -43,8 +46,9 @@ public class MatViewRefreshState implements QuietCloseable {
     private long recordRowCopierMetadataVersion;
     private RecordToRowCopier recordToRowCopier;
 
-    public MatViewRefreshState(MatViewDefinition viewDefinition) {
+    public MatViewRefreshState(MatViewDefinition viewDefinition, MatViewTelemetryFacade telemetryFacade) {
         this.viewDefinition = viewDefinition;
+        this.telemetryFacade = telemetryFacade;
     }
 
     public RecordCursorFactory acquireRecordFactory() {
@@ -75,6 +79,10 @@ public class MatViewRefreshState implements QuietCloseable {
         return viewDefinition;
     }
 
+    public void init() {
+        telemetryFacade.store(MAT_VIEW_CREATE, viewDefinition.getMatViewToken(), -1L, 0L);
+    }
+
     public boolean isDropped() {
         return dropped;
     }
@@ -89,29 +97,35 @@ public class MatViewRefreshState implements QuietCloseable {
 
     public void markAsDropped() {
         dropped = true;
+        telemetryFacade.store(MAT_VIEW_DROP, viewDefinition.getMatViewToken(), -1L, 0L);
     }
 
     public void markAsInvalid() {
         invalid = true;
+        telemetryFacade.store(MAT_VIEW_INVALIDATE, viewDefinition.getMatViewToken(), -1L, 0L);
     }
 
     public void refreshFail(long refreshTimestamp) {
         assert latch.get();
         lastRefreshTimestamp = refreshTimestamp;
         invalid = true;
+        telemetryFacade.store(MAT_VIEW_REFRESH_FAIL, viewDefinition.getMatViewToken(), -1L, 0L);
     }
 
     public void refreshSuccess(
             RecordCursorFactory factory,
             RecordToRowCopier copier,
             long recordRowCopierMetadataVersion,
-            long refreshTimestamp
+            long refreshTimestamp,
+            long refreshTriggeredTimestamp,
+            long baseTableTxn
     ) {
         assert latch.get();
         this.cursorFactory = factory;
         this.recordToRowCopier = copier;
         this.recordRowCopierMetadataVersion = recordRowCopierMetadataVersion;
         this.lastRefreshTimestamp = refreshTimestamp;
+        telemetryFacade.store(MAT_VIEW_REFRESH_SUCCESS, viewDefinition.getMatViewToken(), baseTableTxn, refreshTimestamp - refreshTriggeredTimestamp);
     }
 
     public void tryCloseIfDropped() {

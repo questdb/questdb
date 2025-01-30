@@ -7712,10 +7712,20 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 25,
                 "view name expected"
         );
+        assertSyntaxError(
+                "REFRESH MATERIALIZED VIEW",
+                25,
+                "view name expected"
+        );
     }
 
     @Test
     public void testRefreshMatView3() throws Exception {
+        assertSyntaxError(
+                "REFRESH MATERIALIZED VIEW 'myview'",
+                26,
+                "materialized view does not exist [view=myview]"
+        );
         assertSyntaxError(
                 "REFRESH MATERIALIZED VIEW 'myview';",
                 26,

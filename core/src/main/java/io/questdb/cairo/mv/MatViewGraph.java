@@ -33,12 +33,14 @@ import org.jetbrains.annotations.TestOnly;
 
 public interface MatViewGraph extends QuietCloseable, Mutable {
 
+    // must be called after creating the underlying table
+    MatViewRefreshState addView(MatViewDefinition viewDefinition);
+
+    MatViewRefreshState addView(TableToken baseTableToken, MatViewDefinition viewDefinition);
+
     @TestOnly
     @Override
     void clear();
-
-    // must be called after creating the underlying table
-    void createView(MatViewDefinition viewDefinition);
 
     void createView(TableToken baseTableToken, MatViewDefinition viewDefinition);
 
@@ -46,9 +48,11 @@ public interface MatViewGraph extends QuietCloseable, Mutable {
 
     void getDependentMatViews(TableToken table, ObjList<TableToken> sink);
 
-    @Nullable MatViewDefinition getMatViewDefinition(TableToken matViewToken);
+    @Nullable
+    MatViewDefinition getMatViewDefinition(TableToken matViewToken);
 
-    @Nullable MatViewRefreshState getViewRefreshState(TableToken tableToken);
+    @Nullable
+    MatViewRefreshState getViewRefreshState(TableToken tableToken);
 
     void getViews(ObjList<TableToken> bucket);
 

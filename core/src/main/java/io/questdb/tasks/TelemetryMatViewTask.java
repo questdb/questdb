@@ -31,13 +31,14 @@ import io.questdb.griffin.QueryBuilder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ObjectFactory;
+import io.questdb.std.str.Utf8String;
 import org.jetbrains.annotations.NotNull;
 
-public class TelemetryWalTask implements AbstractTelemetryTask {
-    public static final String NAME = "WAL TELEMETRY";
-    public static final String TABLE_NAME = "telemetry_wal";
-    public static final Telemetry.TelemetryTypeBuilder<TelemetryWalTask> WAL_TELEMETRY = configuration -> {
-        String tableName = configuration.getSystemTableNamePrefix() + TABLE_NAME;
+public class TelemetryMatViewTask implements AbstractTelemetryTask {
+    public static final String NAME = "MAT VIEW TELEMETRY";
+    public static final String TABLE_NAME = "telemetry_mat_view";
+    public static final Telemetry.TelemetryTypeBuilder<TelemetryMatViewTask> MAT_VIEW_TELEMETRY = configuration -> {
+        final String tableName = configuration.getSystemTableNamePrefix() + TABLE_NAME;
         return new Telemetry.TelemetryType<>() {
             @Override
             public QueryBuilder getCreateSql(QueryBuilder builder) {
@@ -46,11 +47,9 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
                         .$("' (" +
                                 "created TIMESTAMP, " +
                                 "event SHORT, " +
-                                "tableId INT, " +
-                                "walId INT, " +
-                                "seqTxn LONG, " +
-                                "rowCount LONG," +
-                                "physicalRowCount LONG," +
+                                "viewTableId INT, " +
+                                "baseTableTxn LONG, " +
+                                "errorMessage VARCHAR, " +
                                 "latency FLOAT" +
                                 ") TIMESTAMP(created) PARTITION BY DAY TTL 1 WEEK BYPASS WAL"
                         );
@@ -67,33 +66,27 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
             }
 
             @Override
-            public ObjectFactory<TelemetryWalTask> getTaskFactory() {
-                return TelemetryWalTask::new;
+            public ObjectFactory<TelemetryMatViewTask> getTaskFactory() {
+                return TelemetryMatViewTask::new;
             }
         };
     };
-    private static final Log LOG = LogFactory.getLog(TelemetryWalTask.class);
+    private static final Log LOG = LogFactory.getLog(TelemetryMatViewTask.class);
+    private long baseTableTxn;
     private short event;
     private float latency; // millis
-    private long physicalRowCount;
     private long queueCursor;
-    private long rowCount;
-    private long seqTxn;
-    private int tableId;
-    private int walId;
+    private int viewTableId;
 
-    private TelemetryWalTask() {
+    private TelemetryMatViewTask() {
     }
 
-    public static void store(@NotNull Telemetry<TelemetryWalTask> telemetry, short event, int tableId, int walId, long seqTxn, long rowCount, long physicalRowCount, long latencyUs) {
-        final TelemetryWalTask task = telemetry.nextTask();
+    public static void store(@NotNull Telemetry<TelemetryMatViewTask> telemetry, short event, int viewTableId, long baseTableTxn, long latencyUs) {
+        final TelemetryMatViewTask task = telemetry.nextTask();
         if (task != null) {
             task.event = event;
-            task.tableId = tableId;
-            task.walId = walId;
-            task.seqTxn = seqTxn;
-            task.rowCount = rowCount;
-            task.physicalRowCount = physicalRowCount;
+            task.viewTableId = viewTableId;
+            task.baseTableTxn = baseTableTxn;
             task.latency = latencyUs / 1000.0f; // millis
             telemetry.store(task);
         }
@@ -113,12 +106,11 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
         try {
             final TableWriter.Row row = writer.newRow(timestamp);
             row.putShort(1, event);
-            row.putInt(2, tableId);
-            row.putInt(3, walId);
-            row.putLong(4, seqTxn);
-            row.putLong(5, rowCount);
-            row.putLong(6, physicalRowCount);
-            row.putFloat(7, latency);
+            row.putInt(2, viewTableId);
+            row.putLong(3, baseTableTxn);
+            // TODO(glasstiger): pass error message here for failed refresh/view invalidate
+            row.putVarchar(4, new Utf8String(""));
+            row.putFloat(5, latency);
             row.append();
         } catch (CairoException e) {
             LOG.error().$("Could not insert a new ").$(TABLE_NAME).$(" row [errno=").$(e.getErrno())

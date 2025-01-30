@@ -24,6 +24,8 @@
 
 package io.questdb.cairo.mv;
 
+import io.questdb.Telemetry;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.log.Log;
@@ -33,6 +35,8 @@ import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.ThreadLocal;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.tasks.TelemetryMatViewTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -44,34 +48,25 @@ public class MatViewGraphImpl implements MatViewGraph {
     private final Function<CharSequence, MatViewRefreshList> createRefreshList;
     // TODO(puzpuzpuz): this map is grow-only, i.e. keys are never removed
     private final ConcurrentHashMap<MatViewRefreshList> dependentViewsByTableName = new ConcurrentHashMap<>();
+    private final Telemetry<TelemetryMatViewTask> matViewTelemetry;
+    private final MatViewTelemetryFacade matViewTelemetryFacade;
+    private final MicrosecondClock microsecondClock;
     private final ConcurrentHashMap<MatViewRefreshState> refreshStateByTableDirName = new ConcurrentHashMap<>();
     private final ConcurrentQueue<MatViewRefreshTask> refreshTaskQueue = new ConcurrentQueue<>(MatViewRefreshTask::new);
     private final ThreadLocal<MatViewRefreshTask> taskHolder = new ThreadLocal<>(MatViewRefreshTask::new);
 
-    public MatViewGraphImpl() {
+    public MatViewGraphImpl(CairoEngine engine) {
         this.createRefreshList = name -> new MatViewRefreshList();
-    }
-
-    @TestOnly
-    @Override
-    public void clear() {
-        close();
-    }
-
-    @Override
-    public void close() {
-        for (MatViewRefreshState state : refreshStateByTableDirName.values()) {
-            Misc.free(state);
-        }
-        dependentViewsByTableName.clear();
-        refreshStateByTableDirName.clear();
+        this.matViewTelemetry = engine.getTelemetryMatView();
+        this.matViewTelemetryFacade = matViewTelemetry.isEnabled() ? this::storeMatViewTelemetry : this::storeMatViewTelemetryNoop;
+        this.microsecondClock = engine.getConfiguration().getMicrosecondClock();
     }
 
     // must be called after creating the underlying table
     @Override
-    public void createView(MatViewDefinition viewDefinition) {
+    public MatViewRefreshState addView(MatViewDefinition viewDefinition) {
         final TableToken matViewToken = viewDefinition.getMatViewToken();
-        final MatViewRefreshState state = new MatViewRefreshState(viewDefinition);
+        final MatViewRefreshState state = new MatViewRefreshState(viewDefinition, matViewTelemetryFacade);
         final MatViewRefreshState prevState = refreshStateByTableDirName.putIfAbsent(matViewToken.getDirName(), state);
         // WAL table directories are unique, so we don't expect previous value
         if (prevState != null) {
@@ -87,14 +82,35 @@ public class MatViewGraphImpl implements MatViewGraph {
         } finally {
             list.unlockAfterWrite();
         }
+        return state;
+    }
+
+    @Override
+    public MatViewRefreshState addView(TableToken baseTableToken, MatViewDefinition viewDefinition) {
+        assert baseTableToken.getTableName().equals(viewDefinition.getBaseTableName());
+        final MatViewRefreshState state = addView(viewDefinition);
+        // when the view is new and empty, incremental refresh is same as full
+        addToRefreshQueue(baseTableToken, viewDefinition.getMatViewToken(), MatViewRefreshTask.INCREMENTAL_REFRESH);
+        return state;
+    }
+
+    @TestOnly
+    public void clear() {
+        close();
+    }
+
+    @Override
+    public void close() {
+        for (MatViewRefreshState state : refreshStateByTableDirName.values()) {
+            Misc.free(state);
+        }
+        dependentViewsByTableName.clear();
+        refreshStateByTableDirName.clear();
     }
 
     @Override
     public void createView(TableToken baseTableToken, MatViewDefinition viewDefinition) {
-        assert baseTableToken.getTableName().equals(viewDefinition.getBaseTableName());
-        createView(viewDefinition);
-        // when the view is new and empty, incremental refresh is same as full
-        addToRefreshQueue(baseTableToken, viewDefinition.getMatViewToken(), MatViewRefreshTask.INCREMENTAL_REFRESH);
+        addView(baseTableToken, viewDefinition).init();
     }
 
     @Override
@@ -164,10 +180,11 @@ public class MatViewGraphImpl implements MatViewGraph {
     @Override
     public void notifyBaseRefreshed(MatViewRefreshTask task, long seqTxn) {
         final TableToken tableToken = task.baseTableToken;
-        final MatViewRefreshList state = dependentViewsByTableName.get(tableToken.getTableName());
-        if (state != null) {
-            if (state.notifyOnBaseTableRefreshedNoLock(seqTxn)) {
+        final MatViewRefreshList list = dependentViewsByTableName.get(tableToken.getTableName());
+        if (list != null) {
+            if (list.notifyOnBaseTableRefreshedNoLock(seqTxn)) {
                 // While refreshing more txn were committed. Refresh will need to re-run.
+                task.refreshTriggeredTimestamp = microsecondClock.getTicks();
                 refreshTaskQueue.enqueue(task);
             }
         }
@@ -178,6 +195,7 @@ public class MatViewGraphImpl implements MatViewGraph {
         final MatViewRefreshList list = dependentViewsByTableName.get(task.baseTableToken.getTableName());
         if (list != null) {
             if (list.notifyOnBaseTableCommitNoLock(seqTxn)) {
+                task.refreshTriggeredTimestamp = microsecondClock.getTicks();
                 refreshTaskQueue.enqueue(task);
                 LOG.info().$("refresh notified table=").$(task.baseTableToken.getTableName()).$();
             } else {
@@ -194,6 +212,7 @@ public class MatViewGraphImpl implements MatViewGraph {
             task.baseTableToken = state.getViewDefinition().getMatViewToken();
             task.viewToken = viewTableToken;
             task.operation = operation;
+            task.refreshTriggeredTimestamp = microsecondClock.getTicks();
             refreshTaskQueue.enqueue(task);
         }
     }
@@ -208,11 +227,19 @@ public class MatViewGraphImpl implements MatViewGraph {
         task.baseTableToken = baseToken;
         task.viewToken = viewToken;
         task.operation = operation;
+        task.refreshTriggeredTimestamp = microsecondClock.getTicks();
         refreshTaskQueue.enqueue(task);
     }
 
     @NotNull
     private MatViewRefreshList getOrCreateDependentViews(CharSequence tableName) {
         return dependentViewsByTableName.computeIfAbsent(tableName, createRefreshList);
+    }
+
+    private void storeMatViewTelemetry(short event, TableToken tableToken, long baseTableTxn, long latencyUs) {
+        TelemetryMatViewTask.store(matViewTelemetry, event, tableToken.getTableId(), baseTableTxn, latencyUs);
+    }
+
+    private void storeMatViewTelemetryNoop(short event, TableToken tableToken, long baseTableTxn, long latencyUs) {
     }
 }

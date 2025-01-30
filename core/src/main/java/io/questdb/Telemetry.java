@@ -80,14 +80,18 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
         }
     }
 
+    public void clear() {
+        if (writer != null) {
+            consumeAll();
+            telemetryType.logStatus(writer, TelemetrySystemEvent.SYSTEM_DOWN, clock.getTicks());
+            writer = Misc.free(writer);
+        }
+    }
+
     @Override
     public void close() {
         try {
-            if (writer != null) {
-                consumeAll();
-                telemetryType.logStatus(writer, TelemetrySystemEvent.SYSTEM_DOWN, clock.getTicks());
-                writer = Misc.free(writer);
-            }
+            clear();
         } finally {
             telemetryQueue = Misc.free(telemetryQueue);
         }
@@ -101,6 +105,10 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
         if (enabled && telemetrySubSeq.consumeAll(telemetryQueue, taskConsumer)) {
             writer.commit();
         }
+    }
+
+    public String getName() {
+        return telemetryType.getName();
     }
 
     public void init(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
@@ -254,12 +262,14 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
     public interface TelemetryType<T extends AbstractTelemetryTask> {
         QueryBuilder getCreateSql(QueryBuilder builder);
 
+        String getName();
+
         String getTableName();
 
         ObjectFactory<T> getTaskFactory();
 
         //todo: we could tailor the config for each telemetry type
-        //we could set different queue sizes or disable telemetry per type, for example
+        // we could set different queue sizes or disable telemetry per type, for example
         default TelemetryConfiguration getTelemetryConfiguration(@NotNull CairoConfiguration configuration) {
             return configuration.getTelemetryConfiguration();
         }

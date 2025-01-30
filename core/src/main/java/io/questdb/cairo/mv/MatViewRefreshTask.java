@@ -34,6 +34,7 @@ public class MatViewRefreshTask implements ValueHolder<MatViewRefreshTask> {
     public static final int UNSET = -1;
     public TableToken baseTableToken;
     public int operation = UNSET;
+    public long refreshTriggeredTimestamp;
     public TableToken viewToken;
 
     @Override
@@ -41,6 +42,7 @@ public class MatViewRefreshTask implements ValueHolder<MatViewRefreshTask> {
         operation = UNSET;
         baseTableToken = null;
         viewToken = null;
+        refreshTriggeredTimestamp = -1L;
     }
 
     @Override
@@ -48,5 +50,6 @@ public class MatViewRefreshTask implements ValueHolder<MatViewRefreshTask> {
         anotherHolder.operation = operation;
         anotherHolder.baseTableToken = baseTableToken;
         anotherHolder.viewToken = viewToken;
+        anotherHolder.refreshTriggeredTimestamp = refreshTriggeredTimestamp;
     }
 }

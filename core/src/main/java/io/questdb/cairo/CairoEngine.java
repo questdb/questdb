@@ -101,6 +101,8 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.tasks.AbstractTelemetryTask;
+import io.questdb.tasks.TelemetryMatViewTask;
 import io.questdb.tasks.TelemetryTask;
 import io.questdb.tasks.TelemetryWalTask;
 import io.questdb.tasks.WalTxnNotificationTask;
@@ -145,7 +147,9 @@ public class CairoEngine implements Closeable, WriterSource {
     private final TableMetadataPool tableMetadataPool;
     private final TableNameRegistry tableNameRegistry;
     private final TableSequencerAPI tableSequencerAPI;
+    private final ObjList<Telemetry<? extends AbstractTelemetryTask>> telemetries;
     private final Telemetry<TelemetryTask> telemetry;
+    private final Telemetry<TelemetryMatViewTask> telemetryMatView;
     private final Telemetry<TelemetryWalTask> telemetryWal;
     // initial value of unpublishedWalTxnCount is 1 because we want to scan for non-applied WAL transactions on startup
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
@@ -177,6 +181,8 @@ public class CairoEngine implements Closeable, WriterSource {
             this.engineMaintenanceJob = new EngineMaintenanceJob(configuration);
             this.telemetry = new Telemetry<>(TelemetryTask.TELEMETRY, configuration);
             this.telemetryWal = new Telemetry<>(TelemetryWalTask.WAL_TELEMETRY, configuration);
+            this.telemetryMatView = new Telemetry<>(TelemetryMatViewTask.MAT_VIEW_TELEMETRY, configuration);
+            this.telemetries = new ObjList<>(telemetry, telemetryWal, telemetryMatView);
             this.tableIdGenerator = new IDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME);
             this.checkpointAgent = new DatabaseCheckpointAgent(this);
             this.queryRegistry = new QueryRegistry(configuration);
@@ -199,7 +205,7 @@ public class CairoEngine implements Closeable, WriterSource {
             }
             this.metadataCache = new MetadataCache(this);
             this.matViewGraph = configuration.isMatViewEnabled()
-                    ? new MatViewGraphImpl()
+                    ? new MatViewGraphImpl(this)
                     : NoOpMatViewGraph.INSTANCE;
         } catch (Throwable th) {
             close();
@@ -372,8 +378,7 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(tableIdGenerator);
         Misc.free(messageBus);
         Misc.free(tableSequencerAPI);
-        Misc.free(telemetry);
-        Misc.free(telemetryWal);
+        Misc.freeObjList(telemetries);
         Misc.free(tableNameRegistry);
         Misc.free(checkpointAgent);
         Misc.free(metadataCache);
@@ -816,8 +821,16 @@ public class CairoEngine implements Closeable, WriterSource {
         return walWriterPool.get(tableToken);
     }
 
+    public ObjList<Telemetry<? extends AbstractTelemetryTask>> getTelemetries() {
+        return telemetries;
+    }
+
     public Telemetry<TelemetryTask> getTelemetry() {
         return telemetry;
+    }
+
+    public Telemetry<TelemetryMatViewTask> getTelemetryMatView() {
+        return telemetryMatView;
     }
 
     public Telemetry<TelemetryWalTask> getTelemetryWal() {
@@ -1385,7 +1398,7 @@ public class CairoEngine implements Closeable, WriterSource {
                                     .$(", view=").utf8(tableToken.getTableName())
                                     .I$();
                         } else {
-                            matViewGraph.createView(baseTableToken, matViewDefinition);
+                            matViewGraph.addView(baseTableToken, matViewDefinition);
                             matViewGraph.refresh(tableToken, MatViewRefreshTask.INCREMENTAL_REFRESH);
                         }
                     } catch (CairoException e) {

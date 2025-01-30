@@ -32,21 +32,23 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.Misc;
-import io.questdb.tasks.TelemetryTask;
-import io.questdb.tasks.TelemetryWalTask;
+import io.questdb.std.ObjList;
+import io.questdb.tasks.AbstractTelemetryTask;
 
 import java.io.Closeable;
 
 public class TelemetryJob extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(TelemetryJob.class);
-    private final Telemetry<TelemetryTask> telemetry;
+
+    private final ObjList<Telemetry<? extends AbstractTelemetryTask>> telemetries;
     private final TelemetryConfigLogger telemetryConfigLogger;
-    private final Telemetry<TelemetryWalTask> telemetryWal;
 
     public TelemetryJob(CairoEngine engine) throws SqlException {
         try {
-            telemetry = engine.getTelemetry();
-            telemetryWal = engine.getTelemetryWal();
+            // owned by the engine, should be closed by the engine
+            telemetries = engine.getTelemetries();
+
+            // owned by the job, should be closed by the job
             telemetryConfigLogger = new TelemetryConfigLogger(engine);
 
             try (final SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -57,8 +59,9 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
                         null
                 );
 
-                telemetry.init(engine, compiler, sqlExecutionContext);
-                telemetryWal.init(engine, compiler, sqlExecutionContext);
+                for (int i = 0, n = telemetries.size(); i < n; i++) {
+                    telemetries.getQuick(i).init(engine, compiler, sqlExecutionContext);
+                }
                 telemetryConfigLogger.init(engine, compiler, sqlExecutionContext);
             }
         } catch (Throwable th) {
@@ -69,22 +72,20 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
 
     @Override
     public void close() {
-        Misc.free(telemetry);
-        Misc.free(telemetryWal);
+        for (int i = 0, n = telemetries.size(); i < n; i++) {
+            telemetries.getQuick(i).clear();
+        }
         Misc.free(telemetryConfigLogger);
     }
 
     @Override
     public boolean runSerially() {
-        try {
-            telemetry.consumeAll();
-        } catch (Throwable th) {
-            LOG.error().$("failed to process telemetry event").$(th).$();
-        }
-        try {
-            telemetryWal.consumeAll();
-        } catch (Throwable th) {
-            LOG.error().$("failed to process wal telemetry event").$(th).$();
+        for (int i = 0, n = telemetries.size(); i < n; i++) {
+            try {
+                telemetries.getQuick(i).consumeAll();
+            } catch (Throwable th) {
+                LOG.error().$("failed to process ").$(telemetries.getQuick(i).getName()).$(" event").$(th).$();
+            }
         }
         return false;
     }

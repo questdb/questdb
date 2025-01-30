@@ -1975,6 +1975,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         tok = expectToken(lexer, "view name");
+        if (isSemicolon(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "view name expected'");
+        }
         assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
 
         final CharSequence matViewName = GenericLexer.unquote(tok);
