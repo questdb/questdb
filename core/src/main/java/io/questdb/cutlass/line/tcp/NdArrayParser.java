@@ -43,7 +43,7 @@ import org.jetbrains.annotations.NotNull;
 import static io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode.*;
 
 /**
- * Parse N-dimensional arrays for ILP input.
+ * Parses an ND array literal used in ILP.
  * <p>Here are a few examples:</p>
  * <p>A 1-D array of longs: <code>{6i1,2,3}</code></p>
  * <p>A 2-D array of doubles: <code>{6f{NaN,1},{2.5,3}}</code></p>
@@ -188,14 +188,13 @@ public class NdArrayParser implements QuietCloseable {
     }
 
     /**
-     * Parses the outermost level of a row-major array literal.
-     * <p>Generally, this would look something like this:</p>
+     * Parses the body of a row-major array literal.
+     * <p>Note that by the time we call this function, the initial left brace
+     * and type have already been parsed. Example:</p>
      * <pre>
      *     {5f2.5,1.0,NaN}
      *        ^_____________ we start here!
      * </pre>
-     * <p>Note that by the time we call this function, the initial left brace
-     * and type have already been parsed.</p>
      */
     private void parseElements() throws ParseException {
         final char numberType = ColumnType.getNdArrayElementTypeClass(bufs.type);
