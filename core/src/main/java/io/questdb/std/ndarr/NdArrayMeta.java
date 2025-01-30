@@ -141,16 +141,15 @@ public class NdArrayMeta {  // TODO(amunra): Rename to `NdArrayMetaUtils`.
     }
 
     /**
-     * Check that each dimension in the shape is &gt;= 0.
+     * Validate that each dimension in the shape is positive and doesn't exceed
+     * {@value DIM_MAX_SIZE}.
      */
-    public static boolean validShape(DirectIntSlice shape) {
+    public static void validateShape(DirectIntSlice shape) {
         for (int dimIndex = 0, nDims = shape.length(); dimIndex < nDims; ++dimIndex) {
             final int dim = shape.get(dimIndex);
             if ((dim <= 0) || (dim >= DIM_MAX_SIZE))
-                // having a zero or negative dimension is never valid.
-                return false;
+                throw new AssertionError(String.format("shape dimension %,d out of bounds: %,d", dimIndex, dim));
         }
-        return true;
     }
 
 }

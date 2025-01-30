@@ -399,36 +399,20 @@ public class NdArrayParser implements QuietCloseable {
         private ErrorCode errorCode;
         private int position;
 
-        public static @NotNull ParseException invalidShape(int position) {
-            return instance().errorCode(ND_ARR_INVALID_SHAPE).position(position);
-        }
-
         public static @NotNull ParseException invalidType(int position) {
             return instance().errorCode(ND_ARR_INVALID_TYPE).position(position);
-        }
-
-        public static @NotNull ParseException invalidValuesSize(int position) {
-            return instance().errorCode(ND_ARR_INVALID_VALUES_SIZE).position(position);
         }
 
         public static @NotNull ParseException irregularShape(int position) {
             return instance().errorCode(ND_ARR_IRREGULAR_SHAPE).position(position);
         }
 
-        public static @NotNull ParseException malformed(int position) {
-            return instance().errorCode(ErrorCode.ND_ARR_MALFORMED).position(position);
-        }
-
         public static @NotNull ParseException prematureEnd(int position) {
             return instance().errorCode(ND_ARR_PREMATURE_END).position(position);
         }
 
-        public static @NotNull ParseException shapeStridesMismatch(int position) {
-            return instance().errorCode(ND_ARR_SHAPE_STRIDES_MISMATCH).position(position);
-        }
-
         public static @NotNull ParseException unexpectedToken(int position) {
-            return instance().errorCode(ND_ARR_UNEXPECTED).position(position);
+            return instance().errorCode(ND_ARR_UNEXPECTED_TOKEN).position(position);
         }
 
         public ParseException errorCode(ErrorCode errorCode) {

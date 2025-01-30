@@ -220,22 +220,18 @@ public class NdArrayView {
         boolean complete = false;
         try {
             if (!ColumnType.isNdArray(type)) {
-                throw ParseException.invalidType(0);
+                throw new AssertionError("type class is not NDArray: " + type);
             }
             if (shapeLength != stridesLength) {
-                throw ParseException.shapeStridesMismatch(0);
+                throw new AssertionError("shapeLength != stridesLength");
             }
             this.type = type;
-            this.shape.of(shapePtr, shapeLength);
-            if (!NdArrayMeta.validShape(this.shape)) {
-                throw ParseException.invalidShape(0);
-            }
+            shape.of(shapePtr, shapeLength);
+            NdArrayMeta.validateShape(shape);
             final int valuesLength = NdArrayMeta.flatLength(shape);
-            if (!validValuesSize(type, valuesOffset, valuesLength, valuesSize)) {
-                throw ParseException.invalidValuesSize(0);
-            }
-            this.strides.of(stridesPtr, stridesLength);
-            this.values.of(valuesPtr, valuesSize);
+            validateValuesSize(type, valuesOffset, valuesLength, valuesSize);
+            strides.of(stridesPtr, stridesLength);
+            values.of(valuesPtr, valuesSize);
             this.valuesOffset = valuesOffset;
             complete = true;
         } finally {
@@ -265,10 +261,12 @@ public class NdArrayView {
         this.crc = 0;
     }
 
-    private static boolean validValuesSize(int type, int valuesOffset, int valuesLength, int valuesSize) {
+    private static void validateValuesSize(int type, int valuesOffset, int valuesLength, int valuesSize) {
         final int totExpectedElementCapacity = valuesOffset + valuesLength;
         final int expectedByteSize = NdArrayMeta.calcRequiredValuesByteSize(type, totExpectedElementCapacity);
-        return expectedByteSize == valuesSize;
+        if (valuesSize != expectedByteSize) {
+            throw new AssertionError(String.format("invalid valuesSize, expected %,d actual %,d", expectedByteSize, valuesSize));
+        }
     }
 
     /**
@@ -284,29 +282,5 @@ public class NdArrayView {
         }
         assert flatIndex < NdArrayMeta.flatLength(shape);
         return valuesOffset + flatIndex;
-    }
-
-    public enum ValidatonStatus {
-        OK,
-
-        /**
-         * Not an ARRAY(...) ColumnType.
-         */
-        BAD_TYPE,
-
-        /**
-         * There are a different number of dimensions and strides.
-         */
-        UNALIGNED_SHAPE_AND_STRIDES,
-
-        /**
-         * The shape contains 0 or negative dimensions.
-         */
-        BAD_SHAPE,
-
-        /**
-         * The values vector is of an unexpected byte length.
-         */
-        BAD_VALUES_SIZE,
     }
 }

@@ -654,38 +654,17 @@ public class LineTcpParser implements QuietCloseable {
         /**
          * Unexpected token found
          */
-        ND_ARR_UNEXPECTED,
+        ND_ARR_UNEXPECTED_TOKEN,
 
         /**
-         * Invalid array dimension nesting. E.g. {{1, 2}, {1, 2, 3}}
+         * Array literal specifies an irregular (jagged) array shape. E.g. {{1, 2}, {1, 2, 3}}
          */
         ND_ARR_IRREGULAR_SHAPE,
-
-        /**
-         * Shape array contains zero or negative dimensions
-         */
-        ND_ARR_INVALID_SHAPE,
-
-        /**
-         * Values array size doesn't match expectation
-         */
-        ND_ARR_INVALID_VALUES_SIZE,
-
-        /**
-         * Length of the shape array mismatches the length of the strides array
-         */
-        ND_ARR_SHAPE_STRIDES_MISMATCH,
-
-        /**
-         * The array parsing completed, but the array state was invalid.
-         */
-        ND_ARR_MALFORMED,
 
         /**
          * Parsing of the array datatype failed.
          */
         ND_ARR_INVALID_TYPE,
-
 
         NONE
     }

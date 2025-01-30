@@ -67,10 +67,10 @@ public class NdArrayParserTest {
 
     @Test
     public void testBoolean1dInvalid() {
-        testInvalidLiteral("{0u2}", ND_ARR_UNEXPECTED, 3);
-        testInvalidLiteral("{0u-1}", ND_ARR_UNEXPECTED, 3);
-        testInvalidLiteral("{0u.}", ND_ARR_UNEXPECTED, 3);
-        testInvalidLiteral("{0u0,1,2}", ND_ARR_UNEXPECTED, 7);
+        testInvalidLiteral("{0u2}", ND_ARR_UNEXPECTED_TOKEN, 3);
+        testInvalidLiteral("{0u-1}", ND_ARR_UNEXPECTED_TOKEN, 3);
+        testInvalidLiteral("{0u.}", ND_ARR_UNEXPECTED_TOKEN, 3);
+        testInvalidLiteral("{0u0,1,2}", ND_ARR_UNEXPECTED_TOKEN, 7);
     }
 
     @Test
@@ -117,16 +117,16 @@ public class NdArrayParserTest {
 
     @Test
     public void testInt1dInvalid() {
-        testInvalidLiteral("{5i}", ND_ARR_UNEXPECTED, 3);
-        testInvalidLiteral("{5i,}", ND_ARR_UNEXPECTED, 3);
-        testInvalidLiteral("{5ia}", ND_ARR_UNEXPECTED, 3);
-        testInvalidLiteral("{5i1.1}", ND_ARR_UNEXPECTED, 3);
-        testInvalidLiteral("{5i1,,1}", ND_ARR_UNEXPECTED, 5);
-        testInvalidLiteral("{5i1,}", ND_ARR_UNEXPECTED, 5);
+        testInvalidLiteral("{5i}", ND_ARR_UNEXPECTED_TOKEN, 3);
+        testInvalidLiteral("{5i,}", ND_ARR_UNEXPECTED_TOKEN, 3);
+        testInvalidLiteral("{5ia}", ND_ARR_UNEXPECTED_TOKEN, 3);
+        testInvalidLiteral("{5i1.1}", ND_ARR_UNEXPECTED_TOKEN, 3);
+        testInvalidLiteral("{5i1,,1}", ND_ARR_UNEXPECTED_TOKEN, 5);
+        testInvalidLiteral("{5i1,}", ND_ARR_UNEXPECTED_TOKEN, 5);
         String veryLongInt = String.join("", nCopies(NdArrayParser.LEAF_LENGTH_LIMIT - 1, "1"));
         String dosAttack = veryLongInt + "1";
         testInvalidLiteral(String.format("{5i%s", veryLongInt), ND_ARR_PREMATURE_END, 3);
-        testInvalidLiteral(String.format("{5i%s", dosAttack), ND_ARR_UNEXPECTED, 3);
+        testInvalidLiteral(String.format("{5i%s", dosAttack), ND_ARR_UNEXPECTED_TOKEN, 3);
     }
 
     @Test
@@ -138,14 +138,14 @@ public class NdArrayParserTest {
 
     @Test
     public void testInt2dInvalid() {
-        testInvalidLiteral("{5i{}}", ND_ARR_UNEXPECTED, 4);
-        testInvalidLiteral("{5i{,}}", ND_ARR_UNEXPECTED, 4);
-        testInvalidLiteral("{5i{a}}", ND_ARR_UNEXPECTED, 4);
-        testInvalidLiteral("{5i{1.1}}", ND_ARR_UNEXPECTED, 4);
-        testInvalidLiteral("{5i{1,}}", ND_ARR_UNEXPECTED, 6);
-        testInvalidLiteral("{5i{1},,{1}}", ND_ARR_UNEXPECTED, 7);
-        testInvalidLiteral("{5i{1,,1}}", ND_ARR_UNEXPECTED, 6);
-        testInvalidLiteral("{5i{1},}", ND_ARR_UNEXPECTED, 7);
+        testInvalidLiteral("{5i{}}", ND_ARR_UNEXPECTED_TOKEN, 4);
+        testInvalidLiteral("{5i{,}}", ND_ARR_UNEXPECTED_TOKEN, 4);
+        testInvalidLiteral("{5i{a}}", ND_ARR_UNEXPECTED_TOKEN, 4);
+        testInvalidLiteral("{5i{1.1}}", ND_ARR_UNEXPECTED_TOKEN, 4);
+        testInvalidLiteral("{5i{1,}}", ND_ARR_UNEXPECTED_TOKEN, 6);
+        testInvalidLiteral("{5i{1},,{1}}", ND_ARR_UNEXPECTED_TOKEN, 7);
+        testInvalidLiteral("{5i{1,,1}}", ND_ARR_UNEXPECTED_TOKEN, 6);
+        testInvalidLiteral("{5i{1},}", ND_ARR_UNEXPECTED_TOKEN, 7);
     }
 
     @Test
@@ -188,14 +188,14 @@ public class NdArrayParserTest {
 
     @Test
     public void testValuesOutOfRange() {
-        testInvalidLiteral(String.format("{3i%d}", Byte.MIN_VALUE - 1), ND_ARR_UNEXPECTED, 3);
-        testInvalidLiteral(String.format("{3i%d}", Byte.MAX_VALUE + 1), ND_ARR_UNEXPECTED, 3);
-        testInvalidLiteral(String.format("{4i%d}", Short.MIN_VALUE - 1), ND_ARR_UNEXPECTED, 3);
-        testInvalidLiteral(String.format("{4i%d}", Short.MAX_VALUE + 1), ND_ARR_UNEXPECTED, 3);
-        testInvalidLiteral(String.format("{5i%d}", Integer.MIN_VALUE - 1L), ND_ARR_UNEXPECTED, 3);
-        testInvalidLiteral(String.format("{5i%d}", Integer.MAX_VALUE + 1L), ND_ARR_UNEXPECTED, 3);
-        testInvalidLiteral("{6i-9223372036854775809}", ND_ARR_UNEXPECTED, 3);
-        testInvalidLiteral("{6i9223372036854775808}", ND_ARR_UNEXPECTED, 3);
+        testInvalidLiteral(String.format("{3i%d}", Byte.MIN_VALUE - 1), ND_ARR_UNEXPECTED_TOKEN, 3);
+        testInvalidLiteral(String.format("{3i%d}", Byte.MAX_VALUE + 1), ND_ARR_UNEXPECTED_TOKEN, 3);
+        testInvalidLiteral(String.format("{4i%d}", Short.MIN_VALUE - 1), ND_ARR_UNEXPECTED_TOKEN, 3);
+        testInvalidLiteral(String.format("{4i%d}", Short.MAX_VALUE + 1), ND_ARR_UNEXPECTED_TOKEN, 3);
+        testInvalidLiteral(String.format("{5i%d}", Integer.MIN_VALUE - 1L), ND_ARR_UNEXPECTED_TOKEN, 3);
+        testInvalidLiteral(String.format("{5i%d}", Integer.MAX_VALUE + 1L), ND_ARR_UNEXPECTED_TOKEN, 3);
+        testInvalidLiteral("{6i-9223372036854775809}", ND_ARR_UNEXPECTED_TOKEN, 3);
+        testInvalidLiteral("{6i9223372036854775808}", ND_ARR_UNEXPECTED_TOKEN, 3);
     }
 
     private void assertSliceEquals(DirectIntSlice actual, int[] expected) {
