@@ -41,6 +41,9 @@ import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.metrics.QueryTracingJob;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.millitime.MillisecondClockImpl;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.cutlass.http.TestHttpClient;
 import io.questdb.test.tools.TestUtils;
@@ -600,6 +603,28 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     }
 
     @Test
+    public void testReadYourWrites() throws Exception {
+        assertMemoryLeak(() -> {
+            // use a file in dbroot to make sure it uses the same filesystem as other tests
+            File f = new File(serverConf.getParent(), "overwriteme.conf");
+//            if (!Files.exists(f.toPath())) {
+            Assert.assertTrue(f.createNewFile());
+//            }
+
+            try (io.questdb.std.str.Path path = new io.questdb.std.str.Path()) {
+                path.of(f.getAbsolutePath());
+
+                testReadYourWrites(500, 10, path);
+                testReadYourWrites(1000, 5, path);
+                testReadYourWrites(2000, 2, path);
+
+                // 1 ms might be inconclusive due to rounding errors
+                testReadYourWrites(5000, 1, path);
+            }
+        });
+    }
+
+    @Test
     public void testReloadDisabled() throws Exception {
         assertMemoryLeak(() -> {
             try (FileWriter w = new FileWriter(serverConf)) {
@@ -740,5 +765,36 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 }
             }
         };
+    }
+
+    private void testReadYourWrites(long iterationCount, long waitTimeMillis, io.questdb.std.str.Path path) throws Exception {
+        File f = new File(path.toString());
+        LPSZ lpsz = path.$();
+        
+        for (int i = 0; i < iterationCount; i++) {
+            long fileBefore = io.questdb.std.Files.getLastModified(lpsz);
+
+            // wait for another millisecond to make sure the file timestamp in millis changes on the next write
+            long timeBeforeWrite = MillisecondClockImpl.INSTANCE.getTicks();
+            long deadLine = timeBeforeWrite + waitTimeMillis;
+            while (MillisecondClockImpl.INSTANCE.getTicks() < deadLine) {
+                //
+            }
+
+            try (FileWriter w = new FileWriter(f)) {
+                w.write("foo=after\n");
+            }
+
+            long fileAfter = io.questdb.std.Files.getLastModified(lpsz);
+            Assert.assertTrue("File was not updated [" +
+                            "iteration=" + i
+                            + ", waitTimeMillis=" + waitTimeMillis
+                            + ", fileBefore=" + Timestamps.toString(fileBefore * 1000)
+                            + ", fileAfter=" + Timestamps.toString(fileAfter * 1000)
+                            + ", timeBeforeWrite=" + Timestamps.toString(timeBeforeWrite * 1000)
+                            + ", deadLine=" + Timestamps.toString(deadLine * 1000)
+                            + "]",
+                    fileAfter > fileBefore);
+        }
     }
 }
