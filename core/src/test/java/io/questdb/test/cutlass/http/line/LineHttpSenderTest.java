@@ -347,10 +347,10 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 ) {
                     sender.table(tableName)
                             .symbol("x", "42i")
-                            .symbol("y", "{6f1.0,2.5,3.0,4.5,5.0}")  // ensuring no array parsing for symbol
+                            .symbol("y", "[6f1.0,2.5,3.0,4.5,5.0]")  // ensuring no array parsing for symbol
                             .longColumn("l1", 23452345)
-                            .arrayColumn("a1", "{6f1.0,2.5,3.0,4.5,5.0}")  // TODO(amunra): API it's the raw buffer passed into ILP
-                            .arrayColumn("a2", "{6i-1,0,100000000}")  // TODO(amunra): API it's the raw buffer passed into ILP
+                            .arrayColumn("a1", "[6f1.0,2.5,3.0,4.5,5.0]")  // TODO(amunra): API it's the raw buffer passed into ILP
+                            .arrayColumn("a2", "[6i-1,0,100000000]")  // TODO(amunra): API it's the raw buffer passed into ILP
                             .at(100000000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
@@ -359,7 +359,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                 serverMain.assertSql("select * from " + tableName, "x\ty\tl1\ta1\ta2\tts\n" +
                         "42i\t" +
-                        "{6f1.0,2.5,3.0,4.5,5.0}\t" +
+                        "[6f1.0,2.5,3.0,4.5,5.0]\t" +
                         "23452345\t" +
                         "[1.0,2.5,3.0,4.5,5.0]\t" +
                         "[-1,0,100000000]\t" +

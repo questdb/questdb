@@ -45,8 +45,8 @@ import static io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode.*;
 /**
  * Parses an ND array literal used in ILP.
  * <p>Here are a few examples:</p>
- * <p>A 1-D array of longs: <code>{6i1,2,3}</code></p>
- * <p>A 2-D array of doubles: <code>{6f{NaN,1},{2.5,3}}</code></p>
+ * <p>A 1-D array of longs: <code>[6i1,2,3]</code></p>
+ * <p>A 2-D array of doubles: <code>[6f[NaN,1],[2.5,3]]</code></p>
  * <p>The type marker is as follows: <code>[type_precision][type_class]</code></p>
  * <dl>
  *     <dt>type_precision</dt>
@@ -109,7 +109,7 @@ public class NdArrayParser implements QuietCloseable {
     public void parse(DirectUtf8String value) throws ParseException {
         reset();
 
-        if (Utf8s.equalsAscii("{}", value)) {
+        if (Utf8s.equalsAscii("[]", value)) {
             view.ofNull();
             return;
         }
@@ -192,7 +192,7 @@ public class NdArrayParser implements QuietCloseable {
      * <p>Note that by the time we call this function, the initial left brace
      * and type have already been parsed. Example:</p>
      * <pre>
-     *     {5f2.5,1.0,NaN}
+     *     [5f2.5,1.0,NaN]
      *        ^_____________ we start here!
      * </pre>
      */
@@ -210,7 +210,7 @@ public class NdArrayParser implements QuietCloseable {
             }
             levelCounts.add(0);
             shape.add(IntList.NO_ENTRY_VALUE);
-            if (input.byteAt(0) != '{') {
+            if (input.byteAt(0) != '[') {
                 nDims = level + 1;
                 break;
             }
@@ -229,7 +229,7 @@ public class NdArrayParser implements QuietCloseable {
             }
             byte b = input.byteAt(0);
             switch (b) {
-                case '{': {
+                case '[': {
                     assert level < nDims : "Nesting level is too much";
                     if (commaWelcome) {
                         throw ParseException.unexpectedToken(position());
@@ -243,7 +243,7 @@ public class NdArrayParser implements QuietCloseable {
                     input.advance();
                     continue;
                 }
-                case '}': {
+                case ']': {
                     int countAtCurrLevel = levelCounts.get(level);
                     if (!commaWelcome) {
                         throw ParseException.unexpectedToken(position());
@@ -275,7 +275,7 @@ public class NdArrayParser implements QuietCloseable {
                     int tokenLimit = 0;
                     for (int n = Math.min(input.size(), LEAF_LENGTH_LIMIT), i = 1; i < n; i++) {
                         b = input.byteAt(i);
-                        if (b == ',' || b == '}') {
+                        if (b == ',' || b == ']') {
                             tokenLimit = i;
                             break;
                         }
@@ -346,7 +346,7 @@ public class NdArrayParser implements QuietCloseable {
             throw ParseException.prematureEnd(position());
         }
         final byte b = input.byteAt(0);
-        if (b != (byte) '{') {
+        if (b != (byte) '[') {
             throw ParseException.unexpectedToken(position());
         }
         input.advance();

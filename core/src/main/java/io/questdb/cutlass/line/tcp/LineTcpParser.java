@@ -190,11 +190,11 @@ public class LineTcpParser implements QuietCloseable {
         }
 
         // Main parsing loop
-        int braceCount = 0;
+        int bracketCount = 0;
         while (bufAt < bufHi) {
             DirectUtf8String soFar = new DirectUtf8String();
             soFar.of(lineStart, bufAt + 1);
-            // System.err.println("entityHandler=" + entityHandler + ", braceCount=" + braceCount + ", soFar=`" + soFar + "`");
+//            System.err.println("entityHandler=" + entityHandler + ", bracketCount=" + bracketCount + ", soFar=`" + soFar + "`");
             byte b = Unsafe.getUnsafe().getByte(bufAt);
 
             if (nEscapedChars == 0 && !controlBytes[b & 0xff]) {
@@ -216,7 +216,7 @@ public class LineTcpParser implements QuietCloseable {
                     endOfLine = true;
                     b = '\n';
                 case ',':
-                    if (braceCount > 0) {
+                    if (bracketCount > 0) {
                         appendByte = true;
                         break;
                     }
@@ -294,16 +294,16 @@ public class LineTcpParser implements QuietCloseable {
                         return getError(bufHi);
                     }
 
-                case '{':
+                case '[':
                     if (tagsComplete && entityHandler == ENTITY_HANDLER_VALUE) {
-                        ++braceCount;
+                        ++bracketCount;
                         appendByte = true;
                         break;
                     }
 
-                case '}':
+                case ']':
                     if (tagsComplete && entityHandler == ENTITY_HANDLER_VALUE) {
-                        --braceCount;
+                        --bracketCount;
                         appendByte = true;
                         break;
                     }
@@ -316,6 +316,7 @@ public class LineTcpParser implements QuietCloseable {
                 case '\0':
                     LOG.info().$("could not parse [byte=\\0]").$();
                     return getError(bufHi);
+
                 case '/':
                     if (entityHandler != ENTITY_HANDLER_VALUE) {
                         LOG.info().$("could not parse [byte=/]").$();
@@ -807,7 +808,7 @@ public class LineTcpParser implements QuietCloseable {
                     type = ENTITY_TYPE_SYMBOL;
                     return false;
                 }
-                case '}': {
+                case ']': {
                     try {
                         ndArrParser.parse(value);
                         type = ENTITY_TYPE_ND_ARRAY;
@@ -875,7 +876,7 @@ public class LineTcpParser implements QuietCloseable {
     }
 
     static {
-        char[] chars = new char[]{'\n', '\r', '=', ',', ' ', '\\', '"', '\0', '/', '{', '}'};
+        char[] chars = new char[]{'\n', '\r', '=', ',', ' ', '\\', '"', '\0', '/', '[', ']'};
         controlBytes = new boolean[256];
         for (char ch : chars) {
             controlBytes[ch] = true;
