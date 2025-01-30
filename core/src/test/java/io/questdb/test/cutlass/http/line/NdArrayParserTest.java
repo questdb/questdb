@@ -172,6 +172,12 @@ public class NdArrayParserTest {
     }
 
     @Test
+    public void testNullArray() throws ParseException {
+        NdArrayValuesSlice values = parseAndGetValues("{}", new int[0]);
+        assertEquals("values should be empty", 0, values.size());
+    }
+
+    @Test
     public void testShort1d() throws ParseException {
         testShortLiteral("{4i1}", new int[]{1}, new int[]{1});
         testShortLiteral(String.format("{4i%d}", Short.MAX_VALUE), new int[]{1}, new int[]{Short.MAX_VALUE});

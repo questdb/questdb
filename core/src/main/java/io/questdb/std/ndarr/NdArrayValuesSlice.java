@@ -121,7 +121,6 @@ public class NdArrayValuesSlice implements DirectSequence {
      */
     @Override
     public int size() {
-        assert size > 0;
         return size;
     }
 }
