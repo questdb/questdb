@@ -47,7 +47,7 @@ import static io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode.*;
  * <p>Here are a few examples:</p>
  * <p>A 1-D array of longs: <code>[6i1,2,3]</code></p>
  * <p>A 2-D array of doubles: <code>[6f[NaN,1],[2.5,3]]</code></p>
- * <p>The type marker is as follows: <code>[type_precision][type_class]</code></p>
+ * <p>The type marker is as follows: <code>&lt;type_precision>&lt;type_class></code></p>
  * <dl>
  *     <dt>type_precision</dt>
  *     <dd>power of two of number of bits in the numeric type, e.g.
@@ -63,10 +63,10 @@ public class NdArrayParser implements QuietCloseable {
     public static final int DIM_COUNT_LIMIT = 8;
     public static final int LEAF_LENGTH_LIMIT = 100;
     // bufs.shape is populated gradually during the parsing process.
-    // We start by counting the initial `{` chars, this gives us the number of
+    // We start by counting the initial `[` chars, this gives us the number of
     // dimensions in the array literal. We populate bufs.shape with that many instances
     // of the number -1 ("not yet determined").
-    // Later on, each time we encounter a `}`, we check whether the size of the
+    // Later on, each time we encounter a `]`, we check whether the size of the
     // dimension corresponding to the element just being closed has already been
     // determined. If so, the size of the element must match that; otherwise we're
     // parsing a jagged array, which is not allowed. If the size hasn't yet been

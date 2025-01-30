@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 #!/usr/bin/env -S uv run --no-project
 
 # /// script
@@ -14,32 +15,32 @@ The manual Java impl is derived from this onwards as a recursive descent parser 
 
 Usage examples:
 
-$ echo "{}" | ./core/src/main/java/io/questdb/cutlass/line/tcp/nd_arr_grammar.py
-<Node called "array_lit" matching "{}">
-    <Node called "null" matching "{}">
+$ echo "[]" | ./core/src/main/java/io/questdb/cutlass/line/tcp/nd_arr_grammar.py
+<Node called "array_lit" matching "[]">
+    <Node called "null" matching "[]">
 
 
 
 
 
-$ echo "{3s}" | ./core/src/main/java/io/questdb/cutlass/line/tcp/nd_arr_grammar.py
-parsimonious.exceptions.ParseError: Rule 'elements' didn't match at '}' (line 1, column 4).
+$ echo "[3i]" | ./core/src/main/java/io/questdb/cutlass/line/tcp/nd_arr_grammar.py
+parsimonious.exceptions.ParseError: Rule 'elements' didn't match at ']' (line 1, column 4).
 
 
 
-$ echo "{6s{100,-10,1},{200,-20,2}}" | ./core/src/main/java/io/questdb/cutlass/line/tcp/nd_arr_grammar.py
-<Node called "array_lit" matching "{6s{100,-10,1},{200,-20,2}}">
-    <Node called "outer_def" matching "{6s{100,-10,1},{200,-20,2}}">
-        <Node matching "{">
+$ echo "[6i[100,-10,1],[200,-20,2]]" | ./core/src/main/java/io/questdb/cutlass/line/tcp/nd_arr_grammar.py
+<Node called "array_lit" matching "[6s[100,-10,1],[200,-20,2]]">
+    <Node called "outer_def" matching "[6s[100,-10,1],[200,-20,2]]">
+        <Node matching "[">
         <Node called "type" matching "6s">
             <Node called "precision" matching "6">
                 <Node matching "6">
             <Node called "class" matching "s">
                 <Node matching "s">
-        <Node called "elements" matching "{100,-10,1},{200,-20,2}">
-            <Node called "element" matching "{100,-10,1}">
-                <Node called "array_def" matching "{100,-10,1}">
-                    <Node matching "{">
+        <Node called "elements" matching "[100,-10,1],[200,-20,2]">
+            <Node called "element" matching "[100,-10,1]">
+                <Node called "array_def" matching "[100,-10,1]">
+                    <Node matching "[">
                     <Node called "elements" matching "100,-10,1">
                         <Node called "element" matching "100">
                             <Node called "number" matching "100">
@@ -63,13 +64,13 @@ $ echo "{6s{100,-10,1},{200,-20,2}}" | ./core/src/main/java/io/questdb/cutlass/l
                                         <Node called "long" matching "1">
                                             <Node matching "">
                                             <RegexNode called "digits" matching "1">
-                    <Node matching "}">
-            <Node matching ",{200,-20,2}">
-                <Node matching ",{200,-20,2}">
+                    <Node matching "]">
+            <Node matching ",[200,-20,2]">
+                <Node matching ",[200,-20,2]">
                     <Node matching ",">
-                    <Node called "element" matching "{200,-20,2}">
-                        <Node called "array_def" matching "{200,-20,2}">
-                            <Node matching "{">
+                    <Node called "element" matching "[200,-20,2]">
+                        <Node called "array_def" matching "[200,-20,2]">
+                            <Node matching "[">
                             <Node called "elements" matching "200,-20,2">
                                 <Node called "element" matching "200">
                                     <Node called "number" matching "200">
@@ -93,8 +94,8 @@ $ echo "{6s{100,-10,1},{200,-20,2}}" | ./core/src/main/java/io/questdb/cutlass/l
                                                 <Node called "long" matching "2">
                                                     <Node matching "">
                                                     <RegexNode called "digits" matching "2">
-                            <Node matching "}">
-        <Node matching "}">
+                            <Node matching "]">
+        <Node matching "]">
 """
 
 import sys
@@ -107,10 +108,10 @@ GRAMMAR = r"""
 array_lit   = (null / outer_def )
 element     = number / array_def
 elements    = element ("," element)*
-array_def   = "{" elements "}"
-outer_def   = "{" type elements "}"
-flat_arr    = "{" number ("," number)* "}"
-null        = "{}"
+array_def   = "[" elements "]"
+outer_def   = "[" type elements "]"
+flat_arr    = "[" number ("," number)* "]"
+null        = "[]"
 number      = long / double
 double      = sign? digits "." digits exponent?
 long        = sign? digits
