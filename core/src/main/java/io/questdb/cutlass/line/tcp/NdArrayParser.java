@@ -45,7 +45,7 @@ import static io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode.*;
 /**
  * Parse N-dimensional arrays for ILP input.
  * <p>Here are a few examples:</p>
- * <p>A 1-D array of longs: <code>{6s1,2,3}</code></p>
+ * <p>A 1-D array of longs: <code>{6i1,2,3}</code></p>
  * <p>A 2-D array of doubles: <code>{6f{NaN,1},{2.5,3}}</code></p>
  * <p>The type marker is as follows: <code>[type_precision][type_class]</code></p>
  * <dl>
@@ -56,15 +56,16 @@ import static io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode.*;
  *     <dd>type of number, <code>i</code> for signed integer, <code>u</code> for unsigned,
  *         <code>f</code> for floating point</dd>
  * </dl>
- * <p><string>Obviously not all combinations are valid</strong>: Refer to `ColType.java`'s ND_ARRAY implementation.</p>
+ * <p><strong>Not all combinations are valid</strong>: refer to `ColType.java`'s ND_ARRAY implementation.</p>
  */
 public class NdArrayParser implements QuietCloseable {
 
     public static final int DIM_COUNT_LIMIT = 8;
     public static final int LEAF_LENGTH_LIMIT = 100;
     // bufs.shape is populated gradually during the parsing process.
-    // Initially, we determine the number of dimensions by counting the initial `{`
-    // chars, and initialize the size of each dimension to -1 ("not yet determined").
+    // We start by counting the initial `{` chars, this gives us the number of
+    // dimensions in the array literal. We populate bufs.shape with that many instances
+    // of the number -1 ("not yet determined").
     // Later on, each time we encounter a `}`, we check whether the size of the
     // dimension corresponding to the element just being closed has already been
     // determined. If so, the size of the element must match that; otherwise we're
@@ -93,8 +94,8 @@ public class NdArrayParser implements QuietCloseable {
     }
 
     /**
-     * Obtain the parsed result.
-     * <p>Throws if {@link #parse(DirectUtf8String)} returned an error.</p>
+     * Obtains the parsed result.
+     * <p>Throws an exception if {@link #parse(DirectUtf8String)} didn't succeed.</p>
      */
     public @NotNull NdArrayView getView() {
         if (view.getType() == ColumnType.UNDEFINED)
@@ -103,8 +104,7 @@ public class NdArrayParser implements QuietCloseable {
     }
 
     /**
-     * Resets state and parses.
-     * <p>Check the return code. If it's {@link ErrorCode#NONE}, access the result via {@link #getView()}.</p>
+     * Resets the state and parses the value.
      */
     public void parse(DirectUtf8String value) throws ParseException {
         reset();
@@ -124,8 +124,8 @@ public class NdArrayParser implements QuietCloseable {
     }
 
     /**
-     * Get the position of the parsing error,
-     * relative to the start of the input passed to {@link #parse(DirectUtf8String)}.
+     * Returns the current position within the input, as tracked by discarding the
+     * already parsed input bytes.
      */
     public int position() {
         return (int) (input.lo() - inputStartAddr);
@@ -188,13 +188,14 @@ public class NdArrayParser implements QuietCloseable {
     }
 
     /**
-     * Parse the outermost level of a row-major array.
+     * Parses the outermost level of a row-major array literal.
      * <p>Generally, this would look something like this:</p>
      * <pre>
      *     {5f2.5,1.0,NaN}
      *        ^_____________ we start here!
      * </pre>
-     * <p>Note that by the time we call this function, the opening left brace and type have already been parsed.</p>
+     * <p>Note that by the time we call this function, the initial left brace
+     * and type have already been parsed.</p>
      */
     private void parseElements() throws ParseException {
         final char numberType = ColumnType.getNdArrayElementTypeClass(bufs.type);
@@ -397,19 +398,19 @@ public class NdArrayParser implements QuietCloseable {
         private int position;
 
         public static @NotNull ParseException invalidType(int position) {
-            return instance().errorCode(ND_ARR_INVALID_TYPE).position(position);
+            return tlException.get().errorCode(ND_ARR_INVALID_TYPE).position(position);
         }
 
         public static @NotNull ParseException irregularShape(int position) {
-            return instance().errorCode(ND_ARR_IRREGULAR_SHAPE).position(position);
+            return tlException.get().errorCode(ND_ARR_IRREGULAR_SHAPE).position(position);
         }
 
         public static @NotNull ParseException prematureEnd(int position) {
-            return instance().errorCode(ND_ARR_PREMATURE_END).position(position);
+            return tlException.get().errorCode(ND_ARR_PREMATURE_END).position(position);
         }
 
         public static @NotNull ParseException unexpectedToken(int position) {
-            return instance().errorCode(ND_ARR_UNEXPECTED_TOKEN).position(position);
+            return tlException.get().errorCode(ND_ARR_UNEXPECTED_TOKEN).position(position);
         }
 
         public ParseException errorCode(ErrorCode errorCode) {
@@ -428,13 +429,6 @@ public class NdArrayParser implements QuietCloseable {
 
         public int position() {
             return position;
-        }
-
-        private static ParseException instance() {
-            ParseException ex = tlException.get();
-            // This is to have correct stack trace in local debugging with -ea option
-            assert (ex = new ParseException()) != null;
-            return ex;
         }
     }
 }
