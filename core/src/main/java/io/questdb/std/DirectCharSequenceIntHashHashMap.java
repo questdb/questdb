@@ -70,6 +70,8 @@ public class DirectCharSequenceIntHashHashMap extends AbstractCharSequenceIntHas
         if (index < 0) {
             values[-index - 1] = value;
             return false;
+        } else {
+            closeDirectMemory(keys[index]);
         }
         DirectUtf16Sink directUtf16Sink = toDirectUtf16Sink(key);
         putAt0(index, directUtf16Sink, value);

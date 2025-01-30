@@ -230,15 +230,25 @@ public abstract class AbstractCharSequenceIntHashMapTest extends AbstractTest {
     }
 
     @Test
-    public void testMemoryLeak() throws Exception {
+    public void testMemoryLeaks() throws Exception {
         assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
             AbstractCharSequenceIntHashMap map = createInstance();
             final int N = 1000;
             for (int i = 0; i < N; i++) {
-                CharSequence cs = rnd.nextChars(15);
-                boolean b = map.put(cs, rnd.nextInt());
+                CharSequence nextKey = rnd.nextChars(15);
+                var nextValue = rnd.nextInt();
+                map.put(nextKey, nextValue);
             }
+            closeInstance(map);
+        });
+        assertMemoryLeak(() -> {
+            Rnd rnd = new Rnd();
+            AbstractCharSequenceIntHashMap map = createInstance();
+            CharSequence nextKey = rnd.nextChars(15);
+            var nextValue = rnd.nextInt();
+            map.putAt(1, nextKey, nextValue);
+            map.putAt(1, nextKey, nextValue);
             closeInstance(map);
         });
     }
