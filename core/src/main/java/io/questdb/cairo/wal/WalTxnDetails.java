@@ -184,19 +184,35 @@ public class WalTxnDetails implements QuietCloseable {
 
     public int calculateInsertTransactionBlock(long seqTxn, TableWriterPressureControl pressureControl, long maxBlockRecordCount) {
         int blockSize = 1;
-        long lastSeqTxn = Math.min(getLastSeqTxn(), seqTxn + pressureControl.getMaxTransactionCount() - 1);
+        long lastSeqTxn = getLastSeqTxn();
         long totalRowCount = 0;
+        maxBlockRecordCount = Math.min(maxBlockRecordCount, pressureControl.getMaxBatchRowCount());
+
         for (long nextTxn = seqTxn; nextTxn < lastSeqTxn; nextTxn++) {
+            long txnRowCount = getSegmentRowHi(nextTxn) - getSegmentRowLo(nextTxn);
+            totalRowCount += txnRowCount;
             if (getCommitToTimestamp(nextTxn) == FORCE_FULL_COMMIT || totalRowCount > maxBlockRecordCount) {
                 break;
             }
-            long txnRowCount = getSegmentRowHi(nextTxn) - getSegmentRowLo(nextTxn);
-            totalRowCount += txnRowCount;
             blockSize++;
         }
 
-//         TODO: support blocked transactions
-//        return 1;
+        // Find reasonable block size that will not cause O3
+        // Here we are trying to find the block size that is in the row count range of [maxBlockRecordCount / 2; maxBlockRecordCount]
+        // And the commit to timestamp includes the last transaction in the block
+        // This is very basic heuristic and needs some read time testing to come with a more robust solution
+        long lastTxn = seqTxn + blockSize - 1;
+        if (blockSize > 1 && getCommitToTimestamp(lastTxn) != FORCE_FULL_COMMIT) {
+            while (blockSize > 1 && getCommitToTimestamp(lastTxn) < getMaxTimestamp(lastTxn) && totalRowCount > maxBlockRecordCount / 2) {
+                blockSize--;
+                lastTxn--;
+                totalRowCount -= getSegmentRowHi(lastTxn) - getSegmentRowLo(lastTxn);
+            }
+        }
+
+        // to force switch to 1 by 1 txn commit, uncomment the following line
+        // return 1;
+        pressureControl.updateInflightBatchRowCount(maxBlockRecordCount);
         return blockSize;
     }
 

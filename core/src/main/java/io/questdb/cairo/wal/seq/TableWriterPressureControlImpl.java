@@ -35,16 +35,16 @@ public class TableWriterPressureControlImpl implements TableWriterPressureContro
     private static final int PARTITION_COUNT_SCALE_UP_FACTOR = 4;
     private static final int TXN_COUNT_SCALE_DOWN_FACTOR = 4;
     private static final int TXN_COUNT_SCALE_UP_FACTOR = 1000;
-    private int inflightTransactionCount;
+    private long inflightBatchRowCount;
     private int maxRecordedInflightPartitions = 1;
-    private int maxTransactionCount = Integer.MAX_VALUE;
+    private long maxBatchRowCount = Integer.MAX_VALUE;
     // positive int: holds max parallelism
     // negative int: holds backoff counter
     private int memoryPressureRegulationValue = Integer.MAX_VALUE;
     private long walBackoffUntil = -1;
 
-    public int getMaxTransactionCount() {
-        return Math.max(1, maxTransactionCount);
+    public long getMaxBatchRowCount() {
+        return Math.max(1, maxBatchRowCount);
     }
 
     public int getMemoryPressureLevel() {
@@ -69,7 +69,7 @@ public class TableWriterPressureControlImpl implements TableWriterPressureContro
     public boolean onEnoughMemory() {
         maxRecordedInflightPartitions = 1;
         walBackoffUntil = -1;
-        maxTransactionCount = Math.max(maxTransactionCount, maxTransactionCount * TXN_COUNT_SCALE_UP_FACTOR);
+        maxBatchRowCount = Math.max(maxBatchRowCount, maxBatchRowCount * TXN_COUNT_SCALE_UP_FACTOR);
 
         if (memoryPressureRegulationValue == Integer.MAX_VALUE) {
             // already at max parallelism, can't go more optimistic
@@ -98,8 +98,8 @@ public class TableWriterPressureControlImpl implements TableWriterPressureContro
      */
     @Override
     public void onOutOfMemory() {
-        int inflightTxns = inflightTransactionCount;
-        inflightTransactionCount = maxTransactionCount = Math.max(1, inflightTxns / TXN_COUNT_SCALE_DOWN_FACTOR);
+        long inflightTxns = inflightBatchRowCount;
+        inflightBatchRowCount = maxBatchRowCount = Math.max(1, inflightTxns / TXN_COUNT_SCALE_DOWN_FACTOR);
         if (maxRecordedInflightPartitions == 1 && inflightTxns <= 1) {
             // There was no parallelism
             if (memoryPressureRegulationValue <= -5) {
@@ -125,8 +125,8 @@ public class TableWriterPressureControlImpl implements TableWriterPressureContro
     }
 
     @Override
-    public void setMaxTransactionCount(int count) {
-        maxTransactionCount = count;
+    public void setMaxBatchRowCount(int count) {
+        maxBatchRowCount = count;
     }
 
     @Override
@@ -135,8 +135,8 @@ public class TableWriterPressureControlImpl implements TableWriterPressureContro
     }
 
     @Override
-    public void updateInflightTransactions(int count) {
-        inflightTransactionCount = count;
+    public void updateInflightBatchRowCount(long count) {
+        inflightBatchRowCount = count;
     }
 
     private static long getTicks() {

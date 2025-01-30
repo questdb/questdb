@@ -187,9 +187,9 @@ public class SeqTxnTrackerTest {
         int expectedParallelism = 16;
         pressureControl.updateInflightPartitions(expectedParallelism);
         pressureControl.onOutOfMemory();
-        expectedParallelism /= 2;
+        expectedParallelism /= 4;
         assertEquals(expectedParallelism, pressureControl.getMemoryPressureRegulationValue());
-        expectedParallelism *= 2;
+        expectedParallelism *= 4;
         int maxSuccessToEaseOff = 100;
         retryBlock:
         {
@@ -238,7 +238,7 @@ public class SeqTxnTrackerTest {
         tracker.updateInflightPartitions(expectedParallelism);
         while (true) {
             tracker.onOutOfMemory();
-            expectedParallelism /= 2;
+            expectedParallelism /= 4;
             if (expectedParallelism < 1) {
                 break;
             }

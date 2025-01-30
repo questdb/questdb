@@ -1118,9 +1118,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         physicallyWrittenRowsSinceLastCommit.set(0);
         txWriter.beginPartitionSizeUpdate();
         long commitToTimestamp = walTxnDetails.getCommitToTimestamp(seqTxn);
-        int transactionBlock = txWriter.getLagRowCount() > 0 ? 1 :
-                walTxnDetails.calculateInsertTransactionBlock(seqTxn, pressureControl, 1_000_000L);
-        pressureControl.updateInflightTransactions(transactionBlock);
+        int transactionBlock = calculateInsertTransactionBlock(seqTxn, pressureControl);
 
         boolean committed;
         final long initialCommittedRowCount = txWriter.getRowCount();
@@ -3739,6 +3737,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             noOpRowCount = 0L;
             enforceTtl();
         }
+    }
+
+    private int calculateInsertTransactionBlock(long seqTxn, TableWriterPressureControl pressureControl) {
+        if (txWriter.getLagRowCount() > 0) {
+            pressureControl.updateInflightPartitions(1);
+            return 1;
+        }
+        return walTxnDetails.calculateInsertTransactionBlock(seqTxn, pressureControl, getWalMaxLagRows());
     }
 
     private void configureAppendPosition() {
