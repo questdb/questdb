@@ -40,6 +40,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 // if it is used by multiple threads (i.e. set as a delegate in multiple wrappers at the same time).
 public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBreaker, Closeable {
     private final State state = new State();
+    // When a backup() call was made, contains either reference to `state` in case
+    // when the wrapper is initialized, or `null` in case of uninitialized wrapper.
     private State backup;
     private SqlExecutionCircuitBreaker delegate;
     private NetworkSqlExecutionCircuitBreaker networkSqlExecutionCircuitBreaker;
@@ -48,6 +50,17 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
         networkSqlExecutionCircuitBreaker = new NetworkSqlExecutionCircuitBreaker(configuration, MemoryTag.NATIVE_CB2);
     }
 
+    /**
+     * Backs up current circuit breaker (CB) wrapper state. For an initialized wrapper this means
+     * either reference to an atomic CB or a network CB configuration (e.g. socket fd). For an
+     * uninitialized wrapper, a null is stored as the backup reference.
+     * <p>
+     * Intended to be called before init() call and, after these calls, followed by
+     * a {@link #restore()} call to restore the original wrapper state. This is handy in work stealing
+     * scenario when doing parallel SQL execution where frame sequence may have to switch between its
+     * own tasks, someone else's tasks and back. Without restoring the wrapper state, it may stay
+     * initialized with another query's CB leading to data races.
+     */
     public void backup() {
         state.clear();
         backup = null;
@@ -150,6 +163,9 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
         delegate.resetTimer();
     }
 
+    /**
+     * Should be called after {@link #backup()} to restore the original wrapper state.
+     */
     public void restore() {
         if (backup != null) {
             if (backup.threadSafeDelegate != null) {
