@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.ndarr;
+package io.questdb.cairo.ndarr;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.DirectIntSlice;

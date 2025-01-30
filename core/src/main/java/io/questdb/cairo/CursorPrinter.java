@@ -24,6 +24,9 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.ndarr.NdArrayJsonSerializer;
+import io.questdb.cairo.ndarr.NdArrayRowMajorTraversal;
+import io.questdb.cairo.ndarr.NdArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -36,9 +39,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Uuid;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
-import io.questdb.std.ndarr.NdArrayJsonSerializer;
-import io.questdb.std.ndarr.NdArrayRowMajorTraversal;
-import io.questdb.std.ndarr.NdArrayView;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Utf8Sequence;

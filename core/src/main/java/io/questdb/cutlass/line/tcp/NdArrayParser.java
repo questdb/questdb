@@ -25,6 +25,9 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ndarr.NdArrayBuffers;
+import io.questdb.cairo.ndarr.NdArrayMeta;
+import io.questdb.cairo.ndarr.NdArrayView;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.IntList;
@@ -33,9 +36,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.ndarr.NdArrayBuffers;
-import io.questdb.std.ndarr.NdArrayMeta;
-import io.questdb.std.ndarr.NdArrayView;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
@@ -43,11 +43,13 @@ import org.jetbrains.annotations.NotNull;
 import static io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode.*;
 
 /**
- * Parses an ND array literal used in ILP.
- * <p>Here are a few examples:</p>
- * <p>A 1-D array of longs: <code>[6i1,2,3]</code></p>
- * <p>A 2-D array of doubles: <code>[6f[NaN,1],[2.5,3]]</code></p>
- * <p>The type marker is as follows: <code>&lt;type_precision>&lt;type_class></code></p>
+ * Parses an ND array literal used in ILP. Here are a few examples:
+ * <p>
+ * A 1-D array of longs: <code>[6i1,2,3]</code>
+ * A 2-D array of doubles: <code>[6f[NaN,1],[2.5,3]]</code>
+ *
+ * <p>
+ * The type marker is as follows: <code>&lt;type_precision&gt;&lt;type_class&gt;</code>
  * <dl>
  *     <dt>type_precision</dt>
  *     <dd>power of two of number of bits in the numeric type, e.g.
@@ -56,7 +58,8 @@ import static io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode.*;
  *     <dd>type of number, <code>i</code> for signed integer, <code>u</code> for unsigned,
  *         <code>f</code> for floating point</dd>
  * </dl>
- * <p><strong>Not all combinations are valid</strong>: refer to `ColType.java`'s ND_ARRAY implementation.</p>
+ * <p>
+ * <strong>Not all combinations are valid</strong>: refer to `ColType.java`'s ND_ARRAY implementation.
  */
 public class NdArrayParser implements QuietCloseable {
 
@@ -79,14 +82,6 @@ public class NdArrayParser implements QuietCloseable {
      * Address where the input string starts. Used to calculate the current position.
      */
     private long inputStartAddr = 0;
-
-    /**
-     * Count of how many elements we've stored.
-     * <p>This is tracked separately since our <code>elements</code> is just bytes,
-     * and we can't determine the elementsCount if the <code>type</code>
-     * has a precision smaller than a byte.</p>
-     */
-    private int numValues = 0;
 
     @Override
     public void close() {
@@ -286,7 +281,6 @@ public class NdArrayParser implements QuietCloseable {
                                 : ParseException.unexpectedToken(position());
                     }
                     parseLeaf(numberType, numberBitSize, tokenLimit);
-                    numValues++;
                     commaWelcome = true;
                     input.advance(tokenLimit);
                 }
@@ -382,11 +376,10 @@ public class NdArrayParser implements QuietCloseable {
     private void reset() {
         view.reset();
         bufs.reset();
-        numValues = 0;
         inputStartAddr = 0;
     }
 
-    private void setArray() throws ParseException {
+    private void setArray() {
         NdArrayMeta.setDefaultStrides(bufs.shape.asSlice(), bufs.strides);
         bufs.updateView(view);
     }

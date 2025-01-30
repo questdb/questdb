@@ -3235,8 +3235,7 @@ public class SqlParser {
             final int bits = GeoHashUtil.parseGeoHashBits(lexer.lastTokenPosition(), 0, expectLiteral(lexer).token);
             expectTok(lexer, ')');
             return ColumnType.getGeoHashTypeWithBits(bits);
-        }
-        else if (ColumnType.ND_ARRAY == typeTag) {
+        } else if (ColumnType.ND_ARRAY == typeTag) {
             expectTok(lexer, '(');
             final CharSequence elementTypeTok = SqlUtil.fetchNext(lexer);
             final int ndArrayType = SqlUtil.toNdArrayType(elementTypeTok, lexer.lastTokenPosition());

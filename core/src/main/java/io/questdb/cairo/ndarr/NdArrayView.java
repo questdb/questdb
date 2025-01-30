@@ -22,10 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.ndarr;
+package io.questdb.cairo.ndarr;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cutlass.line.tcp.NdArrayParser.ParseException;
 import io.questdb.std.CRC16XModem;
 import io.questdb.std.DirectIntSlice;
 
@@ -113,7 +112,7 @@ public class NdArrayView {
      * <ul>
      *     <li>A 1-D vector of 100 elements: <code>[100]</code>.</li>
      *     <li>A 2-D matrix of 50 rows and 2 columns: <code>[50, 2]</code>.</li>
-     * </ul></p>
+     * </ul>
      */
     public DirectIntSlice getShape() {
         return shape;
@@ -135,7 +134,7 @@ public class NdArrayView {
      *         Since we also support packed arrays (e.g. bool bit arrays),
      *         the strides here are expressed in the element count space
      *         instead.</li>
-     * </ul></p>
+     * </ul>
      */
     public DirectIntSlice getStrides() {
         return strides;
@@ -159,7 +158,7 @@ public class NdArrayView {
      *     {{3, 4}, {5, 6}, {7, 8}},
      *     {{9, 0}, {1, 2}, {3, 4}}
      * }
-     * </pre></p>
+     * </pre>
      * <p>The buffer would contain a flat vector of elements
      * with the numbers <code>[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4]</code>.</p>
      * <p><strong>IMPORTANT</strong>: The number of elements</p>
@@ -216,7 +215,7 @@ public class NdArrayView {
             int valuesSize,
             int valuesOffset,
             short crc
-    ) throws ParseException {
+    ) {
         boolean complete = false;
         try {
             if (!ColumnType.isNdArray(type)) {

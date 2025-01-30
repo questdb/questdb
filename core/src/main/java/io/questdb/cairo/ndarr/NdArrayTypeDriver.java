@@ -22,8 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.ndarr;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeDriver;
+import io.questdb.cairo.O3Utils;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCARW;
@@ -32,20 +35,13 @@ import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryOM;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.CRC16XModem;
-import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectIntSlice;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.ThreadLocal;
 import io.questdb.std.Unsafe;
-import io.questdb.std.ndarr.NdArrayRowMajorTraversal;
-import io.questdb.std.ndarr.NdArrayValuesSlice;
-import io.questdb.std.ndarr.NdArrayView;
 import io.questdb.std.str.LPSZ;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-
-import java.io.Closeable;
 
 /**
  * Reads and writes arrays.
@@ -72,12 +68,12 @@ import java.io.Closeable;
  * <h2>Encoding NULLs</h2>
  * <ul>
  *     <li>A null value has no size.</li>
- *     <li>The CRC of a null array is 0, so <code>auxLo >> CRC16_SHIFT == 0</code></li>
+ *     <li>The CRC of a null array is 0, so <code>auxLo &gt;&gt; CRC16_SHIFT == 0</code></li>
  *     <li>We however <em>do</em> populate the <code>offset</code> field with
  *     the end of the previous non-null value.</li>
  *     <li>This allows mapping the data vector for a specific range of values.</li>
- * </ul></p>
- * <h1>Data vector</h1>
+ * </ul>
+ * <h2>Data vector</h2>
  * <pre>
  * variable length encoding, starting at the offset specified in the `aux` entry.
  *     * START ALIGNMENT: Each offset pointed to by an aux entry is guaranteed to have at least `int` alignment`.
@@ -91,9 +87,7 @@ import java.io.Closeable;
  *         * e.g. for 64-bit numeric types ensures that the following section
  *           starts on an 8 byte boundary, for a 32-bit type, on a 4 byte boundary.
  *           This is to avoid unaligned data reads later.
- *           See the following <a
- *           href="https://medium.com/@jkstoyanov/aligned-and-unaligned-memory-access-9b5843b7f4ac"
- *           >blog post</a>.
+ *           See the following <a href="https://medium.com/@jkstoyanov/aligned-and-unaligned-memory-access-9b5843b7f4ac">blog post</a>.
  *         * In practice, this would be either 0 or 4 bytes of padding (given we've just written ints).
  *     * raw values buffer
  *         * a buffer of bytes, containing the values in row-major order.
@@ -119,12 +113,10 @@ import java.io.Closeable;
  * </pre>
  */
 public class NdArrayTypeDriver implements ColumnTypeDriver {
+    public static final int CRC16_SHIFT = 48;
     public static final NdArrayTypeDriver INSTANCE = new NdArrayTypeDriver();
     public static final long OFFSET_MAX = (1L << 48) - 1L;
-    public static final int CRC16_SHIFT = 48;
     private static final int ND_ARRAY_AUX_WIDTH_BYTES = 3 * Integer.BYTES;
-    private static final ThreadLocal<DirectIntList> SHAPE = new ThreadLocal<>(NdArrayTypeDriver::newShape);
-    public static final Closeable THREAD_LOCAL_CLEANER = NdArrayTypeDriver::clearThreadLocals;
     private static final long U32_MASK = 0xFFFFFFFFL;
 
     // TODO(amunra): Take traversal as arg, drop use of thread local.
@@ -141,13 +133,25 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
         writeAuxEntry(auxMem, beginOffset, crc, size);
     }
 
+    public static long getAuxVectorOffsetStatic(long row) {
+        return ND_ARRAY_AUX_WIDTH_BYTES * row;
+    }
+
     public static long getIntAlignedLong(@NotNull MemoryR mem, long offset) {
         final int lower = mem.getInt(offset);
         final int upper = mem.getInt(offset + Integer.BYTES);
         return ((long) upper << 32) | (lower & U32_MASK);
     }
 
-    /** Number of bytes to skip to find the next aligned address/offset. */
+    public static long getIntAlignedLong(long address) {
+        final int lower = Unsafe.getUnsafe().getInt(address);
+        final int upper = Unsafe.getUnsafe().getInt(address + Integer.BYTES);
+        return ((long) upper << 32) | (lower & U32_MASK);
+    }
+
+    /**
+     * Number of bytes to skip to find the next aligned address/offset.
+     */
     public static int skipsToAlign(long unaligned, int byteAlignment) {
         final int pastBy = (int) (unaligned % byteAlignment);
         if (pastBy == 0) {
@@ -233,7 +237,7 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
 
     @Override
     public long getAuxVectorOffset(long row) {
-        return ND_ARRAY_AUX_WIDTH_BYTES * row;
+        return getAuxVectorOffsetStatic(row);
     }
 
     @Override
@@ -377,16 +381,6 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
         appendNullImpl(auxMem, offset);
     }
 
-    public static void clearThreadLocals() {
-        SHAPE.close();
-    }
-
-    public static long getIntAlignedLong(long address) {
-        final int lower = Unsafe.getUnsafe().getInt(address);
-        final int upper = Unsafe.getUnsafe().getInt(address + Integer.BYTES);
-        return ((long) upper << 32) | (lower & U32_MASK);
-    }
-
     private static short initCrc16FromShape(@NotNull DirectIntSlice shape) {
         short checksum = CRC16XModem.updateInt(CRC16XModem.init(), shape.length());
         for (int dimIndex = 0, nDims = shape.length(); dimIndex < nDims; ++dimIndex) {
@@ -401,10 +395,6 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
      */
     private static boolean isByteAligned(int bitWidth, @NotNull NdArrayView array) {
         return array.getValuesOffset() * bitWidth % 8 == 0;
-    }
-
-    private static DirectIntList newShape() {
-        return new DirectIntList(8, MemoryTag.NATIVE_ND_ARRAY_DBG1);
     }
 
     private static void padTo(@NotNull MemoryA dataMem, int byteAlignment) {

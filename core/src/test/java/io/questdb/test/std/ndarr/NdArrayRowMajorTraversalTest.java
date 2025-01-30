@@ -24,17 +24,14 @@
 
 package io.questdb.test.std.ndarr;
 
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
+import io.questdb.cairo.ndarr.NdArrayRowMajorTraversal;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.ndarr.NdArrayRowMajorTraversal;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class NdArrayRowMajorTraversalTest {
-    private static final Log LOG = LogFactory.getLog(NdArrayRowMajorTraversalTest.class);
 
     @Test
     public void test1() throws Exception {

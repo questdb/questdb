@@ -25,13 +25,12 @@
 package io.questdb.mp;
 
 import io.questdb.Metrics;
-import io.questdb.cairo.NdArrayTypeDriver;
+import io.questdb.cairo.ndarr.NdArrayRowMajorTraversal;
 import io.questdb.log.Log;
 import io.questdb.metrics.WorkerMetrics;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
-import io.questdb.std.ndarr.NdArrayRowMajorTraversal;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -218,8 +217,8 @@ public class WorkerPool implements Closeable {
         for (int i = 0; i < workerCount; i++) {
             ObjList<Closeable> workerCleaners = threadLocalCleaners.getQuick(i);
             workerCleaners.add(Path.THREAD_LOCAL_CLEANER);
+            // todo: these cleaners are in a wrong place, method name should be used as a clue
             workerCleaners.add(NdArrayRowMajorTraversal.THREAD_LOCAL_CLEANER);
-            workerCleaners.add(NdArrayTypeDriver.THREAD_LOCAL_CLEANER);
         }
     }
 }

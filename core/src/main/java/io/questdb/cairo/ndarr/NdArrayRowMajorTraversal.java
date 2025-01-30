@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.ndarr;
+package io.questdb.cairo.ndarr;
 
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectIntSlice;
@@ -34,10 +34,14 @@ import java.io.Closeable;
 
 /**
  * An iterator-like utility to traverse an {@link NdArrayView} in row-major order.
- * <p>Instead of obtaining the values, this traversal class computes the coordinates.</p>
- * <p>It is down to the user to then pass those coordinates to the type-appropriate
- * getter method.</p>
- * <p>Example: <pre>{@code
+ * Instead of obtaining the values, this traversal class computes the coordinates.
+ * <p>
+ * It is down to the user to then pass those coordinates to the type-appropriate
+ * getter method.
+ * <p>
+ * Example:
+ * <pre>
+ *     {@code
  *     NdArrayView array = ...;
  *     try (NdArrayRowMajorTraversal traversal = new NdArrayRowMajorTraversal()) {
  *         traversal.of(array);
@@ -47,7 +51,8 @@ import java.io.Closeable;
  *             ...
  *         }
  *     }
- * }</pre></p>
+ * }
+ * </pre>
  */
 public class NdArrayRowMajorTraversal implements QuietCloseable {
     public static final io.questdb.std.ThreadLocal<NdArrayRowMajorTraversal> LOCAL = new io.questdb.std.ThreadLocal<>(NdArrayRowMajorTraversal::new);

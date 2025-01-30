@@ -33,14 +33,19 @@ import java.util.concurrent.atomic.AtomicLong;
  * Wraps a resource and guards its <code>.close()</code> method so it's only
  * called once the refcount has reached 0.
  *
- * <p>To share ownership:
+ * <p>
+ * To share ownership:
  * <ul>
  *     <li>Call the <code>.incref()</code> method and hand that to the new shared owner.</li>
  *     <li>The internal refcount will be bumped up by one.</li>
  *     <li>The resource's <code>T::close()</code> method will be called ony once all the owners
  *         call <code>Arc&lt;T&gt;::close()</code> and the ref count drops to 0.</li>
- * </ul></p>
- * <p>Call the <code>.get()</code> method to access the resource without affecting the refcount.</p>
+ * </ul>
+ *
+ * <p>
+ *
+ * Call the <code>.get()</code> method to access the resource without affecting the refcount.
+ *
  * @param <T> The wrapped resource
  */
 public class Arc<T> implements QuietCloseable {

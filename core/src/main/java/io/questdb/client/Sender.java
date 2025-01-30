@@ -63,7 +63,7 @@ import java.util.concurrent.TimeUnit;
  *     <li>Use {@link #stringColumn(CharSequence, CharSequence)}, {@link #longColumn(CharSequence, long)},
  *     {@link #doubleColumn(CharSequence, double)}, {@link #boolColumn(CharSequence, boolean)},
  *     {@link #timestampColumn(CharSequence, long, ChronoUnit)} to add remaining columns columns</li>
- *     <li>Use {@link #at(long, ChronoUnit)} (long)} to finish a row with an explicit timestamp.Alternatively, you can use use
+ *     <li>Use {@link #at(long, ChronoUnit)} (long)} to finish a row with an explicit timestamp.Alternatively, you can use
  *     {@link #atNow()} which will add a timestamp on a server.</li>
  *     <li>Optionally: You can use {@link #flush()} to send locally buffered data into a server</li>
  * </ol>
@@ -199,7 +199,7 @@ public interface Sender extends Closeable {
      * <ul>
      *     <li>type precision, expressed as the exponent of a power of two. E.g. 5 means 2^5, i.e. 32-bit type.</li>
      *     <li>type class, e.g. <code>u</code> for unsigned, <code>s</code> for signed, <code>f</code> for floating point</li>
-     * </ul></p>
+     * </ul>
      * <p>Examples:
      * <ul>
      *     <li><code>1u</code>: boolean</li>
@@ -209,7 +209,8 @@ public interface Sender extends Closeable {
      *     <li><code>6s</code>: long</li>
      *     <li><code>5f</code>: float</li>
      *     <li><code>6f</code>: double</li>
-     * </ul></p>
+     * </ul>
+     *
      * @param name  name of the column
      * @param value the encoded array buffer
      */

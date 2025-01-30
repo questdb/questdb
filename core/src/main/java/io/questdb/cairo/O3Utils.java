@@ -56,6 +56,16 @@ public class O3Utils {
         }
     }
 
+    public static void shiftCopyVarcharColumnAux(
+            long shift,
+            long srcAddr,
+            long srcLo,
+            long srcHi,
+            long dstAddr
+    ) {
+        Vect.shiftCopyVarcharColumnAux(shift, srcAddr, srcLo, srcHi, dstAddr);
+    }
+
     static void close(FilesFacade ff, long fd) {
         if (fd > 0) {
             LOG.debug().$("closed [fd=").$(fd).$(']').$();
@@ -70,16 +80,6 @@ public class O3Utils {
             long dstAddr
     ) {
         Vect.copyFromTimestampIndex(src, srcLo, srcHi, dstAddr);
-    }
-
-    static void shiftCopyVarcharColumnAux(
-            long shift,
-            long srcAddr,
-            long srcLo,
-            long srcHi,
-            long dstAddr
-    ) {
-        Vect.shiftCopyVarcharColumnAux(shift, srcAddr, srcLo, srcHi, dstAddr);
     }
 
     static void unmap(FilesFacade ff, long addr, long size) {

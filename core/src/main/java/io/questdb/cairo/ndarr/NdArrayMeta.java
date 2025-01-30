@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.ndarr;
+package io.questdb.cairo.ndarr;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.DirectIntList;
@@ -43,7 +43,7 @@ public class NdArrayMeta {  // TODO(amunra): Rename to `NdArrayMetaUtils`.
      * <ul>
      *   <li>Our buffers are at most Integer.MAX_VALUE long</li>
      *   <li>Our largest datatypes are 8 bytes</li>
-     * </ul></p>
+     * </ul>
      * Assuming a 1-D array, <code>Integer.MAX_VALUE / Long.BYTES</code> gives us a maximum
      * of 2 ** 28 - 1, i.e. all bits 0 to (inc) 27 set.
      * <p><strong>NOTE</strong>: This value can also be used as a mask to extract the dim

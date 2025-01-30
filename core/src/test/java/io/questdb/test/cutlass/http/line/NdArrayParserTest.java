@@ -25,14 +25,14 @@
 package io.questdb.test.cutlass.http.line;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ndarr.NdArrayJsonSerializer;
+import io.questdb.cairo.ndarr.NdArrayRowMajorTraversal;
+import io.questdb.cairo.ndarr.NdArrayValuesSlice;
+import io.questdb.cairo.ndarr.NdArrayView;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode;
 import io.questdb.cutlass.line.tcp.NdArrayParser;
 import io.questdb.cutlass.line.tcp.NdArrayParser.ParseException;
 import io.questdb.std.DirectIntSlice;
-import io.questdb.std.ndarr.NdArrayJsonSerializer;
-import io.questdb.std.ndarr.NdArrayRowMajorTraversal;
-import io.questdb.std.ndarr.NdArrayValuesSlice;
-import io.questdb.std.ndarr.NdArrayView;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.DirectUtf8String;
 import org.jetbrains.annotations.NotNull;

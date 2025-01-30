@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.ndarr;
+package io.questdb.cairo.ndarr;
 
 import io.questdb.std.Unsafe;
 import io.questdb.std.bytes.DirectSequence;

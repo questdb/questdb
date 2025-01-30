@@ -25,10 +25,10 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.ndarr.NdArrayView;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
-import io.questdb.std.ndarr.NdArrayView;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.MutableUtf16Sink;
 import io.questdb.std.str.Utf16Sink;

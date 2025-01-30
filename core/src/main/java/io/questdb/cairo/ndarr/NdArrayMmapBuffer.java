@@ -22,12 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.ndarr;
+package io.questdb.cairo.ndarr;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.NdArrayTypeDriver;
-import io.questdb.cutlass.line.tcp.NdArrayParser.ParseException;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -57,7 +54,7 @@ public class NdArrayMmapBuffer implements QuietCloseable {
             long dataLim,
             long row
     ) {
-        final long rowOffset = NdArrayTypeDriver.INSTANCE.getAuxVectorOffset(row);
+        final long rowOffset = NdArrayTypeDriver.getAuxVectorOffsetStatic(row);
         assert auxAddr + (3 * Integer.BYTES) <= auxLim;
         final long crcAndOffset = NdArrayTypeDriver.getIntAlignedLong(auxAddr + rowOffset);
         final long size = Unsafe.getUnsafe().getInt(auxAddr + rowOffset + Long.BYTES);
@@ -90,21 +87,16 @@ public class NdArrayMmapBuffer implements QuietCloseable {
         final int valuesSize = NdArrayMeta.calcRequiredValuesByteSize(columnType, flatLength);
         assert valuesPtr + valuesSize <= dataLim;
 
-        try {
-            view.of(
-                    columnType,
-                    shapePtr,
-                    shapeLength,
-                    strides.getAddress(),
-                    (int) strides.size(),
-                    valuesPtr,
-                    valuesSize,
-                    0, // No values to skip in the values vec.
-                    crc);
-        } catch (ParseException e) {
-            // TODO(amunra): Improve exception here.
-            throw CairoException.nonCritical().put("Invalid array encoding: " + e.errorCode());
-        }
+        view.of(
+                columnType,
+                shapePtr,
+                shapeLength,
+                strides.getAddress(),
+                (int) strides.size(),
+                valuesPtr,
+                valuesSize,
+                0, // No values to skip in the values vec.
+                crc);
         viewRes = view;
         return this;
     }

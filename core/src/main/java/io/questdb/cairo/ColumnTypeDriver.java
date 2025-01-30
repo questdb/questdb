@@ -24,7 +24,13 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.api.*;
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.cairo.vm.api.MemoryCR;
+import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.cairo.vm.api.MemoryOM;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 
@@ -178,6 +184,7 @@ public interface ColumnTypeDriver {
      * For now this method is called by WAL writer when data is rolled back (or row is cancelled). The
      * expectation of the WAL writer is to have the append position set correctly on aux mem and size of data vector
      * provided correctly.
+     *
      * @param rowCount the new row count that we'll want to write at.
      * @return the write offset for <code>rowCount</code> in the data vector.
      */

@@ -22,10 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.ndarr;
+package io.questdb.cairo.ndarr;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cutlass.line.tcp.NdArrayParser.ParseException;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -34,11 +33,8 @@ import io.questdb.std.bytes.DirectByteSink;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * Buffers required for an array.
- * <p>The buffers are allocated on first use.</p>
- * <p>Use this when parsing/loading a new array.</p>
- * If you only need a buffer for the strides, use the more specialized
- * {@link NdArrayMmapBuffer} instead.</p>
+ * Buffers required for an array. The buffers are allocated on first use. Use this when parsing/loading a new array.
+ * If you only need a buffer for the strides, use the more specialized {@link NdArrayMmapBuffer} instead.
  */
 public class NdArrayBuffers implements QuietCloseable {
     public final DirectIntList currCoords = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY_DBG2);
@@ -66,7 +62,7 @@ public class NdArrayBuffers implements QuietCloseable {
     /**
      * Validates the buffers and updates the array view.
      */
-    public void updateView(@NotNull NdArrayView view) throws ParseException {
+    public void updateView(@NotNull NdArrayView view) {
         if (shape.size() == 0) {
             view.ofNull();
         } else {

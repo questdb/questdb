@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.ndarr.NdArrayTypeDriver;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntObjHashMap;
@@ -307,12 +308,7 @@ public final class ColumnType {
      * Checks if a type can be cast from NULL to the specified type.
      */
     public static boolean isCastableFromNull(int columnType) {
-        switch (tagOf(columnType)) {
-            case CHAR:
-                return false;
-            default:
-                return true;
-        }
+        return tagOf(columnType) != CHAR;
     }
 
     public static boolean isChar(int columnType) {

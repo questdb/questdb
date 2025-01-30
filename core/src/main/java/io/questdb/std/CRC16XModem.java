@@ -28,15 +28,16 @@ package io.questdb.std;
  * Used https://github.com/lammertb/libcrc/blob/master/src/crc16.c
  * and https://github.com/TobiasBengtsson/crc-fast-rs/blob/master/crc-fast-gen/src/lib.rs
  * as references.
- * <p>Usage:
+ * <p>
+ * Usage:
  * <pre>
  *     short crc16 = CRC16XModem.init();
  *     crc16 = CRC16XModem.update(crc16, [... the data you want to compute for ...]);
  *     crc16 = CRC16XModem.update(crc16, [... the data you want to compute for ...]);
  *     crc16 = CRC16XModem.finalize(crc16);
- * </pre></p>
- * <p><strong>N.B.</strong>: There are different overloads of <code>calc</code> for different inputs.</p>
- * <p>You can keep on adding more data to the same CRC value with multiple calls to <code>calc()</code>.</p>
+ * </pre>
+ * <strong>N.B.</strong>: There are different overloads of <code>calc</code> for different inputs.
+ * You can keep on adding more data to the same CRC value with multiple calls to <code>calc()</code>.
  */
 public class CRC16XModem {
     // Compare with https://crccalc.com/?crc=0&method=CRC-16/XMODEM&datatype=ascii&outtype=hex
