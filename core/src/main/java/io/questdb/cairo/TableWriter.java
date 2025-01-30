@@ -4234,11 +4234,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 denseSymbolMapWriters.size(),
                 txWriter
         );
+        denseSymbolMapWriters.add(w);
+        symbolMapWriters.extendAndSet(columnCount, w);
+        
         // In case there are some dirty files left from rolled back transaction
         // clean the newly created symbol files.
         w.truncate();
-        denseSymbolMapWriters.add(w);
-        symbolMapWriters.extendAndSet(columnCount, w);
     }
 
     private boolean createWalSymbolMapping(SymbolMapDiff symbolMapDiff, int columnIndex, IntList symbolMap) {
