@@ -2307,7 +2307,7 @@ public class SqlParser {
             throw SqlException.$(lexer.lastTokenPosition(), "missing column expression");
         }
 
-        QueryColumn col = queryColumnPool.next().of(null, expr);
+        QueryColumn col = queryColumnPool.next().of(expr.token, expr);
         model.addUnpivotColumn(col);
         lexer.unparseLast();
 
@@ -2320,7 +2320,7 @@ public class SqlParser {
         while (true) {
             expr = expr(lexer, model, sqlParserCallback);
 
-            if (expr == null) {
+            if (expr == null|| Chars.equals(expr.token, ";")) {
                 break;
             }
 

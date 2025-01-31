@@ -74,6 +74,7 @@ import io.questdb.griffin.engine.ExplainPlanFactory;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.LimitRecordCursorFactory;
 import io.questdb.griffin.engine.RecordComparator;
+import io.questdb.griffin.engine.UnpivotRecordCursorFactory;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.cast.CastByteToCharFunctionFactory;
@@ -274,6 +275,7 @@ import io.questdb.std.BufferWindowCharSequence;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LongList;
@@ -3243,26 +3245,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateQuery0(QueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
-        return generateLimit(
-                generateOrderBy(
-                        generateLatestBy(
-                                generateFilter(
-                                        generateSelect(
-                                                model,
-                                                executionContext,
-                                                processJoins
-                                        ),
-                                        model,
-                                        executionContext
-                                ),
-                                model
-                        ),
-                        model,
-                        executionContext
-                ),
-                model,
-                executionContext
-        );
+        RecordCursorFactory factory = generateSelect(model, executionContext, processJoins);
+        factory = generateFilter(factory, model, executionContext);
+        factory = generateLatestBy(factory, model);
+        factory = generateOrderBy(factory, model, executionContext);
+        factory = generateLimit(factory, model, executionContext);
+        factory = generateUnpivot(factory, model, executionContext);
+        return factory;
+
     }
 
     @NotNull
@@ -3725,6 +3715,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 executionContext.pushTimestampRequiredFlag(false);
             }
             factory = generateSubQuery(model, executionContext);
+            if (factory instanceof UnpivotRecordCursorFactory) {
+                return factory;
+            }
         } finally {
             if (overrideTimestampRequired) {
                 executionContext.popTimestampRequiredFlag();
@@ -3748,6 +3741,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 QueryColumn queryColumn = columns.getQuick(i);
                 CharSequence columnName = queryColumn.getAlias();
                 int index = metadata.getColumnIndexQuiet(queryColumn.getAst().token);
+
                 assert index > -1 : "wtf? " + queryColumn.getAst().token;
 
                 int updateColumnIndex = updateColumnNames.indexOf(columnName);
@@ -3876,6 +3870,82 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         return new SelectedRecordCursorFactory(selectMetadata, columnCrossIndex, factory);
+    }
+
+    private RecordCursorFactory generateUnpivot(RecordCursorFactory base, QueryModel model, SqlExecutionContext executionContext) throws SqlException
+    {
+        if (model.getUnpivotFor() != null && model.getUnpivotFor().size() > 0)   {
+            // We need to build new metadata
+//             SELECT *
+//             FROM monthly_sales UNPIVOT (
+//                 sales
+//                 FOR month IN (jan, feb, mar, apr, may, jun)
+//             );
+            // We need to take the original metadata
+            // Then remove the FOR-IN columns
+            GenericRecordMetadata unpivotMetadata = new GenericRecordMetadata();
+            ExpressionNode forExpr = model.getUnpivotFor().getQuick(0);
+
+            boolean addToMetadata = true;
+            int valueColumnType = -1;
+
+            IntIntHashMap passthroughIndicesMap = new IntIntHashMap();
+            IntList unpivotForIndices = new IntList();
+            ObjList<CharSequence> unpivotForNames = new ObjList<>();
+
+            for (int i = 0, n = base.getMetadata().getColumnCount(); i < n; i++) {
+                TableColumnMetadata columnMetadata = base.getMetadata().getColumnMetadata(i);
+
+                for (int j = 0, m = forExpr.paramCount - 1; j < m; j++) {
+                    ExpressionNode forExprArg = forExpr.args.getQuick(j);
+                    if (Chars.equalsIgnoreCase(columnMetadata.getColumnName(), forExprArg.token)) {
+                        addToMetadata = false;
+                        unpivotForIndices.add(i);
+                        unpivotForNames.add(forExprArg.token);
+
+                        if (valueColumnType == -1) {
+                            valueColumnType = columnMetadata.getColumnType();
+                        } else {
+                            if (valueColumnType != columnMetadata.getColumnType()) {
+                                throw SqlException.$(forExprArg.position,
+                                        "unpivot column type mismatch in `FOR` [expected=")
+                                        .put(ColumnType.nameOf(valueColumnType))
+                                        .put(", actual=")
+                                        .put(ColumnType.nameOf(columnMetadata.getColumnType()));
+                            }
+                        }
+                        break;
+                    }
+                }
+
+                if (addToMetadata) {
+                    unpivotMetadata.add(columnMetadata);
+                    passthroughIndicesMap.put(unpivotMetadata.getColumnCount() - 1, i);
+                } else {
+                    addToMetadata = true;
+                }
+            }
+
+
+            // add the 'in' column i.e the column that will contain the column names
+            ExpressionNode inExpr = forExpr.args.getLast();
+            TableColumnMetadata inColumnMetadata = new TableColumnMetadata(inExpr.token.toString(), ColumnType.SYMBOL, false, -1, false, null);
+            unpivotMetadata.add(inColumnMetadata);
+
+            int inColumnIndex = unpivotMetadata.getColumnCount() - 1;
+
+            // add the value column
+            assert model.getUnpivotColumns() != null;
+            QueryColumn valueColumn = model.getUnpivotColumns().getQuick(0);
+            unpivotMetadata.add(new TableColumnMetadata(valueColumn.getName().toString(), valueColumnType));
+
+            int valueColumnIndex = unpivotMetadata.getColumnCount() - 1;
+
+
+
+            return new UnpivotRecordCursorFactory(base, unpivotMetadata, inColumnIndex, valueColumnIndex, unpivotForIndices, unpivotForNames, passthroughIndicesMap);
+        }
+        return base;
     }
 
     private RecordCursorFactory generateSelectCursor(

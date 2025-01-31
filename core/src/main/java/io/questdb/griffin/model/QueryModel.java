@@ -692,7 +692,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && allowPropagationOfOrderByAdvice == that.allowPropagationOfOrderByAdvice
                 && Objects.equals(decls, that.decls)
                 && Objects.equals(pivotColumns, that.pivotColumns)
-                && Objects.equals(pivotFor, that.pivotFor);
+                && Objects.equals(pivotFor, that.pivotFor)
+                && Objects.equals(unpivotColumns, that.unpivotColumns)
+                && Objects.equals(unpivotFor, that.unpivotFor);
     }
 
     public QueryColumn findBottomUpColumnByAst(ExpressionNode node) {
@@ -958,10 +960,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     }
 
     public void addPivotFor(ExpressionNode _for) {
-        if (pivotFor == null) {
-            pivotFor = new ObjList<>();
+        if (unpivotFor == null) {
+            unpivotFor = new ObjList<>();
         }
-        pivotFor.add(_for);
+        unpivotFor.add(_for);
     }
 
     public void addUnpivotFor(ExpressionNode _for) {
@@ -1114,7 +1116,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 isUpdateModel, modelType, updateTableModel,
                 updateTableToken, artificialStar, fillFrom, fillStride, fillTo, fillValues, decls,
                 allowPropagationOfOrderByAdvice,
-                pivotColumns, pivotFor
+                pivotColumns, pivotFor, unpivotColumns, unpivotFor
         );
     }
 
@@ -2019,6 +2021,29 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 }
             }
             unionModel.toSink0(sink, false, showOrderBy);
+        }
+
+        if (pivotColumns != null && pivotColumns.size() > 0) {
+            sink.putAscii(" pivot ");
+            pivotColumns.toSink(sink);
+            sink.putAscii(" for ");
+
+            assert pivotFor != null;
+            for (int i = 0, n = pivotFor.size(); i < n; i++) {
+                pivotFor.getQuick(i).toSink(sink);
+            }
+        }
+
+
+        if (unpivotColumns != null && unpivotColumns.size() > 0) {
+            sink.putAscii(" unpivot ");
+            unpivotColumns.toSink(sink);
+            sink.putAscii(" for ");
+
+            assert unpivotFor != null;
+            for (int i = 0, n = unpivotFor.size(); i < n; i++) {
+                unpivotFor.getQuick(i).toSink(sink);
+            }
         }
     }
 
