@@ -43,6 +43,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8s;
 
+import static io.questdb.cutlass.line.LineTcpTimestampAdapter.TS_COLUMN_INSTANCE;
 import static io.questdb.cutlass.line.tcp.LineProtocolException.*;
 import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.COLUMN_NOT_FOUND;
 import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.DUPLICATED_COLUMN;
@@ -55,7 +56,13 @@ public class LineWalAppender {
     private final boolean stringToCharCastAllowed;
     private LineTcpTimestampAdapter timestampAdapter;
 
-    public LineWalAppender(boolean autoCreateNewColumns, boolean stringToCharCastAllowed, LineTcpTimestampAdapter timestampAdapter, int maxFileNameLength, MicrosecondClock microsecondClock) {
+    public LineWalAppender(
+            boolean autoCreateNewColumns,
+            boolean stringToCharCastAllowed,
+            LineTcpTimestampAdapter timestampAdapter,
+            int maxFileNameLength,
+            MicrosecondClock microsecondClock
+    ) {
         this.autoCreateNewColumns = autoCreateNewColumns;
         this.stringToCharCastAllowed = stringToCharCastAllowed;
         this.timestampAdapter = timestampAdapter;
@@ -111,7 +118,7 @@ public class LineWalAppender {
     ) throws CommitFailedException, MetadataChangedException {
 
         // pass 1: create all columns that do not exist
-        final TableUpdateDetails.ThreadLocalDetails ld = tud.getThreadLocalDetails(0); // IO thread id is not relevant
+        final TableUpdateDetails.ThreadLocalDetails ld = tud.getThreadLocalDetails(0); // IO thread id is irrelevant
         ld.resetStateIfNecessary();
         ld.clearColumnTypes();
 
@@ -229,7 +236,8 @@ public class LineWalAppender {
                                 } else if (entityValue == Numbers.LONG_NULL) {
                                     r.putInt(columnIndex, Numbers.INT_NULL);
                                 } else {
-                                    throw boundsError(entityValue, ColumnType.INT, tud.getTableNameUtf16(), writer.getMetadata().getColumnName(columnIndex));
+                                    throw boundsError(entityValue, ColumnType.INT, tud.getTableNameUtf16(),
+                                            writer.getMetadata().getColumnName(columnIndex));
                                 }
                                 break;
                             }
@@ -240,7 +248,8 @@ public class LineWalAppender {
                                 } else if (entityValue == Numbers.LONG_NULL) {
                                     r.putShort(columnIndex, (short) 0);
                                 } else {
-                                    throw boundsError(entityValue, ColumnType.SHORT, tud.getTableNameUtf16(), writer.getMetadata().getColumnName(columnIndex));
+                                    throw boundsError(entityValue, ColumnType.SHORT, tud.getTableNameUtf16(),
+                                            writer.getMetadata().getColumnName(columnIndex));
                                 }
                                 break;
                             }
@@ -251,7 +260,8 @@ public class LineWalAppender {
                                 } else if (entityValue == Numbers.LONG_NULL) {
                                     r.putByte(columnIndex, (byte) 0);
                                 } else {
-                                    throw boundsError(entityValue, ColumnType.BYTE, tud.getTableNameUtf16(), writer.getMetadata().getColumnName(columnIndex));
+                                    throw boundsError(entityValue, ColumnType.BYTE, tud.getTableNameUtf16(),
+                                            writer.getMetadata().getColumnName(columnIndex));
                                 }
                                 break;
                             }
@@ -400,11 +410,11 @@ public class LineWalAppender {
                     case LineTcpParser.ENTITY_TYPE_TIMESTAMP: {
                         switch (colType) {
                             case ColumnType.TIMESTAMP:
-                                long timestampValue = LineTcpTimestampAdapter.TS_COLUMN_INSTANCE.getMicros(ent.getLongValue(), ent.getUnit());
+                                long timestampValue = TS_COLUMN_INSTANCE.getMicros(ent.getLongValue(), ent.getUnit());
                                 r.putTimestamp(columnIndex, timestampValue);
                                 break;
                             case ColumnType.DATE:
-                                long dateValue = LineTcpTimestampAdapter.TS_COLUMN_INSTANCE.getMicros(ent.getLongValue(), ent.getUnit());
+                                long dateValue = TS_COLUMN_INSTANCE.getMicros(ent.getLongValue(), ent.getUnit());
                                 r.putTimestamp(columnIndex, dateValue / 1000);
                                 break;
                             case ColumnType.SYMBOL:
@@ -431,13 +441,15 @@ public class LineWalAppender {
         } catch (CommitFailedException commitFailedException) {
             throw commitFailedException;
         } catch (CairoException th) {
-            LOG.error().$("could not write line protocol measurement [tableName=").$(tud.getTableNameUtf16()).$(", message=").$(th.getFlyweightMessage()).I$();
+            LOG.error().$("could not write line protocol measurement [tableName=")
+                    .$(tud.getTableNameUtf16()).$(", message=").$(th.getFlyweightMessage()).I$();
             if (r != null) {
                 r.cancel();
             }
             throw th;
         } catch (Throwable th) {
-            LOG.error().$("could not write line protocol measurement [tableName=").$(tud.getTableNameUtf16()).$(", message=").$(th.getMessage()).$(th).I$();
+            LOG.error().$("could not write line protocol measurement [tableName=")
+                    .$(tud.getTableNameUtf16()).$(", message=").$(th.getMessage()).$(th).I$();
             if (r != null) {
                 r.cancel();
             }
