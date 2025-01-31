@@ -32,11 +32,6 @@ public class NoOpMatViewGraph implements MatViewGraph {
     public static final NoOpMatViewGraph INSTANCE = new NoOpMatViewGraph();
 
     @Override
-    public MatViewRefreshState addView(TableToken baseTableToken, MatViewDefinition viewDefinition) {
-        return null;
-    }
-
-    @Override
     public MatViewRefreshState addView(MatViewDefinition viewDefinition) {
         return null;
     }
@@ -51,7 +46,7 @@ public class NoOpMatViewGraph implements MatViewGraph {
     }
 
     @Override
-    public void createView(TableToken baseTableToken, MatViewDefinition viewDefinition) {
+    public void createView(MatViewDefinition viewDefinition) {
     }
 
     @Override

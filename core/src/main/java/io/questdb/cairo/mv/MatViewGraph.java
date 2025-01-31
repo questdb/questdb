@@ -33,15 +33,15 @@ import org.jetbrains.annotations.TestOnly;
 
 public interface MatViewGraph extends QuietCloseable, Mutable {
 
-    MatViewRefreshState addView(TableToken baseTableToken, MatViewDefinition viewDefinition);
-
+    // only adds the view, no refresh initiated, no telemetry event logged
     MatViewRefreshState addView(MatViewDefinition viewDefinition);
 
     @TestOnly
     @Override
     void clear();
 
-    void createView(TableToken baseTableToken, MatViewDefinition viewDefinition);
+    // adds the view, initiates refresh, logs telemetry event
+    void createView(MatViewDefinition viewDefinition);
 
     void dropViewIfExists(TableToken viewToken);
 

@@ -1398,7 +1398,7 @@ public class CairoEngine implements Closeable, WriterSource {
                                     .$(", view=").utf8(tableToken.getTableName())
                                     .I$();
                         } else {
-                            matViewGraph.addView(baseTableToken, matViewDefinition);
+                            matViewGraph.addView(matViewDefinition);
                             matViewGraph.refresh(tableToken, MatViewRefreshTask.INCREMENTAL_REFRESH);
                         }
                     } catch (CairoException e) {

@@ -38,7 +38,6 @@ import io.questdb.std.ThreadLocal;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.tasks.TelemetryMatViewTask;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.function.Function;
@@ -60,15 +59,6 @@ public class MatViewGraphImpl implements MatViewGraph {
         this.matViewTelemetry = engine.getTelemetryMatView();
         this.matViewTelemetryFacade = matViewTelemetry.isEnabled() ? this::storeMatViewTelemetry : this::storeMatViewTelemetryNoop;
         this.microsecondClock = engine.getConfiguration().getMicrosecondClock();
-    }
-
-    @Override
-    public MatViewRefreshState addView(TableToken baseTableToken, MatViewDefinition viewDefinition) {
-        assert baseTableToken.getTableName().equals(viewDefinition.getBaseTableName());
-        final MatViewRefreshState state = addView(viewDefinition);
-        // when the view is new and empty, incremental refresh is same as full
-        addToQueue(baseTableToken, viewDefinition.getMatViewToken(), MatViewRefreshTask.INCREMENTAL_REFRESH);
-        return state;
     }
 
     @Override
@@ -108,8 +98,9 @@ public class MatViewGraphImpl implements MatViewGraph {
     }
 
     @Override
-    public void createView(TableToken baseTableToken, MatViewDefinition viewDefinition) {
-        addView(baseTableToken, viewDefinition).init();
+    public void createView(MatViewDefinition viewDefinition) {
+        addView(viewDefinition).init();
+        enqueueRefreshTask(viewDefinition.getMatViewToken(), MatViewRefreshTask.INCREMENTAL_REFRESH);
     }
 
     @Override
@@ -207,12 +198,7 @@ public class MatViewGraphImpl implements MatViewGraph {
     public void refresh(TableToken viewToken, int operation) {
         final MatViewRefreshState state = refreshStateByTableDirName.get(viewToken.getDirName());
         if (state != null && !state.isDropped()) {
-            final MatViewRefreshTask task = taskHolder.get();
-            task.viewToken = viewToken;
-            task.baseTableToken = null;
-            task.operation = operation;
-            task.refreshTriggeredTimestamp = microsecondClock.getTicks();
-            refreshTaskQueue.enqueue(task);
+            enqueueRefreshTask(viewToken, operation);
         }
     }
 
@@ -221,9 +207,9 @@ public class MatViewGraphImpl implements MatViewGraph {
         return refreshTaskQueue.tryDequeue(task);
     }
 
-    private void addToQueue(TableToken baseToken, @Nullable TableToken viewToken, int operation) {
+    private void enqueueRefreshTask(TableToken viewToken, int operation) {
         final MatViewRefreshTask task = taskHolder.get();
-        task.baseTableToken = baseToken;
+        task.baseTableToken = null;
         task.viewToken = viewToken;
         task.operation = operation;
         task.refreshTriggeredTimestamp = microsecondClock.getTicks();

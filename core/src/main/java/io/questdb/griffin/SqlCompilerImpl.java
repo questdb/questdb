@@ -2657,8 +2657,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         cursor.hasNext();
                     }
 
-                    final TableToken baseTableToken = engine.getTableTokenIfExists(matViewDefinition.getBaseTableName());
-                    engine.getMatViewGraph().createView(baseTableToken, matViewDefinition);
+                    engine.getMatViewGraph().createView(matViewDefinition);
                     createMatViewOp.updateOperationFutureTableToken(matViewToken);
                 } else {
                     throw SqlException.$(createTableOp.getTableNamePosition(), "materialized view requires a SELECT statement");
