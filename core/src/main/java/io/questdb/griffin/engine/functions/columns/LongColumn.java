@@ -36,7 +36,7 @@ public class LongColumn extends LongFunction implements ScalarFunction {
     private static final ObjList<LongColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 
-    public LongColumn(int columnIndex) {
+    private LongColumn(int columnIndex) {
         this.columnIndex = columnIndex;
     }
 

@@ -38,7 +38,7 @@ public class IntervalColumn extends IntervalFunction implements ScalarFunction {
     private static final ObjList<IntervalColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 
-    public IntervalColumn(int columnIndex) {
+    private IntervalColumn(int columnIndex) {
         this.columnIndex = columnIndex;
     }
 

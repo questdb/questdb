@@ -36,7 +36,7 @@ public class ShortColumn extends ShortFunction implements ScalarFunction {
     private static final ObjList<ShortColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 
-    public ShortColumn(int columnIndex) {
+    private ShortColumn(int columnIndex) {
         this.columnIndex = columnIndex;
     }
 

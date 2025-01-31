@@ -38,7 +38,7 @@ public class Long256Column extends Long256Function implements ScalarFunction {
     private static final ObjList<Long256Column> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 
-    public Long256Column(int columnIndex) {
+    private Long256Column(int columnIndex) {
         this.columnIndex = columnIndex;
     }
 

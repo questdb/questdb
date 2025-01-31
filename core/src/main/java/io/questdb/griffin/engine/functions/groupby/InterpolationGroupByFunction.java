@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -63,6 +64,11 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         wrappedFunction.computeNext(mapValue, record, rowId);
+    }
+
+    @Override
+    public ArrayView getArray(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override

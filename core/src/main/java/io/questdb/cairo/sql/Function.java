@@ -26,6 +26,7 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
@@ -94,6 +95,8 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     default void cursorClosed() {
     }
+
+    ArrayView getArray(Record rec);
 
     int getArrayLength();
 

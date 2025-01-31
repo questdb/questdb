@@ -599,6 +599,29 @@ public class SqlParser {
         return tok;
     }
 
+    private int parseArrayDimensions(GenericLexer lexer) throws SqlException {
+        int dim = 0;
+        do {
+            CharSequence tok = optTok(lexer);
+            if (Chars.equalsNc(tok, '[')) {
+                // could be a start of array type
+                tok = optTok(lexer);
+
+                if (Chars.equalsNc(tok, ']')) {
+                    dim++;
+                } else {
+                    // we do not expect anything between [], but lets try to be helpful to user and ask them
+                    // to remove things between brackets
+                    throw SqlException.$(lexer.lastTokenPosition(), "']' expected");
+                }
+            } else {
+                lexer.unparseLast();
+                break;
+            }
+        } while (true);
+        return dim;
+    }
+
     private QueryModel parseAsSubQueryAndExpectClosingBrace(
             GenericLexer lexer,
             LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses,
@@ -3229,40 +3252,20 @@ public class SqlParser {
     }
 
     private int toColumnType(GenericLexer lexer, @NotNull CharSequence tok) throws SqlException {
-        final short typeTag = SqlUtil.toPersistedTypeTag(tok, lexer.lastTokenPosition());
-        if (typeTag == ColumnType.GEOHASH) {
+        int typePosition = lexer.lastTokenPosition();
+        final short typeTag = SqlUtil.toPersistedTypeTag(tok, typePosition);
+
+        int dim = parseArrayDimensions(lexer);
+        if (dim > 0) {
+            if (ColumnType.isSupportedArrayType(typeTag)) {
+                return ColumnType.encodeArrayType(typeTag, dim); // dim is 0 - based here, but 1-based in ColumnType
+            }
+            throw SqlException.position(typePosition).put(ColumnType.nameOf(typeTag)).put(" array type is not supported");
+        } else if (typeTag == ColumnType.GEOHASH) {
             expectTok(lexer, '(');
             final int bits = GeoHashUtil.parseGeoHashBits(lexer.lastTokenPosition(), 0, expectLiteral(lexer).token);
             expectTok(lexer, ')');
             return ColumnType.getGeoHashTypeWithBits(bits);
-        } else if (typeTag == ColumnType.ND_ARRAY) {
-            expectTok(lexer, '(');
-            final int typeClassPos = lexer.getPosition();
-            CharSequence typeClassTok = optTok(lexer);
-            if (typeClassTok == null) {
-                throw SqlException.position(typeClassPos).put("type expected");
-            }
-            typeClassTok = typeClassTok.toString();
-            tok = optTok(lexer);
-            tok = tok != null ? tok : "<EOF>";
-            final int nDims;
-            final int dimPos;
-            if (Chars.equals(tok, ',')) {
-                tok = optTok(lexer);
-                dimPos = lexer.lastTokenPosition();
-                try {
-                    nDims = Numbers.parseInt(tok);
-                } catch (NumericException e) {
-                    throw SqlException.position(lexer.lastTokenPosition()).put("number expected");
-                }
-                expectTok(lexer, ')');
-            } else if (Chars.equals(tok, ')')) {
-                dimPos = 0;
-                nDims = 1;
-            } else {
-                throw SqlException.position(lexer.getPosition()).put("',' or ')' expected");
-            }
-            return SqlUtil.toNdArrayType(typeClassTok, nDims, typeClassPos, dimPos);
         }
         return typeTag;
     }

@@ -36,7 +36,7 @@ public class DoubleColumn extends DoubleFunction implements ScalarFunction {
     private static final ObjList<DoubleColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 
-    public DoubleColumn(int columnIndex) {
+    private DoubleColumn(int columnIndex) {
         this.columnIndex = columnIndex;
     }
 

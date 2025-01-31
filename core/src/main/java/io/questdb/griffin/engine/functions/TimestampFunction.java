@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions;
 
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
@@ -38,6 +39,11 @@ import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
 public abstract class TimestampFunction implements ScalarFunction {
+    @Override
+    public ArrayView getArray(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
     @Override
     public final BinarySequence getBin(Record rec) {
         throw new UnsupportedOperationException();

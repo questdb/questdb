@@ -52,6 +52,7 @@ import io.questdb.griffin.engine.functions.cast.CastStrToRegClassFunctionFactory
 import io.questdb.griffin.engine.functions.cast.CastStrToStrArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.catalogue.StringToStringArrayFunction;
 import io.questdb.griffin.engine.functions.catalogue.WalTransactionsFunctionFactory;
+import io.questdb.griffin.engine.functions.columns.ArrayColumn;
 import io.questdb.griffin.engine.functions.columns.BinColumn;
 import io.questdb.griffin.engine.functions.columns.BooleanColumn;
 import io.questdb.griffin.engine.functions.columns.ByteColumn;
@@ -2340,29 +2341,30 @@ public class ExplainPlanTest extends AbstractCairoTest {
             })));
 
             IntObjHashMap<Function> colFuncs = new IntObjHashMap<>();
-            colFuncs.put(ColumnType.BOOLEAN, new BooleanColumn(1));
-            colFuncs.put(ColumnType.BYTE, new ByteColumn(1));
-            colFuncs.put(ColumnType.SHORT, new ShortColumn(2));
+            colFuncs.put(ColumnType.BOOLEAN, BooleanColumn.newInstance(1));
+            colFuncs.put(ColumnType.BYTE, ByteColumn.newInstance(1));
+            colFuncs.put(ColumnType.SHORT, ShortColumn.newInstance(2));
             colFuncs.put(ColumnType.CHAR, new CharColumn(1));
-            colFuncs.put(ColumnType.INT, new IntColumn(1));
+            colFuncs.put(ColumnType.INT, IntColumn.newInstance(1));
             colFuncs.put(ColumnType.IPv4, new IPv4Column(1));
-            colFuncs.put(ColumnType.LONG, new LongColumn(1));
-            colFuncs.put(ColumnType.DATE, new DateColumn(1));
-            colFuncs.put(ColumnType.TIMESTAMP, new TimestampColumn(1));
-            colFuncs.put(ColumnType.FLOAT, new FloatColumn(1));
-            colFuncs.put(ColumnType.DOUBLE, new DoubleColumn(1));
+            colFuncs.put(ColumnType.LONG, LongColumn.newInstance(1));
+            colFuncs.put(ColumnType.DATE, DateColumn.newInstance(1));
+            colFuncs.put(ColumnType.TIMESTAMP, TimestampColumn.newInstance(1));
+            colFuncs.put(ColumnType.FLOAT, FloatColumn.newInstance(1));
+            colFuncs.put(ColumnType.DOUBLE, DoubleColumn.newInstance(1));
             colFuncs.put(ColumnType.STRING, new StrColumn(1));
             colFuncs.put(ColumnType.VARCHAR, new VarcharColumn(1));
             colFuncs.put(ColumnType.SYMBOL, new SymbolColumn(1, true));
-            colFuncs.put(ColumnType.LONG256, new Long256Column(1));
-            colFuncs.put(ColumnType.GEOBYTE, new GeoByteColumn(1, ColumnType.getGeoHashTypeWithBits(5)));
-            colFuncs.put(ColumnType.GEOSHORT, new GeoShortColumn(1, ColumnType.getGeoHashTypeWithBits(10)));
-            colFuncs.put(ColumnType.GEOINT, new GeoIntColumn(1, ColumnType.getGeoHashTypeWithBits(20)));
-            colFuncs.put(ColumnType.GEOLONG, new GeoLongColumn(1, ColumnType.getGeoHashTypeWithBits(35)));
-            colFuncs.put(ColumnType.GEOHASH, new GeoShortColumn((short) 1, ColumnType.getGeoHashTypeWithBits(15)));
-            colFuncs.put(ColumnType.BINARY, new BinColumn(1));
-            colFuncs.put(ColumnType.LONG128, new Long128Column(1));
-            colFuncs.put(ColumnType.UUID, new UuidColumn(1));
+            colFuncs.put(ColumnType.LONG256, Long256Column.newInstance(1));
+            colFuncs.put(ColumnType.GEOBYTE, GeoByteColumn.newInstance(1, ColumnType.getGeoHashTypeWithBits(5)));
+            colFuncs.put(ColumnType.GEOSHORT, GeoShortColumn.newInstance(1, ColumnType.getGeoHashTypeWithBits(10)));
+            colFuncs.put(ColumnType.GEOINT, GeoIntColumn.newInstance(1, ColumnType.getGeoHashTypeWithBits(20)));
+            colFuncs.put(ColumnType.GEOLONG, GeoLongColumn.newInstance(1, ColumnType.getGeoHashTypeWithBits(35)));
+            colFuncs.put(ColumnType.GEOHASH, GeoShortColumn.newInstance((short) 1, ColumnType.getGeoHashTypeWithBits(15)));
+            colFuncs.put(ColumnType.BINARY, BinColumn.newInstance(1));
+            colFuncs.put(ColumnType.LONG128, Long128Column.newInstance(1));
+            colFuncs.put(ColumnType.UUID, UuidColumn.newInstance(1));
+            colFuncs.put(ColumnType.ARRAY, new ArrayColumn(1, ColumnType.encodeArrayType(ColumnType.INT, 2)));
 
             PlanSink planSink = new TextPlanSink() {
                 @Override
@@ -2470,8 +2472,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 } else if (factory instanceof EqIntervalFunctionFactory) {
                                     args.add(IntervalConstant.NULL);
                                 } else if (factory instanceof CoalesceFunctionFactory) {
-                                    args.add(new FloatColumn(1));
-                                    args.add(new FloatColumn(2));
+                                    args.add(FloatColumn.newInstance(1));
+                                    args.add(FloatColumn.newInstance(2));
                                     args.add(new FloatConstant(12f));
                                 } else if (factory instanceof ExtractFromTimestampFunctionFactory && sigArgType == ColumnType.STRING) {
                                     args.add(new StrConstant("day"));

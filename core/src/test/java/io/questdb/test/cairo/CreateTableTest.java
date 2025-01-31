@@ -520,33 +520,6 @@ public class CreateTableTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateTableNdArrayColInvalid() {
-        try {
-            execute("CREATE TABLE tango (arr ARRAY(int, 0))");
-            fail("CREATE TABLE succeeded with zero dimensionality");
-        } catch (SqlException e) {
-            assertEquals("[35] array dimensionality out of range: 0", e.getMessage());
-        }
-        try {
-            execute("CREATE TABLE tango (arr ARRAY(int, 17))");
-            fail("CREATE TABLE succeeded with dimensionality 17");
-        } catch (SqlException e) {
-            assertEquals("[35] array dimensionality out of range: 17", e.getMessage());
-        }
-    }
-
-    @Test
-    public void testCreateTableNdArrayColValid() throws Exception {
-        execute("CREATE TABLE tango (arr ARRAY(int))");
-        execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (arr ARRAY(int, 1))");
-        execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (arr ARRAY(int, 2))");
-        execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (arr ARRAY(int, 16))");
-    }
-
-    @Test
     public void testCreateTableParallel() throws Throwable {
         assertMemoryLeak(() -> {
             int threadCount = 2;

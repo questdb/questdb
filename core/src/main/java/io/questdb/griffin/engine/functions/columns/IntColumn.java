@@ -36,7 +36,7 @@ public class IntColumn extends IntFunction implements ScalarFunction {
     private static final ObjList<IntColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 
-    public IntColumn(int columnIndex) {
+    private IntColumn(int columnIndex) {
         this.columnIndex = columnIndex;
     }
 

@@ -22,32 +22,21 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions;
+package io.questdb.cairo.sql;
 
-import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.cairo.ColumnType;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.Nullable;
 
-public abstract class AbstractGeoHashFunction implements ScalarFunction {
+public abstract class ArrayFunction implements ScalarFunction {
 
-    protected int type; // +number bits
-
-    protected AbstractGeoHashFunction(int type) {
-        this.type = type;
-    }
+    protected int type = ColumnType.UNDEFINED;
 
     @Override
-    public ArrayView getArray(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final BinarySequence getBin(Record rec) {
+    public BinarySequence getBin(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -67,12 +56,12 @@ public abstract class AbstractGeoHashFunction implements ScalarFunction {
     }
 
     @Override
-    public final char getChar(Record rec) {
+    public char getChar(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final long getDate(Record rec) {
+    public long getDate(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -87,7 +76,27 @@ public abstract class AbstractGeoHashFunction implements ScalarFunction {
     }
 
     @Override
-    public final int getIPv4(Record rec) {
+    public byte getGeoByte(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int getGeoInt(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getGeoLong(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public short getGeoShort(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int getIPv4(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -97,7 +106,7 @@ public abstract class AbstractGeoHashFunction implements ScalarFunction {
     }
 
     @Override
-    public final long getLong(Record rec) {
+    public long getLong(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -112,17 +121,17 @@ public abstract class AbstractGeoHashFunction implements ScalarFunction {
     }
 
     @Override
-    public final void getLong256(Record rec, CharSink<?> sink) {
+    public void getLong256(Record rec, CharSink<?> sink) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final Long256 getLong256A(Record rec) {
+    public Long256 getLong256A(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final Long256 getLong256B(Record rec) {
+    public Long256 getLong256B(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -137,52 +146,52 @@ public abstract class AbstractGeoHashFunction implements ScalarFunction {
     }
 
     @Override
-    public final String getStrA(Record rec) {
+    public CharSequence getStrA(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final CharSequence getStrB(Record rec) {
+    public CharSequence getStrB(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final int getStrLen(Record rec) {
+    public int getStrLen(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final CharSequence getSymbol(Record rec) {
+    public CharSequence getSymbol(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final CharSequence getSymbolB(Record rec) {
+    public CharSequence getSymbolB(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final long getTimestamp(Record rec) {
+    public long getTimestamp(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final int getType() {
+    public int getType() {
         return type;
     }
 
     @Override
-    public Utf8Sequence getVarcharA(Record rec) {
+    public @Nullable Utf8Sequence getVarcharA(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public Utf8Sequence getVarcharB(Record rec) {
+    public @Nullable Utf8Sequence getVarcharB(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final int getVarcharSize(Record rec) {
+    public int getVarcharSize(Record rec) {
         throw new UnsupportedOperationException();
     }
 }

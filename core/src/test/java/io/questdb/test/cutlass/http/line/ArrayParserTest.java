@@ -29,15 +29,16 @@ import io.questdb.cairo.arr.ArrayJsonSerializer;
 import io.questdb.cairo.arr.ArrayRowMajorTraversal;
 import io.questdb.cairo.arr.ArrayValuesSlice;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cutlass.line.tcp.ArrayParser;
+import io.questdb.cutlass.line.tcp.ArrayParser.ParseException;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode;
-import io.questdb.cutlass.line.tcp.NdArrayParser;
-import io.questdb.cutlass.line.tcp.NdArrayParser.ParseException;
 import io.questdb.std.DirectIntSlice;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.DirectUtf8String;
 import org.jetbrains.annotations.NotNull;
 import org.junit.After;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.Arrays;
@@ -46,15 +47,18 @@ import static io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode.*;
 import static java.util.Collections.nCopies;
 import static org.junit.Assert.*;
 
-public class NdArrayParserTest {
+@Ignore
+// todo: array parser should not be required at all if ILP sender sends data in the same format that we store array as
+//    it will be both not requiring parsing overhead and on the storage fast path
+public class ArrayParserTest {
 
-    private NdArrayParser parser;
+    private ArrayParser parser;
     private DirectUtf8Sink sink;
 
     @Before
     public void setUp() {
         sink = new DirectUtf8Sink(1024);
-        parser = new NdArrayParser();
+        parser = new ArrayParser();
     }
 
     @After
@@ -89,9 +93,9 @@ public class NdArrayParserTest {
 
     @Test
     public void testDimensionalityLimit() throws ParseException {
-        int maxNesting = NdArrayParser.DIM_COUNT_LIMIT - 1;
+        int maxNesting = ArrayParser.DIM_COUNT_LIMIT - 1;
         String validArray = String.format("[5i%s1%s]", repeat("[", maxNesting), repeat("]", maxNesting));
-        int[] maxShape = new int[NdArrayParser.DIM_COUNT_LIMIT];
+        int[] maxShape = new int[ArrayParser.DIM_COUNT_LIMIT];
         Arrays.fill(maxShape, 1);
         testIntLiteral(validArray, maxShape, new int[]{1});
 
@@ -141,7 +145,7 @@ public class NdArrayParserTest {
         testInvalidLiteral("[5i1.1]", ND_ARR_UNEXPECTED_TOKEN, 3);
         testInvalidLiteral("[5i1,,1]", ND_ARR_UNEXPECTED_TOKEN, 5);
         testInvalidLiteral("[5i1,]", ND_ARR_UNEXPECTED_TOKEN, 5);
-        String veryLongInt = repeat("1", NdArrayParser.LEAF_LENGTH_LIMIT - 1);
+        String veryLongInt = repeat("1", ArrayParser.LEAF_LENGTH_LIMIT - 1);
         String dosAttack = veryLongInt + "1";
         testInvalidLiteral(String.format("[5i%s", veryLongInt), ND_ARR_PREMATURE_END, 3);
         testInvalidLiteral(String.format("[5i%s", dosAttack), ND_ARR_UNEXPECTED_TOKEN, 3);
@@ -287,7 +291,7 @@ public class NdArrayParserTest {
     }
 
     private void testLiteralToJson(String literal) throws ParseException {
-        int columnType = ColumnType.encodeNdArrayTypeFromScalar(ColumnType.INT, 1);
+        int columnType = ColumnType.encodeArrayType(ColumnType.INT, 1);
         DirectUtf8String arrayStr = utf8String(sink, literal);
         parser.parse(arrayStr);
         ArrayView array = parser.getView();

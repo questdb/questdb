@@ -25,7 +25,7 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cutlass.line.tcp.NdArrayParser.ParseException;
+import io.questdb.cutlass.line.tcp.ArrayParser.ParseException;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -672,7 +672,7 @@ public class LineTcpParser implements QuietCloseable {
 
     public class ProtoEntity implements QuietCloseable {
         private final DirectUtf8String name = new DirectUtf8String();
-        private final NdArrayParser ndArrParser = new NdArrayParser();
+        private final ArrayParser ndArrParser = new ArrayParser();
         private final DirectUtf8String value = new DirectUtf8String();
         private boolean booleanValue;
         private double floatValue;

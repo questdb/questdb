@@ -37,7 +37,7 @@ public class BinColumn extends BinFunction implements ScalarFunction {
     private static final ObjList<BinColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 
-    public BinColumn(int columnIndex) {
+    private BinColumn(int columnIndex) {
         this.columnIndex = columnIndex;
     }
 

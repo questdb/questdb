@@ -36,7 +36,7 @@ public class FloatColumn extends FloatFunction implements ScalarFunction {
     private static final ObjList<FloatColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 
-    public FloatColumn(int columnIndex) {
+    private FloatColumn(int columnIndex) {
         this.columnIndex = columnIndex;
     }
 

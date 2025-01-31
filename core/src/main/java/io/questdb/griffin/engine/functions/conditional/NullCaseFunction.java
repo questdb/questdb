@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.conditional;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -47,6 +48,11 @@ class NullCaseFunction implements CaseFunction {
     @Override
     public ObjList<Function> getArgs() {
         return args;
+    }
+
+    @Override
+    public ArrayView getArray(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override

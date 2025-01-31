@@ -32,7 +32,6 @@ import io.questdb.std.Long256;
 import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
-import org.jetbrains.annotations.NotNull;
 
 // ColumnType layout - 32bit
 //
@@ -102,11 +101,11 @@ public final class ColumnType {
     public static final short LONG128 = GEOHASH + 1;            // = 24  Limited support, few tests only
     public static final short IPv4 = LONG128 + 1;               // = 25
     public static final short VARCHAR = IPv4 + 1;               // = 26
-    public static final short ND_ARRAY = VARCHAR + 1;           // = 27
+    public static final short ARRAY = VARCHAR + 1;           // = 27
     // PG specific types to work with 3rd party software
     // with canned catalogue queries:
     // REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER
-    public static final short REGCLASS = ND_ARRAY + 1;          // = 28;
+    public static final short REGCLASS = ARRAY + 1;          // = 28;
     public static final short REGPROCEDURE = REGCLASS + 1;      // = 29;
     public static final short ARRAY_STRING = REGPROCEDURE + 1;  // = 30;
     public static final short PARAMETER = ARRAY_STRING + 1;     // = 31;
@@ -122,10 +121,12 @@ public final class ColumnType {
     public static final int VERSION = 426;
     static final int[] GEO_TYPE_SIZE_POW2;
     private static final boolean ALLOW_DEFAULT_STRING_CHANGE = false;
+    private static final int ARRAY_DIMENSION_LIMIT = 16; // inclusive
     private static final int BYTE_BITS = 8;
     private static final short[][] OVERLOAD_PRIORITY;
     private static final int TYPE_FLAG_DESIGNATED_TIMESTAMP = (1 << 17);
     private static final int TYPE_FLAG_GEO_HASH = (1 << 16);
+    private static final IntHashSet arrayTypeSet = new IntHashSet();
     private static final LowerCaseAsciiCharSequenceIntHashMap nameTypeMap = new LowerCaseAsciiCharSequenceIntHashMap();
     private static final IntHashSet nonPersistedTypes = new IntHashSet();
     private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
@@ -134,7 +135,7 @@ public final class ColumnType {
     }
 
     public static int decodeArrayDimensionality(int type) {
-        if (ColumnType.tagOf(type) == ColumnType.ND_ARRAY) {
+        if (ColumnType.tagOf(type) == ColumnType.ARRAY) {
             return ((type >> BYTE_BITS) & 0xF) + 1; // dimensionality is encoded in 4 bits.
         }
         return -1;
@@ -146,7 +147,7 @@ public final class ColumnType {
      * returns <code>Character.MAX_VALUE</code> if the type is not an array.
      */
     public static char decodeArrayElementTypeClass(int encodedType) {
-        if (ColumnType.tagOf(encodedType) == ColumnType.ND_ARRAY) {
+        if (ColumnType.tagOf(encodedType) == ColumnType.ARRAY) {
             return (char) ('a' + ((encodedType >> (2 * BYTE_BITS)) & 0x1F)); // typeClass is encoded in 5 bits.
         }
         return Character.MAX_VALUE;
@@ -167,7 +168,7 @@ public final class ColumnType {
      * returns -1 if the type is not an array.
      */
     public static int decodeArrayElementTypePrecision(int type) {
-        if (ColumnType.tagOf(type) == ColumnType.ND_ARRAY) {
+        if (ColumnType.tagOf(type) == ColumnType.ARRAY) {
             return (byte) ((type >> 12) & 0xF); // precision is encoded in 4 bits.
         }
         return -1;
@@ -193,61 +194,26 @@ public final class ColumnType {
      * |          |           |         byte         |      byte     |
      * </pre>
      */
-    public static int encodeNdArrayType(char typeClass, int typePrecision, int nDims) {
-        assert typeClass >= 'a' && typeClass <= 'z';
-        assert typePrecision >= 0 && typePrecision <= 15;
-        assert nDims >= 1 && nDims <= 16;
-
-        if (
-            // Types which we don't support are commented out.
-                (typeClass == 'u' && typePrecision == 0) ||  // boolean
-//                        (typeClass == 'u' && typePrecision == 1) ||
-//                        (typeClass == 'u' && typePrecision == 2) ||
-//                        (typeClass == 'u' && typePrecision == 3) ||
-//                        (typeClass == 'u' && typePrecision == 4) ||
-//                        (typeClass == 'u' && typePrecision == 5) ||
-//                        (typeClass == 'u' && typePrecision == 6) ||
-                        (typeClass == 'i' && typePrecision == 3) ||  // byte
-                        (typeClass == 'i' && typePrecision == 4) ||  // short
-                        (typeClass == 'i' && typePrecision == 5) ||  // int
-                        (typeClass == 'i' && typePrecision == 6) ||  // long
-//                        (typeClass == 'f' && typePrecision == 3) ||
-//                        (typeClass == 'f' && typePrecision == 4) ||
-                        (typeClass == 'f' && typePrecision == 5) ||  // float
-                        (typeClass == 'f' && typePrecision == 6)     // double
-        ) {
-            nDims = (nDims - 1) & 0xF;
-            typePrecision &= 0xF;
-            int byte1 = typePrecision << 4 | nDims;
-            int byte2 = (typeClass - 'a') & 0x1F;
-            return (byte2 << (2 * BYTE_BITS)) | (byte1 << BYTE_BITS) | ND_ARRAY;
-        } else {
-            return -1;
-        }
+    public static int encodeArrayType(int typeTag, int nDims) {
+        assert nDims >= 1 && nDims <= ARRAY_DIMENSION_LIMIT;
+        nDims = (nDims - 1) & 0xF;
+        int shlTypePrecision = pow2SizeOf(typeTag);
+        shlTypePrecision &= 0xF;
+        int byte1 = shlTypePrecision << 4 | nDims;
+        int byte2 = typeTag & 0x1F;
+        return (byte2 << (2 * BYTE_BITS)) | (byte1 << BYTE_BITS) | ARRAY;
     }
 
-    /**
-     * Used to create an array type (if possible) from a scalar value.
-     */
-    public static int encodeNdArrayTypeFromScalar(int scalarType, int nDims) {
-        switch (scalarType) {
-            case BOOLEAN:
-                return encodeNdArrayType('u', 0, nDims);
-            case BYTE:
-                return encodeNdArrayType('i', 3, nDims);
-            case SHORT:
-                return encodeNdArrayType('i', 4, nDims);
-            case INT:
-                return encodeNdArrayType('i', 5, nDims);
-            case LONG:
-                return encodeNdArrayType('i', 6, nDims);
-            case FLOAT:
-                return encodeNdArrayType('f', 5, nDims);
-            case DOUBLE:
-                return encodeNdArrayType('f', 6, nDims);
-            default:
-                return -1;
-        }
+    public static int getArrayCommonWideningType(int typeA, int typeB) {
+        assert isArray(typeA);
+        assert isArray(typeB);
+        final char typeClass = getArrayCommonWideningTypeClass(
+                decodeArrayElementTypeClass(typeA),
+                decodeArrayElementTypeClass(typeB));
+        final int nDims = Math.max(
+                decodeArrayDimensionality(typeA),
+                decodeArrayDimensionality(typeB));
+        return encodeArrayType(typeClass, nDims);
     }
 
     public static ColumnTypeDriver getDriver(int columnType) {
@@ -258,7 +224,7 @@ public final class ColumnType {
                 return BinaryTypeDriver.INSTANCE;
             case VARCHAR:
                 return VarcharTypeDriver.INSTANCE;
-            case ND_ARRAY:
+            case ARRAY:
                 return ArrayTypeDriver.INSTANCE;
             default:
                 throw CairoException.critical(0).put("no driver for type: ").put(columnType);
@@ -275,26 +241,18 @@ public final class ColumnType {
         return mkGeoHashType(bits, (short) (GEOBYTE + pow2SizeOfBits(bits)));
     }
 
-    public static int getNdArrayCommonWideningType(int typeA, int typeB) {
-        assert isArray(typeA);
-        assert isArray(typeB);
-        final char typeClass = getNdArrayCommonWideningTypeClass(
-                decodeArrayElementTypeClass(typeA),
-                decodeArrayElementTypeClass(typeB));
-        final int precision = Math.max(
-                decodeArrayElementTypePrecision(typeA),
-                decodeArrayElementTypePrecision(typeB));
-        final int nDims = Math.max(
-                decodeArrayDimensionality(typeA),
-                decodeArrayDimensionality(typeB));
-        return encodeNdArrayType(typeClass, precision, nDims);
-    }
-
     public static int getWalDataColumnShl(int columnType, boolean designatedTimestamp) {
         if (columnType == ColumnType.TIMESTAMP && designatedTimestamp) {
             return 4; // 128 bit column
         }
         return pow2SizeOf(columnType);
+    }
+
+    /**
+     * Is an N-dimensional array type.
+     */
+    public static boolean isArray(int columnType) {
+        return ColumnType.tagOf(columnType) == ColumnType.ARRAY;
     }
 
     public static boolean isAssignableFrom(int fromType, int toType) {
@@ -378,11 +336,8 @@ public final class ColumnType {
         }
     }
 
-    /**
-     * Is an N-dimensional array type.
-     */
-    public static boolean isArray(int columnType) {
-        return ColumnType.tagOf(columnType) == ColumnType.ND_ARRAY;
+    public static boolean isGenericType(int columnType) {
+        return isGeoHash(columnType) || isArray(columnType);
     }
 
     public static boolean isGeoHash(int columnType) {
@@ -397,10 +352,6 @@ public final class ColumnType {
         return columnType == INTERVAL;
     }
 
-    public static boolean isGenericType(int columnType) {
-        return isGeoHash(columnType) || isArray(columnType);
-    }
-
     public static boolean isNull(int columnType) {
         return columnType == NULL;
     }
@@ -411,6 +362,10 @@ public final class ColumnType {
 
     public static boolean isString(int columnType) {
         return columnType == STRING;
+    }
+
+    public static boolean isSupportedArrayType(short typeTag) {
+        return arrayTypeSet.contains(typeTag);
     }
 
     public static boolean isSymbol(int columnType) {
@@ -443,7 +398,7 @@ public final class ColumnType {
         return columnType == STRING ||
                 columnType == BINARY ||
                 columnType == VARCHAR ||
-                tagOf(columnType) == ND_ARRAY;
+                tagOf(columnType) == ARRAY;
     }
 
     public static boolean isVarchar(int columnType) {
@@ -487,39 +442,6 @@ public final class ColumnType {
         // this check is just in case
         assert toTag > UNDEFINED : "Undefined not supported in overloads";
         return OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * fromTag + toTag];
-    }
-
-    public static int parseNdArrayType(@NotNull CharSequence name, int nDims) {
-        if (nDims < 1 || nDims > 16) {
-            return -1;
-        }
-        final char typeClass;
-        final byte precision;  // power of 2
-        if (Chars.equalsIgnoreCase(name, "boolean")) {
-            typeClass = 'u';
-            precision = 0;
-        } else if (Chars.equalsIgnoreCase(name, "byte")) {
-            typeClass = 'i';
-            precision = 3;
-        } else if (Chars.equalsIgnoreCase(name, "short")) {
-            typeClass = 'i';
-            precision = 4;
-        } else if (Chars.equalsIgnoreCase(name, "int")) {
-            typeClass = 'i';
-            precision = 5;
-        } else if (Chars.equalsIgnoreCase(name, "long")) {
-            typeClass = 'i';
-            precision = 6;
-        } else if (Chars.equalsIgnoreCase(name, "float")) {
-            typeClass = 'f';
-            precision = 5;
-        } else if (Chars.equalsIgnoreCase(name, "double")) {
-            typeClass = 'f';
-            precision = 6;
-        } else {
-            return -1;
-        }
-        return ColumnType.encodeNdArrayType(typeClass, precision, nDims);
     }
 
     public static int pow2SizeOf(int columnType) {
@@ -567,7 +489,7 @@ public final class ColumnType {
      * Find the common widening type class for the specified pair.
      * Unsigned -> Signed -> Floating
      */
-    private static char getNdArrayCommonWideningTypeClass(char tc1, char tc2) {
+    private static char getArrayCommonWideningTypeClass(char tc1, char tc2) {
         assert tc1 == 'u' || tc1 == 'i' || tc1 == 'f';
         assert tc2 == 'u' || tc2 == 'i' || tc2 == 'f';
         // This works, but by coincidence.
@@ -678,7 +600,7 @@ public final class ColumnType {
                 /* 24 LONG128   */, {LONG128}
                 /* 25 IPv4      */, {IPv4}
                 /* 26 VARCHAR   */, {VARCHAR, STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE}
-                /* 27 ND_ARRAY  */, {ND_ARRAY}
+                /* 27 ARRAY     */, {ARRAY}
                 /* 28 unused    */, {}
                 /* 29 unused    */, {}
                 /* 30 unused    */, {}
@@ -719,7 +641,7 @@ public final class ColumnType {
         typeNameMap.put(CHAR, "CHAR");
         typeNameMap.put(STRING, "STRING");
         typeNameMap.put(VARCHAR, "VARCHAR");
-        typeNameMap.put(ND_ARRAY, "ARRAY");
+        typeNameMap.put(ARRAY, "ARRAY");
         typeNameMap.put(SYMBOL, "SYMBOL");
         typeNameMap.put(BINARY, "BINARY");
         typeNameMap.put(DATE, "DATE");
@@ -739,6 +661,19 @@ public final class ColumnType {
         typeNameMap.put(INTERVAL, "INTERVAL");
         typeNameMap.put(NULL, "NULL");
 
+        arrayTypeSet.add(BOOLEAN);
+        arrayTypeSet.add(BYTE);
+        arrayTypeSet.add(DOUBLE);
+        arrayTypeSet.add(FLOAT);
+        arrayTypeSet.add(INT);
+        arrayTypeSet.add(LONG);
+        arrayTypeSet.add(SHORT);
+        arrayTypeSet.add(DATE);
+        arrayTypeSet.add(TIMESTAMP);
+        arrayTypeSet.add(LONG256);
+        arrayTypeSet.add(UUID);
+        arrayTypeSet.add(IPv4);
+
         nameTypeMap.put("boolean", BOOLEAN);
         nameTypeMap.put("byte", BYTE);
         nameTypeMap.put("double", DOUBLE);
@@ -749,7 +684,7 @@ public final class ColumnType {
         nameTypeMap.put("char", CHAR);
         nameTypeMap.put("string", STRING);
         nameTypeMap.put("varchar", VARCHAR);
-        nameTypeMap.put("array", ND_ARRAY);
+        nameTypeMap.put("array", ARRAY);
         nameTypeMap.put("symbol", SYMBOL);
         nameTypeMap.put("binary", BINARY);
         nameTypeMap.put("date", DATE);
@@ -797,7 +732,7 @@ public final class ColumnType {
         TYPE_SIZE_POW2[DOUBLE] = 3;
         TYPE_SIZE_POW2[STRING] = -1;
         TYPE_SIZE_POW2[VARCHAR] = -1;
-        TYPE_SIZE_POW2[ND_ARRAY] = -1;
+        TYPE_SIZE_POW2[ARRAY] = -1;
         TYPE_SIZE_POW2[LONG] = 3;
         TYPE_SIZE_POW2[DATE] = 3;
         TYPE_SIZE_POW2[TIMESTAMP] = 3;
@@ -827,7 +762,7 @@ public final class ColumnType {
         TYPE_SIZE[SYMBOL] = Integer.BYTES;
         TYPE_SIZE[STRING] = 0;
         TYPE_SIZE[VARCHAR] = 0;
-        TYPE_SIZE[ND_ARRAY] = 0;
+        TYPE_SIZE[ARRAY] = 0;
         TYPE_SIZE[DOUBLE] = Double.BYTES;
         TYPE_SIZE[LONG] = Long.BYTES;
         TYPE_SIZE[DATE] = Long.BYTES;
@@ -857,5 +792,20 @@ public final class ColumnType {
         nonPersistedTypes.add(REGCLASS);
         nonPersistedTypes.add(REGPROCEDURE);
         nonPersistedTypes.add(ARRAY_STRING);
+
+        // add array type names up to dimension limit
+        // this has to be done after we configured type bit widths
+        for (int i = 0, n = arrayTypeSet.size(); i < n; i++) {
+            int type = arrayTypeSet.get(i);
+            sink.clear();
+            sink.put(nameOf(type));
+            for (int d = 1; d <= ARRAY_DIMENSION_LIMIT; d++) {
+                sink.put("[]");
+                int arrayType = encodeArrayType(type, d);
+                String name = sink.toString();
+                typeNameMap.put(arrayType, name);
+                nameTypeMap.put(name, arrayType);
+            }
+        }
     }
 }

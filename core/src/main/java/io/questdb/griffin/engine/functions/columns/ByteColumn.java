@@ -36,7 +36,7 @@ public class ByteColumn extends ByteFunction implements ScalarFunction {
     private static final ObjList<ByteColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 
-    public ByteColumn(int columnIndex) {
+    private ByteColumn(int columnIndex) {
         this.columnIndex = columnIndex;
     }
 

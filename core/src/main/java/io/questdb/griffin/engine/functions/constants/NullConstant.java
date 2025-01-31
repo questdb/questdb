@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.constants;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
@@ -47,6 +48,11 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
 
     private NullConstant() {
         this.type = ColumnType.NULL;
+    }
+
+    @Override
+    public ArrayView getArray(Record rec) {
+        return null;
     }
 
     @Override

@@ -25,8 +25,13 @@
 package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -57,6 +62,11 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     @Override
     public void close() {
         base = Misc.free(base);
+    }
+
+    @Override
+    public ArrayView getArray(Record rec) {
+        return getBase().getArray(rec);
     }
 
     @Override
@@ -217,10 +227,6 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     @Override
     public int getVarcharSize(Record rec) {
         return getBase().getVarcharSize(rec);
-    }
-
-    public int getVariableIndex() {
-        return variableIndex;
     }
 
     @Override

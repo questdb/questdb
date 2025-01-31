@@ -171,7 +171,7 @@ public class CursorPrinter {
                     interval.toSink(sink);
                 }
                 break;
-            case ColumnType.ND_ARRAY:
+            case ColumnType.ARRAY:
                 final ArrayView array = record.getArray(columnIndex, columnType);
                 if (array != null) {
                     try (ArrayRowMajorTraversal traversal = new ArrayRowMajorTraversal()) {

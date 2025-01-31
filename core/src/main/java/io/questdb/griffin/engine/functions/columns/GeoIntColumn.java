@@ -37,7 +37,7 @@ public class GeoIntColumn extends GeoIntFunction {
 
     protected final int columnIndex;
 
-    public GeoIntColumn(int columnIndex, int columnType) {
+    private GeoIntColumn(int columnIndex, int columnType) {
         super(columnType);
         this.columnIndex = columnIndex;
     }

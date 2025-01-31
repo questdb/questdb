@@ -440,7 +440,7 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
                 }
 
                 MapRecordCursor mapCursor = map.getCursor();
-                mapCursor.longTopK(heap, new LongColumn(0));
+                mapCursor.longTopK(heap, LongColumn.newInstance(0));
 
                 Assert.assertEquals(heapCapacity, heap.size());
 

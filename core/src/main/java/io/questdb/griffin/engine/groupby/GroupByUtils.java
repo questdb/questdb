@@ -38,6 +38,7 @@ import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory;
+import io.questdb.griffin.engine.functions.columns.ArrayColumn;
 import io.questdb.griffin.engine.functions.columns.BinColumn;
 import io.questdb.griffin.engine.functions.columns.BooleanColumn;
 import io.questdb.griffin.engine.functions.columns.ByteColumn;
@@ -302,13 +303,13 @@ public class GroupByUtils {
                 func = ShortColumn.newInstance(keyColumnIndex - 1);
                 break;
             case ColumnType.CHAR:
-                func = CharColumn.newInstance(keyColumnIndex - 1);
+                func = new CharColumn(keyColumnIndex - 1);
                 break;
             case ColumnType.INT:
                 func = IntColumn.newInstance(keyColumnIndex - 1);
                 break;
             case ColumnType.IPv4:
-                func = IPv4Column.newInstance(keyColumnIndex - 1);
+                func = new IPv4Column(keyColumnIndex - 1);
                 break;
             case ColumnType.LONG:
                 func = LongColumn.newInstance(keyColumnIndex - 1);
@@ -320,10 +321,10 @@ public class GroupByUtils {
                 func = DoubleColumn.newInstance(keyColumnIndex - 1);
                 break;
             case ColumnType.STRING:
-                func = StrColumn.newInstance(keyColumnIndex - 1);
+                func = new StrColumn(keyColumnIndex - 1);
                 break;
             case ColumnType.VARCHAR:
-                func = VarcharColumn.newInstance(keyColumnIndex - 1);
+                func = new VarcharColumn(keyColumnIndex - 1);
                 break;
             case ColumnType.SYMBOL:
                 if (metadata != null) {
@@ -363,6 +364,9 @@ public class GroupByUtils {
                 break;
             case ColumnType.INTERVAL:
                 func = IntervalColumn.newInstance(keyColumnIndex - 1);
+                break;
+            case ColumnType.ARRAY:
+                func = new ArrayColumn(keyColumnIndex - 1, type);
                 break;
             default:
                 func = BinColumn.newInstance(keyColumnIndex - 1);

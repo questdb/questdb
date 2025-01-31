@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
@@ -44,6 +45,11 @@ public abstract class IPv4Function implements ScalarFunction {
     private final StringSink sinkB = new StringSink();
     private final Utf8StringSink utf8SinkA = new Utf8StringSink();
     private final Utf8StringSink utf8SinkB = new Utf8StringSink();
+
+    @Override
+    public ArrayView getArray(Record rec) {
+        throw new UnsupportedOperationException();
+    }
 
     @Override
     public final BinarySequence getBin(Record rec) {

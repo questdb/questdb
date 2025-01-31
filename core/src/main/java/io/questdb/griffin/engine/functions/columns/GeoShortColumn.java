@@ -37,7 +37,7 @@ public class GeoShortColumn extends GeoShortFunction {
 
     private final int columnIndex;
 
-    public GeoShortColumn(int columnIndex, int columnType) {
+    private GeoShortColumn(int columnIndex, int columnType) {
         super(columnType);
         this.columnIndex = columnIndex;
     }

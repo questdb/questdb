@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.functions;
 
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -45,6 +46,11 @@ public class GroupByFunctionTest {
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
+        }
+
+        @Override
+        public ArrayView getArray(Record rec) {
+            return null;
         }
 
         @Override

@@ -24,53 +24,35 @@
 
 package io.questdb.griffin.engine.functions.columns;
 
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.engine.functions.Long128Function;
-import io.questdb.std.ObjList;
 
-import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
-
-public class Long128Column extends Long128Function implements ScalarFunction {
-    private static final ObjList<Long128Column> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
+public class ArrayColumn extends ArrayFunction {
     private final int columnIndex;
 
-    private Long128Column(int columnIndex) {
+    public ArrayColumn(int columnIndex, int columnType) {
         this.columnIndex = columnIndex;
+        this.type = columnType;
     }
 
-    public static Long128Column newInstance(int columnIndex) {
-        if (columnIndex < STATIC_COLUMN_COUNT) {
-            return COLUMNS.getQuick(columnIndex);
-        }
-        return new Long128Column(columnIndex);
-    }
-
-    @Override
-    public long getLong128Hi(Record rec) {
-        return rec.getLong128Hi(columnIndex);
+    public static ArrayColumn newInstance(int columnIndex, int columnType) {
+        return new ArrayColumn(columnIndex, columnType);
     }
 
     @Override
-    public long getLong128Lo(Record rec) {
-        return rec.getLong128Lo(columnIndex);
+    public ArrayView getArray(Record rec) {
+        return rec.getArray(columnIndex, type);
     }
 
     @Override
-    public boolean isThreadSafe() {
-        return true;
+    public int getType() {
+        return 0;
     }
 
     @Override
     public void toPlan(PlanSink sink) {
         sink.putColumnName(columnIndex);
-    }
-
-    static {
-        COLUMNS.setPos(STATIC_COLUMN_COUNT);
-        for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {
-            COLUMNS.setQuick(i, new Long128Column(i));
-        }
     }
 }

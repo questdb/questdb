@@ -36,7 +36,7 @@ public class TimestampColumn extends TimestampFunction implements ScalarFunction
     private static final ObjList<TimestampColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 
-    public TimestampColumn(int columnIndex) {
+    private TimestampColumn(int columnIndex) {
         this.columnIndex = columnIndex;
     }
 

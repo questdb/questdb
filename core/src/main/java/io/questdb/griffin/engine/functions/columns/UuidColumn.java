@@ -36,7 +36,7 @@ public final class UuidColumn extends UuidFunction implements ScalarFunction {
     private static final ObjList<UuidColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 
-    public UuidColumn(int columnIndex) {
+    private UuidColumn(int columnIndex) {
         this.columnIndex = columnIndex;
     }
 

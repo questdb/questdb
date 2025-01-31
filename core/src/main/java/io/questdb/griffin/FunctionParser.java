@@ -24,11 +24,6 @@
 
 package io.questdb.griffin;
 
-import java.util.ArrayDeque;
-
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
@@ -52,6 +47,7 @@ import io.questdb.griffin.engine.functions.cast.CastUuidToVarcharFunctionFactory
 import io.questdb.griffin.engine.functions.cast.CastVarcharToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastVarcharToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastVarcharToUuidFunctionFactory;
+import io.questdb.griffin.engine.functions.columns.ArrayColumn;
 import io.questdb.griffin.engine.functions.columns.BinColumn;
 import io.questdb.griffin.engine.functions.columns.BooleanColumn;
 import io.questdb.griffin.engine.functions.columns.ByteColumn;
@@ -116,6 +112,10 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+import java.util.ArrayDeque;
 
 import static io.questdb.griffin.SqlKeywords.*;
 
@@ -166,7 +166,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case ColumnType.SHORT:
                 return ShortColumn.newInstance(index);
             case ColumnType.CHAR:
-                return CharColumn.newInstance(index);
+                return new CharColumn(index);
             case ColumnType.INT:
                 return IntColumn.newInstance(index);
             case ColumnType.LONG:
@@ -208,10 +208,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case ColumnType.UUID:
                 return UuidColumn.newInstance(index);
             case ColumnType.IPv4:
-                return IPv4Column.newInstance(index);
+                return new IPv4Column(index);
             case ColumnType.INTERVAL:
-                // we cannot use a pooled IntervalColumn instance, because it is not thread-safe
-                return new IntervalColumn(index);
+                return IntervalColumn.newInstance(index);
+            case ColumnType.ARRAY:
+                return new ArrayColumn(index, columnType);
             default:
                 throw SqlException.position(position)
                         .put("unsupported column type ")

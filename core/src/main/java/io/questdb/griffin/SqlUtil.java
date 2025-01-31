@@ -789,17 +789,6 @@ public class SqlUtil {
         }
     }
 
-    public static int toNdArrayType(@NotNull CharSequence typeClass, int nDims, int typeClassPos, int dimPos) throws SqlException {
-        if (nDims < 1 || nDims > 16) {
-            throw SqlException.$(dimPos, "array dimensionality out of range: ").put(nDims);
-        }
-        final int ndArrayType = ColumnType.parseNdArrayType(typeClass, nDims);
-        if (ndArrayType == -1) {
-            throw SqlException.$(typeClassPos, "non-array element type: ").put(typeClass);
-        }
-        return ndArrayType;
-    }
-
     public static short toPersistedTypeTag(@NotNull CharSequence tok, int tokPosition) throws SqlException {
         final short typeTag = ColumnType.tagOf(tok);
         if (typeTag == -1) {

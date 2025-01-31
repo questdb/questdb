@@ -73,7 +73,7 @@ public class ToTimestampVCFunctionFactoryTest extends AbstractFunctionFactoryTes
     @Test
     public void test_whenInputStringIsNotConstant_functionDoesntCacheValue() throws SqlException {
         ObjList<Function> funcs = new ObjList<>();
-        funcs.add(new TimestampColumn(1));
+        funcs.add(TimestampColumn.newInstance(1));
         funcs.add(new StrConstant("yyyy dd/MM"));
 
         Function f = new ToTimestampVCFunctionFactory().newInstance(0, funcs, new IntList(), configuration, sqlExecutionContext);

@@ -61,7 +61,7 @@ import static io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode.*;
  * <p>
  * <strong>Not all combinations are valid</strong>: refer to `ColType.java`'s ND_ARRAY implementation.
  */
-public class NdArrayParser implements QuietCloseable {
+public class ArrayParser implements QuietCloseable {
 
     public static final int DIM_COUNT_LIMIT = 8;
     public static final int LEAF_LENGTH_LIMIT = 100;
@@ -173,7 +173,7 @@ public class NdArrayParser implements QuietCloseable {
                 assert false : "Unexpected type class";
         }
 
-        final int arrayType = ColumnType.encodeNdArrayType(typeClass, typePrecision, 1);
+        final int arrayType = ColumnType.encodeArrayType(typeClass, 1);
         if (arrayType == -1) {
             throw ParseException.invalidType(position());
         }
@@ -287,7 +287,7 @@ public class NdArrayParser implements QuietCloseable {
                 }
             }
         }
-        bufs.type = ColumnType.encodeNdArrayType(typeClass, typePrecision, nDims);
+        bufs.type = ColumnType.encodeArrayType(typeClass, nDims);
     }
 
     private void parseLeaf(char typeClass, int bitSize, int tokenLimit) throws ParseException {

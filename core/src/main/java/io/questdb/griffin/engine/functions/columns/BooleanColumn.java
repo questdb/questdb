@@ -36,7 +36,7 @@ public class BooleanColumn extends BooleanFunction implements ScalarFunction {
     private static final ObjList<BooleanColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 
-    public BooleanColumn(int columnIndex) {
+    private BooleanColumn(int columnIndex) {
         this.columnIndex = columnIndex;
     }
 

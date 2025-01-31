@@ -36,7 +36,7 @@ public class DateColumn extends DateFunction implements ScalarFunction {
     private static final ObjList<DateColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 
-    public DateColumn(int columnIndex) {
+    private DateColumn(int columnIndex) {
         this.columnIndex = columnIndex;
     }
 

@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
@@ -40,6 +41,11 @@ import io.questdb.std.str.Utf8s;
 public abstract class VarcharFunction implements ScalarFunction {
     private final StringSink utf16SinkA = new StringSink();
     private final StringSink utf16SinkB = new StringSink();
+
+    @Override
+    public ArrayView getArray(Record rec) {
+        throw new UnsupportedOperationException();
+    }
 
     @Override
     public final BinarySequence getBin(Record rec) {
