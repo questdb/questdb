@@ -44,30 +44,29 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Reads and writes arrays.
- * <p>Arrays are organised as such</p>
+ * Reads and writes arrays. Arrays are organised as follows:
  * <h1>AUX entries</h1>
  * <h2>Data Offset Handling</h2>
- * <p>Like the <code>VARCHAR</code> type, <code>ARRAY</code> uses an <code>N</code>
- * (not <code>N + 1</code> encoding scheme.</p>
+ * <p>Like the <code>VARCHAR</code> type, <code>ARRAY</code> uses <code>N</code>
+ * (not <code>N + 1</code>) entries in the AUX table.</p>
  * <h2>AUX entry format</h2>
- * <p><strong>IMPORTANT!</strong>: Since we store 96 bit entries, every second entry is unaligned for reading
- * via <code>Unsafe.getLong()</code>, as such if you find any <code>{MemoryR,Unsafe}.{get,set}Long</code> calls
- * operating on the aux data in this code, it's probably a bug!</p>
+ * <p><strong>IMPORTANT!</strong>: Since we store 96 bit entries, every other entry
+ * is unaligned for reading via <code>Unsafe.getLong()</code>, as such if you find
+ * any <code>{MemoryR,Unsafe}.{get,set}Long</code> calls operating on the aux data in
+ * this code, it's probably a bug!</p>
  * <pre>
- * 96-bit fixed size entries
- *     * crc_and_offset: 64-bits
- *         * offset_and_hash: long ======
- *             * bits 0 to =47: offset: 48-bit unsigned integer
- *                 * byte count offset into the data vector
- *             * bits 48 to =64: hash: 16-bit
- *                 * CRC-16/XMODEM hash used to speed up equality comparisons
- *     * data_size: 32-bits
+ * 96-bit entries
+ *     * offset_and_hash: 64 bits
+ *         * bits 0 to =47: offset, a 48-bit unsigned integer
+ *             * byte-level offset into the data vector
+ *         * bits 48 to =64: hash, 16-bit
+ *             * CRC-16/XMODEM hash used to speed up equality comparisons
+ *     * data_size: 32 bits
  *         * number of bytes used to the store the array (along with any additional metadata) in the data vector.
  * </pre>
  * <h2>Encoding NULLs</h2>
  * <ul>
- *     <li>A null value has no size.</li>
+ *     <li>A null value has zero size.</li>
  *     <li>The CRC of a null array is 0, so <code>auxLo &gt;&gt; CRC16_SHIFT == 0</code></li>
  *     <li>We however <em>do</em> populate the <code>offset</code> field with
  *     the end of the previous non-null value.</li>
