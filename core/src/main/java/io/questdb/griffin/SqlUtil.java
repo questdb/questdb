@@ -56,6 +56,7 @@ import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.std.datetime.millitime.DateFormatUtils.*;
@@ -788,15 +789,18 @@ public class SqlUtil {
         }
     }
 
-    public static int toNdArrayType(CharSequence tok, int tokPosition) throws SqlException {
-        final int ndArrayType = ColumnType.parseNdArrayType(tok);
+    public static int toNdArrayType(@NotNull CharSequence typeClass, int nDims, int typeClassPos, int dimPos) throws SqlException {
+        if (nDims < 1 || nDims > 16) {
+            throw SqlException.$(dimPos, "array dimensionality out of range: ").put(nDims);
+        }
+        final int ndArrayType = ColumnType.parseNdArrayType(typeClass, nDims);
         if (ndArrayType == -1) {
-            throw SqlException.$(tokPosition, "non-array element type: ").put(tok);
+            throw SqlException.$(typeClassPos, "non-array element type: ").put(typeClass);
         }
         return ndArrayType;
     }
 
-    public static short toPersistedTypeTag(CharSequence tok, int tokPosition) throws SqlException {
+    public static short toPersistedTypeTag(@NotNull CharSequence tok, int tokPosition) throws SqlException {
         final short typeTag = ColumnType.tagOf(tok);
         if (typeTag == -1) {
             throw SqlException.$(tokPosition, "unsupported column type: ").put(tok);
