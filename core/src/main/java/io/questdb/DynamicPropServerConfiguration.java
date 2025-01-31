@@ -42,7 +42,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -108,7 +107,6 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     private final Object reloadLock = new Object();
     private final String root;
     private final AtomicReference<PropServerConfiguration> serverConfig;
-    private long lastModified;
     private long version;
 
     public DynamicPropServerConfiguration(
@@ -155,13 +153,6 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
         this.version = 0;
         this.confPath = Paths.get(getCairoConfiguration().getConfRoot().toString(), Bootstrap.CONFIG_FILE);
         this.configReloadEnabled = serverConfig.isConfigReloadEnabled();
-        try (Path p = new Path()) {
-            // we assume the config file does exist, otherwise we should not
-            // get to this code. This constructor is passed properties object,
-            // loaded from the same file. We are not expecting races here either.
-            p.of(confPath.toString());
-            lastModified = Files.getLastModified(p.$());
-        }
     }
 
     public DynamicPropServerConfiguration(
@@ -371,29 +362,22 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
 
             synchronized (reloadLock) {
                 // Check that the file has been modified since the last trigger
-                long newLastModified = Files.getLastModified(p.$());
-                if (newLastModified > lastModified) {
-                    // If it has, update the cached value
-                    lastModified = newLastModified;
+                // Then load the config properties
 
-                    // Then load the config properties
-                    Properties newProperties = new Properties();
-                    try (InputStream is = java.nio.file.Files.newInputStream(confPath)) {
-                        newProperties.load(is);
-                    } catch (IOException exc) {
-                        LOG.error().$(exc).$();
-                        return false;
-                    }
-
-                    if (updateSupportedProperties(properties, newProperties, dynamicProps, keyResolver, LOG)) {
-                        reload0();
-                        LOG.info().$("reloaded, [file=").$(confPath).$(", modifiedAt=").$ts(newLastModified * 1000).I$();
-                        return true;
-                    }
-                    LOG.info().$("nothing to reload [file=").$(confPath).$(", modifiedAt=").$ts(newLastModified * 1000).I$();
-                } else if (newLastModified == -1) {
-                    LOG.critical().$("Server configuration file is inaccessible! This is dangerous as server will likely not boot on restart. Make sure the current user can access the configuration file [path=").$(confPath).I$();
+                Properties newProperties = new Properties();
+                try (InputStream is = java.nio.file.Files.newInputStream(confPath)) {
+                    newProperties.load(is);
+                } catch (IOException exc) {
+                    LOG.error().$(exc).$();
+                    return false;
                 }
+
+                if (updateSupportedProperties(properties, newProperties, dynamicProps, keyResolver, LOG)) {
+                    reload0();
+                    LOG.info().$("reloaded, [file=").$(confPath).I$();
+                    return true;
+                }
+                LOG.info().$("nothing to reload [file=").$(confPath).I$();
             }
         }
         return false;
