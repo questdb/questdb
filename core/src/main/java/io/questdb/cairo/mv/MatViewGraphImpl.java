@@ -62,35 +62,12 @@ public class MatViewGraphImpl implements MatViewGraph {
         this.microsecondClock = engine.getConfiguration().getMicrosecondClock();
     }
 
-    // must be called after creating the underlying table
-    @Override
-    public MatViewRefreshState addView(MatViewDefinition viewDefinition) {
-        final TableToken matViewToken = viewDefinition.getMatViewToken();
-        final MatViewRefreshState state = new MatViewRefreshState(viewDefinition, matViewTelemetryFacade);
-        final MatViewRefreshState prevState = refreshStateByTableDirName.putIfAbsent(matViewToken.getDirName(), state);
-        // WAL table directories are unique, so we don't expect previous value
-        if (prevState != null) {
-            Misc.free(state);
-            throw CairoException.critical(0).put("mat view state already exists [dir=")
-                    .put(matViewToken.getDirName());
-        }
-
-        final MatViewRefreshList list = getOrCreateDependentViews(viewDefinition.getBaseTableName());
-        final ObjList<TableToken> matViews = list.lockForWrite();
-        try {
-            matViews.add(matViewToken);
-        } finally {
-            list.unlockAfterWrite();
-        }
-        return state;
-    }
-
     @Override
     public MatViewRefreshState addView(TableToken baseTableToken, MatViewDefinition viewDefinition) {
         assert baseTableToken.getTableName().equals(viewDefinition.getBaseTableName());
         final MatViewRefreshState state = addView(viewDefinition);
         // when the view is new and empty, incremental refresh is same as full
-        addToRefreshQueue(baseTableToken, viewDefinition.getMatViewToken(), MatViewRefreshTask.INCREMENTAL_REFRESH);
+        addToQueue(baseTableToken, viewDefinition.getMatViewToken(), MatViewRefreshTask.INCREMENTAL_REFRESH);
         return state;
     }
 
@@ -197,20 +174,20 @@ public class MatViewGraphImpl implements MatViewGraph {
             if (list.notifyOnBaseTableCommitNoLock(seqTxn)) {
                 task.refreshTriggeredTimestamp = microsecondClock.getTicks();
                 refreshTaskQueue.enqueue(task);
-                LOG.info().$("refresh notified table=").$(task.baseTableToken.getTableName()).$();
+                LOG.debug().$("refresh notified [table=").$(task.baseTableToken.getTableName()).I$();
             } else {
-                LOG.info().$("no need to notify to refresh table=").$(task.baseTableToken.getTableName()).$();
+                LOG.debug().$("no need to notify to refresh [table=").$(task.baseTableToken.getTableName()).I$();
             }
         }
     }
 
     @Override
-    public void refresh(TableToken viewTableToken, int operation) {
-        final MatViewRefreshState state = refreshStateByTableDirName.get(viewTableToken.getDirName());
+    public void refresh(TableToken viewToken, int operation) {
+        final MatViewRefreshState state = refreshStateByTableDirName.get(viewToken.getDirName());
         if (state != null && !state.isDropped()) {
             final MatViewRefreshTask task = taskHolder.get();
-            task.baseTableToken = state.getViewDefinition().getMatViewToken();
-            task.viewToken = viewTableToken;
+            task.viewToken = viewToken;
+            task.baseTableToken = null;
             task.operation = operation;
             task.refreshTriggeredTimestamp = microsecondClock.getTicks();
             refreshTaskQueue.enqueue(task);
@@ -222,13 +199,35 @@ public class MatViewGraphImpl implements MatViewGraph {
         return refreshTaskQueue.tryDequeue(task);
     }
 
-    private void addToRefreshQueue(TableToken baseToken, @Nullable TableToken viewToken, int operation) {
+    private void addToQueue(TableToken baseToken, @Nullable TableToken viewToken, int operation) {
         final MatViewRefreshTask task = taskHolder.get();
         task.baseTableToken = baseToken;
         task.viewToken = viewToken;
         task.operation = operation;
         task.refreshTriggeredTimestamp = microsecondClock.getTicks();
         refreshTaskQueue.enqueue(task);
+    }
+
+    // must be called after creating the underlying table
+    private MatViewRefreshState addView(MatViewDefinition viewDefinition) {
+        final TableToken matViewToken = viewDefinition.getMatViewToken();
+        final MatViewRefreshState state = new MatViewRefreshState(viewDefinition, matViewTelemetryFacade);
+        final MatViewRefreshState prevState = refreshStateByTableDirName.putIfAbsent(matViewToken.getDirName(), state);
+        // WAL table directories are unique, so we don't expect previous value
+        if (prevState != null) {
+            Misc.free(state);
+            throw CairoException.critical(0).put("mat view state already exists [dir=")
+                    .put(matViewToken.getDirName());
+        }
+
+        final MatViewRefreshList list = getOrCreateDependentViews(viewDefinition.getBaseTableName());
+        final ObjList<TableToken> matViews = list.lockForWrite();
+        try {
+            matViews.add(matViewToken);
+        } finally {
+            list.unlockAfterWrite();
+        }
+        return state;
     }
 
     @NotNull

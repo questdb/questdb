@@ -105,6 +105,10 @@ public class MatViewRefreshState implements QuietCloseable {
         telemetryFacade.store(MAT_VIEW_INVALIDATE, viewDefinition.getMatViewToken(), -1L, 0L);
     }
 
+    public void markAsValid() {
+        invalid = false;
+    }
+
     public void refreshFail(long refreshTimestamp) {
         assert latch.get();
         lastRefreshTimestamp = refreshTimestamp;

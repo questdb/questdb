@@ -1995,8 +1995,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         final MatViewGraph matViewGraph = engine.getMatViewGraph();
-        // TODO: only INCREMENTAL refresh for now
-        matViewGraph.refresh(tableToken, MatViewRefreshTask.INCREMENTAL_REFRESH);
+        matViewGraph.refresh(tableToken, MatViewRefreshTask.REBUILD);
         compiledQuery.ofRefreshMatView();
     }
 

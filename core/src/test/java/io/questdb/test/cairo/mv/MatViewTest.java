@@ -187,7 +187,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "views"
             );
 
-            // Create another base table instead of the one that was renamed
+            // Create another base table instead of the one that was renamed.
+            // This table is non-WAL, so mat view should be still invalid.
             execute(
                     "create table base_price (" +
                             "sym varchar, price double, ts timestamp" +
@@ -200,7 +201,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             assertSql(
                     "name\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tlast_error\tlast_error_code\tinvalid\n" +
-                            "price_1h\tbase_price\t2024-10-24T18:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tnull\ttrue\n",
+                            "price_1h\tbase_price\t2024-10-24T19:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tnull\ttrue\n",
                     "views"
             );
         });
@@ -647,6 +648,65 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRebuild() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp, extra_col long" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
+            execute(
+                    "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            );
+            drainWalQueue();
+
+            currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.842574Z");
+            MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
+            refreshJob.run(0);
+            drainWalQueue();
+
+            assertSql(
+                    "name\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tlast_error\tlast_error_code\tinvalid\n" +
+                            "price_1h\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tnull\tfalse\n",
+                    "views"
+            );
+            final String expected = "sym\tprice\tts\n" +
+                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n";
+            assertSql(expected, "price_1h order by sym");
+
+            execute("alter table base_price drop column extra_col");
+            drainWalQueue();
+            refreshJob.run(0);
+            drainWalQueue();
+
+            assertSql(
+                    "name\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tlast_error\tlast_error_code\tinvalid\n" +
+                            "price_1h\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tnull\ttrue\n",
+                    "views"
+            );
+
+            execute("refresh materialized view price_1h");
+            refreshJob.run(0);
+            drainWalQueue();
+
+            assertSql(
+                    "name\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tlast_error\tlast_error_code\tinvalid\n" +
+                            "price_1h\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tnull\tfalse\n",
+                    "views"
+            );
+            assertSql(expected, "price_1h order by sym");
+        });
+    }
+
+    @Test
     @Ignore
     public void testSampleByDST() throws Exception {
         assertMemoryLeak(() -> {
@@ -976,17 +1036,19 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testSimpleRefresh() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table base_price (" +
-                    "sym varchar, price double, ts timestamp" +
-                    ") timestamp(ts) partition by DAY WAL"
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
             );
 
             createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
 
-            execute("insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
-                    ",('gbpusd', 1.323, '2024-09-10T12:02')" +
-                    ",('jpyusd', 103.21, '2024-09-10T12:02')" +
-                    ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            execute(
+                    "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
             );
             drainWalQueue();
 
@@ -1002,8 +1064,9 @@ public class MatViewTest extends AbstractCairoTest {
                     "price_1h order by ts, sym"
             );
 
-            execute("insert into base_price values('gbpusd', 1.319, '2024-09-10T12:05')" +
-                    ",('gbpusd', 1.325, '2024-09-10T13:03')"
+            execute(
+                    "insert into base_price values('gbpusd', 1.319, '2024-09-10T12:05')" +
+                            ",('gbpusd', 1.325, '2024-09-10T13:03')"
             );
             drainWalQueue();
 

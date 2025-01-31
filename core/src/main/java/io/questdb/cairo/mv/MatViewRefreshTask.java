@@ -28,9 +28,9 @@ import io.questdb.cairo.TableToken;
 import io.questdb.mp.ValueHolder;
 
 public class MatViewRefreshTask implements ValueHolder<MatViewRefreshTask> {
-    public static final int FULL_REFRESH = 1;
     public static final int INCREMENTAL_REFRESH = 0;
     public static final int INVALIDATE = 2;
+    public static final int REBUILD = 1;
     public static final int UNSET = -1;
     public TableToken baseTableToken;
     public int operation = UNSET;

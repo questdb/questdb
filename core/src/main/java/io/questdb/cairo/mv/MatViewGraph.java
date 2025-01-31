@@ -33,9 +33,6 @@ import org.jetbrains.annotations.TestOnly;
 
 public interface MatViewGraph extends QuietCloseable, Mutable {
 
-    // must be called after creating the underlying table
-    MatViewRefreshState addView(MatViewDefinition viewDefinition);
-
     MatViewRefreshState addView(TableToken baseTableToken, MatViewDefinition viewDefinition);
 
     @TestOnly
