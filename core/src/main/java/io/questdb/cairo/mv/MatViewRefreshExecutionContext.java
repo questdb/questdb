@@ -31,6 +31,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
@@ -60,6 +61,25 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
     @Override
     public @NotNull SqlExecutionCircuitBreaker getCircuitBreaker() {
         return getSimpleCircuitBreaker(); // mat view refresh should use cancellable circuit breaker instead of no-op
+    }
+
+    @Override
+    public TableReader getReader(TableToken tableToken, long version) {
+        if (tableToken.equals(baseTableReader.getTableToken())) {
+            // The base table reader is fixed throughout the mat view refresh.
+            if (version > -1 && baseTableReader.getMetadataVersion() != version) {
+                final int tableId = tableToken.getTableId();
+                throw TableReferenceOutOfDateException.of(
+                        tableToken,
+                        tableId,
+                        tableId,
+                        version,
+                        baseTableReader.getMetadataVersion()
+                );
+            }
+            return baseTableReader;
+        }
+        return getCairoEngine().getReader(tableToken, version);
     }
 
     @Override

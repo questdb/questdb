@@ -1865,7 +1865,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private ExecutionModel compileExecutionModel(SqlExecutionContext executionContext) throws SqlException {
         ExecutionModel model = parser.parse(lexer, executionContext, this);
 
-        if (ExecutionModel.EXPLAIN != model.getModelType()) {
+        if (model.getModelType() != ExecutionModel.EXPLAIN) {
             return compileExecutionModel0(executionContext, model);
         } else {
             ExplainModel explainModel = (ExplainModel) model;
