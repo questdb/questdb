@@ -273,6 +273,8 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.BitSet;
 import io.questdb.std.BufferWindowCharSequence;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntIntHashMap;
@@ -3874,50 +3876,51 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private RecordCursorFactory generateUnpivot(RecordCursorFactory base, QueryModel model, SqlExecutionContext executionContext) throws SqlException
     {
-        if (model.getUnpivotFor() != null && model.getUnpivotFor().size() > 0)   {
-            // We need to build new metadata
-//             SELECT *
-//             FROM monthly_sales UNPIVOT (
-//                 sales
-//                 FOR month IN (jan, feb, mar, apr, may, jun)
-//             );
-            // We need to take the original metadata
-            // Then remove the FOR-IN columns
+        if (model.getUnpivotFor() != null && model.getUnpivotFor().size() == 1)   {
+            assert model.getUnpivotColumns() != null;
+            assert model.getUnpivotColumns().size() == 1; // only support one for now
+
             GenericRecordMetadata unpivotMetadata = new GenericRecordMetadata();
             ExpressionNode forExpr = model.getUnpivotFor().getQuick(0);
 
             boolean addToMetadata = true;
             int valueColumnType = -1;
 
-            IntIntHashMap passthroughIndicesMap = new IntIntHashMap();
-            IntList unpivotForIndices = new IntList();
-            ObjList<CharSequence> unpivotForNames = new ObjList<>();
+            IntIntHashMap passthroughIndicesMap = new IntIntHashMap(); // map from unpivot metadata to base metadata
+            IntList unpivotForIndices = new IntList(); // list of base metadata for column positions
+            ObjList<CharSequence> unpivotForNames = new ObjList<>(); // list of base metadata for column names
+            CharSequenceHashSet forNamesSet = new CharSequenceHashSet();
 
+            // build a set of the for expr names
+            for (int i = 0, n = forExpr.paramCount - 1; i < n; i++) {
+                forNamesSet.add(forExpr.args.getQuick(i).token.toString().toLowerCase());
+            }
+
+            // for every column in base metadata, check what we need to pull up
             for (int i = 0, n = base.getMetadata().getColumnCount(); i < n; i++) {
                 TableColumnMetadata columnMetadata = base.getMetadata().getColumnMetadata(i);
+                String columnNameLc = columnMetadata.getColumnName().toLowerCase();
 
-                for (int j = 0, m = forExpr.paramCount - 1; j < m; j++) {
-                    ExpressionNode forExprArg = forExpr.args.getQuick(j);
-                    if (Chars.equalsIgnoreCase(columnMetadata.getColumnName(), forExprArg.token)) {
-                        addToMetadata = false;
-                        unpivotForIndices.add(i);
-                        unpivotForNames.add(forExprArg.token);
+                // if it is in the name set, add it to our 'for' lists
+                if (forNamesSet.contains(columnNameLc)) {
+                    addToMetadata = false;
+                    unpivotForIndices.add(i);
+                    unpivotForNames.add(columnMetadata.getColumnName());
 
-                        if (valueColumnType == -1) {
-                            valueColumnType = columnMetadata.getColumnType();
-                        } else {
-                            if (valueColumnType != columnMetadata.getColumnType()) {
-                                throw SqlException.$(forExprArg.position,
-                                        "unpivot column type mismatch in `FOR` [expected=")
-                                        .put(ColumnType.nameOf(valueColumnType))
-                                        .put(", actual=")
-                                        .put(ColumnType.nameOf(columnMetadata.getColumnType()));
-                            }
+                    if (valueColumnType == -1) {
+                        valueColumnType = columnMetadata.getColumnType();
+                    } else {
+                        if (valueColumnType != columnMetadata.getColumnType()) {
+                            throw SqlException.$(forExpr.position,
+                                            "unpivot column type mismatch in `FOR` [expected=")
+                                    .put(ColumnType.nameOf(valueColumnType))
+                                    .put(", actual=")
+                                    .put(ColumnType.nameOf(columnMetadata.getColumnType()));
                         }
-                        break;
                     }
                 }
 
+                // else we can add the passthrough column
                 if (addToMetadata) {
                     unpivotMetadata.add(columnMetadata);
                     passthroughIndicesMap.put(unpivotMetadata.getColumnCount() - 1, i);
@@ -3926,7 +3929,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
-
             // add the 'in' column i.e the column that will contain the column names
             ExpressionNode inExpr = forExpr.args.getLast();
             TableColumnMetadata inColumnMetadata = new TableColumnMetadata(inExpr.token.toString(), ColumnType.SYMBOL, false, -1, false, null);
@@ -3934,14 +3936,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             int inColumnIndex = unpivotMetadata.getColumnCount() - 1;
 
-            // add the value column
+            // add the value column which will contain the unpivoted values
             assert model.getUnpivotColumns() != null;
             QueryColumn valueColumn = model.getUnpivotColumns().getQuick(0);
             unpivotMetadata.add(new TableColumnMetadata(valueColumn.getName().toString(), valueColumnType));
 
             int valueColumnIndex = unpivotMetadata.getColumnCount() - 1;
-
-
 
             return new UnpivotRecordCursorFactory(base, unpivotMetadata, inColumnIndex, valueColumnIndex, unpivotForIndices, unpivotForNames, passthroughIndicesMap);
         }

@@ -58,54 +58,27 @@ public class UnpivotTest extends AbstractSqlParserTest {
                    "        Frame forward scan on: monthly_sales\n");
 
            assertSql("empid\tdept\tmonth\tsales\n" +
-                   "1\telectronics\tjan\t1\n" +
-                   "1\telectronics\tfeb\t2\n" +
-                   "1\telectronics\tmar\t3\n" +
-                   "1\telectronics\tapr\t4\n" +
-                   "1\telectronics\tmay\t5\n" +
-                   "1\telectronics\tjun\t6\n" +
-                   "2\tclothes\tjan\t10\n" +
-                   "2\tclothes\tfeb\t20\n" +
-                   "2\tclothes\tmar\t30\n" +
-                   "2\tclothes\tapr\t40\n" +
-                   "2\tclothes\tmay\t50\n" +
-                   "2\tclothes\tjun\t60\n" +
-                   "3\tcars\tjan\t100\n" +
-                   "3\tcars\tfeb\t200\n" +
-                   "3\tcars\tmar\t300\n" +
-                   "3\tcars\tapr\t400\n" +
-                   "3\tcars\tmay\t500\n" +
-                   "3\tcars\tjun\t600\n", unpivot);
+                   "1\telectronics\tJan\t1\n" +
+                   "1\telectronics\tFeb\t2\n" +
+                   "1\telectronics\tMar\t3\n" +
+                   "1\telectronics\tApr\t4\n" +
+                   "1\telectronics\tMay\t5\n" +
+                   "1\telectronics\tJun\t6\n" +
+                   "2\tclothes\tJan\t10\n" +
+                   "2\tclothes\tFeb\t20\n" +
+                   "2\tclothes\tMar\t30\n" +
+                   "2\tclothes\tApr\t40\n" +
+                   "2\tclothes\tMay\t50\n" +
+                   "2\tclothes\tJun\t60\n" +
+                   "3\tcars\tJan\t100\n" +
+                   "3\tcars\tFeb\t200\n" +
+                   "3\tcars\tMar\t300\n" +
+                   "3\tcars\tApr\t400\n" +
+                   "3\tcars\tMay\t500\n" +
+                   "3\tcars\tJun\t600\n", unpivot);
        });
     }
 }
 
 
 
-//
-///**
-// * Rewrite UNPIVOT statements.
-// * FROM monthly_sales UNPIVOT (
-// *     sales
-// *     FOR month IN (jan, feb, mar, apr, may, jun)
-// *  );
-// *  -- becomes
-// * SELECT empid, dept, 'jan' as month, jan as sales FROM monthly_sales
-// * UNION
-// * SELECT empid, dept, 'feb' as month, feb as sales FROM monthly_sales
-// * UNION
-// * SELECT empid, dept, 'mar' as month, mar as sales FROM monthly_sales
-// * UNION
-// * SELECT empid, dept, 'apr' as month, apr as sales FROM monthly_sales
-// * UNION
-// * SELECT empid, dept, 'may' as month, may as sales FROM monthly_sales
-// * UNION
-// * SELECT empid, dept, 'jun' as month, jun as sales FROM monthly_sales;
-// */
-//QueryModel rewriteUnpivot(QueryModel model) throws SqlException {
-//    if (model == null) {
-//        return null;
-//    }
-//
-//    return model;
-//};

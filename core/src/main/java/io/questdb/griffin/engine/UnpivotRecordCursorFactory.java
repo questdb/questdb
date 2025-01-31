@@ -42,6 +42,15 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
 
+
+/**
+ * UNPIVOTs data i.e rotate columns into rows.
+ *
+ * FROM monthly_sales UNPIVOT (
+ *     sales
+ *     FOR month IN (jan, feb, mar, apr, may, jun)
+ *  );
+ */
 public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
     private final RecordMetadata baseMetadata;
@@ -108,23 +117,7 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
         sink.child(base);
     }
 
-    @Override
-    public boolean usesCompiledFilter() {
-        return base.usesCompiledFilter();
-    }
-
-    @Override
-    public boolean usesIndex() {
-        return base.usesIndex();
-    }
-
-    @Override
-    protected void _close() {
-        base.close();
-    }
-
     public class UnpivotRecordCursor implements RecordCursor {
-        private SqlExecutionContext executionContext;
         private RecordCursor baseCursor;
         private Record baseRecord = null;
         private final UnpivotRecord unpivotRecord;
@@ -135,14 +128,13 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         public void of(SqlExecutionContext executionContext) throws SqlException {
-            this.executionContext = executionContext;
             this.baseCursor = base.getCursor(executionContext);
             this.toTop();
         }
 
         @Override
         public void close() {
-
+            baseCursor.close();
         }
 
         @Override
@@ -155,27 +147,34 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
             throw new UnsupportedOperationException();
         }
 
-
-        // We are iterating over each column we need to map.
         @Override
         public boolean hasNext() throws DataUnavailableException {
 
-            // if we aren't on a record yet
+            // if we have no record, we grab one and set column position to 0
             if (baseRecord == null) {
+                // columnPosition == -1, baseRecord == null is a pairing we assert
                 assert columnPosition == -1;
+
                 if (!baseCursor.hasNext()) {
                     return false;
                 }
+                // pull the base record
                 baseRecord = baseCursor.getRecord();
+
+                // make it available to our cursor
                 unpivotRecord.of(baseRecord);
+
+                // bump our -1 position to 0, so we are looking at the first column
                 columnPosition++;
                 return true;
             }
 
+            // on each subsequent call, we shift the column position to the next column we need to unpivot
             if (columnPosition + 1 < unpivotForIndices.size()) {
                 columnPosition++;
                 return true;
             } else {
+                // when we have no columns left, we reset the state and call hasNext() again
                 baseRecord = null;
                 columnPosition = -1;
                 return hasNext();
@@ -189,7 +188,7 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public long size() throws DataUnavailableException {
-            return 0;
+            return -1;
         }
 
         @Override
@@ -200,6 +199,15 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
         }
     }
 
+    /*
+        Handles the mapping of passthrough and unpivoted columns.
+        Three cases:
+            1. col == valueColumnIndex. This is the case where the parent cursor is trying to retrieve an unpivoted value.
+                We look up the right column in our base record and then retrieve the value.
+            2. col == inColumnIndex. This is only for SYMBOL, and means that the parent cursor is trying to retrieve
+                the name of the unpivoted column. We look up the name from our names list.
+            3. Otherwise, column is a passthrough column. We look up its value in the base record and return it.
+     */
     private class UnpivotRecord implements Record {
         Record baseRecord;
 
@@ -207,293 +215,156 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
             this.baseRecord = baseRecord;
         }
 
-        // if it is a regular column, we simply pass it through
-
-        // logic - if it is a value column, we look
-
         @Override
         public BinarySequence getBin(int col) {
-            // if it is the value column, look up the column position in the base record
             if (col == valueColumnIndex) {
                 return baseRecord.getBin(unpivotForIndices.getQuick(cursor.columnPosition));
             }
-
-            // if it is a passthrough
-            int passthrough = passthroughIndicesMap.get(col);
-
-            assert col != -1;
-
-            return baseRecord.getBin(passthrough);
+            return baseRecord.getBin(passthroughIndicesMap.get(col));
         }
 
         @Override
         public long getBinLen(int col) {
-            // if it is the value column, look up the column position in the base record
             if (col == valueColumnIndex) {
                 return baseRecord.getBinLen(unpivotForIndices.getQuick(cursor.columnPosition));
             }
-
-            // if it is a passthrough
-            int passthrough = passthroughIndicesMap.get(col);
-
-            assert col != -1;
-
-            return baseRecord.getBinLen(passthrough);
+            return baseRecord.getBinLen(passthroughIndicesMap.get(col));
         }
 
         @Override
         public boolean getBool(int col) {
-            // if it is the value column, look up the column position in the base record
             if (col == valueColumnIndex) {
                 return baseRecord.getBool(unpivotForIndices.getQuick(cursor.columnPosition));
             }
-
-            // if it is a passthrough
-            int passthrough = passthroughIndicesMap.get(col);
-
-            assert col != -1;
-
-            return baseRecord.getBool(passthrough);
+            return baseRecord.getBool(passthroughIndicesMap.get(col));
         }
 
         @Override
         public byte getByte(int col) {
-            // if it is the value column, look up the column position in the base record
             if (col == valueColumnIndex) {
                 return baseRecord.getByte(unpivotForIndices.getQuick(cursor.columnPosition));
             }
-
-            // if it is a passthrough
-            int passthrough = passthroughIndicesMap.get(col);
-
-            assert col != -1;
-
-            return baseRecord.getByte(passthrough);
+            return baseRecord.getByte(passthroughIndicesMap.get(col));
         }
 
         @Override
         public char getChar(int col) {
-            // if it is the value column, look up the column position in the base record
             if (col == valueColumnIndex) {
                 return baseRecord.getChar(unpivotForIndices.getQuick(cursor.columnPosition));
             }
-
-            // if it is a passthrough
-            int passthrough = passthroughIndicesMap.get(col);
-
-            assert col != -1;
-
-            return baseRecord.getChar(passthrough);
+            return baseRecord.getChar(passthroughIndicesMap.get(col));
         }
 
         @Override
         public double getDouble(int col) {
-            // if it is the value column, look up the column position in the base record
             if (col == valueColumnIndex) {
                 return baseRecord.getDouble(unpivotForIndices.getQuick(cursor.columnPosition));
             }
-
-            // if it is a passthrough
-            int passthrough = passthroughIndicesMap.get(col);
-
-            assert col != -1;
-
-            return baseRecord.getDouble(passthrough);
+            return baseRecord.getDouble(passthroughIndicesMap.get(col));
         }
 
         @Override
         public float getFloat(int col) {
-            // if it is the value column, look up the column position in the base record
             if (col == valueColumnIndex) {
                 return baseRecord.getFloat(unpivotForIndices.getQuick(cursor.columnPosition));
             }
-
-            // if it is a passthrough
-            int passthrough = passthroughIndicesMap.get(col);
-
-            assert col != -1;
-
-            return baseRecord.getFloat(passthrough);
+            return baseRecord.getFloat(passthroughIndicesMap.get(col));
         }
 
         @Override
         public byte getGeoByte(int col) {
-            // if it is the value column, look up the column position in the base record
             if (col == valueColumnIndex) {
                 return baseRecord.getGeoByte(unpivotForIndices.getQuick(cursor.columnPosition));
             }
-
-            // if it is a passthrough
-            int passthrough = passthroughIndicesMap.get(col);
-
-            assert col != -1;
-
-            return baseRecord.getGeoByte(passthrough);
+            return baseRecord.getGeoByte(passthroughIndicesMap.get(col));
         }
 
         @Override
         public int getGeoInt(int col) {
-            // if it is the value column, look up the column position in the base record
             if (col == valueColumnIndex) {
                 return baseRecord.getGeoInt(unpivotForIndices.getQuick(cursor.columnPosition));
             }
-
-            // if it is a passthrough
-            int passthrough = passthroughIndicesMap.get(col);
-
-            assert col != -1;
-
-            return baseRecord.getGeoInt(passthrough);
+            return baseRecord.getGeoInt(passthroughIndicesMap.get(col));
         }
 
         @Override
         public long getGeoLong(int col) {
-            // if it is the value column, look up the column position in the base record
             if (col == valueColumnIndex) {
                 return baseRecord.getGeoLong(unpivotForIndices.getQuick(cursor.columnPosition));
             }
-
-            // if it is a passthrough
-            int passthrough = passthroughIndicesMap.get(col);
-
-            assert col != -1;
-
-            return baseRecord.getGeoLong(passthrough);
+            return baseRecord.getGeoLong(passthroughIndicesMap.get(col));
         }
 
         @Override
         public short getGeoShort(int col) {
-            // if it is the value column, look up the column position in the base record
             if (col == valueColumnIndex) {
                 return baseRecord.getGeoShort(unpivotForIndices.getQuick(cursor.columnPosition));
             }
-
-            // if it is a passthrough
-            int passthrough = passthroughIndicesMap.get(col);
-
-            assert col != -1;
-
-            return baseRecord.getGeoShort(passthrough);
+            return baseRecord.getGeoShort(passthroughIndicesMap.get(col));
         }
 
         @Override
         public int getIPv4(int col) {
-            // if it is the value column, look up the column position in the base record
             if (col == valueColumnIndex) {
                 return baseRecord.getIPv4(unpivotForIndices.getQuick(cursor.columnPosition));
             }
-
-            // if it is a passthrough
-            int passthrough = passthroughIndicesMap.get(col);
-
-            assert col != -1;
-
-            return baseRecord.getIPv4(passthrough);
+            return baseRecord.getIPv4(passthroughIndicesMap.get(col));
         }
 
         @Override
         public int getInt(int col) {
-            // if it is the value column, look up the column position in the base record
             if (col == valueColumnIndex) {
                 return baseRecord.getInt(unpivotForIndices.getQuick(cursor.columnPosition));
             }
-
-            // if it is a passthrough
-            int passthrough = passthroughIndicesMap.get(col);
-
-            assert col != -1;
-
-            return baseRecord.getInt(passthrough);
+            return baseRecord.getInt(passthroughIndicesMap.get(col));
         }
 
         @Override
         public long getLong(int col) {
-            // if it is the value column, look up the column position in the base record
             if (col == valueColumnIndex) {
                 return baseRecord.getLong(unpivotForIndices.getQuick(cursor.columnPosition));
             }
-
-            // if it is a passthrough
-            int passthrough = passthroughIndicesMap.get(col);
-
-            assert col != -1;
-
-            return baseRecord.getLong(passthrough);
+            return baseRecord.getLong(passthroughIndicesMap.get(col));
         }
 
         @Override
         public long getLong128Hi(int col) {
-            // if it is the value column, look up the column position in the base record
             if (col == valueColumnIndex) {
                 return baseRecord.getLong128Hi(unpivotForIndices.getQuick(cursor.columnPosition));
             }
-
-            // if it is a passthrough
-            int passthrough = passthroughIndicesMap.get(col);
-
-            assert col != -1;
-
-            return baseRecord.getLong128Hi(passthrough);
+            return baseRecord.getLong128Hi(passthroughIndicesMap.get(col));
         }
 
         @Override
         public long getLong128Lo(int col) {
-            // if it is the value column, look up the column position in the base record
             if (col == valueColumnIndex) {
                 return baseRecord.getLong128Lo(unpivotForIndices.getQuick(cursor.columnPosition));
             }
-
-            // if it is a passthrough
-            int passthrough = passthroughIndicesMap.get(col);
-
-            assert col != -1;
-
-            return baseRecord.getLong128Lo(passthrough);
+            return baseRecord.getLong128Lo(passthroughIndicesMap.get(col));
         }
 
         @Override
         public void getLong256(int col, CharSink<?> sink) {
-            // if it is the value column, look up the column position in the base record
             if (col == valueColumnIndex) {
                 baseRecord.getLong256(unpivotForIndices.getQuick(cursor.columnPosition), sink);
             }
-
-            // if it is a passthrough
-            int passthrough = passthroughIndicesMap.get(col);
-
-            assert col != -1;
-
-            baseRecord.getLong256(passthrough, sink);
+            baseRecord.getLong256(passthroughIndicesMap.get(col), sink);
         }
 
         @Override
         public Long256 getLong256A(int col) {
-            // if it is the value column, look up the column position in the base record
             if (col == valueColumnIndex) {
                 return baseRecord.getLong256A(unpivotForIndices.getQuick(cursor.columnPosition));
             }
-
-            // if it is a passthrough
-            int passthrough = passthroughIndicesMap.get(col);
-
-            assert col != -1;
-
-            return baseRecord.getLong256A(passthrough);
+            return baseRecord.getLong256A(passthroughIndicesMap.get(col));
         }
 
         @Override
         public Long256 getLong256B(int col) {
-            // if it is the value column, look up the column position in the base record
             if (col == valueColumnIndex) {
                 return baseRecord.getLong256B(unpivotForIndices.getQuick(cursor.columnPosition));
             }
-
-            // if it is a passthrough
-            int passthrough = passthroughIndicesMap.get(col);
-
-            assert col != -1;
-
-            return baseRecord.getLong256B(passthrough);
+            return baseRecord.getLong256B(passthroughIndicesMap.get(col));
         }
 
         @Override
@@ -503,163 +374,93 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public short getShort(int col) {
-            // if it is the value column, look up the column position in the base record
             if (col == valueColumnIndex) {
                 return baseRecord.getShort(unpivotForIndices.getQuick(cursor.columnPosition));
             }
-
-            // if it is a passthrough
-            int passthrough = passthroughIndicesMap.get(col);
-
-            assert col != -1;
-
-            return baseRecord.getShort(passthrough);
+            return baseRecord.getShort(passthroughIndicesMap.get(col));
         }
 
 
         @Override
         public @Nullable CharSequence getStrA(int col) {
-            // if it is the value column, look up the column position in the base record
             if (col == valueColumnIndex) {
                 return baseRecord.getStrA(unpivotForIndices.getQuick(cursor.columnPosition));
             }
-
-            // if it is a passthrough
-            int passthrough = passthroughIndicesMap.get(col);
-
-            assert col != -1;
-
-            return baseRecord.getStrA(passthrough);
+            return baseRecord.getStrA(passthroughIndicesMap.get(col));
         }
 
         @Override
         public CharSequence getStrB(int col) {
-            // if it is the value column, look up the column position in the base record
             if (col == valueColumnIndex) {
                 return baseRecord.getStrB(unpivotForIndices.getQuick(cursor.columnPosition));
             }
-
-            // if it is a passthrough
-            int passthrough = passthroughIndicesMap.get(col);
-
-            assert col != -1;
-
-            return baseRecord.getStrB(passthrough);
+            return baseRecord.getStrB(passthroughIndicesMap.get(col));
         }
 
         @Override
         public int getStrLen(int col) {
-            // if it is the value column, look up the column position in the base record
             if (col == valueColumnIndex) {
                 return baseRecord.getStrLen(unpivotForIndices.getQuick(cursor.columnPosition));
             }
-
-            // if it is a passthrough
-            int passthrough = passthroughIndicesMap.get(col);
-
-            assert col != -1;
-
-            return baseRecord.getStrLen(passthrough);
+            return baseRecord.getStrLen(passthroughIndicesMap.get(col));
         }
 
         @Override
         public CharSequence getSymA(int col) {
-            // if it is the value column, look up the column position in the base record
             if (col == valueColumnIndex) {
                 return baseRecord.getSymA(unpivotForIndices.getQuick(cursor.columnPosition));
             }
 
-            // if it is the name column
             if (col == inColumnIndex) {
                 return unpivotForNames.getQuick(cursor.columnPosition);
             }
 
-            // if it is a passthrough
-            int passthrough = passthroughIndicesMap.get(col);
-
-            assert col != -1;
-
-            return baseRecord.getSymA(passthrough);
+            return baseRecord.getSymA(passthroughIndicesMap.get(col));
         }
 
         @Override
         public CharSequence getSymB(int col) {
-            // if it is the value column, look up the column position in the base record
             if (col == valueColumnIndex) {
                 return baseRecord.getSymB(unpivotForIndices.getQuick(cursor.columnPosition));
             }
 
-            // if it is the name column
             if (col == inColumnIndex) {
                 return unpivotForNames.getQuick(cursor.columnPosition);
             }
 
-            // if it is a passthrough
-            int passthrough = passthroughIndicesMap.get(col);
-
-            assert col != -1;
-
-            return baseRecord.getSymB(passthrough);
+            return baseRecord.getSymB(passthroughIndicesMap.get(col));
         }
 
         @Override
         public long getTimestamp(int col) {
-            // if it is the value column, look up the column position in the base record
             if (col == valueColumnIndex) {
                 return baseRecord.getTimestamp(unpivotForIndices.getQuick(cursor.columnPosition));
             }
-
-            // if it is a passthrough
-            int passthrough = passthroughIndicesMap.get(col);
-
-            assert col != -1;
-
-            return baseRecord.getTimestamp(passthrough);
+            return baseRecord.getTimestamp(passthroughIndicesMap.get(col));
         }
 
         @Override
         public @Nullable Utf8Sequence getVarcharA(int col) {
-            // if it is the value column, look up the column position in the base record
             if (col == valueColumnIndex) {
                 return baseRecord.getVarcharA(unpivotForIndices.getQuick(cursor.columnPosition));
             }
-
-            // if it is a passthrough
-            int passthrough = passthroughIndicesMap.get(col);
-
-            assert col != -1;
-
-            return baseRecord.getVarcharA(passthrough);
+            return baseRecord.getVarcharA(passthroughIndicesMap.get(col));
         }
 
         @Override
         public @Nullable Utf8Sequence getVarcharB(int col) {
-            // if it is the value column, look up the column position in the base record
             if (col == valueColumnIndex) {
                 return baseRecord.getVarcharB(unpivotForIndices.getQuick(cursor.columnPosition));
             }
-
-            // if it is a passthrough
-            int passthrough = passthroughIndicesMap.get(col);
-
-            assert col != -1;
-
-            return baseRecord.getVarcharB(passthrough);
+            return baseRecord.getVarcharB(passthroughIndicesMap.get(col));
         }
 
         @Override
         public int getVarcharSize(int col) {
-            // if it is the value column, look up the column position in the base record
             if (col == valueColumnIndex) {
                 return baseRecord.getVarcharSize(unpivotForIndices.getQuick(cursor.columnPosition));
             }
-
-            // if it is a passthrough
-            int passthrough = passthroughIndicesMap.get(col);
-
-            assert col != -1;
-
-            return baseRecord.getVarcharSize(passthrough);
+            return baseRecord.getVarcharSize(passthroughIndicesMap.get(col));
         }
     }
 }
