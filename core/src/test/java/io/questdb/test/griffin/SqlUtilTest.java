@@ -48,6 +48,8 @@ import org.junit.Test;
 
 import java.util.concurrent.TimeUnit;
 
+import static io.questdb.cairo.ColumnType.*;
+
 public class SqlUtilTest {
 
     @Test
@@ -167,6 +169,44 @@ public class SqlUtilTest {
         Assert.assertEquals(0, SqlUtil.implicitCastLongAsByte(Numbers.LONG_NULL));
         Assert.assertEquals(Numbers.INT_NULL, SqlUtil.implicitCastLongAsInt(Numbers.LONG_NULL));
         Assert.assertEquals(0, SqlUtil.implicitCastLongAsShort(Numbers.LONG_NULL));
+    }
+
+    @Test
+    public void testNdArrayTypeCodecInvalid() {
+        try {
+            SqlUtil.toNdArrayType("nt", 1, 42, 71);
+            Assert.fail("'nt' accepted as array element type");
+        } catch (SqlException e) {
+            Assert.assertEquals("[42] non-array element type: nt", e.getMessage());
+        }
+        try {
+            SqlUtil.toNdArrayType("in", 1, 42, 71);
+            Assert.fail("'in' accepted as array element type");
+        } catch (SqlException e) {
+            Assert.assertEquals("[42] non-array element type: in", e.getMessage());
+        }
+        try {
+            SqlUtil.toNdArrayType("int", 17, 42, 71);
+        } catch (SqlException e) {
+            Assert.assertEquals("[71] array dimensionality out of range: 17", e.getMessage());
+        }
+        try {
+            SqlUtil.toNdArrayType("int", 0, 42, 71);
+        } catch (SqlException e) {
+            Assert.assertEquals("[71] array dimensionality out of range: 0", e.getMessage());
+        }
+    }
+
+    @Test
+    public void testNdArrayTypeCodecValid() throws SqlException {
+        int nDims = 0;
+        assertNdArrayType("boolean", ++nDims, 'u', 0);
+        assertNdArrayType("byte", ++nDims, 'i', 3);
+        assertNdArrayType("short", ++nDims, 'i', 4);
+        assertNdArrayType("int", ++nDims, 'i', 5);
+        assertNdArrayType("long", ++nDims, 'i', 6);
+        assertNdArrayType("float", ++nDims, 'f', 5);
+        assertNdArrayType("double", ++nDims, 'f', 6);
     }
 
     @Test
@@ -685,6 +725,15 @@ public class SqlUtilTest {
         } catch (ImplicitCastException e) {
             TestUtils.assertEquals("inconvertible value: `hello` [VARCHAR -> SHORT]", e.getFlyweightMessage());
         }
+    }
+
+    private static void assertNdArrayType(
+            String qdbType, int nDims, char expectedTypeClass, int expectedPrecision
+    ) throws SqlException {
+        int encodedType = SqlUtil.toNdArrayType(qdbType, nDims, 0, 0);
+        Assert.assertEquals(expectedTypeClass, decodeNdArrayElementTypeClass(encodedType));
+        Assert.assertEquals(expectedPrecision, decodeNdArrayElementTypePrecision(encodedType));
+        Assert.assertEquals(nDims, decodeNdArrayDimensionality(encodedType));
     }
 
     private void testImplicitCastCharAsGeoHashInvalidChar0(char c) {
