@@ -22,23 +22,23 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.ndarr;
+package io.questdb.cairo.arr;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.DirectIntSlice;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
-public class NdArrayJsonSerializer {
-    private NdArrayJsonSerializer() {
+public class ArrayJsonSerializer {
+    private ArrayJsonSerializer() {
     }
 
     public static void serialize(
             @NotNull CharSink<?> sink,
-            @NotNull NdArrayView array,
-            @NotNull NdArrayRowMajorTraversal traversal,
+            @NotNull ArrayView array,
+            @NotNull ArrayRowMajorTraversal traversal,
             int columnType) {
-        assert ColumnType.isNdArray(columnType);
+        assert ColumnType.isArray(columnType);
         if (array.isNull()) {
             sink.putAscii("[]");
             return;
@@ -55,9 +55,9 @@ public class NdArrayJsonSerializer {
         }
     }
 
-    private static void writeElement(CharSink<?> sink, @NotNull NdArrayView array, DirectIntSlice coordinates, int columnType) {
-        final int precision = ColumnType.decodeNdArrayElementTypePrecision(columnType);
-        final char typeClass = ColumnType.decodeNdArrayElementTypeClass(columnType);
+    private static void writeElement(CharSink<?> sink, @NotNull ArrayView array, DirectIntSlice coordinates, int columnType) {
+        final int precision = ColumnType.decodeArrayElementTypePrecision(columnType);
+        final char typeClass = ColumnType.decodeArrayElementTypeClass(columnType);
         switch (precision) {
             case 0:
                 assert typeClass == 'u';

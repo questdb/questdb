@@ -120,7 +120,7 @@ open module io.questdb {
     exports io.questdb.std.filewatch;
     exports io.questdb.griffin.engine.table.parquet;
     exports io.questdb.cutlass.pgwire.modern;
-    exports io.questdb.cairo.ndarr;
+    exports io.questdb.cairo.arr;
 
     provides io.questdb.griffin.FunctionFactory with
 

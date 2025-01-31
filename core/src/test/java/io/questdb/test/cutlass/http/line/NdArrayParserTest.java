@@ -25,10 +25,10 @@
 package io.questdb.test.cutlass.http.line;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ndarr.NdArrayJsonSerializer;
-import io.questdb.cairo.ndarr.NdArrayRowMajorTraversal;
-import io.questdb.cairo.ndarr.NdArrayValuesSlice;
-import io.questdb.cairo.ndarr.NdArrayView;
+import io.questdb.cairo.arr.ArrayJsonSerializer;
+import io.questdb.cairo.arr.ArrayRowMajorTraversal;
+import io.questdb.cairo.arr.ArrayValuesSlice;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode;
 import io.questdb.cutlass.line.tcp.NdArrayParser;
 import io.questdb.cutlass.line.tcp.NdArrayParser.ParseException;
@@ -200,7 +200,7 @@ public class NdArrayParserTest {
 
     @Test
     public void testNullArray() throws ParseException {
-        NdArrayValuesSlice values = parseAndGetValues("[]", new int[0]);
+        ArrayValuesSlice values = parseAndGetValues("[]", new int[0]);
         assertEquals("values should be empty", 0, values.size());
     }
 
@@ -233,16 +233,16 @@ public class NdArrayParserTest {
         assertArrayEquals(expected, actual.toArray());
     }
 
-    private NdArrayValuesSlice parseAndGetValues(String literal, int[] expectedShape) throws ParseException {
+    private ArrayValuesSlice parseAndGetValues(String literal, int[] expectedShape) throws ParseException {
         DirectUtf8String arrayStr = utf8String(sink, literal);
         parser.parse(arrayStr);
-        NdArrayView view = parser.getView();
+        ArrayView view = parser.getView();
         assertSliceEquals(view.getShape(), expectedShape);
         return view.getValues();
     }
 
     private void testByteLiteral(String literal, int[] expectedShape, int[] expectedValues) throws ParseException {
-        NdArrayValuesSlice values = parseAndGetValues(literal, expectedShape);
+        ArrayValuesSlice values = parseAndGetValues(literal, expectedShape);
         assertEquals("values don't have the expected size", expectedValues.length, values.size());
         for (int i = 0; i < expectedValues.length; i++) {
             assertEquals(expectedValues[i], values.getByte(i));
@@ -250,7 +250,7 @@ public class NdArrayParserTest {
     }
 
     private void testDoubleLiteral(String literal, int[] expectedShape, double[] expectedValues) throws ParseException {
-        NdArrayValuesSlice values = parseAndGetValues(literal, expectedShape);
+        ArrayValuesSlice values = parseAndGetValues(literal, expectedShape);
         assertEquals("values don't have the expected size",
                 Double.BYTES * expectedValues.length, values.size());
         for (int i = 0; i < expectedValues.length; i++) {
@@ -259,7 +259,7 @@ public class NdArrayParserTest {
     }
 
     private void testFloatLiteral(String literal, int[] expectedShape, float[] expectedValues) throws ParseException {
-        NdArrayValuesSlice values = parseAndGetValues(literal, expectedShape);
+        ArrayValuesSlice values = parseAndGetValues(literal, expectedShape);
         assertEquals("values don't have the expected size",
                 Float.BYTES * expectedValues.length, values.size());
         for (int i = 0; i < expectedValues.length; i++) {
@@ -268,7 +268,7 @@ public class NdArrayParserTest {
     }
 
     private void testIntLiteral(String literal, int[] expectedShape, int[] expectedValues) throws ParseException {
-        NdArrayValuesSlice values = parseAndGetValues(literal, expectedShape);
+        ArrayValuesSlice values = parseAndGetValues(literal, expectedShape);
         assertEquals("values don't have the expected size",
                 Integer.BYTES * expectedValues.length, values.size());
         for (int i = 0; i < expectedValues.length; i++) {
@@ -290,18 +290,18 @@ public class NdArrayParserTest {
         int columnType = ColumnType.encodeNdArrayTypeFromScalar(ColumnType.INT, 1);
         DirectUtf8String arrayStr = utf8String(sink, literal);
         parser.parse(arrayStr);
-        NdArrayView array = parser.getView();
-        try (NdArrayRowMajorTraversal traversal = new NdArrayRowMajorTraversal()) {
+        ArrayView array = parser.getView();
+        try (ArrayRowMajorTraversal traversal = new ArrayRowMajorTraversal()) {
             traversal.of(array);
             sink.clear();
-            NdArrayJsonSerializer.serialize(sink, array, traversal, columnType);
+            ArrayJsonSerializer.serialize(sink, array, traversal, columnType);
         }
         String expectedJson = "[" + literal.substring(3);
         assertEquals("JSON doesn't match the array literal", expectedJson, sink.toString());
     }
 
     private void testLongLiteral(String literal, int[] expectedShape, long[] expectedValues) throws ParseException {
-        NdArrayValuesSlice values = parseAndGetValues(literal, expectedShape);
+        ArrayValuesSlice values = parseAndGetValues(literal, expectedShape);
         assertEquals("values don't have the expected size",
                 Long.BYTES * expectedValues.length, values.size());
         for (int i = 0; i < expectedValues.length; i++) {
@@ -310,7 +310,7 @@ public class NdArrayParserTest {
     }
 
     private void testShortLiteral(String literal, int[] expectedShape, int[] expectedValues) throws ParseException {
-        NdArrayValuesSlice values = parseAndGetValues(literal, expectedShape);
+        ArrayValuesSlice values = parseAndGetValues(literal, expectedShape);
         assertEquals("values don't have the expected size",
                 Short.BYTES * expectedValues.length, values.size());
         for (int i = 0; i < expectedValues.length; i++) {

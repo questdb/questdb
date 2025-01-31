@@ -25,9 +25,9 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ndarr.NdArrayBuffers;
-import io.questdb.cairo.ndarr.NdArrayMeta;
-import io.questdb.cairo.ndarr.NdArrayView;
+import io.questdb.cairo.arr.ArrayBuffers;
+import io.questdb.cairo.arr.ArrayMeta;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.IntList;
@@ -74,9 +74,9 @@ public class NdArrayParser implements QuietCloseable {
     // determined. If so, the size of the element must match that; otherwise we're
     // parsing a jagged array, which is not allowed. If the size hasn't yet been
     // determined, we set it to the size of the current element.
-    private final NdArrayBuffers bufs = new NdArrayBuffers();
+    private final ArrayBuffers bufs = new ArrayBuffers();
     private final DirectUtf8String input = new DirectUtf8String();
-    private final NdArrayView view = new NdArrayView();
+    private final ArrayView view = new ArrayView();
 
     /**
      * Address where the input string starts. Used to calculate the current position.
@@ -92,7 +92,7 @@ public class NdArrayParser implements QuietCloseable {
      * Obtains the parsed result.
      * <p>Throws an exception if {@link #parse(DirectUtf8String)} didn't succeed.</p>
      */
-    public @NotNull NdArrayView getView() {
+    public @NotNull ArrayView getView() {
         if (view.getType() == ColumnType.UNDEFINED)
             throw new IllegalStateException("Parsing error");
         return view;
@@ -192,8 +192,8 @@ public class NdArrayParser implements QuietCloseable {
      * </pre>
      */
     private void parseElements() throws ParseException {
-        final char typeClass = ColumnType.decodeNdArrayElementTypeClass(bufs.type);
-        final int typePrecision = ColumnType.decodeNdArrayElementTypePrecision(bufs.type);
+        final char typeClass = ColumnType.decodeArrayElementTypeClass(bufs.type);
+        final int typePrecision = ColumnType.decodeArrayElementTypePrecision(bufs.type);
         final int typeBitSize = 1 << typePrecision;
         final DirectIntList shape = bufs.shape;
         final DirectIntList levelCounts = bufs.currCoords;
@@ -382,7 +382,7 @@ public class NdArrayParser implements QuietCloseable {
     }
 
     private void setArray() {
-        NdArrayMeta.setDefaultStrides(bufs.shape.asSlice(), bufs.strides);
+        ArrayMeta.setDefaultStrides(bufs.shape.asSlice(), bufs.strides);
         bufs.updateView(view);
     }
 

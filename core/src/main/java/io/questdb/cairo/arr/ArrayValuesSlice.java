@@ -22,17 +22,17 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.ndarr;
+package io.questdb.cairo.arr;
 
 import io.questdb.std.Unsafe;
 import io.questdb.std.bytes.DirectSequence;
 
 /**
- * A flyweight to an immutable byte sequence containing flattened NdArray values.
+ * A flyweight to an immutable byte sequence containing flattened Array values.
  * <p><strong>IMPORTANT</strong>: The values are accessed by element index,
  * not by address offset.</p>
  */
-public class NdArrayValuesSlice implements DirectSequence {
+public class ArrayValuesSlice implements DirectSequence {
     private long ptr = 0;
     private int size = 0;
 
@@ -91,7 +91,7 @@ public class NdArrayValuesSlice implements DirectSequence {
         return Unsafe.getUnsafe().getShort(addr);
     }
 
-    public NdArrayValuesSlice of(long ptr, int size) {
+    public ArrayValuesSlice of(long ptr, int size) {
         assert ptr > 0;
         assert size > 0;
         this.ptr = ptr;

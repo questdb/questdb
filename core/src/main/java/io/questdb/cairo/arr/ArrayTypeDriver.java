@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.ndarr;
+package io.questdb.cairo.arr;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeDriver;
@@ -96,7 +96,7 @@ import org.jetbrains.annotations.Nullable;
  *                {4, 5, 6}}
  *           The numbers are recorded in the order 1, 2, 3, 4, 5, 6.
  *         * its size is calculated as:
- *               bits_per_elem = pow(2, ColumnType.getNdArrayElementTypePrecision(type))
+ *               bits_per_elem = pow(2, ColumnType.getArrayElementTypePrecision(type))
  *               n_bytes_size = (bits_per_elem * product(all_dimensions) + 7) / 8
  *           where `product(all_dimensions)` is each dimension multiplied
  *
@@ -112,15 +112,15 @@ import org.jetbrains.annotations.Nullable;
  *         * enough padding for `int` alignment, ready for the next record (see START ALIGNMENT note).
  * </pre>
  */
-public class NdArrayTypeDriver implements ColumnTypeDriver {
+public class ArrayTypeDriver implements ColumnTypeDriver {
     public static final int CRC16_SHIFT = 48;
-    public static final NdArrayTypeDriver INSTANCE = new NdArrayTypeDriver();
+    public static final ArrayTypeDriver INSTANCE = new ArrayTypeDriver();
     public static final long OFFSET_MAX = (1L << 48) - 1L;
     private static final int ND_ARRAY_AUX_WIDTH_BYTES = 3 * Integer.BYTES;
     private static final long U32_MASK = 0xFFFFFFFFL;
 
     // TODO(amunra): Take traversal as arg, drop use of thread local.
-    public static void appendValue(@NotNull MemoryA auxMem, @NotNull MemoryA dataMem, @Nullable NdArrayView array) {
+    public static void appendValue(@NotNull MemoryA auxMem, @NotNull MemoryA dataMem, @Nullable ArrayView array) {
         if ((array == null) || array.isNull()) {
             appendNullImpl(auxMem, dataMem);
             return;
@@ -393,7 +393,7 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
     /**
      * Determine if the values buffer's values inside the array are all byte aligned.
      */
-    private static boolean isByteAligned(int bitWidth, @NotNull NdArrayView array) {
+    private static boolean isByteAligned(int bitWidth, @NotNull ArrayView array) {
         return array.getValuesOffset() * bitWidth % 8 == 0;
     }
 
@@ -436,13 +436,13 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
      *
      * @return the CRC16/XModem value
      **/
-    private static short writeDataEntry(@NotNull MemoryA dataMem, @NotNull NdArrayView array) {
+    private static short writeDataEntry(@NotNull MemoryA dataMem, @NotNull ArrayView array) {
         writeShape(dataMem, array.getShape());
 
         // We could be storing values of different datatypes.
         // We thus need to align accordingly. I.e., if we store doubles, we need to align on an 8-byte boundary.
         // for shorts, it's on a 2-byte boundary. For booleans, we align to the byte.
-        final int bitWidth = 1 << ColumnType.decodeNdArrayElementTypePrecision(array.getType());
+        final int bitWidth = 1 << ColumnType.decodeArrayElementTypePrecision(array.getType());
         final int requiredByteAlignment = (bitWidth + 7) / 8;
         padTo(dataMem, requiredByteAlignment);
         final short crc = writeValues(dataMem, array, bitWidth);
@@ -451,7 +451,7 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
         return crc;
     }
 
-    private static short writeFlatValueBytes(@NotNull MemoryA dataMem, @NotNull NdArrayView array, int bitWidth, NdArrayValuesSlice values) {
+    private static short writeFlatValueBytes(@NotNull MemoryA dataMem, @NotNull ArrayView array, int bitWidth, ArrayValuesSlice values) {
         final int requiredByteAlignment = (bitWidth + 7) / 8;
         final int bytesToSkip = skipsToAlign(array.getValuesOffset(), requiredByteAlignment);
         final short cachedCrc = array.getCachedCrc();
@@ -486,8 +486,8 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
         }
     }
 
-    private static short writeStrided1ByteValues(@NotNull MemoryA dataMem, @NotNull NdArrayView array) {
-        NdArrayRowMajorTraversal t = NdArrayRowMajorTraversal.LOCAL.get().of(array);
+    private static short writeStrided1ByteValues(@NotNull MemoryA dataMem, @NotNull ArrayView array) {
+        ArrayRowMajorTraversal t = ArrayRowMajorTraversal.LOCAL.get().of(array);
         DirectIntSlice coordinates;
         final short cachedCrc = array.getCachedCrc();
         if (cachedCrc != 0) {
@@ -507,8 +507,8 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
         }
     }
 
-    private static short writeStrided2ByteValues(@NotNull MemoryA dataMem, @NotNull NdArrayView array) {
-        NdArrayRowMajorTraversal t = NdArrayRowMajorTraversal.LOCAL.get().of(array);
+    private static short writeStrided2ByteValues(@NotNull MemoryA dataMem, @NotNull ArrayView array) {
+        ArrayRowMajorTraversal t = ArrayRowMajorTraversal.LOCAL.get().of(array);
         DirectIntSlice coordinates;
         final short cachedCrc = array.getCachedCrc();
         if (cachedCrc != 0) {
@@ -531,8 +531,8 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
     /**
      * Write INT or FLOAT -- works for both since we're just doing bit-wise copies.
      */
-    private static short writeStrided4ByteValues(@NotNull MemoryA dataMem, @NotNull NdArrayView array) {
-        NdArrayRowMajorTraversal t = NdArrayRowMajorTraversal.LOCAL.get().of(array);
+    private static short writeStrided4ByteValues(@NotNull MemoryA dataMem, @NotNull ArrayView array) {
+        ArrayRowMajorTraversal t = ArrayRowMajorTraversal.LOCAL.get().of(array);
         DirectIntSlice coordinates;
         final short cachedCrc = array.getCachedCrc();
         if (cachedCrc != 0) {
@@ -556,8 +556,8 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
     /**
      * Write LONG or DOUBLE -- works for both since we're just doing bit-wise copies.
      */
-    private static short writeStrided8ByteValues(@NotNull MemoryA dataMem, @NotNull NdArrayView array) {
-        NdArrayRowMajorTraversal t = NdArrayRowMajorTraversal.LOCAL.get().of(array);
+    private static short writeStrided8ByteValues(@NotNull MemoryA dataMem, @NotNull ArrayView array) {
+        ArrayRowMajorTraversal t = ArrayRowMajorTraversal.LOCAL.get().of(array);
         DirectIntSlice coordinates;
         final short cachedCrc = array.getCachedCrc();
         if (cachedCrc != 0) {
@@ -577,11 +577,11 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
         }
     }
 
-    private static short writeStridedBooleanValues(@NotNull MemoryA dataMem, @NotNull NdArrayView array) {
+    private static short writeStridedBooleanValues(@NotNull MemoryA dataMem, @NotNull ArrayView array) {
         // Accumulate the bits into bytes, then write them.
         byte buf = 0;
         int bitIndex = 0;
-        NdArrayRowMajorTraversal t = NdArrayRowMajorTraversal.LOCAL.get().of(array);
+        ArrayRowMajorTraversal t = ArrayRowMajorTraversal.LOCAL.get().of(array);
         DirectIntSlice coordinates;
         final short cachedCrc = array.getCachedCrc();
         if (cachedCrc != 0) {
@@ -620,7 +620,7 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
         }
     }
 
-    private static short writeStridedByteAlignedValues(int byteWidth, @NotNull MemoryA dataMem, @NotNull NdArrayView array) {
+    private static short writeStridedByteAlignedValues(int byteWidth, @NotNull MemoryA dataMem, @NotNull ArrayView array) {
         // Yes, the code would be shorter written by striding first, then switching on type,
         // but this way we avoid conditionals inside a loop.
         switch (byteWidth) {
@@ -640,8 +640,8 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
     /**
      * Writes the values and returns the CRC16 value
      */
-    private static short writeValues(@NotNull MemoryA dataMem, @NotNull NdArrayView array, int bitWidth) {
-        final NdArrayValuesSlice values = array.getValues();
+    private static short writeValues(@NotNull MemoryA dataMem, @NotNull ArrayView array, int bitWidth) {
+        final ArrayValuesSlice values = array.getValues();
         final short crc;
         if (array.hasDefaultStrides() && isByteAligned(bitWidth, array)) {
             crc = writeFlatValueBytes(dataMem, array, bitWidth, values);

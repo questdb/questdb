@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.ndarr;
+package io.questdb.cairo.arr;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.DirectIntList;
@@ -35,7 +35,7 @@ import org.jetbrains.annotations.NotNull;
  * <p>Note that, unlike in most array implementations,
  * the strides are defined in element space, thus are the same regardless of type.</p>
  */
-public class NdArrayMeta {  // TODO(amunra): Rename to `NdArrayMetaUtils`.
+public class ArrayMeta {  // TODO(amunra): Rename to `ArrayMetaUtils`.
 
     /**
      * Maximum size of any given dimension.
@@ -51,15 +51,15 @@ public class NdArrayMeta {  // TODO(amunra): Rename to `NdArrayMetaUtils`.
      */
     public static final int DIM_MAX_SIZE = (1 << 28) - 1;
 
-    private NdArrayMeta() {
+    private ArrayMeta() {
     }
 
     /**
      * For a given "flat" element count and nd array type, compute the number of bytes required to store.
      */
     public static int calcRequiredValuesByteSize(int type, int elementsCount) {
-        assert ColumnType.isNdArray(type) : "type class is not NDArray";
-        final int bitWidth = Math.max(8, 1 << ColumnType.decodeNdArrayElementTypePrecision(type));
+        assert ColumnType.isArray(type) : "type class is not Array";
+        final int bitWidth = Math.max(8, 1 << ColumnType.decodeArrayElementTypePrecision(type));
         final int requiredBits = elementsCount * bitWidth;
         return (requiredBits + 7) / 8;
     }
@@ -67,7 +67,7 @@ public class NdArrayMeta {  // TODO(amunra): Rename to `NdArrayMetaUtils`.
     /**
      * The product of all the shape's dimensions.
      * <p>This returns the number of elements contained in the values
-     * vector returned by {@link NdArrayView#getValues()}.</p>
+     * vector returned by {@link ArrayView#getValues()}.</p>
      */
     public static int flatLength(@NotNull DirectIntSlice shape) {
         return flatLength(shape.ptr(), shape.length());
@@ -88,7 +88,7 @@ public class NdArrayMeta {  // TODO(amunra): Rename to `NdArrayMetaUtils`.
 
     /**
      * Determine if the strides are the default strides.
-     * <p>If they are, the data can be iterated in order simply by accessing the {@link NdArrayView#getValues()} vec.</p>
+     * <p>If they are, the data can be iterated in order simply by accessing the {@link ArrayView#getValues()} vec.</p>
      */
     public static boolean isDefaultStrides(DirectIntSlice shape, DirectIntSlice strides) {
         assert shape.length() == strides.length();

@@ -28,8 +28,8 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
-import io.questdb.cairo.ndarr.NdArrayMmapBuffer;
-import io.questdb.cairo.ndarr.NdArrayView;
+import io.questdb.cairo.arr.ArrayMmapBuffer;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCR;
@@ -68,7 +68,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     private final byte letter;
     private final ObjList<Long256Impl> longs256A = new ObjList<>();
     private final ObjList<Long256Impl> longs256B = new ObjList<>();
-    private final ObjList<NdArrayMmapBuffer> ndArrays = new ObjList<>();
+    private final ObjList<ArrayMmapBuffer> arrayBuffers = new ObjList<>();
     private final ObjList<SymbolTable> symbolTableCache = new ObjList<>();
     private final ObjList<Utf8SplitString> utf8ViewsA = new ObjList<>();
     private final ObjList<Utf8SplitString> utf8ViewsB = new ObjList<>();
@@ -115,7 +115,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     @Override
     public void close() {
         Misc.freeObjListIfCloseable(symbolTableCache);
-        Misc.freeObjList(ndArrays);
+        Misc.freeObjList(arrayBuffers);
         symbolTableCache.clear();
         clear();
     }
@@ -336,8 +336,22 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return Numbers.ipv4ToLong(getIPv4(columnIndex));
     }
 
-    public NdArrayView getNdArray(int columnIndex, int columnType) {
-        return getNdArray(ndArrays, columnIndex, columnType);
+    public ArrayView getArray(int columnIndex, int columnType) {
+        final long auxPageAddress = auxPageAddresses.getQuick(columnIndex);
+        if (auxPageAddress != 0) {
+            final long auxPageLim = auxPageAddress + auxPageSizes.getQuick(columnIndex);
+            final long dataPageAddress = pageAddresses.getQuick(columnIndex);
+            final long dataPageLim = dataPageAddress + pageSizes.getQuick(columnIndex);
+            final ArrayMmapBuffer buffer = ensureArrayMmapBuffer(arrayBuffers, columnIndex);
+            return buffer.of(
+                    columnType,
+                    auxPageAddress,
+                    auxPageLim,
+                    dataPageAddress,
+                    dataPageLim,
+                    rowIndex).getView();
+        }
+        return null;
     }
 
     @Override
@@ -467,10 +481,10 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.rowIndex = rowIndex;
     }
 
-    private static @NotNull NdArrayMmapBuffer ensureNdArrayMmapBuffer(ObjList<NdArrayMmapBuffer> buffers, int columnIndex) {
-        NdArrayMmapBuffer buffer = buffers.getQuiet(columnIndex);
+    private static @NotNull ArrayMmapBuffer ensureArrayMmapBuffer(ObjList<ArrayMmapBuffer> buffers, int columnIndex) {
+        ArrayMmapBuffer buffer = buffers.getQuiet(columnIndex);
         if (buffer == null) {
-            buffer = new NdArrayMmapBuffer();
+            buffer = new ArrayMmapBuffer();
             buffers.extendAndSet(columnIndex, buffer);
         }
         return buffer;
@@ -527,24 +541,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     private void getLong256(long addr, CharSink<?> sink) {
         Numbers.appendLong256FromUnsafe(addr, sink);
-    }
-
-    private NdArrayView getNdArray(ObjList<NdArrayMmapBuffer> ndArrays, int columnIndex, int columnType) {
-        final long auxPageAddress = auxPageAddresses.getQuick(columnIndex);
-        if (auxPageAddress != 0) {
-            final long auxPageLim = auxPageAddress + auxPageSizes.getQuick(columnIndex);
-            final long dataPageAddress = pageAddresses.getQuick(columnIndex);
-            final long dataPageLim = dataPageAddress + pageSizes.getQuick(columnIndex);
-            final NdArrayMmapBuffer buffer = ensureNdArrayMmapBuffer(ndArrays, columnIndex);
-            return buffer.of(
-                    columnType,
-                    auxPageAddress,
-                    auxPageLim,
-                    dataPageAddress,
-                    dataPageLim,
-                    rowIndex).getView();
-        }
-        return null;
     }
 
     private DirectString getStr(long base, long offset, long dataLim, DirectString view) {

@@ -24,21 +24,21 @@
 
 package io.questdb.test.std.ndarr;
 
-import io.questdb.cairo.ndarr.NdArrayRowMajorTraversal;
+import io.questdb.cairo.arr.ArrayRowMajorTraversal;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class NdArrayRowMajorTraversalTest {
+public class ArrayRowMajorTraversalTest {
 
     @Test
     public void test1() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (
                     DirectIntList shape = new DirectIntList(1, MemoryTag.NATIVE_ND_ARRAY);
-                    NdArrayRowMajorTraversal traversal = new NdArrayRowMajorTraversal()
+                    ArrayRowMajorTraversal traversal = new ArrayRowMajorTraversal()
             ) {
                 shape.add(1);
                 traversal.of(shape.asSlice());
@@ -57,7 +57,7 @@ public class NdArrayRowMajorTraversalTest {
         TestUtils.assertMemoryLeak(() -> {
             try (
                     DirectIntList shape = new DirectIntList(1, MemoryTag.NATIVE_ND_ARRAY);
-                    NdArrayRowMajorTraversal traversal = new NdArrayRowMajorTraversal()
+                    ArrayRowMajorTraversal traversal = new ArrayRowMajorTraversal()
             ) {
                 shape.add(1);
                 shape.add(1);
@@ -77,11 +77,11 @@ public class NdArrayRowMajorTraversalTest {
         TestUtils.assertMemoryLeak(() -> {
             try (
                     DirectIntList shape = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY);
-                    NdArrayRowMajorTraversal traversal = new NdArrayRowMajorTraversal()
+                    ArrayRowMajorTraversal traversal = new ArrayRowMajorTraversal()
             ) {
                 shape.add(2);  // rows
                 shape.add(3);  // columns
-                NdArrayRowMajorTraversal t = traversal.of(shape.asSlice());
+                ArrayRowMajorTraversal t = traversal.of(shape.asSlice());
                 Assert.assertSame(traversal, t);
 
                 // {0, 0}:
@@ -157,7 +157,7 @@ public class NdArrayRowMajorTraversalTest {
         TestUtils.assertMemoryLeak(() -> {
             try (
                     DirectIntList shape = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY);
-                    NdArrayRowMajorTraversal traversal = new NdArrayRowMajorTraversal()
+                    ArrayRowMajorTraversal traversal = new ArrayRowMajorTraversal()
             ) {
                 shape.add(2);
                 shape.add(3);
@@ -271,7 +271,7 @@ public class NdArrayRowMajorTraversalTest {
         TestUtils.assertMemoryLeak(() -> {
             try (
                     DirectIntList shape = new DirectIntList(1, MemoryTag.NATIVE_ND_ARRAY);
-                    NdArrayRowMajorTraversal traversal = new NdArrayRowMajorTraversal()
+                    ArrayRowMajorTraversal traversal = new ArrayRowMajorTraversal()
             ) {
                 shape.add(4);
                 traversal.of(shape.asSlice());
@@ -305,7 +305,7 @@ public class NdArrayRowMajorTraversalTest {
         TestUtils.assertMemoryLeak(() -> {
             try (
                     DirectIntList shape = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY);
-                    NdArrayRowMajorTraversal traversal = new NdArrayRowMajorTraversal()
+                    ArrayRowMajorTraversal traversal = new ArrayRowMajorTraversal()
             ) {
                 traversal.of(shape.asSlice());
                 Assert.assertFalse(traversal.hasNext());

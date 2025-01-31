@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.ndarr;
+package io.questdb.cairo.arr;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.CRC16XModem;
@@ -32,10 +32,10 @@ import io.questdb.std.DirectIntSlice;
  * A view over an immutable N-dimensional Array.
  * This is a flyweight object.
  */
-public class NdArrayView {
+public class ArrayView {
     private final DirectIntSlice shape = new DirectIntSlice();
     private final DirectIntSlice strides = new DirectIntSlice();
-    private final NdArrayValuesSlice values = new NdArrayValuesSlice();
+    private final ArrayValuesSlice values = new ArrayValuesSlice();
     int valuesOffset = 0;
     private volatile short crc;
     private int type = ColumnType.UNDEFINED;
@@ -65,7 +65,7 @@ public class NdArrayView {
         if (crc == 0) {
             // IMPORTANT!!
             // Keep this logic in sync with the "intrusive"
-            // CRC logic in `NdArrayTypeDriver.writeValues`.
+            // CRC logic in `ArrayTypeDriver.writeValues`.
 
             // Add the dimension information first.
             short checksum = CRC16XModem.updateInt(CRC16XModem.init(), shape.length());
@@ -75,7 +75,7 @@ public class NdArrayView {
             }
 
             // Add the values next.
-            if ((ColumnType.decodeNdArrayElementTypePrecision(type) < 3) && (valuesOffset > 0)) {
+            if ((ColumnType.decodeArrayElementTypePrecision(type) < 3) && (valuesOffset > 0)) {
                 // We don't currently support walking data that has a byte-unaligned start.
                 // In other words, a scenario where the first value is not at the start of a byte boundary.
                 // We simplify this even further by not supporting `valuesOffset` at all yet.
@@ -163,15 +163,15 @@ public class NdArrayView {
      * with the numbers <code>[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4]</code>.</p>
      * <p><strong>IMPORTANT</strong>: The number of elements</p>
      */
-    public NdArrayValuesSlice getValues() {
+    public ArrayValuesSlice getValues() {
         return values;
     }
 
     /**
-     * Number of values readable, after skipping {@link NdArrayView#getValuesOffset}.
+     * Number of values readable, after skipping {@link ArrayView#getValuesOffset}.
      */
     public int getValuesLength() {
-        return NdArrayMeta.flatLength(getShape());
+        return ArrayMeta.flatLength(getShape());
     }
 
     /**
@@ -186,7 +186,7 @@ public class NdArrayView {
     }
 
     public boolean hasDefaultStrides() {
-        return NdArrayMeta.isDefaultStrides(shape, strides);
+        return ArrayMeta.isDefaultStrides(shape, strides);
     }
 
     /**
@@ -218,16 +218,16 @@ public class NdArrayView {
     ) {
         boolean complete = false;
         try {
-            if (!ColumnType.isNdArray(type)) {
-                throw new AssertionError("type class is not NDArray: " + type);
+            if (!ColumnType.isArray(type)) {
+                throw new AssertionError("type class is not Array: " + type);
             }
             if (shapeLength != stridesLength) {
                 throw new AssertionError("shapeLength != stridesLength");
             }
             this.type = type;
             shape.of(shapePtr, shapeLength);
-            NdArrayMeta.validateShape(shape);
-            final int valuesLength = NdArrayMeta.flatLength(shape);
+            ArrayMeta.validateShape(shape);
+            final int valuesLength = ArrayMeta.flatLength(shape);
             validateValuesSize(type, valuesOffset, valuesLength, valuesSize);
             strides.of(stridesPtr, stridesLength);
             values.of(valuesPtr, valuesSize);
@@ -262,7 +262,7 @@ public class NdArrayView {
 
     private static void validateValuesSize(int type, int valuesOffset, int valuesLength, int valuesSize) {
         final int totExpectedElementCapacity = valuesOffset + valuesLength;
-        final int expectedByteSize = NdArrayMeta.calcRequiredValuesByteSize(type, totExpectedElementCapacity);
+        final int expectedByteSize = ArrayMeta.calcRequiredValuesByteSize(type, totExpectedElementCapacity);
         if (valuesSize != expectedByteSize) {
             throw new AssertionError(String.format("invalid valuesSize, expected %,d actual %,d", expectedByteSize, valuesSize));
         }
@@ -279,7 +279,7 @@ public class NdArrayView {
             final int dimStride = strides.get(dimsIndex);
             flatIndex += (dimCoordinate * dimStride);
         }
-        assert flatIndex < NdArrayMeta.flatLength(shape);
+        assert flatIndex < ArrayMeta.flatLength(shape);
         return valuesOffset + flatIndex;
     }
 }

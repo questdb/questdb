@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.ndarr;
+package io.questdb.cairo.arr;
 
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectIntSlice;
@@ -33,7 +33,7 @@ import io.questdb.std.QuietCloseable;
 import java.io.Closeable;
 
 /**
- * An iterator-like utility to traverse an {@link NdArrayView} in row-major order.
+ * An iterator-like utility to traverse an {@link ArrayView} in row-major order.
  * Instead of obtaining the values, this traversal class computes the coordinates.
  * <p>
  * It is down to the user to then pass those coordinates to the type-appropriate
@@ -42,8 +42,8 @@ import java.io.Closeable;
  * Example:
  * <pre>
  *     {@code
- *     NdArrayView array = ...;
- *     try (NdArrayRowMajorTraversal traversal = new NdArrayRowMajorTraversal()) {
+ *     ArrayView array = ...;
+ *     try (ArrayRowMajorTraversal traversal = new ArrayRowMajorTraversal()) {
  *         traversal.of(array);
  *         DirectIntSlice coords;
  *         while ((coords = traversal.next()) != null) {
@@ -54,9 +54,9 @@ import java.io.Closeable;
  * }
  * </pre>
  */
-public class NdArrayRowMajorTraversal implements QuietCloseable {
-    public static final io.questdb.std.ThreadLocal<NdArrayRowMajorTraversal> LOCAL = new io.questdb.std.ThreadLocal<>(NdArrayRowMajorTraversal::new);
-    public static final Closeable THREAD_LOCAL_CLEANER = NdArrayRowMajorTraversal::clearThreadLocals;
+public class ArrayRowMajorTraversal implements QuietCloseable {
+    public static final io.questdb.std.ThreadLocal<ArrayRowMajorTraversal> LOCAL = new io.questdb.std.ThreadLocal<>(ArrayRowMajorTraversal::new);
+    public static final Closeable THREAD_LOCAL_CLEANER = ArrayRowMajorTraversal::clearThreadLocals;
     private final DirectIntList coordinates = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY_DBG4);
     private boolean done = false;
     private int in = 0;
@@ -142,11 +142,11 @@ public class NdArrayRowMajorTraversal implements QuietCloseable {
         return coordinates.asSlice();
     }
 
-    public NdArrayRowMajorTraversal of(NdArrayView array) {
+    public ArrayRowMajorTraversal of(ArrayView array) {
         return of(array.getShape());
     }
 
-    public NdArrayRowMajorTraversal of(DirectIntSlice shape) {
+    public ArrayRowMajorTraversal of(DirectIntSlice shape) {
         reset();
         this.shape = shape;
         for (int dimIndex = shape.length() - 1; dimIndex >= 0; --dimIndex) {

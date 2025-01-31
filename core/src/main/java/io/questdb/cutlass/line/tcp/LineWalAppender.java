@@ -24,7 +24,14 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitFailedException;
+import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cutlass.line.LineTcpTimestampAdapter;
 import io.questdb.log.Log;
@@ -409,11 +416,11 @@ public class LineWalAppender {
                         break;
                     }
                     case LineTcpParser.ENTITY_TYPE_ND_ARRAY:
-                        if (!ColumnType.isNdArray(colType)) {
+                        if (!ColumnType.isArray(colType)) {
                             throw castError(tud.getTableNameUtf16(), "ND_ARRAY", colType, ent.getName());
                         }
                         // TODO(amunra): Validate the array type itself. It's a free-for-all now.
-                        r.putNdArray(columnIndex, ent.getNdArray());
+                        r.putArray(columnIndex, ent.getNdArray());
                         break;
                     default:
                         break; // unsupported types are ignored

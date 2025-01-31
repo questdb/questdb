@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.ndarr;
+package io.questdb.cairo.arr;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.DirectIntList;
@@ -34,9 +34,9 @@ import org.jetbrains.annotations.NotNull;
 
 /**
  * Buffers required for an array. The buffers are allocated on first use. Use this when parsing/loading a new array.
- * If you only need a buffer for the strides, use the more specialized {@link NdArrayMmapBuffer} instead.
+ * If you only need a buffer for the strides, use the more specialized {@link ArrayMmapBuffer} instead.
  */
-public class NdArrayBuffers implements QuietCloseable {
+public class ArrayBuffers implements QuietCloseable {
     public final DirectIntList currCoords = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY_DBG2);
     public final DirectIntList shape = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY_DBG2);
     public final DirectIntList strides = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY_DBG2);
@@ -62,7 +62,7 @@ public class NdArrayBuffers implements QuietCloseable {
     /**
      * Validates the buffers and updates the array view.
      */
-    public void updateView(@NotNull NdArrayView view) {
+    public void updateView(@NotNull ArrayView view) {
         if (shape.size() == 0) {
             view.ofNull();
         } else {

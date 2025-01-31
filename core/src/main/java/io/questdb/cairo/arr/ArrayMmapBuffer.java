@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.ndarr;
+package io.questdb.cairo.arr;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.DirectIntList;
@@ -32,21 +32,21 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.Nullable;
 
-public class NdArrayMmapBuffer implements QuietCloseable {
+public class ArrayMmapBuffer implements QuietCloseable {
     private final DirectIntList strides = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY_DBG3);
-    private final NdArrayView view = new NdArrayView();
-    private @Nullable NdArrayView viewRes = null;  // set to `view` when has value, or `null` otherwise.
+    private final ArrayView view = new ArrayView();
+    private @Nullable ArrayView viewRes = null;  // set to `view` when has value, or `null` otherwise.
 
     @Override
     public void close() {
         Misc.free(strides);
     }
 
-    public NdArrayView getView() {
+    public ArrayView getView() {
         return viewRes;
     }
 
-    public NdArrayMmapBuffer of(
+    public ArrayMmapBuffer of(
             int columnType,
             long auxAddr,
             long auxLim,
@@ -54,9 +54,9 @@ public class NdArrayMmapBuffer implements QuietCloseable {
             long dataLim,
             long row
     ) {
-        final long rowOffset = NdArrayTypeDriver.getAuxVectorOffsetStatic(row);
+        final long rowOffset = ArrayTypeDriver.getAuxVectorOffsetStatic(row);
         assert auxAddr + (3 * Integer.BYTES) <= auxLim;
-        final long crcAndOffset = NdArrayTypeDriver.getIntAlignedLong(auxAddr + rowOffset);
+        final long crcAndOffset = ArrayTypeDriver.getIntAlignedLong(auxAddr + rowOffset);
         final long size = Unsafe.getUnsafe().getInt(auxAddr + rowOffset + Long.BYTES);
         if (size == 0) {
             // A null array
@@ -66,8 +66,8 @@ public class NdArrayMmapBuffer implements QuietCloseable {
         assert dataAddr + size <= dataLim;
 
         // A non-null array, we need to access the data vec.
-        final long offset = crcAndOffset & NdArrayTypeDriver.OFFSET_MAX;
-        final short crc = (short) (crcAndOffset >> NdArrayTypeDriver.CRC16_SHIFT);
+        final long offset = crcAndOffset & ArrayTypeDriver.OFFSET_MAX;
+        final short crc = (short) (crcAndOffset >> ArrayTypeDriver.CRC16_SHIFT);
 
         // Decode the shape and set the default strides.
         final long dataEntryPtr = dataAddr + offset;
@@ -75,16 +75,16 @@ public class NdArrayMmapBuffer implements QuietCloseable {
         final int shapeLength = Unsafe.getUnsafe().getInt(dataEntryPtr);  // i.e., the number of dimensions.
         final long shapePtr = dataEntryPtr + Integer.BYTES;
         assert (dataEntryPtr + ((1 + shapeLength) * Byte.BYTES)) <= dataLim;
-        NdArrayMeta.setDefaultStrides(shapePtr, shapeLength, strides);
+        ArrayMeta.setDefaultStrides(shapePtr, shapeLength, strides);
 
         // Obtain the values ptr / len from the data.
-        final int bitWidth = 1 << ColumnType.decodeNdArrayElementTypePrecision(columnType);
+        final int bitWidth = 1 << ColumnType.decodeArrayElementTypePrecision(columnType);
         final int requiredByteAlignment = Math.max(1, bitWidth / 8);
         final long unalignedValuesOffset = offset + ((long) (1 + shapeLength) * Integer.BYTES);
-        final long toSkip = NdArrayTypeDriver.skipsToAlign(unalignedValuesOffset, requiredByteAlignment);
+        final long toSkip = ArrayTypeDriver.skipsToAlign(unalignedValuesOffset, requiredByteAlignment);
         final long valuesPtr = dataAddr + unalignedValuesOffset + toSkip;
-        final int flatLength = NdArrayMeta.flatLength(shapePtr, shapeLength);
-        final int valuesSize = NdArrayMeta.calcRequiredValuesByteSize(columnType, flatLength);
+        final int flatLength = ArrayMeta.flatLength(shapePtr, shapeLength);
+        final int valuesSize = ArrayMeta.calcRequiredValuesByteSize(columnType, flatLength);
         assert valuesPtr + valuesSize <= dataLim;
 
         view.of(

@@ -24,7 +24,7 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.ndarr.NdArrayTypeDriver;
+import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntObjHashMap;
@@ -133,7 +133,7 @@ public final class ColumnType {
     private ColumnType() {
     }
 
-    public static int decodeNdArrayDimensionality(int type) {
+    public static int decodeArrayDimensionality(int type) {
         if (ColumnType.tagOf(type) == ColumnType.ND_ARRAY) {
             return ((type >> BYTE_BITS) & 0xF) + 1; // dimensionality is encoded in 4 bits.
         }
@@ -145,7 +145,7 @@ public final class ColumnType {
      * <p>'i' for a signed integer, 'u' for an unsigned integer, 'f' for a floating point number.</p>
      * returns <code>Character.MAX_VALUE</code> if the type is not an array.
      */
-    public static char decodeNdArrayElementTypeClass(int encodedType) {
+    public static char decodeArrayElementTypeClass(int encodedType) {
         if (ColumnType.tagOf(encodedType) == ColumnType.ND_ARRAY) {
             return (char) ('a' + ((encodedType >> (2 * BYTE_BITS)) & 0x1F)); // typeClass is encoded in 5 bits.
         }
@@ -166,7 +166,7 @@ public final class ColumnType {
      * </ul>
      * returns -1 if the type is not an array.
      */
-    public static int decodeNdArrayElementTypePrecision(int type) {
+    public static int decodeArrayElementTypePrecision(int type) {
         if (ColumnType.tagOf(type) == ColumnType.ND_ARRAY) {
             return (byte) ((type >> 12) & 0xF); // precision is encoded in 4 bits.
         }
@@ -259,7 +259,7 @@ public final class ColumnType {
             case VARCHAR:
                 return VarcharTypeDriver.INSTANCE;
             case ND_ARRAY:
-                return NdArrayTypeDriver.INSTANCE;
+                return ArrayTypeDriver.INSTANCE;
             default:
                 throw CairoException.critical(0).put("no driver for type: ").put(columnType);
         }
@@ -276,17 +276,17 @@ public final class ColumnType {
     }
 
     public static int getNdArrayCommonWideningType(int typeA, int typeB) {
-        assert isNdArray(typeA);
-        assert isNdArray(typeB);
+        assert isArray(typeA);
+        assert isArray(typeB);
         final char typeClass = getNdArrayCommonWideningTypeClass(
-                decodeNdArrayElementTypeClass(typeA),
-                decodeNdArrayElementTypeClass(typeB));
+                decodeArrayElementTypeClass(typeA),
+                decodeArrayElementTypeClass(typeB));
         final int precision = Math.max(
-                decodeNdArrayElementTypePrecision(typeA),
-                decodeNdArrayElementTypePrecision(typeB));
+                decodeArrayElementTypePrecision(typeA),
+                decodeArrayElementTypePrecision(typeB));
         final int nDims = Math.max(
-                decodeNdArrayDimensionality(typeA),
-                decodeNdArrayDimensionality(typeB));
+                decodeArrayDimensionality(typeA),
+                decodeArrayDimensionality(typeB));
         return encodeNdArrayType(typeClass, precision, nDims);
     }
 
@@ -378,8 +378,11 @@ public final class ColumnType {
         }
     }
 
-    public static boolean isGenericType(int columnType) {
-        return isGeoHash(columnType) || isNdArray(columnType);
+    /**
+     * Is an N-dimensional array type.
+     */
+    public static boolean isArray(int columnType) {
+        return ColumnType.tagOf(columnType) == ColumnType.ND_ARRAY;
     }
 
     public static boolean isGeoHash(int columnType) {
@@ -394,11 +397,8 @@ public final class ColumnType {
         return columnType == INTERVAL;
     }
 
-    /**
-     * Is an N-dimensional array type.
-     */
-    public static boolean isNdArray(int columnType) {
-        return ColumnType.tagOf(columnType) == ColumnType.ND_ARRAY;
+    public static boolean isGenericType(int columnType) {
+        return isGeoHash(columnType) || isArray(columnType);
     }
 
     public static boolean isNull(int columnType) {

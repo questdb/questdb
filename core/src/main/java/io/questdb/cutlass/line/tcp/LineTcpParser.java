@@ -24,7 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.ndarr.NdArrayView;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cutlass.line.tcp.NdArrayParser.ParseException;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.log.Log;
@@ -168,7 +168,6 @@ public class LineTcpParser implements QuietCloseable {
     }
 
     public ParseResult parseMeasurement(long bufHi) {
-        final long lineStart = bufAt;
         assert bufAt != 0 && bufHi >= bufAt;
         // We can resume from random place of the line message
         // the class member variables should resume byte by byte parsing from the last place
@@ -702,7 +701,7 @@ public class LineTcpParser implements QuietCloseable {
             return name;
         }
 
-        public NdArrayView getNdArray() {
+        public ArrayView getNdArray() {
             return ndArrParser.getView();
         }
 

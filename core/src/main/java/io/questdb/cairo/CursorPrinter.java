@@ -24,9 +24,9 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.ndarr.NdArrayJsonSerializer;
-import io.questdb.cairo.ndarr.NdArrayRowMajorTraversal;
-import io.questdb.cairo.ndarr.NdArrayView;
+import io.questdb.cairo.arr.ArrayJsonSerializer;
+import io.questdb.cairo.arr.ArrayRowMajorTraversal;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -172,11 +172,11 @@ public class CursorPrinter {
                 }
                 break;
             case ColumnType.ND_ARRAY:
-                final NdArrayView array = record.getNdArray(columnIndex, columnType);
+                final ArrayView array = record.getArray(columnIndex, columnType);
                 if (array != null) {
-                    try (NdArrayRowMajorTraversal traversal = new NdArrayRowMajorTraversal()) {
+                    try (ArrayRowMajorTraversal traversal = new ArrayRowMajorTraversal()) {
                         traversal.of(array);
-                        NdArrayJsonSerializer.serialize(sink, array, traversal, columnType);
+                        ArrayJsonSerializer.serialize(sink, array, traversal, columnType);
                     }
                 } else {
                     sink.put(nullStringValue);

@@ -26,10 +26,10 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.Metrics;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.frm.Frame;
 import io.questdb.cairo.frm.FrameAlgebra;
 import io.questdb.cairo.frm.file.FrameFactory;
-import io.questdb.cairo.ndarr.NdArrayView;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.SymbolTable;
@@ -8887,7 +8887,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         void putLong256Utf8(int columnIndex, DirectUtf8Sequence hexString);
 
-        void putNdArray(int columnIndex, NdArrayView array);
+        void putArray(int columnIndex, ArrayView array);
 
         void putShort(int columnIndex, short value);
 
@@ -9048,7 +9048,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
-        public void putNdArray(int columnIndex, NdArrayView array) {
+        public void putArray(int columnIndex, ArrayView array) {
             // no-op
         }
 
@@ -9261,7 +9261,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
-        public void putNdArray(int columnIndex, NdArrayView array) {
+        public void putArray(int columnIndex, ArrayView array) {
             throw new UnsupportedOperationException("not yet implemented");
         }
 
