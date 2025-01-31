@@ -59,7 +59,7 @@ public class NdArrayMeta {  // TODO(amunra): Rename to `NdArrayMetaUtils`.
      */
     public static int calcRequiredValuesByteSize(int type, int elementsCount) {
         assert ColumnType.isNdArray(type) : "type class is not NDArray";
-        final int bitWidth = Math.max(8, 1 << ColumnType.getNdArrayElementTypePrecision(type));
+        final int bitWidth = Math.max(8, 1 << ColumnType.decodeNdArrayElementTypePrecision(type));
         final int requiredBits = elementsCount * bitWidth;
         return (requiredBits + 7) / 8;
     }

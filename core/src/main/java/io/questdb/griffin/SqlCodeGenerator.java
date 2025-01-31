@@ -474,6 +474,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // We're in scalar-to-array promotion territory.
             final int arrayType = aIsArray ? typeA : typeB;
             final int otherType = aIsArray ? typeB : typeA;
+            final int nDims = ColumnType.decodeNdArrayDimensionality(arrayType);
             final int promotedArrayType = ColumnType.encodeNdArrayTypeFromScalar(otherType, nDims);
             if (promotedArrayType == -1) {
                 return ColumnType.VARCHAR;  // stringify, as last resort.

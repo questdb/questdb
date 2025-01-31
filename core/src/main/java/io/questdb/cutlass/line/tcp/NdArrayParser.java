@@ -192,8 +192,9 @@ public class NdArrayParser implements QuietCloseable {
      * </pre>
      */
     private void parseElements() throws ParseException {
-        final char numberType = ColumnType.getNdArrayElementTypeClass(bufs.type);
-        final int numberBitSize = 1 << ColumnType.getNdArrayElementTypePrecision(bufs.type);
+        final char typeClass = ColumnType.decodeNdArrayElementTypeClass(bufs.type);
+        final int typePrecision = ColumnType.decodeNdArrayElementTypePrecision(bufs.type);
+        final int typeBitSize = 1 << typePrecision;
         final DirectIntList shape = bufs.shape;
         final DirectIntList levelCounts = bufs.currCoords;
 
@@ -280,7 +281,7 @@ public class NdArrayParser implements QuietCloseable {
                                 ? ParseException.prematureEnd(position())
                                 : ParseException.unexpectedToken(position());
                     }
-                    parseLeaf(numberType, numberBitSize, tokenLimit);
+                    parseLeaf(typeClass, typeBitSize, tokenLimit);
                     commaWelcome = true;
                     input.advance(tokenLimit);
                 }

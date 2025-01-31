@@ -32,6 +32,7 @@ import io.questdb.std.Long256;
 import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
 
 // ColumnType layout - 32bit
 //
@@ -132,41 +133,94 @@ public final class ColumnType {
     private ColumnType() {
     }
 
+    public static int decodeNdArrayDimensionality(int type) {
+        if (ColumnType.tagOf(type) == ColumnType.ND_ARRAY) {
+            return ((type >> BYTE_BITS) & 0xF) + 1; // dimensionality is encoded in 4 bits.
+        }
+        return -1;
+    }
+
     /**
-     * Build an array type from a type class and type precision.
-     * <p>The precision is expressed as a power of 2. E.g. 5 is 2^5 == 32.</p>
+     * Get the N-dimensional array element type's class.
+     * <p>'i' for a signed integer, 'u' for an unsigned integer, 'f' for a floating point number.</p>
+     * returns <code>Character.MAX_VALUE</code> if the type is not an array.
+     */
+    public static char decodeNdArrayElementTypeClass(int encodedType) {
+        if (ColumnType.tagOf(encodedType) == ColumnType.ND_ARRAY) {
+            return (char) ('a' + ((encodedType >> (2 * BYTE_BITS)) & 0x1F)); // typeClass is encoded in 5 bits.
+        }
+        return Character.MAX_VALUE;
+    }
+
+    /**
+     * Get the N-dimensional array element type's precision.
+     * <p>The returned value is to be interpreted as a power of two to obtain the number of bits in the type</p>
+     * <ul>
+     *     <li>0: 1-bit type</li>
+     *     <li>1: 2-bit type</li>
+     *     <li>2: 4-bit type</li>
+     *     <li>3: 8-bit type</li>
+     *     <li>4: 16-bit type</li>
+     *     <li>5: 32-bit type</li>
+     *     <li>6: 64-bit type</li>
+     * </ul>
+     * returns -1 if the type is not an array.
+     */
+    public static int decodeNdArrayElementTypePrecision(int type) {
+        if (ColumnType.tagOf(type) == ColumnType.ND_ARRAY) {
+            return (byte) ((type >> 12) & 0xF); // precision is encoded in 4 bits.
+        }
+        return -1;
+    }
+
+    public static boolean defaultStringImplementationIsUtf8() {
+        return Chars.equals(nameOf(STRING), "VARCHAR");
+    }
+
+    /**
+     * Builds an array type from a type class, precision, and dimensionality.
+     * <p>Precision is log2(bitWidth). E.g. precision = 5 means the value size is
+     * 2^5 == 32 bits. It can range from 0 to 15.</p>
+     * <p>Dimensionality can be from 1 to 16.</p>
      * <p>The resulting type is laid out as follows:</p>
      * <pre>
      * Inclusive bit ranges:
-     *  31          16~30            8~15            0~7
-     * +----------+----------------+---------------+---------------+
-     * | Reserved | typeClass      | typePrecision | ND_ARRAY      |
-     * +----------+----------------+---------------+---------------+
-     *              15 bits (char)   8 bits (byte)   8 bits (tag)
+     *     31~21      20~16       15~12       11~8          7~0
+     * +----------+-----------+-----------+----------+---------------+
+     * | Reserved | typeClass | precision |  nDims   |   ND_ARRAY    |
+     * +----------+-----------+-----------+----------+---------------+
+     * |          |   5 bits  |  4 bits   |  4 bits  |   type tag    |
+     * |          |           |         byte         |      byte     |
      * </pre>
      */
-        assert typeClass > 0;  // to avoid taking up the last reserved bit.
     public static int encodeNdArrayType(char typeClass, int typePrecision, int nDims) {
+        assert typeClass >= 'a' && typeClass <= 'z';
+        assert typePrecision >= 0 && typePrecision <= 15;
+        assert nDims >= 1 && nDims <= 16;
+
         if (
-            // N.B.: Types which we currently don't support are commented out.
-                (typePrecision == 0 && typeClass == 'u') ||  // boolean
-//                        (typePrecision == 1 && typeClass == 'u') ||
-//                        (typePrecision == 2 && typeClass == 'u') ||
-//                        (typePrecision == 3 && typeClass == 'u') ||
-//                        (typePrecision == 4 && typeClass == 'u') ||
-//                        (typePrecision == 5 && typeClass == 'u') ||
-//                        (typePrecision == 6 && typeClass == 'u') ||
-                        (typePrecision == 3 && typeClass == 'i') ||  // byte
-                        (typePrecision == 4 && typeClass == 'i') ||  // short
-                        (typePrecision == 5 && typeClass == 'i') ||  // int
-                        (typePrecision == 6 && typeClass == 'i') ||  // long
-//                        (typePrecision == 3 && typeClass == 'f') ||
-//                        (typePrecision == 4 && typeClass == 'f') ||
-                        (typePrecision == 5 && typeClass == 'f') ||  // float
-                        (typePrecision == 6 && typeClass == 'f')     // double
+            // Types which we don't support are commented out.
+                (typeClass == 'u' && typePrecision == 0) ||  // boolean
+//                        (typeClass == 'u' && typePrecision == 1) ||
+//                        (typeClass == 'u' && typePrecision == 2) ||
+//                        (typeClass == 'u' && typePrecision == 3) ||
+//                        (typeClass == 'u' && typePrecision == 4) ||
+//                        (typeClass == 'u' && typePrecision == 5) ||
+//                        (typeClass == 'u' && typePrecision == 6) ||
+                        (typeClass == 'i' && typePrecision == 3) ||  // byte
+                        (typeClass == 'i' && typePrecision == 4) ||  // short
+                        (typeClass == 'i' && typePrecision == 5) ||  // int
+                        (typeClass == 'i' && typePrecision == 6) ||  // long
+//                        (typeClass == 'f' && typePrecision == 3) ||
+//                        (typeClass == 'f' && typePrecision == 4) ||
+                        (typeClass == 'f' && typePrecision == 5) ||  // float
+                        (typeClass == 'f' && typePrecision == 6)     // double
         ) {
-            final int elementType = (((int) typeClass) << BYTE_BITS) | typePrecision;
-            return ND_ARRAY | (elementType << BYTE_BITS);
+            nDims = (nDims - 1) & 0xF;
+            typePrecision &= 0xF;
+            int byte1 = typePrecision << 4 | nDims;
+            int byte2 = (typeClass - 'a') & 0x1F;
+            return (byte2 << (2 * BYTE_BITS)) | (byte1 << BYTE_BITS) | ND_ARRAY;
         } else {
             return -1;
         }
@@ -194,10 +248,6 @@ public final class ColumnType {
             default:
                 return -1;
         }
-    }
-
-    public static boolean defaultStringImplementationIsUtf8() {
-        return Chars.equals(nameOf(STRING), "VARCHAR");
     }
 
     public static ColumnTypeDriver getDriver(int columnType) {
@@ -229,45 +279,15 @@ public final class ColumnType {
         assert isNdArray(typeA);
         assert isNdArray(typeB);
         final char typeClass = getNdArrayCommonWideningTypeClass(
-                getNdArrayElementTypeClass(typeA),
-                getNdArrayElementTypeClass(typeB));
-        final byte precision = (byte) Math.max(
-                getNdArrayElementTypePrecision(typeA),
-                getNdArrayElementTypePrecision(typeB));
-        return buildNdArrayType(typeClass, precision);
-    }
-
-    /**
-     * Get the N-dimensional array element type's class.
-     * <p>'i' for a signed integer, 'u' for an unsigned integer, 'f' for a floating point number.</p>
-     * returns <code>Character.MAX_VALUE</code> if the type is not an array.
-     */
-    public static char getNdArrayElementTypeClass(int type) {
-        if (ColumnType.tagOf(type) == ColumnType.ND_ARRAY) {
-            return (char) ((type >> (2 * BYTE_BITS)) & 0x7FFF);  // 15-bit mask.
-        }
-        return Character.MAX_VALUE;
-    }
-
-    /**
-     * Get the N-dimensional array element type's precision.
-     * <p>The returned value is to be interpreted as a power of two to obtain the number of bits in the type</p>
-     * <ul>
-     *     <li>0: 1-bit type</li>
-     *     <li>1: 2-bit type</li>
-     *     <li>2: 4-bit type</li>
-     *     <li>3: 8-bit type</li>
-     *     <li>4: 16-bit type</li>
-     *     <li>5: 32-bit type</li>
-     *     <li>6: 64-bit type</li>
-     * </ul>
-     * returns -1 if the type is not an array.
-     */
-    public static byte getNdArrayElementTypePrecision(int type) {
-        if (ColumnType.tagOf(type) == ColumnType.ND_ARRAY) {
-            return (byte) ((type >> BYTE_BITS) & 0xFF);
-        }
-        return -1;
+                decodeNdArrayElementTypeClass(typeA),
+                decodeNdArrayElementTypeClass(typeB));
+        final int precision = Math.max(
+                decodeNdArrayElementTypePrecision(typeA),
+                decodeNdArrayElementTypePrecision(typeB));
+        final int nDims = Math.max(
+                decodeNdArrayDimensionality(typeA),
+                decodeNdArrayDimensionality(typeB));
+        return encodeNdArrayType(typeClass, precision, nDims);
     }
 
     public static int getWalDataColumnShl(int columnType, boolean designatedTimestamp) {
@@ -469,7 +489,10 @@ public final class ColumnType {
         return OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * fromTag + toTag];
     }
 
-    public static int parseNdArrayType(CharSequence name) {
+    public static int parseNdArrayType(@NotNull CharSequence name, int nDims) {
+        if (nDims < 1 || nDims > 16) {
+            return -1;
+        }
         final char typeClass;
         final byte precision;  // power of 2
         if (Chars.equalsIgnoreCase(name, "boolean")) {

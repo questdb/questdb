@@ -78,7 +78,7 @@ public class NdArrayMmapBuffer implements QuietCloseable {
         NdArrayMeta.setDefaultStrides(shapePtr, shapeLength, strides);
 
         // Obtain the values ptr / len from the data.
-        final int bitWidth = 1 << ColumnType.getNdArrayElementTypePrecision(columnType);
+        final int bitWidth = 1 << ColumnType.decodeNdArrayElementTypePrecision(columnType);
         final int requiredByteAlignment = Math.max(1, bitWidth / 8);
         final long unalignedValuesOffset = offset + ((long) (1 + shapeLength) * Integer.BYTES);
         final long toSkip = NdArrayTypeDriver.skipsToAlign(unalignedValuesOffset, requiredByteAlignment);

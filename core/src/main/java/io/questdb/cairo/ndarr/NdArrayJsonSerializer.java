@@ -56,8 +56,8 @@ public class NdArrayJsonSerializer {
     }
 
     private static void writeElement(CharSink<?> sink, @NotNull NdArrayView array, DirectIntSlice coordinates, int columnType) {
-        final int precision = ColumnType.getNdArrayElementTypePrecision(columnType);
-        final char typeClass = ColumnType.getNdArrayElementTypeClass(columnType);
+        final int precision = ColumnType.decodeNdArrayElementTypePrecision(columnType);
+        final char typeClass = ColumnType.decodeNdArrayElementTypeClass(columnType);
         switch (precision) {
             case 0:
                 assert typeClass == 'u';

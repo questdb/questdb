@@ -75,7 +75,7 @@ public class NdArrayView {
             }
 
             // Add the values next.
-            if ((ColumnType.getNdArrayElementTypePrecision(type) < 3) && (valuesOffset > 0)) {
+            if ((ColumnType.decodeNdArrayElementTypePrecision(type) < 3) && (valuesOffset > 0)) {
                 // We don't currently support walking data that has a byte-unaligned start.
                 // In other words, a scenario where the first value is not at the start of a byte boundary.
                 // We simplify this even further by not supporting `valuesOffset` at all yet.

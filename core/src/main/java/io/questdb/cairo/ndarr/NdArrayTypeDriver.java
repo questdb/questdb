@@ -442,7 +442,7 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
         // We could be storing values of different datatypes.
         // We thus need to align accordingly. I.e., if we store doubles, we need to align on an 8-byte boundary.
         // for shorts, it's on a 2-byte boundary. For booleans, we align to the byte.
-        final int bitWidth = 1 << ColumnType.getNdArrayElementTypePrecision(array.getType());
+        final int bitWidth = 1 << ColumnType.decodeNdArrayElementTypePrecision(array.getType());
         final int requiredByteAlignment = (bitWidth + 7) / 8;
         padTo(dataMem, requiredByteAlignment);
         final short crc = writeValues(dataMem, array, bitWidth);
