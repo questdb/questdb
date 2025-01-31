@@ -145,8 +145,8 @@ public final class ColumnType {
      *              15 bits (char)   8 bits (byte)   8 bits (tag)
      * </pre>
      */
-    public static int buildNdArrayType(char typeClass, byte typePrecision) {
         assert typeClass > 0;  // to avoid taking up the last reserved bit.
+    public static int encodeNdArrayType(char typeClass, int typePrecision, int nDims) {
         if (
             // N.B.: Types which we currently don't support are commented out.
                 (typePrecision == 0 && typeClass == 'u') ||  // boolean
@@ -175,22 +175,22 @@ public final class ColumnType {
     /**
      * Used to create an array type (if possible) from a scalar value.
      */
-    public static int buildNdArrayTypeFromScalar(int scalarType) {
+    public static int encodeNdArrayTypeFromScalar(int scalarType, int nDims) {
         switch (scalarType) {
             case BOOLEAN:
-                return buildNdArrayType('u', (byte) 0);
+                return encodeNdArrayType('u', 0, nDims);
             case BYTE:
-                return buildNdArrayType('i', (byte) 3);
+                return encodeNdArrayType('i', 3, nDims);
             case SHORT:
-                return buildNdArrayType('i', (byte) 4);
+                return encodeNdArrayType('i', 4, nDims);
             case INT:
-                return buildNdArrayType('i', (byte) 5);
+                return encodeNdArrayType('i', 5, nDims);
             case LONG:
-                return buildNdArrayType('i', (byte) 6);
+                return encodeNdArrayType('i', 6, nDims);
             case FLOAT:
-                return buildNdArrayType('f', (byte) 5);
+                return encodeNdArrayType('f', 5, nDims);
             case DOUBLE:
-                return buildNdArrayType('f', (byte) 6);
+                return encodeNdArrayType('f', 6, nDims);
             default:
                 return -1;
         }
@@ -496,7 +496,7 @@ public final class ColumnType {
         } else {
             return -1;
         }
-        return ColumnType.buildNdArrayType(typeClass, precision);
+        return ColumnType.encodeNdArrayType(typeClass, precision, nDims);
     }
 
     public static int pow2SizeOf(int columnType) {

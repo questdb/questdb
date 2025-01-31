@@ -287,7 +287,7 @@ public class NdArrayParserTest {
     }
 
     private void testLiteralToJson(String literal) throws ParseException {
-        int columnType = ColumnType.buildNdArrayTypeFromScalar(ColumnType.INT);
+        int columnType = ColumnType.encodeNdArrayTypeFromScalar(ColumnType.INT, 1);
         DirectUtf8String arrayStr = utf8String(sink, literal);
         parser.parse(arrayStr);
         NdArrayView array = parser.getView();

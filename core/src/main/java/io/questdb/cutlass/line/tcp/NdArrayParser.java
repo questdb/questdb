@@ -173,7 +173,7 @@ public class NdArrayParser implements QuietCloseable {
                 assert false : "Unexpected type class";
         }
 
-        final int arrayType = ColumnType.buildNdArrayType(typeClass, typePrecision);
+        final int arrayType = ColumnType.encodeNdArrayType(typeClass, typePrecision, 1);
         if (arrayType == -1) {
             throw ParseException.invalidType(position());
         }
@@ -286,6 +286,7 @@ public class NdArrayParser implements QuietCloseable {
                 }
             }
         }
+        bufs.type = ColumnType.encodeNdArrayType(typeClass, typePrecision, nDims);
     }
 
     private void parseLeaf(char typeClass, int bitSize, int tokenLimit) throws ParseException {
