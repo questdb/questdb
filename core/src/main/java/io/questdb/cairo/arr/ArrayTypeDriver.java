@@ -46,14 +46,20 @@ import org.jetbrains.annotations.Nullable;
 /**
  * Reads and writes arrays. Arrays are organised as follows:
  * <h1>AUX entries</h1>
+ *
  * <h2>Data Offset Handling</h2>
- * <p>Like the <code>VARCHAR</code> type, <code>ARRAY</code> uses <code>N</code>
- * (not <code>N + 1</code>) entries in the AUX table.</p>
+ * <p>
+ * Like the <code>VARCHAR</code> type, <code>ARRAY</code> uses <code>N</code>
+ * (not <code>N + 1</code>) entries in the AUX table.
+ *
  * <h2>AUX entry format</h2>
- * <p><strong>IMPORTANT!</strong>: Since we store 96 bit entries, every other entry
+ *
+ * <strong>IMPORTANT!</strong>: Since we store 96 bit entries, every other entry
  * is unaligned for reading via <code>Unsafe.getLong()</code>, as such if you find
  * any <code>{MemoryR,Unsafe}.{get,set}Long</code> calls operating on the aux data in
- * this code, it's probably a bug!</p>
+ * this code, it's probably a bug! See
+ * <a href="https://medium.com/@jkstoyanov/aligned-and-unaligned-memory-access-9b5843b7f4ac">blog post</a>.
+ *
  * <pre>
  * 96-bit entries
  *     * offset_and_hash: 64 bits
@@ -64,6 +70,7 @@ import org.jetbrains.annotations.Nullable;
  *     * data_size: 32 bits
  *         * number of bytes used to the store the array (along with any additional metadata) in the data vector.
  * </pre>
+ *
  * <h2>Encoding NULLs</h2>
  * <ul>
  *     <li>A null value has zero size.</li>
@@ -72,21 +79,20 @@ import org.jetbrains.annotations.Nullable;
  *     the end of the previous non-null value.</li>
  *     <li>This allows mapping the data vector for a specific range of values.</li>
  * </ul>
+ *
  * <h2>Data vector</h2>
  * <pre>
  * variable length encoding, starting at the offset specified in the `aux` entry.
- *     * START ALIGNMENT: Each offset pointed to by an aux entry is guaranteed to have at least `int` alignment`.
+ *     * START ALIGNMENT: the start of each entry in the data vector is aligned at 32 bits.
  *     * Shape: len-prefixed ints
- *         * The series of dimensions of the array.
- *         * Starts with an 32-bit int with the number of dimensions.
- *         * Each dimension then written as a 32-bit int.
- *         * Note that each dimension only ever uses the lowest 27 bits.
- *     * padding:
+ *         * A list of dimension sizes of the array.
+ *         * Starts with a 32-bit length (number of dimensions).
+ *         * Each dimension size is a 32-bit int, but uses only 27 bits.
+ *     * Padding:
  *         * enough padding to satisfy the datatype alignment requirements.
- *         * e.g. for 64-bit numeric types ensures that the following section
- *           starts on an 8 byte boundary, for a 32-bit type, on a 4 byte boundary.
- *           This is to avoid unaligned data reads later.
- *           See the following <a href="https://medium.com/@jkstoyanov/aligned-and-unaligned-memory-access-9b5843b7f4ac">blog post</a>.
+ *         * e.g. for 64-bit numeric types, the following section starts on an
+ *           8-byte boundary; for a 32-bit type, on a 4 byte boundary.
+ *           This is to avoid unaligned data reads.
  *         * In practice, this would be either 0 or 4 bytes of padding (given we've just written ints).
  *     * raw values buffer
  *         * a buffer of bytes, containing the values in row-major order.
@@ -118,7 +124,6 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     private static final int ND_ARRAY_AUX_WIDTH_BYTES = 3 * Integer.BYTES;
     private static final long U32_MASK = 0xFFFFFFFFL;
 
-    // TODO(amunra): Take traversal as arg, drop use of thread local.
     public static void appendValue(@NotNull MemoryA auxMem, @NotNull MemoryA dataMem, @Nullable ArrayView array) {
         if ((array == null) || array.isNull()) {
             appendNullImpl(auxMem, dataMem);
@@ -526,6 +531,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         }
     }
 
+    // TODO(amunra): Take traversal as arg, drop use of thread local.
     private static short writeStrided1ByteValues(@NotNull MemoryA dataMem, @NotNull ArrayView array) {
         ArrayRowMajorTraversal t = ArrayRowMajorTraversal.LOCAL.get().of(array);
         DirectIntSlice coordinates;

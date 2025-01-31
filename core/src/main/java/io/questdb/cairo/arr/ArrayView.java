@@ -38,6 +38,7 @@ public class ArrayView {
     private final ArrayValuesSlice values = new ArrayValuesSlice();
     int valuesOffset = 0;
     private volatile short crc;
+    // Encoded array type, contains element type class, type precision, and dimensionality
     private int type = ColumnType.UNDEFINED;
 
     public boolean getBoolean(DirectIntSlice coordinates) {
@@ -223,6 +224,9 @@ public class ArrayView {
             }
             if (shapeLength != stridesLength) {
                 throw new AssertionError("shapeLength != stridesLength");
+            }
+            if (ColumnType.decodeArrayDimensionality(type) != shapeLength) {
+                throw new AssertionError("shapeLength != nDims decoded from type");
             }
             this.type = type;
             shape.of(shapePtr, shapeLength);
