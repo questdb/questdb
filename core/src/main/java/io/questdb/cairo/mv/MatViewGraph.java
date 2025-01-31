@@ -35,6 +35,8 @@ public interface MatViewGraph extends QuietCloseable, Mutable {
 
     MatViewRefreshState addView(TableToken baseTableToken, MatViewDefinition viewDefinition);
 
+    MatViewRefreshState addView(MatViewDefinition viewDefinition);
+
     @TestOnly
     @Override
     void clear();

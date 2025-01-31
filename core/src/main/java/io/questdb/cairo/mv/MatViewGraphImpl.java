@@ -71,6 +71,28 @@ public class MatViewGraphImpl implements MatViewGraph {
         return state;
     }
 
+    @Override
+    public MatViewRefreshState addView(MatViewDefinition viewDefinition) {
+        final TableToken matViewToken = viewDefinition.getMatViewToken();
+        final MatViewRefreshState state = new MatViewRefreshState(viewDefinition, matViewTelemetryFacade);
+        final MatViewRefreshState prevState = refreshStateByTableDirName.putIfAbsent(matViewToken.getDirName(), state);
+        // WAL table directories are unique, so we don't expect previous value
+        if (prevState != null) {
+            Misc.free(state);
+            throw CairoException.critical(0).put("mat view state already exists [dir=")
+                    .put(matViewToken.getDirName());
+        }
+
+        final MatViewRefreshList list = getOrCreateDependentViews(viewDefinition.getBaseTableName());
+        final ObjList<TableToken> matViews = list.lockForWrite();
+        try {
+            matViews.add(matViewToken);
+        } finally {
+            list.unlockAfterWrite();
+        }
+        return state;
+    }
+
     @TestOnly
     public void clear() {
         close();
@@ -206,28 +228,6 @@ public class MatViewGraphImpl implements MatViewGraph {
         task.operation = operation;
         task.refreshTriggeredTimestamp = microsecondClock.getTicks();
         refreshTaskQueue.enqueue(task);
-    }
-
-    // must be called after creating the underlying table
-    private MatViewRefreshState addView(MatViewDefinition viewDefinition) {
-        final TableToken matViewToken = viewDefinition.getMatViewToken();
-        final MatViewRefreshState state = new MatViewRefreshState(viewDefinition, matViewTelemetryFacade);
-        final MatViewRefreshState prevState = refreshStateByTableDirName.putIfAbsent(matViewToken.getDirName(), state);
-        // WAL table directories are unique, so we don't expect previous value
-        if (prevState != null) {
-            Misc.free(state);
-            throw CairoException.critical(0).put("mat view state already exists [dir=")
-                    .put(matViewToken.getDirName());
-        }
-
-        final MatViewRefreshList list = getOrCreateDependentViews(viewDefinition.getBaseTableName());
-        final ObjList<TableToken> matViews = list.lockForWrite();
-        try {
-            matViews.add(matViewToken);
-        } finally {
-            list.unlockAfterWrite();
-        }
-        return state;
     }
 
     @NotNull

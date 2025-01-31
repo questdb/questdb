@@ -36,6 +36,11 @@ public class NoOpMatViewGraph implements MatViewGraph {
         return null;
     }
 
+    @Override
+    public MatViewRefreshState addView(MatViewDefinition viewDefinition) {
+        return null;
+    }
+
     @TestOnly
     @Override
     public void clear() {
