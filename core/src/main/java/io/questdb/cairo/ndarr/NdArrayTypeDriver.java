@@ -177,7 +177,15 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public void configureAuxMemMA(FilesFacade ff, MemoryMA auxMem, LPSZ fileName, long dataAppendPageSize, int memoryTag, long opts, int madviseOpts) {
+    public void configureAuxMemMA(
+            FilesFacade ff,
+            MemoryMA auxMem,
+            LPSZ fileName,
+            long dataAppendPageSize,
+            int memoryTag,
+            long opts,
+            int madviseOpts
+    ) {
         auxMem.of(
                 ff,
                 fileName,
@@ -195,7 +203,16 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public void configureAuxMemOM(FilesFacade ff, MemoryOM auxMem, long fd, LPSZ fileName, long rowLo, long rowHi, int memoryTag, long opts) {
+    public void configureAuxMemOM(
+            FilesFacade ff,
+            MemoryOM auxMem,
+            long fd,
+            LPSZ fileName,
+            long rowLo,
+            long rowHi,
+            int memoryTag,
+            long opts
+    ) {
         auxMem.ofOffset(
                 ff,
                 fd,
@@ -209,7 +226,17 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public void configureDataMemOM(FilesFacade ff, MemoryR auxMem, MemoryOM dataMem, long dataFd, LPSZ fileName, long rowLo, long rowHi, int memoryTag, long opts) {
+    public void configureDataMemOM(
+            FilesFacade ff,
+            MemoryR auxMem,
+            MemoryOM dataMem,
+            long dataFd,
+            LPSZ fileName,
+            long rowLo,
+            long rowHi,
+            int memoryTag,
+            long opts
+    ) {
         long lo;
         if (rowLo > 0) {
             lo = readDataOffset(auxMem, ND_ARRAY_AUX_WIDTH_BYTES * rowLo);
@@ -230,7 +257,9 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public long dedupMergeVarColumnSize(long mergeIndexAddr, long mergeIndexCount, long srcDataFixAddr, long srcOooFixAddr) {
+    public long dedupMergeVarColumnSize(
+            long mergeIndexAddr, long mergeIndexCount, long srcDataFixAddr, long srcOooFixAddr
+    ) {
         throw new UnsupportedOperationException("nyi");
     }
 
@@ -285,17 +314,26 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public void o3ColumnMerge(long timestampMergeIndexAddr, long timestampMergeIndexCount, long srcAuxAddr1, long srcDataAddr1, long srcAuxAddr2, long srcDataAddr2, long dstAuxAddr, long dstDataAddr, long dstDataOffset) {
+    public void o3ColumnMerge(
+            long timestampMergeIndexAddr, long timestampMergeIndexCount, long srcAuxAddr1, long srcDataAddr1,
+            long srcAuxAddr2, long srcDataAddr2, long dstAuxAddr, long dstDataAddr, long dstDataOffset
+    ) {
         throw new UnsupportedOperationException("nyi");
     }
 
     @Override
-    public void o3copyAuxVector(FilesFacade ff, long srcAddr, long srcLo, long srcHi, long dstAddr, long dstFileOffset, long dstFd, boolean mixedIOFlag) {
+    public void o3copyAuxVector(
+            FilesFacade ff, long srcAddr, long srcLo, long srcHi, long dstAddr,
+            long dstFileOffset, long dstFd, boolean mixedIOFlag
+    ) {
         throw new UnsupportedOperationException("nyi");
     }
 
     @Override
-    public void o3sort(long sortedTimestampsAddr, long sortedTimestampsRowCount, MemoryCR srcDataMem, MemoryCR srcAuxMem, MemoryCARW dstDataMem, MemoryCARW dstAuxMem) {
+    public void o3sort(
+            long sortedTimestampsAddr, long sortedTimestampsRowCount, MemoryCR srcDataMem,
+            MemoryCR srcAuxMem, MemoryCARW dstDataMem, MemoryCARW dstAuxMem
+    ) {
         throw new UnsupportedOperationException("nyi");
     }
 
@@ -450,7 +488,10 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
         return crc;
     }
 
-    private static short writeFlatValueBytes(@NotNull MemoryA dataMem, @NotNull NdArrayView array, int bitWidth, NdArrayValuesSlice values) {
+    private static short writeFlatValueBytes(
+            @NotNull MemoryA dataMem, @NotNull NdArrayView array,
+            int bitWidth, NdArrayValuesSlice values
+    ) {
         final int requiredByteAlignment = (bitWidth + 7) / 8;
         final int bytesToSkip = skipsToAlign(array.getValuesOffset(), requiredByteAlignment);
         final short cachedCrc = array.getCachedCrc();
@@ -619,7 +660,9 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
         }
     }
 
-    private static short writeStridedByteAlignedValues(int byteWidth, @NotNull MemoryA dataMem, @NotNull NdArrayView array) {
+    private static short writeStridedByteAlignedValues(
+            int byteWidth, @NotNull MemoryA dataMem, @NotNull NdArrayView array
+    ) {
         // Yes, the code would be shorter written by striding first, then switching on type,
         // but this way we avoid conditionals inside a loop.
         switch (byteWidth) {
