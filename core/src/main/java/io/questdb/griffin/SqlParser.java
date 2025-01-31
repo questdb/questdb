@@ -3230,12 +3230,12 @@ public class SqlParser {
 
     private int toColumnType(GenericLexer lexer, @NotNull CharSequence tok) throws SqlException {
         final short typeTag = SqlUtil.toPersistedTypeTag(tok, lexer.lastTokenPosition());
-        if (ColumnType.GEOHASH == typeTag) {
+        if (typeTag == ColumnType.GEOHASH) {
             expectTok(lexer, '(');
             final int bits = GeoHashUtil.parseGeoHashBits(lexer.lastTokenPosition(), 0, expectLiteral(lexer).token);
             expectTok(lexer, ')');
             return ColumnType.getGeoHashTypeWithBits(bits);
-        } else if (ColumnType.ND_ARRAY == typeTag) {
+        } else if (typeTag == ColumnType.ND_ARRAY) {
             expectTok(lexer, '(');
             final int typeClassPos = lexer.getPosition();
             CharSequence typeClassTok = optTok(lexer);
@@ -3244,13 +3244,12 @@ public class SqlParser {
             }
             typeClassTok = typeClassTok.toString();
             tok = optTok(lexer);
-            if (tok == null) {
-                tok = "<EOF>";
-            }
+            tok = tok != null ? tok : "<EOF>";
             final int nDims;
-            final int dimPos = lexer.getPosition();
+            final int dimPos;
             if (Chars.equals(tok, ',')) {
                 tok = optTok(lexer);
+                dimPos = lexer.lastTokenPosition();
                 try {
                     nDims = Numbers.parseInt(tok);
                 } catch (NumericException e) {
@@ -3258,6 +3257,7 @@ public class SqlParser {
                 }
                 expectTok(lexer, ')');
             } else if (Chars.equals(tok, ')')) {
+                dimPos = 0;
                 nDims = 1;
             } else {
                 throw SqlException.position(lexer.getPosition()).put("',' or ')' expected");
