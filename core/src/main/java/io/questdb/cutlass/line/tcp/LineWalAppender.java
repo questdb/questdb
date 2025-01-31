@@ -32,6 +32,7 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cutlass.line.LineTcpTimestampAdapter;
 import io.questdb.log.Log;
@@ -426,11 +427,11 @@ public class LineWalAppender {
                         break;
                     }
                     case LineTcpParser.ENTITY_TYPE_ND_ARRAY:
-                        if (!ColumnType.isArray(colType)) {
+                        ArrayView array = ent.getNdArray();
+                        if (array.getType() != colType) {
                             throw castError(tud.getTableNameUtf16(), "ND_ARRAY", colType, ent.getName());
                         }
-                        // TODO(amunra): Validate the array type itself. It's a free-for-all now.
-                        r.putArray(columnIndex, ent.getNdArray());
+                        r.putArray(columnIndex, array);
                         break;
                     default:
                         break; // unsupported types are ignored
