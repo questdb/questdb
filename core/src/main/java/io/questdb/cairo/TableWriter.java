@@ -2421,7 +2421,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public void readWalTxnDetails(TransactionLogCursor transactionLogCursor) {
         if (walTxnDetails == null) {
             // Lazy creation
-            walTxnDetails = new WalTxnDetails(ff, configuration.getWalApplyLookAheadTransactionCount() * 10);
+            walTxnDetails = new WalTxnDetails(ff, configuration.getWalApplyLookAheadTransactionCount() * 10, getWalMaxLagRows());
         }
 
         walTxnDetails.readObservableTxnMeta(other, transactionLogCursor, pathSize, getAppliedSeqTxn(), txWriter.getMaxTimestamp());
@@ -3478,6 +3478,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         assert txWriter.getMetadataVersion() == metadata.getMetadataVersion();
     }
 
+    private int calculateInsertTransactionBlock(long seqTxn, TableWriterPressureControl pressureControl) {
+        if (txWriter.getLagRowCount() > 0) {
+            pressureControl.updateInflightPartitions(1);
+            return 1;
+        }
+        return walTxnDetails.calculateInsertTransactionBlock(seqTxn, pressureControl, getWalMaxLagRows());
+    }
+
     private boolean canSquashOverwritePartitionTail(int partitionIndex) {
         long fromTxn = txWriter.getPartitionNameTxn(partitionIndex);
         if (fromTxn < 0) {
@@ -3737,14 +3745,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             noOpRowCount = 0L;
             enforceTtl();
         }
-    }
-
-    private int calculateInsertTransactionBlock(long seqTxn, TableWriterPressureControl pressureControl) {
-        if (txWriter.getLagRowCount() > 0) {
-            pressureControl.updateInflightPartitions(1);
-            return 1;
-        }
-        return walTxnDetails.calculateInsertTransactionBlock(seqTxn, pressureControl, getWalMaxLagRows());
     }
 
     private void configureAppendPosition() {
@@ -7238,10 +7238,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 totalRows = dedupedRowCount;
             }
 
-            assert assertTsIndex(timestampAddr,
+            assert assertTsIndex(
+                    timestampAddr,
                     minTs,
                     maxTs,
-                    totalRows);
+                    totalRows
+            );
 
             // TODO: make debug
             LOG.info().$("shuffling [table=").$(tableToken.getDirName()).$(", columCount=")
@@ -7261,11 +7263,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             assert o3MemColumns1.get(getPrimaryColumnIndex(timestampIndex)) == o3TimestampMem;
             assert o3MemColumns2.get(getPrimaryColumnIndex(timestampIndex)) == o3TimestampMemCpy;
-            assert assertTsIndex(timestampAddr,
-                    minTs,
-                    maxTs,
-                    totalRows);
-
 
             o3Columns = o3MemColumns1;
             activeColumns = o3MemColumns1;
@@ -7543,7 +7540,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (firstPointer == -1) {
                         assert isDeduplicationEnabled() && metadata.isDedupKey(columnIndex);
                         // TODO: remove logging
-                        LOG.info().$("shuffling symbol by reverse index from mem2 into mem1 without remap [columnIndex=").$(columnIndex).$();
+                        LOG.info().$("shuffling symbol by reverse index from mem2 into mem1 without remap [columnIndex=").$(columnIndex).I$();
 
                         long rowCount = Vect.shuffleSymbolColumnByReverseIndex(
                                 indexFormat,
@@ -7589,7 +7586,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             assert rowCount == totalRows || (isDeduplicationEnabled() && rowCount >= totalRows);
                         } else {
                             // TODO: remove logging
-                            LOG.info().$("shuffling symbol as int32, no remap [columnIndex=").$(columnIndex).$();
+                            LOG.info().$("shuffling symbol as int32, no remap [columnIndex=").$(columnIndex).I$();
 
                             // Shuffle as int32, no new symbols to add
                             long rowCount = Vect.mergeShuffleColumnFromManyAddresses(
@@ -7612,12 +7609,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 ColumnTypeDriver driver = ColumnType.getDriver(columnType);
                 long totalVarSize = segmentCopyInfo.createAddressBuffersSecondary(columnIndex, metadata.getColumnCount(), walMappedColumns, mappedAddrBuffSecondary, driver);
 
-                destinationColumnSecondary.jumpTo(driver.getAuxVectorOffset(totalRows));
+                destinationColumnSecondary.jumpTo(driver.getAuxVectorSize(totalRows));
                 var destinationColumnPrimary = o3MemColumns1.get(getPrimaryColumnIndex(columnIndex));
                 destinationColumnPrimary.jumpTo(totalVarSize);
 
                 // TODO: remove logging
-                LOG.info().$("shuffling varlen [columnIndex=").$(columnIndex).$();
+                LOG.info().$("shuffling varlen [columnIndex=").$(columnIndex).I$();
 
                 long rowCount = driver.mergeShuffleColumnFromManyAddresses(
                         indexFormat,
@@ -7626,7 +7623,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         destinationColumnPrimary.getAddress(),
                         destinationColumnSecondary.getAddress(),
                         mergeIndex,
-                        0
+                        0,
+                        totalVarSize
                 );
                 assert rowCount == totalRows;
             }

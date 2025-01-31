@@ -182,9 +182,10 @@ public class StringTypeDriver implements ColumnTypeDriver {
             long outPrimaryAddress,
             long outSecondaryAddress,
             long mergeIndex,
-            long destVarOffset
+            long destVarOffset,
+            long destDataSize
     ) {
-        long res = Vect.mergeShuffleStringColumnFromManyAddresses(
+        long rowCount = Vect.mergeShuffleStringColumnFromManyAddresses(
                 indexFormat,
                 (int) getDataVectorMinEntrySize(),
                 primaryAddressList,
@@ -192,12 +193,13 @@ public class StringTypeDriver implements ColumnTypeDriver {
                 outPrimaryAddress,
                 outSecondaryAddress,
                 mergeIndex,
-                destVarOffset
+                destVarOffset,
+                destDataSize
         );
-        if (res < 0) {
-            throw new IllegalArgumentException("Cannot merge shuffle string column, invalid merge index");
+        if (rowCount < 0) {
+            throw new IllegalArgumentException("cannot merge shuffle string column, returned row count: " + rowCount);
         }
-        return res;
+        return rowCount;
     }
 
     @Override

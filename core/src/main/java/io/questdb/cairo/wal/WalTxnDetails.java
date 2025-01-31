@@ -67,6 +67,7 @@ public class WalTxnDetails implements QuietCloseable {
     public static final int TXN_METADATA_LONGS_SIZE = WAL_TXN_SYMBOL_DIFF_OFFSET + 1;
     private static final int TXN_DETAIL_RECORD_SIZE = 5;
     private final int maxLookahead;
+    private final long maxLookaheadRows;
     private final SymbolMapDiffCursorImpl symbolMapDiffCursor = new SymbolMapDiffCursorImpl();
     private final LongList transactionMeta = new LongList();
     private final IntList txnDetails = new IntList();
@@ -93,9 +94,10 @@ public class WalTxnDetails implements QuietCloseable {
     // Stores all symbol strings for the stored transactions. The format is usula STRING format 4 bytes length + string in chars
     private MemoryCARW symbolStringsMem = null;
 
-    public WalTxnDetails(FilesFacade ff, int maxLookahead) {
+    public WalTxnDetails(FilesFacade ff, int maxLookaheadTxns, long maxLookaheadRows) {
         walEventReader = new WalEventReader(ff);
-        this.maxLookahead = maxLookahead * 10;
+        this.maxLookahead = maxLookaheadTxns * 10;
+        this.maxLookaheadRows = maxLookaheadRows;
     }
 
     public boolean buildTxnSymbolMap(SegmentCopyInfo transactions, int columnIndex, MapWriter mapWriter, MemoryCARW outMem) {

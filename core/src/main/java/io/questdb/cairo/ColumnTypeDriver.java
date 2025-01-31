@@ -135,7 +135,8 @@ public interface ColumnTypeDriver {
             long outPrimaryAddress,
             long outSecondaryAddress,
             long mergeIndex,
-            long destDataOffset
+            long destDataOffset,
+            long destDataSize
     );
 
     void o3ColumnMerge(

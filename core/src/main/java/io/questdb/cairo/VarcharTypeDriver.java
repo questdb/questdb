@@ -491,7 +491,16 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public long mergeShuffleColumnFromManyAddresses(long indexFormat, long primaryAddressList, long secondaryAddressList, long outPrimaryAddress, long outSecondaryAddress, long mergeIndex, long destDataOffset) {
+    public long mergeShuffleColumnFromManyAddresses(
+            long indexFormat,
+            long primaryAddressList,
+            long secondaryAddressList,
+            long outPrimaryAddress,
+            long outSecondaryAddress,
+            long mergeIndex,
+            long destDataOffset,
+            long destDataSize
+    ) {
         long rowCount = Vect.mergeShuffleVarcharColumnFromManyAddresses(
                 indexFormat,
                 primaryAddressList,
@@ -499,10 +508,11 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
                 outPrimaryAddress,
                 outSecondaryAddress,
                 mergeIndex,
-                destDataOffset
+                destDataOffset,
+                destDataSize
         );
         if (rowCount < 0) {
-            throw new IllegalStateException("unsupported column type shuffle result, rowCount=" + rowCount);
+            throw new IllegalStateException("unsupported column type shuffle result, returned row count=" + rowCount);
         }
         return rowCount;
     }

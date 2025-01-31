@@ -592,7 +592,7 @@ int64_t merge_shuffle_column_from_many_addresses(
 }
 
 template<typename T, uint16_t mult, uint16_t segment_bits>
-void merge_shuffle_string_column_from_many_addresses_segment_bits(
+int64_t merge_shuffle_string_column_from_many_addresses_segment_bits(
         const char **src_primary,
         const int64_t **src_secondary,
         char *dst_primary,
@@ -602,6 +602,7 @@ void merge_shuffle_string_column_from_many_addresses_segment_bits(
         int64_t dst_var_offset
 ) {
     constexpr uint64_t segment_mask = (1ULL << segment_bits) - 1;
+    static_assert(std::is_integral_v<T> && std::is_signed_v<T>, "string,binary len must be an signed integer");
 
     for (int64_t l = 0; l < row_count; l++) {
         MM_PREFETCH_T0(merge_index + l + 64);
@@ -625,6 +626,7 @@ void merge_shuffle_string_column_from_many_addresses_segment_bits(
     if (row_count > 0) {
         dst_secondary[row_count] = dst_var_offset;
     }
+    return dst_var_offset;
 }
 
 template<typename T, uint16_t mult>
@@ -638,56 +640,56 @@ inline int64_t merge_shuffle_string_column_from_many_addresses(const int32_t ind
                                                                int64_t dst_var_offset) {
     switch (index_segment_encoding_bytes) {
         case 0:
-            merge_shuffle_string_column_from_many_addresses_segment_bits<T, mult, 0u>(
+            return merge_shuffle_string_column_from_many_addresses_segment_bits<T, mult, 0u>(
                     src_primary, src_secondary,
                     dst_primary, dst_secondary,
                     merge_index_address, row_count,
                     dst_var_offset);
             break;
         case 1:
-            merge_shuffle_string_column_from_many_addresses_segment_bits<T, mult, 8u>(
+            return merge_shuffle_string_column_from_many_addresses_segment_bits<T, mult, 8u>(
                     src_primary, src_secondary,
                     dst_primary, dst_secondary,
                     merge_index_address, row_count,
                     dst_var_offset);
             break;
         case 2:
-            merge_shuffle_string_column_from_many_addresses_segment_bits<T, mult, 16u>(
+            return merge_shuffle_string_column_from_many_addresses_segment_bits<T, mult, 16u>(
                     src_primary, src_secondary,
                     dst_primary, dst_secondary,
                     merge_index_address, row_count,
                     dst_var_offset);
             break;
         case 3:
-            merge_shuffle_string_column_from_many_addresses_segment_bits<T, mult, 24u>(
+            return merge_shuffle_string_column_from_many_addresses_segment_bits<T, mult, 24u>(
                     src_primary, src_secondary,
                     dst_primary, dst_secondary,
                     merge_index_address, row_count,
                     dst_var_offset);
             break;
         case 4:
-            merge_shuffle_string_column_from_many_addresses_segment_bits<T, mult, 32u>(
+            return merge_shuffle_string_column_from_many_addresses_segment_bits<T, mult, 32u>(
                     src_primary, src_secondary,
                     dst_primary, dst_secondary,
                     merge_index_address, row_count,
                     dst_var_offset);
             break;
         case 5:
-            merge_shuffle_string_column_from_many_addresses_segment_bits<T, mult, 40u>(
+            return merge_shuffle_string_column_from_many_addresses_segment_bits<T, mult, 40u>(
                     src_primary, src_secondary,
                     dst_primary, dst_secondary,
                     merge_index_address, row_count,
                     dst_var_offset);
             break;
         case 6:
-            merge_shuffle_string_column_from_many_addresses_segment_bits<T, mult, 48u>(
+            return merge_shuffle_string_column_from_many_addresses_segment_bits<T, mult, 48u>(
                     src_primary, src_secondary,
                     dst_primary, dst_secondary,
                     merge_index_address, row_count,
                     dst_var_offset);
             break;
         case 7:
-            merge_shuffle_string_column_from_many_addresses_segment_bits<T, mult, 56u>(
+            return merge_shuffle_string_column_from_many_addresses_segment_bits<T, mult, 56u>(
                     src_primary, src_secondary,
                     dst_primary, dst_secondary,
                     merge_index_address, row_count,
@@ -696,18 +698,18 @@ inline int64_t merge_shuffle_string_column_from_many_addresses(const int32_t ind
         default:
             return -1;
     }
-    return row_count;
 }
 
 template<uint16_t segment_bits>
-void merge_shuffle_varchar_column_from_many_addresses(
+int64_t merge_shuffle_varchar_column_from_many_addresses(
         const char **src_primary,
         const int64_t **src_secondary,
         char *dst_primary,
         int64_t *dst_secondary,
         const index_l *merge_index,
         int64_t row_count,
-        int64_t dst_var_offset) {
+        int64_t dst_var_offset
+) {
     constexpr uint64_t segment_mask = (1ULL << segment_bits) - 1;
 
     for (int64_t l = 0; l < row_count; l++) {
@@ -715,22 +717,23 @@ void merge_shuffle_varchar_column_from_many_addresses(
         auto row_index = index >> segment_bits;
         auto src_index = index & segment_mask;
 
-        const int64_t firstWord = src_secondary[src_index][row_index * 2];
-        const int64_t secondWord = src_secondary[src_index][row_index * 2 + 1];
+        const int64_t first_word = src_secondary[src_index][row_index * 2];
+        const int64_t second_word = src_secondary[src_index][row_index * 2 + 1];
 
-        auto originalData = secondWord & 0x000000000000ffffLL;
-        auto rellocatedSecondWord = originalData | (dst_var_offset << 16);
-        if ((firstWord & 1) == 0 && (firstWord & 4) == 0) {
+        auto original_data = second_word & 0x000000000000ffffLL;
+        auto rellocated_second_word = original_data | (dst_var_offset << 16);
+        if ((first_word & 1) == 0 && (first_word & 4) == 0) {
             // not inlined and not null
-            auto originalOffset = secondWord >> 16;
-            auto len = (firstWord >> 4) & 0xffffff;
-            auto data = src_primary[src_index] + originalOffset;
+            auto original_offset = second_word >> 16;
+            auto len = (first_word >> 4) & 0xffffff;
+            auto data = src_primary[src_index] + original_offset;
             __MEMCPY(dst_primary + dst_var_offset, data, len);
             dst_var_offset += len;
         }
-        dst_secondary[l * 2] = firstWord;
-        dst_secondary[l * 2 + 1] = rellocatedSecondWord;
+        dst_secondary[l * 2] = first_word;
+        dst_secondary[l * 2 + 1] = rellocated_second_word;
     }
+    return dst_var_offset;
 }
 
 template<typename TIdx, uint8_t merge_format>
