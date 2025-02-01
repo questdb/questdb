@@ -1655,7 +1655,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case ColumnType.GEOBYTE:
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoByteToStrCastFunction(
-                                                GeoShortColumn.newInstance(i, toTag),
+                                                GeoByteColumn.newInstance(i, fromType),
                                                 getGeoHashBits(fromType)
                                         )
                                 );
@@ -1663,7 +1663,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case ColumnType.GEOSHORT:
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoShortToStrCastFunction(
-                                                GeoShortColumn.newInstance(i, toTag),
+                                                GeoShortColumn.newInstance(i, castFromMetadata.getColumnType(i)),
                                                 getGeoHashBits(castFromMetadata.getColumnType(i))
                                         )
                                 );
@@ -1671,7 +1671,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case ColumnType.GEOINT:
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoIntToStrCastFunction(
-                                                GeoIntColumn.newInstance(i, toTag),
+                                                GeoIntColumn.newInstance(i, castFromMetadata.getColumnType(i)),
                                                 getGeoHashBits(castFromMetadata.getColumnType(i))
                                         )
                                 );
@@ -1679,7 +1679,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case ColumnType.GEOLONG:
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoLongToStrCastFunction(
-                                                GeoLongColumn.newInstance(i, toTag),
+                                                GeoLongColumn.newInstance(i, castFromMetadata.getColumnType(i)),
                                                 getGeoHashBits(castFromMetadata.getColumnType(i))
                                         )
                                 );
