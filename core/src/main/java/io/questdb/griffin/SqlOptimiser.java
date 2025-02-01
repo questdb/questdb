@@ -6537,7 +6537,6 @@ public class SqlOptimiser implements Mutable {
                 int numInArgs = for_.paramCount - 1; // skip the LHS of the IN expr
                 int maxIndex = numInArgs - 1; // index is 1 less than list length
                 forMaxes.add(maxIndex);
-
                 expectedPivotColumnsPerAggregateFunction = expectedPivotColumnsPerAggregateFunction == 0 ? numInArgs : expectedPivotColumnsPerAggregateFunction * numInArgs;
             }
 
@@ -6670,6 +6669,9 @@ public class SqlOptimiser implements Mutable {
                     }
                 }
             }
+
+            model.getNestedModel().clearPivot();
+
         } else {
             model.setNestedModel(rewritePivot(model.getNestedModel()));
         }

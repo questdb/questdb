@@ -2404,7 +2404,9 @@ public class SqlParser {
                 }
 
                 tok = optTok(lexer);
+
                 aliasMap.put(alias, col);
+                col.setAlias(alias);
             } else {
                 alias = null;
             }

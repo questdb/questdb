@@ -960,10 +960,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     }
 
     public void addPivotFor(ExpressionNode _for) {
-        if (unpivotFor == null) {
-            unpivotFor = new ObjList<>();
+        if (pivotFor == null) {
+            pivotFor = new ObjList<>();
         }
-        unpivotFor.add(_for);
+        pivotFor.add(_for);
     }
 
     public void addUnpivotFor(ExpressionNode _for) {
@@ -2031,9 +2031,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             assert pivotFor != null;
             for (int i = 0, n = pivotFor.size(); i < n; i++) {
                 pivotFor.getQuick(i).toSink(sink);
+                if (i + 1 < n) {
+                    sink.putAscii(' ');
+                }
             }
         }
-
 
         if (unpivotColumns != null && unpivotColumns.size() > 0) {
             sink.putAscii(" unpivot ");
@@ -2078,6 +2080,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         public QueryModel newInstance() {
             return new QueryModel();
         }
+    }
+
+    public void clearPivot() {
+        pivotFor = null;
+        pivotColumns = null;
     }
 
     static {
