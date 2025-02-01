@@ -1663,24 +1663,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case ColumnType.GEOSHORT:
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoShortToStrCastFunction(
-                                                GeoShortColumn.newInstance(i, castFromMetadata.getColumnType(i)),
-                                                getGeoHashBits(castFromMetadata.getColumnType(i))
+                                                GeoShortColumn.newInstance(i, fromType),
+                                                getGeoHashBits(fromType)
                                         )
                                 );
                                 break;
                             case ColumnType.GEOINT:
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoIntToStrCastFunction(
-                                                GeoIntColumn.newInstance(i, castFromMetadata.getColumnType(i)),
-                                                getGeoHashBits(castFromMetadata.getColumnType(i))
+                                                GeoIntColumn.newInstance(i, fromType),
+                                                getGeoHashBits(fromType)
                                         )
                                 );
                                 break;
                             case ColumnType.GEOLONG:
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoLongToStrCastFunction(
-                                                GeoLongColumn.newInstance(i, castFromMetadata.getColumnType(i)),
-                                                getGeoHashBits(castFromMetadata.getColumnType(i))
+                                                GeoLongColumn.newInstance(i, fromType),
+                                                getGeoHashBits(fromType)
                                         )
                                 );
                                 break;
