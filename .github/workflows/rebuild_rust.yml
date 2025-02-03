@@ -80,16 +80,30 @@ jobs:
           key: nativelibs-osx-${{ github.sha }}
   build-all-linux-x86-64:
     runs-on: ubuntu-latest
-    # this is very bare container, we use it to restrict GLIBC to 2.28
-    # everything has to be installed on it manually
+    # manylinux2014 is a container with new-ish compilers and tools, but old glibc - 2.17
+    # 2.17 is old enough to be compatible with most Linux distributions out there
     container:
-      image: debian:buster
+      image:
+        quay.io/pypa/manylinux2014_x86_64
+      volumes:
+        - /node20217:/node20217
+        - /node20217:/__e/node20
     steps:
-      - name: Install tools (CXX/NASM/Rust)
+      - name: Install tools
         run: |
           ldd --version
-          apt-get update -y
-          apt install git python3 wget ca-certificates build-essential zstd -y
+          yum update -y
+          yum install wget rpm-build zstd curl python3 -y
+      - name: Install Node.js 20 glibc2.17
+        # A hack to override default nodejs 20 to a build compatible with older glibc.
+        # Inspired by https://github.com/pytorch/test-infra/pull/5959 If it's good for pytorch, it's good for us too! :)
+        # Q: Why do we need this hack at all? A: Because many github actions, include action/checkout@v4, depend on nodejs 20.
+        # GitHub Actions runner provides a build of nodejs 20 that requires a newer glibc than manylinux2014 has.
+        # Thus we download a build of nodejs 20 that is compatible with manylinux2014 and override the default one.
+        run: |
+          curl -LO https://unofficial-builds.nodejs.org/download/release/v20.9.0/node-v20.9.0-linux-x64-glibc-217.tar.xz
+          tar -xf node-v20.9.0-linux-x64-glibc-217.tar.xz --strip-components 1 -C /node20217
+          ldd /__e/node20/bin/node
       - uses: actions/checkout@v4
         with:
           submodules: false
