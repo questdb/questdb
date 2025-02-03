@@ -402,12 +402,12 @@ public class CairoEngine implements Closeable, WriterSource {
             boolean keepLock,
             boolean inVolume
     ) {
-        // todo: add securityContext.authorizeMatViewCreate();
+        // todo(glasstiger): add securityContext.authorizeMatViewCreate();
         securityContext.authorizeTableCreate();
 
         final TableToken tableToken = createTableUnsecure(mem, path, ifNotExists, struct, keepLock, inVolume);
 
-        // todo: add getDdlListener(tableToken).onMatViewCreated(securityContext, tableToken);
+        // todo(glasstiger): add getDdlListener(tableToken).onMatViewCreated(securityContext, tableToken);
         getDdlListener(tableToken).onTableCreated(securityContext, tableToken);
 
         return struct.getMatViewDefinition();

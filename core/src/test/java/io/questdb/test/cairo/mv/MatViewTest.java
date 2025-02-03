@@ -1183,6 +1183,40 @@ public class MatViewTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testTtl() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            execute("create materialized view price_1h as (select sym, last(price) as price, ts from base_price sample by 1h) partition by DAY ttl 2 days");
+
+            execute(
+                    "insert into base_price values('gbpusd', 1.310, '2024-09-10T12:05')" +
+                            ",('gbpusd', 1.311, '2024-09-11T13:03')" +
+                            ",('gbpusd', 1.312, '2024-09-12T13:03')" +
+                            ",('gbpusd', 1.313, '2024-09-13T13:03')" +
+                            ",('gbpusd', 1.314, '2024-09-14T13:03')"
+            );
+            drainWalQueue();
+
+            MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
+            refreshJob.run(0);
+            drainWalQueue();
+
+            assertSql(
+                    "sym\tprice\tts\n" +
+                            "gbpusd\t1.312\t2024-09-12T13:00:00.000000Z\n" +
+                            "gbpusd\t1.313\t2024-09-13T13:00:00.000000Z\n" +
+                            "gbpusd\t1.314\t2024-09-14T13:00:00.000000Z\n",
+                    "price_1h order by ts, sym"
+            );
+        });
+    }
+
     private static void assertCannotModifyMatView(String updateSql) {
         try {
             execute(updateSql);

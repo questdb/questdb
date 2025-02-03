@@ -3825,7 +3825,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             if (matViewDefinition != null) {
                                 TableUtils.createMatViewMetaFiles(ff, mem, auxPath, tableRootLen, matViewDefinition);
                             } else {
-                                LOG.info().$("mat view definition for backup not found [view=").$(tableToken).I$();
+                                LOG.info().$("materialized view definition for backup not found [view=").$(tableToken).I$();
                             }
                         }
                     } finally {

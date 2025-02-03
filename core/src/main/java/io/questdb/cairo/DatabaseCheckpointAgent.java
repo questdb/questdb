@@ -276,7 +276,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         if (matViewDefinition != null) {
                                             TableUtils.createMatViewMetaFiles(ff, mem, path, rootLen, matViewDefinition);
                                         } else {
-                                            LOG.info().$("mat view definition not found [view=").$(tableToken).I$();
+                                            LOG.info().$("materialized view definition not found [view=").$(tableToken).I$();
                                         }
                                     }
 

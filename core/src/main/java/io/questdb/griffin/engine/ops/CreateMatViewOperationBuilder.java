@@ -37,6 +37,8 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 
+import static io.questdb.griffin.engine.table.ShowCreateTableRecordCursorFactory.ttlToSink;
+
 public class CreateMatViewOperationBuilder implements Mutable, ExecutionModel, Sinkable {
     public static final ObjectFactory<CreateMatViewOperationBuilder> FACTORY = CreateMatViewOperationBuilder::new;
     private final CreateTableOperationBuilderImpl createTableOperationBuilder = new CreateTableOperationBuilderImpl();
@@ -154,6 +156,9 @@ public class CreateMatViewOperationBuilder implements Mutable, ExecutionModel, S
         sink.putAscii(')');
 
         sink.putAscii(" partition by ").put(PartitionBy.toString(createTableOperationBuilder.getPartitionByFromExpr()));
+
+        int ttlHoursOrMonths = createTableOperationBuilder.getTtlHoursOrMonths();
+        ttlToSink(ttlHoursOrMonths, sink);
 
         final CharSequence volumeAlias = createTableOperationBuilder.getVolumeAlias();
         if (volumeAlias != null) {
