@@ -112,16 +112,22 @@ public class LongGroupSort {
         }
     }
 
+
     private static void quickSortCompareByElementImpl(long[] array, int compareElementByIndex, int low, int high, int n) {
-        if (low + 1 < high) {
+        while (low + 1 < high) {
             int pi = partitionCompareByElementImpl(array, compareElementByIndex, low, high, n);
 
-            quickSortCompareByElementImpl(array, compareElementByIndex, low, pi, n);  // Before pi
-            quickSortCompareByElementImpl(array, compareElementByIndex, pi + 1, high, n); // After pi
+            // Process smaller partition first (tail-recursive elimination)
+            if (pi - low < high - (pi + 1)) {
+                quickSortCompareByElementImpl(array, compareElementByIndex, low, pi, n);
+                low = pi + 1; // Continue sorting the larger part in the loop
+            } else {
+                quickSortCompareByElementImpl(array, compareElementByIndex, pi + 1, high, n);
+                high = pi; // Continue sorting the smaller part in the loop
+            }
         }
     }
 
-    // Swap two groups of 3 elements each
     private static void swapGroups(long[] array, int i, int j, int n) {
         if (i != j) {
             for (int k = 0; k < n; k++) {

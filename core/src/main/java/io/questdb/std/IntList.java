@@ -30,6 +30,7 @@ import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
+import java.util.function.IntBinaryOperator;
 
 public class IntList implements Mutable, Sinkable {
     private static final int DEFAULT_ARRAY_SIZE = 16;
@@ -57,6 +58,13 @@ public class IntList implements Mutable, Sinkable {
         int s = that.size();
         setPos(p + s);
         System.arraycopy(that.data, 0, this.data, p, s);
+    }
+
+    public void addRange(int lo, int hi) {
+        checkCapacity(pos + hi - lo);
+        for (int i = lo; i < hi; i++) {
+            data[pos++] = i;
+        }
     }
 
     public void arrayCopy(int srcPos, int dstPos, int length) {
@@ -249,6 +257,20 @@ public class IntList implements Mutable, Sinkable {
 
     public int size() {
         return pos;
+    }
+
+    /**
+     * Sorts integers using provided comparator.
+     */
+    public void sort(IntBinaryOperator comparator) {
+        IntComparatorSort.quickSort(data, 0, pos - 1, comparator);
+    }
+
+    /**
+     * Sorts integers using provided comparator.
+     */
+    public void sort(IntBinaryOperator comparator, int lo, int hi) {
+        IntComparatorSort.quickSort(data, lo, hi - 1, comparator);
     }
 
     /**

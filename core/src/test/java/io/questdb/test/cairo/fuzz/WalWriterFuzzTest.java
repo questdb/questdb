@@ -134,7 +134,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testChunkedSequencerWriting() throws Exception {
-        Rnd rnd = generateRandom(LOG);
+        Rnd rnd = generateRandom(LOG, 1374259826581L, 1738236878644L);
         fuzzer.setFuzzCounts(false, 5_000, 200, 20, 10, 20, rnd.nextInt(10), 5, 2, 0);
         setFuzzProperties(rnd);
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);

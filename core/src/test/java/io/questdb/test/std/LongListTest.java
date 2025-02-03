@@ -34,6 +34,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.Arrays;
+import java.util.Comparator;
 
 public class LongListTest {
     @Test
@@ -390,6 +391,14 @@ public class LongListTest {
         }
     }
 
+    @Test
+    public void testSortGroupsOneElementCompare() {
+        Rnd rnd = TestUtils.generateRandom(null);
+        int n = 2;// + rnd.nextInt(20);
+        int compareByIndex = rnd.nextInt(n);
+        sortGroupsRandomOneElementCompare(n, compareByIndex, 1_000_000, rnd);
+    }
+
     private static void checkSortGroupsEqualElements(int n, int elements, Rnd rnd) {
         LongList list = new LongList(elements * n);
         int[][] arrays = new int[elements][];
@@ -404,6 +413,18 @@ public class LongListTest {
         }
 
         sortAndCompare(n, elements, arrays, list);
+    }
+
+    private static void sortAndCompare(int n, int compareByIndex, int elements, int[][] arrays, LongList list) {
+        Arrays.sort(arrays, Comparator.comparingInt((int[] a) -> a[compareByIndex]));
+
+        list.sortGroupsByElement(n, compareByIndex, 0, list.size() / n);
+
+        for (int i = 0; i < elements; i++) {
+            for (int j = 0; j < n; j++) {
+                Assert.assertEquals(arrays[i][j], list.get(i * n + j));
+            }
+        }
     }
 
     private static void sortAndCompare(int n, int elements, int[][] arrays, LongList list) {
@@ -439,6 +460,22 @@ public class LongListTest {
         }
 
         sortAndCompare(n, elements, arrays, list);
+    }
+
+    private static void sortGroupsRandomOneElementCompare(int n, int compareBy, int elements, Rnd rnd) {
+        LongList list = new LongList(elements * n);
+        int[][] arrays = new int[elements][];
+
+        for (int i = 0; i < elements; i++) {
+            arrays[i] = new int[n];
+            int value = rnd.nextInt(elements);
+            for (int j = 0; j < n; j++) {
+                arrays[i][j] = value;
+                list.add(arrays[i][j]);
+            }
+        }
+
+        sortAndCompare(n, compareBy, elements, arrays, list);
     }
 
     private void assertOrderedAsc(LongList list) {

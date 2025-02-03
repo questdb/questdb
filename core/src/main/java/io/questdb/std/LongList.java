@@ -468,27 +468,6 @@ public class LongList implements Mutable, LongVec, Sinkable {
      * Comparison between groups is done by comparing the first element of each group, then
      * if the first elements are equal the second elements are compared and so on.
      *
-     * @param groupSize size of the group
-     * @param lo        low index to sort the array from
-     * @param hi        high index to sort the array to
-     */
-    public void sortGroups(int groupSize, int lo, int hi) {
-        if (groupSize > 0 && pos % groupSize == 0 && lo % groupSize == 0 && hi % groupSize == 0 && hi <= pos) {
-            LongGroupSort.quickSort(groupSize, data, lo / groupSize, hi / groupSize);
-            return;
-        }
-        throw new IllegalStateException("sorting not supported for group size: " + groupSize
-                + ", lo:" + lo
-                + ", hi:" + hi
-                + ", length: " + pos
-        );
-    }
-
-    /**
-     * Sorts groups of N elements. The size of the group is specified by {@code groupSize}.
-     * Comparison between groups is done by comparing the first element of each group, then
-     * if the first elements are equal the second elements are compared and so on.
-     *
      * @param groupSize            size of the group
      * @param compareByGroupIndex1 index of the element 1 in the group to compare by
      * @param compareByGroupIndex2 index of the element 2 in the group to compare by
@@ -515,7 +494,7 @@ public class LongList implements Mutable, LongVec, Sinkable {
      */
     public void sortGroupsByElement(int groupSize, int compareByGroupIndex, int lo, int hi) {
         if (groupSize > 0 && pos % groupSize == 0 && lo >= 0 && hi <= pos / groupSize) {
-            LongGroupSort.quickSort(groupSize, compareByGroupIndex, data, lo, hi);
+            LongGroupSort2.quickSort(groupSize, compareByGroupIndex, data, lo, hi);
             return;
         }
         throw new IllegalStateException("sorting not supported for group size: " + groupSize + ", length: " + pos);
