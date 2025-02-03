@@ -18,7 +18,7 @@ jobs:
         - /node20217:/__e/node20
     steps:
       - name: Install dependencies
-        run: yum install -y curl maven git tar gunzip xz
+        run: yum install -y curl git tar gunzip xz
       - name: Print GLIBC version
         run: ldd --version
       - name: Install Node.js 20 glibc2.17
