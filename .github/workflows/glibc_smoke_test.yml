@@ -4,6 +4,9 @@ name: GLIBC Smoke Test
 on:
   pull_request:
     types: [ synchronize, opened, reopened, edited ]
+    paths:
+      - 'core/src/main/resources/io/questdb/bin/**'
+      - './core/src/main/bin/**'
   workflow_dispatch:
 
 jobs:
