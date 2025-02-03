@@ -62,6 +62,7 @@ import org.jetbrains.annotations.TestOnly;
 
 public class MatViewRefreshJob implements Job, QuietCloseable {
     private static final Log LOG = LogFactory.getLog(MatViewRefreshJob.class);
+    private final int batchSize;
     private final ObjList<TableToken> childViewSink = new ObjList<>();
     private final EntityColumnFilter columnFilter = new EntityColumnFilter();
     private final CairoEngine engine;
@@ -79,6 +80,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         this.txnRangeLoader = new WalTxnRangeLoader(engine.getConfiguration().getFilesFacade());
         this.microsecondClock = engine.getConfiguration().getMicrosecondClock();
         this.maxRecompileAttempts = engine.getConfiguration().getMatViewMaxRecompileAttempts();
+        this.batchSize = engine.getConfiguration().getMatViewInsertAsSelectBatchSize();
     }
 
     @TestOnly
@@ -203,7 +205,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
         RecordCursorFactory factory = null;
         RecordToRowCopier copier;
-        long rowCount;
+        long rowCount = 0;
         long refreshTimestamp = microsecondClock.getTicks();
         try {
             factory = state.acquireRecordFactory();
@@ -245,10 +247,16 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
                     try (RecordCursor cursor = factory.getCursor(mvRefreshExecutionContext)) {
                         final Record record = cursor.getRecord();
+                        long deadline = batchSize;
+                        rowCount = 0;
                         while (cursor.hasNext()) {
                             TableWriter.Row row = tableWriter.newRow(record.getTimestamp(cursorTimestampIndex));
                             copier.copy(record, row);
                             row.append();
+                            if (++rowCount >= deadline) {
+                                tableWriter.ic();
+                                deadline = rowCount + batchSize;
+                            }
                         }
                     }
                     break;
@@ -270,7 +278,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 }
             }
 
-            rowCount = tableWriter.getUncommittedRowCount();
             tableWriter.commit();
             state.refreshSuccess(factory, copier, tableWriter.getMetadata().getMetadataVersion(), refreshTimestamp, refreshTriggeredTimestamp, baseTableTxn);
         } catch (Throwable th) {
