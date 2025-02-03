@@ -114,7 +114,7 @@ public class ArrayRowMajorTraversal implements QuietCloseable {
         out = 0;
 
         // The `out` variable counts how many dims _will be_ reset to zero in the call to `next()` after this one.
-        final int lastDimIndex = shape.size() - 1;
+        final int lastDimIndex = shape.getDimensionCount() - 1;
         for (int dimIndex = lastDimIndex; dimIndex >= 0; --dimIndex) {
             final int dim = shape.getLength(dimIndex);
             final int current = coordinates.get(dimIndex);
@@ -135,7 +135,7 @@ public class ArrayRowMajorTraversal implements QuietCloseable {
             }
         }
 
-        if (out == shape.size()) {
+        if (out == shape.getDimensionCount()) {
             done = true;
         }
 
@@ -149,7 +149,7 @@ public class ArrayRowMajorTraversal implements QuietCloseable {
     public ArrayRowMajorTraversal of(ArrayShape shape) {
         reset();
         this.shape = shape;
-        for (int dimIndex = shape.size() - 1; dimIndex >= 0; --dimIndex) {
+        for (int dimIndex = shape.getDimensionCount() - 1; dimIndex >= 0; --dimIndex) {
             coordinates.add(0);
         }
         if (coordinates.size() > 0) {
@@ -158,7 +158,7 @@ public class ArrayRowMajorTraversal implements QuietCloseable {
         }
 
         // will be converted to `in == shape.length()` on first iteration.
-        out = shape.size();
+        out = shape.getDimensionCount();
         return this;
     }
 

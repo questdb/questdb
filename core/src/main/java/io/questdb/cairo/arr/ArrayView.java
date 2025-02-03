@@ -74,4 +74,6 @@ public interface ArrayView {
     }
 
     void appendRowMajor(MemoryA mem);
+
+    int getSize();
 }

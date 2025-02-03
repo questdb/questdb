@@ -320,6 +320,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.rnd.RndVarcharFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndVarcharListFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndDoubleCCFunctionFactory,
+            io.questdb.griffin.engine.functions.rnd.RndDoubleArrayFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndFloatCFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndShortCCFunctionFactory,

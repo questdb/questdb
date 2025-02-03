@@ -192,7 +192,7 @@ public class ArrayParser implements QuietCloseable {
      * </pre>
      */
     private void parseElements() throws ParseException {
-        final char typeClass = ColumnType.decodeArrayElementTypeClass(bufs.type);
+        final int typeClass = ColumnType.decodeArrayElementType(bufs.type);
         final int typePrecision = ColumnType.decodeArrayElementTypePrecision(bufs.type);
         final int typeBitSize = 1 << typePrecision;
         final DirectIntList shape = bufs.shape;
@@ -290,7 +290,7 @@ public class ArrayParser implements QuietCloseable {
         bufs.type = ColumnType.encodeArrayType(typeClass, nDims);
     }
 
-    private void parseLeaf(char typeClass, int bitSize, int tokenLimit) throws ParseException {
+    private void parseLeaf(int typeClass, int bitSize, int tokenLimit) throws ParseException {
         try {
             switch (typeClass) {
                 case 'i':

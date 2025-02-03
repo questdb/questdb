@@ -43,6 +43,11 @@ public class DirectIntSlice implements DirectSequence, ArrayShape {
     }
 
     @Override
+    public int getDimensionCount() {
+        return size();
+    }
+
+    @Override
     public int getLength(int dimension) {
         return get(dimension);
     }

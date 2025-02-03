@@ -29,6 +29,8 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.arr.ArrayShape;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -342,6 +344,37 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.executeStartNanos = nanosecondClock.getTicks();
     }
 
+    /**
+     * Recursively builds a JSON string representation of a multi-dimensional array stored in row‑major order.
+     *
+     * @param arrayView    the flat array containing all the elements
+     * @param shape        an array specifying the size of each dimension (e.g., {2, 2, 3})
+     * @param dim          the current dimension being processed (0 for the outermost dimension)
+     * @param currentIndex the current index in the flat array to process
+     * @param response     the StringBuilder used to accumulate the JSON string
+     * @return the updated flat array index after processing the current dimension
+     */
+    private static int arrayToJson(ArrayView arrayView, ArrayShape shape, int dim, int currentIndex, HttpChunkedResponse response) {
+        response.putAscii('[');
+        int count = shape.getLength(dim); // Number of elements or subarrays at this dimension.
+        for (int i = 0; i < count; i++) {
+            if (dim == shape.getDimensionCount() - 1) {
+                // If we're at the last dimension, append the flat array element.
+                response.put(arrayView.getDoubleFromRowMajor(currentIndex));
+                currentIndex++; // Move to the next element in the flat array.
+            } else {
+                // Recursively build the JSON for the next dimension.
+                currentIndex = arrayToJson(arrayView, shape, dim + 1, currentIndex, response);
+            }
+            // Append a comma if this is not the last element in the current dimension.
+            if (i < count - 1) {
+                response.putAscii(',');
+            }
+        }
+        response.putAscii(']');
+        return currentIndex;
+    }
+
     private static byte parseApiVersion(HttpRequestHeader header) {
         DirectUtf8Sequence versionStr = header.getUrlParam(URL_PARAM_VERSION);
         if (versionStr == null) {
@@ -561,6 +594,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             case ColumnType.UUID:
             case ColumnType.IPv4:
             case ColumnType.INTERVAL:
+            case ColumnType.ARRAY:
                 break;
             default:
                 throw CairoException.nonCritical().put("column type not supported [column=").put(columnName).put(", type=").put(ColumnType.nameOf(columnType)).put(']');
@@ -592,9 +626,15 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             }
             int columnType = columnTypesAndFlags.getQuick(2 * columnIndex);
             response.putAscii('{')
-                    .putAsciiQuoted("name").putAscii(':').putQuote().escapeJsonStr(columnNames.getQuick(columnIndex)).putQuote().putAscii(',')
-                    .putAsciiQuoted("type").putAscii(':').putAsciiQuoted(ColumnType.nameOf(columnType == ColumnType.NULL ? ColumnType.STRING : columnType))
-                    .putAscii('}');
+                    .putAsciiQuoted("name").putAscii(':').putQuote().escapeJsonStr(columnNames.getQuick(columnIndex)).putQuote().putAscii(',');
+            if (ColumnType.tagOf(columnType) == ColumnType.ARRAY) {
+                response.putAsciiQuoted("type").putAscii(':').putAsciiQuoted("ARRAY").put(',');
+                response.putAsciiQuoted("dim").putAscii(':').put(ColumnType.decodeArrayDimensionality(columnType)).put(',');
+                response.putAsciiQuoted("elemType").putAscii(':').putAsciiQuoted(ColumnType.nameOf(ColumnType.decodeArrayElementType(columnType)));
+            } else {
+                response.putAsciiQuoted("type").putAscii(':').putAsciiQuoted(ColumnType.nameOf(columnType == ColumnType.NULL ? ColumnType.STRING : columnType));
+            }
+            response.putAscii('}');
         }
     }
 
@@ -712,6 +752,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     break;
                 case ColumnType.INTERVAL:
                     putIntervalValue(response, record, columnIdx);
+                    break;
+                case ColumnType.ARRAY:
+                    putArrayValue(columnType, response, record, columnIdx);
                     break;
                 default:
                     // this should never happen since metadata are already validated
@@ -862,6 +905,15 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         queryState = QUERY_PREFIX;
         JsonQueryProcessor.header(response, getHttpConnectionContext(), keepAliveHeader, 200);
         onQueryPrefix(response, columnCount);
+    }
+
+    private void putArrayValue(int columnType, HttpChunkedResponse response, Record record, int columnIdx) {
+        switch (ColumnType.decodeArrayElementType(columnType)) {
+            case ColumnType.DOUBLE:
+                ArrayView arrayView = record.getArray(columnIdx, columnType);
+                arrayToJson(arrayView, arrayView.getShape(), 0, 0, response);
+                break;
+        }
     }
 
     private void putBinValue(HttpChunkedResponse response) {

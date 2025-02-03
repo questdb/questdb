@@ -477,8 +477,8 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
      */
     private static void writeShape(@NotNull MemoryA dataMem, @NotNull ArrayShape shape) {
         assert dataMem.getAppendOffset() % Integer.BYTES == 0; // aligned integer write
-        dataMem.putInt(shape.size());
-        for (int dimIndex = 0, nDims = shape.size(); dimIndex < nDims; ++dimIndex) {
+        dataMem.putInt(shape.getDimensionCount());
+        for (int dimIndex = 0, nDims = shape.getDimensionCount(); dimIndex < nDims; ++dimIndex) {
             final int dim = shape.getLength(dimIndex);
             dataMem.putInt(dim);
         }

@@ -146,9 +146,9 @@ public final class ColumnType {
      * <p>'i' for a signed integer, 'u' for an unsigned integer, 'f' for a floating point number.</p>
      * returns <code>Character.MAX_VALUE</code> if the type is not an array.
      */
-    public static char decodeArrayElementTypeClass(int encodedType) {
+    public static int decodeArrayElementType(int encodedType) {
         if (ColumnType.tagOf(encodedType) == ColumnType.ARRAY) {
-            return (char) ('a' + ((encodedType >> (2 * BYTE_BITS)) & 0x1F)); // typeClass is encoded in 5 bits.
+            return ((encodedType >> (2 * BYTE_BITS)) & 0x1F); // typeClass is encoded in 5 bits.
         }
         return Character.MAX_VALUE;
     }
@@ -206,8 +206,9 @@ public final class ColumnType {
         assert isArray(typeA);
         assert isArray(typeB);
         final char typeClass = getArrayCommonWideningTypeClass(
-                decodeArrayElementTypeClass(typeA),
-                decodeArrayElementTypeClass(typeB));
+                decodeArrayElementType(typeA),
+                decodeArrayElementType(typeB)
+        );
         final int nDims = Math.max(
                 decodeArrayDimensionality(typeA),
                 decodeArrayDimensionality(typeB));
@@ -487,7 +488,7 @@ public final class ColumnType {
      * Find the common widening type class for the specified pair.
      * Unsigned -> Signed -> Floating
      */
-    private static char getArrayCommonWideningTypeClass(char tc1, char tc2) {
+    private static char getArrayCommonWideningTypeClass(int tc1, int tc2) {
         assert tc1 == 'u' || tc1 == 'i' || tc1 == 'f';
         assert tc2 == 'u' || tc2 == 'i' || tc2 == 'f';
         // This works, but by coincidence.

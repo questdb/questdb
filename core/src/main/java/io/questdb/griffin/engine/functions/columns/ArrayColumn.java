@@ -47,11 +47,6 @@ public class ArrayColumn extends ArrayFunction {
     }
 
     @Override
-    public int getType() {
-        return 0;
-    }
-
-    @Override
     public void toPlan(PlanSink sink) {
         sink.putColumnName(columnIndex);
     }

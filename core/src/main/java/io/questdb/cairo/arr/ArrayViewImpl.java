@@ -93,6 +93,11 @@ public class ArrayViewImpl implements ArrayView {
         return values.getDouble(flatIndex(coordinates));
     }
 
+    @Override
+    public double getDoubleFromRowMajor(int flatIndex) {
+        return values.getDouble(flatIndex);
+    }
+
     public float getFloat(DirectIntSlice coordinates) {
         return values.getFloat(flatIndex(coordinates));
     }
@@ -117,13 +122,13 @@ public class ArrayViewImpl implements ArrayView {
         return shape;
     }
 
-    @Override
-    public double getDoubleFromRowMajor(int flatIndex) {
-        return values.getDouble(flatIndex);
-    }
-
     public short getShort(DirectIntSlice coordinates) {
         return values.getShort(flatIndex(coordinates));
+    }
+
+    @Override
+    public int getSize() {
+        return values.size();
     }
 
     @Override

@@ -57,7 +57,7 @@ public class ArrayJsonSerializer {
 
     private static void writeElement(CharSink<?> sink, @NotNull ArrayViewImpl array, DirectIntSlice coordinates, int columnType) {
         final int precision = ColumnType.decodeArrayElementTypePrecision(columnType);
-        final char typeClass = ColumnType.decodeArrayElementTypeClass(columnType);
+        final int typeClass = ColumnType.decodeArrayElementType(columnType);
         switch (precision) {
             case 0:
                 assert typeClass == 'u';
