@@ -1108,6 +1108,14 @@ public class SqlParser {
                 tok = null;
             }
 
+            // check for dodgy array syntax
+            CharSequence tempTok = optTok(lexer);
+            if (tempTok != null && Chars.equals(tempTok, ']')) {
+                throw SqlException.position(columnPosition).put(columnName).put(" has an unmatched `]` - were you trying to define an array?");
+            } else {
+                lexer.unparseLast();
+            }
+
             if (tok == null) {
                 tok = tok(lexer, "',' or ')'");
             }

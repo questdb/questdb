@@ -92,7 +92,8 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     "\tn STRING,\n" +
                     "\tarr INT[]\n" + // <-- array should be present
                     ") timestamp(timestamp) BYPASS WAL\n" +
-                    "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n", "show create table x;");
+                    "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n",
+                    "show create table x;");
         });
     }
 
