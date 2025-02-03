@@ -1263,7 +1263,8 @@ public final class TableUtils {
         }
     }
 
-    public static boolean matViewFileExists(CairoConfiguration configuration, Path path, CharSequence dirName, FilesFacade ff) {
+    public static boolean matViewFileExists(CairoConfiguration configuration, Path path, CharSequence dirName) {
+        FilesFacade ff = configuration.getFilesFacade();
         path.of(configuration.getRoot()).concat(dirName).concat(MAT_VIEW_FILE_NAME);
         return ff.exists(path.$());
     }

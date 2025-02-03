@@ -25,6 +25,7 @@
 package io.questdb.cairo.meta;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
@@ -49,6 +50,7 @@ import static io.questdb.cairo.meta.MetaFileUtils.*;
 
 public class MetaFileWriter implements Closeable, Mutable {
     private final BlockMemoryHandleImpl blockMemoryHandle = new BlockMemoryHandleImpl();
+    private final int commitMode;
     private final FilesFacade ff;
     private int blockCount;
     private long blockOffset;
@@ -56,8 +58,17 @@ public class MetaFileWriter implements Closeable, Mutable {
     private boolean isCommitted;
     private MemoryCARW memory;
 
+    public MetaFileWriter(FilesFacade ff, int commitMode) {
+        assert commitMode == CommitMode.ASYNC
+                || commitMode == CommitMode.NOSYNC
+                || commitMode == CommitMode.SYNC;
+        this.ff = ff;
+        this.commitMode = commitMode;
+    }
+
     public MetaFileWriter(FilesFacade ff) {
         this.ff = ff;
+        this.commitMode = CommitMode.SYNC;
     }
 
     public AppendableBlock append() {
@@ -107,8 +118,11 @@ public class MetaFileWriter implements Closeable, Mutable {
         setVersionVolatile(currentVersion);
 
         isCommitted = true;
-        //TODO: no sync
-        file.sync(false);
+
+        if (commitMode != CommitMode.NOSYNC) {
+            file.sync(commitMode == CommitMode.ASYNC);
+        }
+
         return true;
     }
 

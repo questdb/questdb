@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.meta;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.vm.MemoryCARWImpl;
@@ -37,12 +38,15 @@ import io.questdb.std.Long256Acceptor;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
+import io.questdb.std.Os;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
@@ -50,12 +54,16 @@ import static io.questdb.cairo.meta.MetaFileUtils.*;
 
 public class MetaFileReader implements Closeable, Mutable {
     private final BlockCursor blockCursor = new BlockCursor();
+    private final @NotNull MillisecondClock clock;
     private final FilesFacade ff;
+    private final long spinLockTimeoutMs;
     private MemoryCMR file;
     private MemoryCR memory;
 
-    public MetaFileReader(FilesFacade ff) {
-        this.ff = ff;
+    public MetaFileReader(final CairoConfiguration configuration) {
+        this.ff = configuration.getFilesFacade();
+        this.spinLockTimeoutMs = configuration.getSpinLockTimeout();
+        this.clock = configuration.getMillisecondClock();
     }
 
     @Override
@@ -71,7 +79,7 @@ public class MetaFileReader implements Closeable, Mutable {
 
     public BlockCursor getCursor() {
         long regionLength;
-        // TODO: timeout
+        long deadline = clock.getTicks() + spinLockTimeoutMs;
         while (true) {
             long currentVersion = getVersionVolatile();
             final long regionOffset = HEADER_SIZE + file.getLong(getRegionOffsetOffset(currentVersion));
@@ -84,6 +92,12 @@ public class MetaFileReader implements Closeable, Mutable {
             if (currentVersion == getVersionVolatile()) {
                 break;
             }
+
+            if (clock.getTicks() > deadline) {
+                throw CairoException.critical(0)
+                        .put("Metafile read timeout [timeout=").put(spinLockTimeoutMs).put("ms]");
+            }
+            Os.pause();
         }
 
         final long memoryBaseAddress = memory.getPageAddress(0);

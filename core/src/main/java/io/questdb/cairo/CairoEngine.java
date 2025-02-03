@@ -1378,11 +1378,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
         Path path = Path.getThreadLocal(configuration.getRoot());
         final int pathLen = path.size();
-        try (MetaFileReader reader = new MetaFileReader(configuration.getFilesFacade())) {
+        try (MetaFileReader reader = new MetaFileReader(configuration)) {
             for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
                 final TableToken tableToken = tableTokenBucket.get(i);
-                final FilesFacade ff = configuration.getFilesFacade();
-                if (tableToken.isMatView() && TableUtils.matViewFileExists(configuration, path, tableToken.getDirName(), ff)) {
+                if (tableToken.isMatView() && TableUtils.matViewFileExists(configuration, path, tableToken.getDirName())) {
                     try {
                         final MatViewDefinition matViewDefinition = TableUtils.loadMatViewDefinition(
                                 reader,

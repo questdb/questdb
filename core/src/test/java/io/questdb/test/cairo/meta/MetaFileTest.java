@@ -46,7 +46,6 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-import java.io.IOException;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -96,7 +95,7 @@ public class MetaFileTest extends AbstractCairoTest {
                 FilesFacade ff = configuration.getFilesFacade();
                 Assert.assertTrue(ff.touch(path.$()));
 
-                try (MetaFileReader reader = new MetaFileReader(ff)) {
+                try (MetaFileReader reader = new MetaFileReader(configuration)) {
                     reader.of(path.$());
                 } catch (Exception e) {
                     Assert.assertTrue(e.getMessage().contains("Expected at least 1 block"));
@@ -115,7 +114,7 @@ public class MetaFileTest extends AbstractCairoTest {
                     writer.of(path.$());
                 }
 
-                try (MetaFileReader reader = new MetaFileReader(ff)) {
+                try (MetaFileReader reader = new MetaFileReader(configuration)) {
                     reader.of(path.$());
                 } catch (Exception e) {
                     Assert.assertTrue(e.getMessage().contains("Expected at least 1 block"));
@@ -129,7 +128,7 @@ public class MetaFileTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (Path path = getDefinitionFilePath("test")) {
                 FilesFacade ff = configuration.getFilesFacade();
-                try (MetaFileReader reader = new MetaFileReader(ff)) {
+                try (MetaFileReader reader = new MetaFileReader(configuration)) {
                     reader.of(path.$());
                     Assert.fail("Expected exception");
                 } catch (Exception e) {
@@ -168,7 +167,7 @@ public class MetaFileTest extends AbstractCairoTest {
                     assertRegionOffset(writer, 2, regionLength, prevRegionOffset + prevRegionLength);
                 }
 
-                readAllBlocks(ff, path, 1);
+                readAllBlocks(path, 1);
             }
         });
     }
@@ -214,7 +213,7 @@ public class MetaFileTest extends AbstractCairoTest {
                     assertRegionOffset(writer, 3, regionLength, prevRegionOffset + prevRegionLength);
                 }
 
-                readAllBlocks(ff, path, 1);
+                readAllBlocks(path, 1);
             }
         });
     }
@@ -266,7 +265,7 @@ public class MetaFileTest extends AbstractCairoTest {
                         start.await();
                         for (int i = 0; i < iterations; i++) {
                             Os.sleep(1); // interleave reads and writes
-                            readAllBlocks(ff, path, 1);
+                            readAllBlocks(path, 1);
                         }
                     } catch (Exception e) {
                         LOG.error().$("Error in reader thread: ").$(e).$();
@@ -323,7 +322,7 @@ public class MetaFileTest extends AbstractCairoTest {
                     assertRegionOffset(writer, 3, regionLength, 0);
                 }
 
-                readAllBlocks(ff, path, 1);
+                readAllBlocks(path, 1);
             }
         });
     }
@@ -350,7 +349,7 @@ public class MetaFileTest extends AbstractCairoTest {
                     writer.commit();
                 }
 
-                readAllBlocks(ff, path, 3);
+                readAllBlocks(path, 3);
             }
         });
     }
@@ -421,8 +420,8 @@ public class MetaFileTest extends AbstractCairoTest {
         return path.of(configuration.getRoot()).concat(tableName).concat(MAT_VIEW_FILE_NAME);
     }
 
-    private static void readAllBlocks(FilesFacade ff, Path path, int expectedBlocks) throws IOException {
-        try (MetaFileReader reader = new MetaFileReader(ff)) {
+    private static void readAllBlocks(Path path, int expectedBlocks) {
+        try (MetaFileReader reader = new MetaFileReader(configuration)) {
             reader.of(path.$());
             int blockCount = 0;
             MetaFileReader.BlockCursor cursor = reader.getCursor();

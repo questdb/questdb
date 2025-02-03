@@ -741,10 +741,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
             String timeZone,
             String timeZoneOffset
     ) {
-        final FilesFacade ff = configuration.getFilesFacade();
         final TableToken matViewToken = engine.getTableTokenIfExists(name);
-
-        try (MetaFileReader reader = new MetaFileReader(ff); Path path = new Path()) {
+        try (MetaFileReader reader = new MetaFileReader(configuration); Path path = new Path()) {
             path.of(configuration.getRoot());
             final int rootLen = path.size();
             MatViewDefinition mvd = TableUtils.loadMatViewDefinition(

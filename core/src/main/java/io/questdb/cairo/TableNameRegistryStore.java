@@ -375,7 +375,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                             boolean isProtected = tableFlagResolver.isProtected(tableName);
                             boolean isSystem = tableFlagResolver.isSystem(tableName);
                             boolean isPublic = tableFlagResolver.isPublic(tableName);
-                            boolean isMatView = matViewFileExists(configuration, path, dirName, ff);
+                            boolean isMatView = matViewFileExists(configuration, path, dirName);
                             TableToken token = new TableToken(tableName, dirName, tableId, isMatView, isWal, isSystem, isProtected, isPublic);
                             TableToken existingTableToken = tableNameToTableTokenMap.get(tableName);
 
