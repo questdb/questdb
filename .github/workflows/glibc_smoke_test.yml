@@ -15,7 +15,7 @@ jobs:
       image: almalinux:8
     steps:
       - name: Install dependencies
-        run: dnf install -y curl maven
+        run: dnf install -y curl maven git
       - name: Print GLIBC version
         run: ldd --version
       - uses: actions/checkout@v4
