@@ -599,29 +599,6 @@ public class SqlParser {
         return tok;
     }
 
-    private int parseArrayDimensions(GenericLexer lexer) throws SqlException {
-        int dim = 0;
-        do {
-            CharSequence tok = optTok(lexer);
-            if (Chars.equalsNc(tok, '[')) {
-                // could be a start of array type
-                tok = optTok(lexer);
-
-                if (Chars.equalsNc(tok, ']')) {
-                    dim++;
-                } else {
-                    // we do not expect anything between [], but lets try to be helpful to user and ask them
-                    // to remove things between brackets
-                    throw SqlException.$(lexer.lastTokenPosition(), "']' expected");
-                }
-            } else {
-                lexer.unparseLast();
-                break;
-            }
-        } while (true);
-        return dim;
-    }
-
     private QueryModel parseAsSubQueryAndExpectClosingBrace(
             GenericLexer lexer,
             LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses,
@@ -3255,7 +3232,7 @@ public class SqlParser {
         int typePosition = lexer.lastTokenPosition();
         final short typeTag = SqlUtil.toPersistedTypeTag(tok, typePosition);
 
-        int dim = parseArrayDimensions(lexer);
+        int dim = SqlUtil.parseArrayDimensions(lexer);
         if (dim > 0) {
             if (ColumnType.isSupportedArrayType(typeTag)) {
                 return ColumnType.encodeArrayType(typeTag, dim); // dim is 0 - based here, but 1-based in ColumnType
