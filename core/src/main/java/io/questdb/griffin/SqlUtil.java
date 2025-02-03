@@ -789,6 +789,29 @@ public class SqlUtil {
         }
     }
 
+    public static int parseArrayDimensions(GenericLexer lexer) throws SqlException {
+        int dim = 0;
+        do {
+            CharSequence tok = fetchNext(lexer);
+            if (Chars.equalsNc(tok, '[')) {
+                // could be a start of array type
+                tok = fetchNext(lexer);
+
+                if (Chars.equalsNc(tok, ']')) {
+                    dim++;
+                } else {
+                    // we do not expect anything between [], but lets try to be helpful to user and ask them
+                    // to remove things between brackets
+                    throw SqlException.$(lexer.lastTokenPosition(), "']' expected");
+                }
+            } else {
+                lexer.unparseLast();
+                break;
+            }
+        } while (true);
+        return dim;
+    }
+
     public static short toPersistedTypeTag(@NotNull CharSequence tok, int tokPosition) throws SqlException {
         final short typeTag = ColumnType.tagOf(tok);
         if (typeTag == -1) {

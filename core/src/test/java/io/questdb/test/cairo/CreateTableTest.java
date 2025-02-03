@@ -54,6 +54,37 @@ import static org.junit.Assert.*;
 public class CreateTableTest extends AbstractCairoTest {
 
     @Test
+    public void testCreateTableWithInvalidArrayType() throws Exception {
+        assertMemoryLeak(() -> {
+            assertException("create table x (ts timestamp, arr varchar[]);", 34, "VARCHAR array type is not supported");
+        });
+    }
+
+    @Test
+    public void testCreateTableArrayWithMismatchedBrackets() throws Exception {
+        assertMemoryLeak(() -> {
+            assertException("create table x (arr int[);", 24, "']' expected");
+            assertException("create table x (arr int[][);", 26, "']' expected");
+            assertException("create table x (arr int]);", 16, "arr has an unmatched `]` - were you trying to define an array?");
+            assertException("create table x (arr int[]]);", 16, "arr has an unmatched `]` - were you trying to define an array?");
+        });
+    }
+
+    @Test
+    public void testCreateTableWithArrayColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (arr int[]);");
+            assertSql("ddl\n" +
+                            "CREATE TABLE 'x' ( \n" +
+                            "\tarr INT[]\n" +
+                            ")\n" +
+                            "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n",
+                    "show create table x;");
+        });
+    }
+
+
+    @Test
     public void testCreateNaNColumn() throws Exception {
         assertException(
                 "create table a as (select NaN x)",
