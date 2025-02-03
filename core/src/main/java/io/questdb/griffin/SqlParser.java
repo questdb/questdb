@@ -971,6 +971,11 @@ public class SqlParser {
                     } else if (model.isDedupKey() && isDirectCreate) {
                         throw SqlException.position(lexer.lastTokenPosition())
                                 .put("duplicate dedup column [column=").put(columnName).put(']');
+                    } else if (ColumnType.isArray(model.getColumnType())) {
+                        throw SqlException.position(lexer.lastTokenPosition())
+                                .put("dedup key columns cannot include ARRAYs [column=")
+                                .put(columnName).put(", type=")
+                                .put(ColumnType.nameOf(model.getColumnType())).put(']');
                     }
                     model.setIsDedupKey();
                     int colIndex = builder.getColumnIndex(columnName);
