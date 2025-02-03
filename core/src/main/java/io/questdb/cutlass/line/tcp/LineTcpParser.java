@@ -24,7 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.ArrayViewImpl;
 import io.questdb.cutlass.line.tcp.ArrayParser.ParseException;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.log.Log;
@@ -672,7 +672,7 @@ public class LineTcpParser implements QuietCloseable {
 
     public class ProtoEntity implements QuietCloseable {
         private final DirectUtf8String name = new DirectUtf8String();
-        private final ArrayParser ndArrParser = new ArrayParser();
+        private final ArrayParser arrayParser = new ArrayParser();
         private final DirectUtf8String value = new DirectUtf8String();
         private boolean booleanValue;
         private double floatValue;
@@ -682,7 +682,7 @@ public class LineTcpParser implements QuietCloseable {
 
         @Override
         public void close() {
-            Misc.free(ndArrParser);
+            Misc.free(arrayParser);
         }
 
         public boolean getBooleanValue() {
@@ -701,8 +701,8 @@ public class LineTcpParser implements QuietCloseable {
             return name;
         }
 
-        public ArrayView getNdArray() {
-            return ndArrParser.getView();
+        public ArrayViewImpl getArray() {
+            return arrayParser.getView();
         }
 
         public byte getType() {
@@ -806,7 +806,7 @@ public class LineTcpParser implements QuietCloseable {
                 }
                 case ']': {
                     try {
-                        ndArrParser.parse(value);
+                        arrayParser.parse(value);
                         type = ENTITY_TYPE_ND_ARRAY;
                         errorCode = ErrorCode.NONE;
                         return true;

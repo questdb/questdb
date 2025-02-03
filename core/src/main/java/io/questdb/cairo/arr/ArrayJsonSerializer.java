@@ -39,15 +39,15 @@ public class ArrayJsonSerializer {
             @NotNull ArrayRowMajorTraversal traversal,
             int columnType) {
         assert ColumnType.isArray(columnType);
-        if (array.isNull()) {
-            sink.putAscii("[]");
-            return;
-        }
+//        if (array.isNull()) {
+//            sink.putAscii("[]");
+//            return;
+//        }
         traversal.of(array);
         DirectIntSlice coordinates;
         while ((coordinates = traversal.next()) != null) {
             writeRepeated(sink, traversal.getIn(), '[');
-            writeElement(sink, array, coordinates, columnType);
+//            writeElement(sink, array, coordinates, columnType);
             writeRepeated(sink, traversal.getOut(), ']');
             if (traversal.hasNext()) {
                 sink.putAscii(',');
@@ -55,7 +55,7 @@ public class ArrayJsonSerializer {
         }
     }
 
-    private static void writeElement(CharSink<?> sink, @NotNull ArrayView array, DirectIntSlice coordinates, int columnType) {
+    private static void writeElement(CharSink<?> sink, @NotNull ArrayViewImpl array, DirectIntSlice coordinates, int columnType) {
         final int precision = ColumnType.decodeArrayElementTypePrecision(columnType);
         final char typeClass = ColumnType.decodeArrayElementTypeClass(columnType);
         switch (precision) {

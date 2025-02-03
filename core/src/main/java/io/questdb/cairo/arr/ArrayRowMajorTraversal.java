@@ -33,7 +33,7 @@ import io.questdb.std.QuietCloseable;
 import java.io.Closeable;
 
 /**
- * An iterator-like utility to traverse an {@link ArrayView} in row-major order.
+ * An iterator-like utility to traverse an {@link ArrayViewImpl} in row-major order.
  * Instead of obtaining the values, this traversal class computes the coordinates.
  * <p>
  * It is down to the user to then pass those coordinates to the type-appropriate
@@ -64,7 +64,7 @@ public class ArrayRowMajorTraversal implements QuietCloseable {
     /**
      * The array's shape
      */
-    private DirectIntSlice shape;
+    private ArrayShape shape;
 
     public static void clearThreadLocals() {
         LOCAL.close();
@@ -114,9 +114,9 @@ public class ArrayRowMajorTraversal implements QuietCloseable {
         out = 0;
 
         // The `out` variable counts how many dims _will be_ reset to zero in the call to `next()` after this one.
-        final int lastDimIndex = shape.length() - 1;
+        final int lastDimIndex = shape.size() - 1;
         for (int dimIndex = lastDimIndex; dimIndex >= 0; --dimIndex) {
-            final int dim = shape.get(dimIndex);
+            final int dim = shape.getLength(dimIndex);
             final int current = coordinates.get(dimIndex);
             if (out > 0) {
                 if (current + 1 == dim) {
@@ -135,7 +135,7 @@ public class ArrayRowMajorTraversal implements QuietCloseable {
             }
         }
 
-        if (out == shape.length()) {
+        if (out == shape.size()) {
             done = true;
         }
 
@@ -146,10 +146,10 @@ public class ArrayRowMajorTraversal implements QuietCloseable {
         return of(array.getShape());
     }
 
-    public ArrayRowMajorTraversal of(DirectIntSlice shape) {
+    public ArrayRowMajorTraversal of(ArrayShape shape) {
         reset();
         this.shape = shape;
-        for (int dimIndex = shape.length() - 1; dimIndex >= 0; --dimIndex) {
+        for (int dimIndex = shape.size() - 1; dimIndex >= 0; --dimIndex) {
             coordinates.add(0);
         }
         if (coordinates.size() > 0) {
@@ -158,7 +158,7 @@ public class ArrayRowMajorTraversal implements QuietCloseable {
         }
 
         // will be converted to `in == shape.length()` on first iteration.
-        out = shape.length();
+        out = shape.size();
         return this;
     }
 

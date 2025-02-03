@@ -24,266 +24,54 @@
 
 package io.questdb.cairo.arr;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.std.CRC16XModem;
-import io.questdb.std.DirectIntSlice;
+import io.questdb.cairo.vm.api.MemoryA;
 
-/**
- * A view over an immutable N-dimensional Array.
- * This is a flyweight object.
- */
-public class ArrayView {
-    private final DirectIntSlice shape = new DirectIntSlice();
-    private final DirectIntSlice strides = new DirectIntSlice();
-    private final ArrayValuesSlice values = new ArrayValuesSlice();
-    int valuesOffset = 0;
-    private volatile short crc;
-    // Encoded array type, contains element type class, type precision, and dimensionality
-    private int type = ColumnType.UNDEFINED;
+public interface ArrayView {
 
-    public boolean getBoolean(DirectIntSlice coordinates) {
-        return values.getBoolean(flatIndex(coordinates));
+    default double getDouble1D(int x) {
+        return getDoubleFromRowMajor(getValuesOffset() + x);
     }
 
-    public byte getByte(DirectIntSlice coordinates) {
-        return values.getByte(flatIndex(coordinates));
+    default double getDouble2D(int x, int y) {
+        return getDoubleFromRowMajor(getValuesOffset() + x * getStride(0) + y);
+    }
+
+    default double getDouble3D(int x, int y, int z) {
+        return getDoubleFromRowMajor(getValuesOffset() + x * getStride(0) + y * getStride(1) + z);
     }
 
     /**
-     * Gets the CRC value, if one was already previously calculated.
-     * <p>Returns 0 if this was never previously computed.</p>
-     */
-    public short getCachedCrc() {
-        return crc;
-    }
-
-    public short getCrc() {
-        if (isNull()) {
-            return 0;
-        }
-
-        // Compute lazily.
-        if (crc == 0) {
-            // IMPORTANT!!
-            // Keep this logic in sync with the "intrusive"
-            // CRC logic in `ArrayTypeDriver.writeValues`.
-
-            // Add the dimension information first.
-            short checksum = CRC16XModem.updateInt(CRC16XModem.init(), shape.length());
-            for (int dimIndex = 0, nDims = shape.length(); dimIndex < nDims; ++dimIndex) {
-                final int dim = shape.get(dimIndex);
-                checksum = CRC16XModem.updateInt(checksum, dim);
-            }
-
-            // Add the values next.
-            if ((ColumnType.decodeArrayElementTypePrecision(type) < 3) && (valuesOffset > 0)) {
-                // We don't currently support walking data that has a byte-unaligned start.
-                // In other words, a scenario where the first value is not at the start of a byte boundary.
-                // We simplify this even further by not supporting `valuesOffset` at all yet.
-                throw new UnsupportedOperationException("nyi");
-            }
-            if (!hasDefaultStrides()) {
-                throw new UnsupportedOperationException("nyi");
-            }
-            checksum = CRC16XModem.updateBytes(checksum, values.ptr(), values.size());
-            crc = CRC16XModem.finalize(checksum);
-        }
-        return crc;
-    }
-
-    public double getDouble(DirectIntSlice coordinates) {
-        return values.getDouble(flatIndex(coordinates));
-    }
-
-    public float getFloat(DirectIntSlice coordinates) {
-        return values.getFloat(flatIndex(coordinates));
-    }
-
-    public int getInt(DirectIntSlice coordinates) {
-        return values.getInt(flatIndex(coordinates));
-    }
-
-    public long getLong(DirectIntSlice coordinates) {
-        return values.getLong(flatIndex(coordinates));
-    }
-
-    /**
-     * Get the dimensions (<i>aka shape</i>) of the array.
-     * <p>Examples shapes:
-     * <ul>
-     *     <li>A 1-D vector of 100 elements: <code>[100]</code>.</li>
-     *     <li>A 2-D matrix of 50 rows and 2 columns: <code>[50, 2]</code>.</li>
-     * </ul>
-     */
-    public DirectIntSlice getShape() {
-        return shape;
-    }
-
-    public short getShort(DirectIntSlice coordinates) {
-        return values.getShort(flatIndex(coordinates));
-    }
-
-    /**
-     * Get the array's strides, in element space.
-     * <p>The returned strides expresses the number of elements to skip
-     * to read the next element in each dimension.</p>
-     * <p><strong>IMPORTANT:</strong>
-     * <ul>
-     *     <li>A stride can be <code>0</code>, in case of broadcasting, or
-     *         <code>&lt; 0</code> in case of reversing of data.</li>
-     *     <li>Most libraries support strides expressed in the byte space.
-     *         Since we also support packed arrays (e.g. bool bit arrays),
-     *         the strides here are expressed in the element count space
-     *         instead.</li>
-     * </ul>
-     */
-    public DirectIntSlice getStrides() {
-        return strides;
-    }
-
-    /**
-     * Get the array's type
-     */
-    public int getType() {
-        return type;
-    }
-
-    /**
-     * Buffer holding the flattened array values.
-     * <p>Data is stored in row-major format.</p>
-     * <p>For example, for the 4x3x2 nd array:
-     * <pre>
-     * {
-     *     {{1, 2}, {3, 4}, {5, 6}},
-     *     {{7, 8}, {9, 0}, {1, 2}},
-     *     {{3, 4}, {5, 6}, {7, 8}},
-     *     {{9, 0}, {1, 2}, {3, 4}}
-     * }
-     * </pre>
-     * <p>The buffer would contain a flat vector of elements
-     * with the numbers <code>[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4]</code>.</p>
-     * <p><strong>IMPORTANT</strong>: The number of elements</p>
-     */
-    public ArrayValuesSlice getValues() {
-        return values;
-    }
-
-    /**
-     * Number of values readable, after skipping {@link ArrayView#getValuesOffset}.
-     */
-    public int getValuesLength() {
-        return ArrayMeta.flatLength(getShape());
-    }
-
-    /**
-     * Number of values to skip reading before
-     * applying the strides logic to access the dense array.
-     * <p>This is exposed (rather than being a part of the Values object)
-     * because of densely packed datatypes, such as boolean bit arrays,
-     * where this might mean slicing across the byte boundary.</p>
-     */
-    public int getValuesOffset() {
-        return valuesOffset;
-    }
-
-    public boolean hasDefaultStrides() {
-        return ArrayMeta.isDefaultStrides(shape, strides);
-    }
-
-    /**
-     * The array is a typeless zero-dimensional array.
-     * <p>This maps to the <code>NULL</code> value in an array column.</p>
-     */
-    public boolean isNull() {
-        return type == ColumnType.NULL;
-    }
-
-    /**
-     * Set to a non-null array.
+     * Raw access into flat array with row major layout.
      *
-     * @param shapeLength   number of elements
-     * @param stridesLength number of elements
-     * @param valuesSize    number of bytes
-     * @param crc           the pre-computed CRC16/XModem checksum, or 0 if unavailable.
+     * @param flatIndex flat index into the flat array
+     * @return double value from the array
      */
-    public void of(
-            int type,
-            long shapePtr,
-            int shapeLength,
-            long stridesPtr,
-            int stridesLength,
-            long valuesPtr,
-            int valuesSize,
-            int valuesOffset,
-            short crc
-    ) {
-        boolean complete = false;
-        try {
-            if (!ColumnType.isArray(type)) {
-                throw new AssertionError("type class is not Array: " + type);
-            }
-            if (shapeLength != stridesLength) {
-                throw new AssertionError("shapeLength != stridesLength");
-            }
-            if (ColumnType.decodeArrayDimensionality(type) != shapeLength) {
-                throw new AssertionError("shapeLength != nDims decoded from type");
-            }
-            this.type = type;
-            shape.of(shapePtr, shapeLength);
-            ArrayMeta.validateShape(shape);
-            final int valuesLength = ArrayMeta.flatLength(shape);
-            validateValuesSize(type, valuesOffset, valuesLength, valuesSize);
-            strides.of(stridesPtr, stridesLength);
-            values.of(valuesPtr, valuesSize);
-            this.valuesOffset = valuesOffset;
-            complete = true;
-        } finally {
-            if (!complete) {
-                reset();
-            }
-        }
+    double getDoubleFromRowMajor(int flatIndex);
+
+    /**
+     * This is array dimensionality, the length of the shape is the number of dimensions.
+     *
+     * @return array shape
+     */
+    ArrayShape getShape();
+
+    int getStride(int dimension);
+
+    int getType();
+
+    default int getValuesOffset() {
+        return 0;
     }
 
     /**
-     * Set to a null array.
+     * If the underling array has default strides, 0 values offset and is aligned, we
+     * call it "vanilla" and we can persist the array without manipulating it.
+     *
+     * @return true for arrays lifted direct from storage or otherwise implementing "vanilla" layouts.
      */
-    public void ofNull() {
-        reset();
-        type = ColumnType.NULL;
+    default boolean isVanilla() {
+        return true;
     }
 
-    /**
-     * Reset to an invalid array.
-     */
-    public void reset() {
-        this.type = ColumnType.UNDEFINED;
-        this.shape.reset();
-        this.strides.reset();
-        this.values.reset();
-        this.valuesOffset = 0;
-        this.crc = 0;
-    }
-
-    private static void validateValuesSize(int type, int valuesOffset, int valuesLength, int valuesSize) {
-        final int totExpectedElementCapacity = valuesOffset + valuesLength;
-        final int expectedByteSize = ArrayMeta.calcRequiredValuesByteSize(type, totExpectedElementCapacity);
-        if (valuesSize != expectedByteSize) {
-            throw new AssertionError(String.format("invalid valuesSize, expected %,d actual %,d", expectedByteSize, valuesSize));
-        }
-    }
-
-    /**
-     * Convert the coordinates into an element index into the values array.
-     */
-    private int flatIndex(DirectIntSlice coordinates) {
-        assert coordinates.length() == strides.length();
-        int flatIndex = 0;
-        for (int dimsIndex = 0, nDims = strides.length(); dimsIndex < nDims; dimsIndex++) {
-            final int dimCoordinate = coordinates.get(dimsIndex);
-            final int dimStride = strides.get(dimsIndex);
-            flatIndex += (dimCoordinate * dimStride);
-        }
-        assert flatIndex < ArrayMeta.flatLength(shape);
-        return valuesOffset + flatIndex;
-    }
+    void appendRowMajor(MemoryA mem);
 }
