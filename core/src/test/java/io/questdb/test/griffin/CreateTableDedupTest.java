@@ -42,6 +42,14 @@ import org.junit.Test;
 public class CreateTableDedupTest extends AbstractCairoTest {
 
     @Test
+    public void testCreateTableWithArrayDedupKey() throws Exception {
+        assertMemoryLeak(() -> {
+            assertException("create table x ( ts timestamp, arr int[]) timestamp(ts) partition by day wal dedup upsert keys(ts, arr)", 99, "dedup key columns cannot include ARRAYs [column=arr, type=INT[]]");
+        });
+    }
+
+
+    @Test
     public void testAddIndexOnDeduplicatedColumn() throws Exception {
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
