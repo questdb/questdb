@@ -28,7 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayJsonSerializer;
 import io.questdb.cairo.arr.ArrayRowMajorTraversal;
 import io.questdb.cairo.arr.ArrayValuesSlice;
-import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.ArrayViewImpl;
 import io.questdb.cutlass.line.tcp.ArrayParser;
 import io.questdb.cutlass.line.tcp.ArrayParser.ParseException;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode;
@@ -240,8 +240,8 @@ public class ArrayParserTest {
     private ArrayValuesSlice parseAndGetValues(String literal, int[] expectedShape) throws ParseException {
         DirectUtf8String arrayStr = utf8String(sink, literal);
         parser.parse(arrayStr);
-        ArrayView view = parser.getView();
-        assertSliceEquals(view.getShape(), expectedShape);
+        ArrayViewImpl view = parser.getView();
+        assertSliceEquals((DirectIntSlice) view.getShape(), expectedShape);
         return view.getValues();
     }
 
@@ -294,7 +294,7 @@ public class ArrayParserTest {
         int columnType = ColumnType.encodeArrayType(ColumnType.INT, 1);
         DirectUtf8String arrayStr = utf8String(sink, literal);
         parser.parse(arrayStr);
-        ArrayView array = parser.getView();
+        ArrayViewImpl array = parser.getView();
         try (ArrayRowMajorTraversal traversal = new ArrayRowMajorTraversal()) {
             traversal.of(array);
             sink.clear();

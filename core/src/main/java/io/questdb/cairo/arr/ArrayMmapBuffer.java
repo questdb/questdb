@@ -34,15 +34,15 @@ import org.jetbrains.annotations.Nullable;
 
 public class ArrayMmapBuffer implements QuietCloseable {
     private final DirectIntList strides = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY_DBG3);
-    private final ArrayView view = new ArrayView();
-    private @Nullable ArrayView viewRes = null;  // set to `view` when has value, or `null` otherwise.
+    private final ArrayViewImpl view = new ArrayViewImpl();
+    private @Nullable ArrayViewImpl viewRes = null;  // set to `view` when has value, or `null` otherwise.
 
     @Override
     public void close() {
         Misc.free(strides);
     }
 
-    public ArrayView getView() {
+    public ArrayViewImpl getView() {
         return viewRes;
     }
 

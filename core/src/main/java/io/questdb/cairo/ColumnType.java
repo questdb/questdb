@@ -168,10 +168,8 @@ public final class ColumnType {
      * returns -1 if the type is not an array.
      */
     public static int decodeArrayElementTypePrecision(int type) {
-        if (ColumnType.tagOf(type) == ColumnType.ARRAY) {
-            return (byte) ((type >> 12) & 0xF); // precision is encoded in 4 bits.
-        }
-        return -1;
+        assert ColumnType.tagOf(type) == ColumnType.ARRAY;
+        return (byte) ((type >> 12) & 0xF); // precision is encoded in 4 bits.
     }
 
     public static boolean defaultStringImplementationIsUtf8() {

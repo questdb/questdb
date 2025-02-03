@@ -24,15 +24,15 @@
 
 package io.questdb.std;
 
+import io.questdb.cairo.arr.ArrayShape;
 import io.questdb.std.bytes.DirectSequence;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.TestOnly;
 
 /**
  * A flyweight to an immutable int slice stored in native memory.
  */
-public class DirectIntSlice implements DirectSequence {
+public class DirectIntSlice implements DirectSequence, ArrayShape {
     private int length = 0;
     private long ptr = 0;
 
@@ -40,6 +40,11 @@ public class DirectIntSlice implements DirectSequence {
         assert index >= 0;
         assert index < length;
         return Unsafe.getUnsafe().getInt(ptr + ((long) index << 2));
+    }
+
+    @Override
+    public int getLength(int dimension) {
+        return get(dimension);
     }
 
     public int length() {
@@ -89,7 +94,7 @@ public class DirectIntSlice implements DirectSequence {
         Utf16Sink sb = Misc.getThreadLocalSink();
         sb.put('[');
         final int maxElementsToPrint = 1000; // Do not try to print too much, it can hang IntelliJ debugger.
-        for (int i = 0, n = (int) Math.min(maxElementsToPrint, length); i < n; i++) {
+        for (int i = 0, n = Math.min(maxElementsToPrint, length); i < n; i++) {
             if (i > 0) {
                 sb.put(',').put(' ');
             }

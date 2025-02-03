@@ -55,6 +55,8 @@ public interface MemoryA extends Closeable {
 
     void putByte(byte value);
 
+    void zeroMem(int length);
+
     void putChar(char value);
 
     void putDouble(double value);

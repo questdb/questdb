@@ -62,7 +62,7 @@ public class ArrayBuffers implements QuietCloseable {
     /**
      * Validates the buffers and updates the array view.
      */
-    public void updateView(@NotNull ArrayView view) {
+    public void updateView(@NotNull ArrayViewImpl view) {
         if (shape.size() == 0) {
             view.ofNull();
         } else {

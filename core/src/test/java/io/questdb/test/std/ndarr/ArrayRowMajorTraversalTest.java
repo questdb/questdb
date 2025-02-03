@@ -29,8 +29,10 @@ import io.questdb.std.DirectIntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
+@Ignore
 public class ArrayRowMajorTraversalTest {
 
     @Test

@@ -34,8 +34,6 @@ import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryOM;
 import io.questdb.cairo.vm.api.MemoryR;
-import io.questdb.std.CRC16XModem;
-import io.questdb.std.DirectIntSlice;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
@@ -124,17 +122,21 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     private static final int ND_ARRAY_AUX_WIDTH_BYTES = 3 * Integer.BYTES;
     private static final long U32_MASK = 0xFFFFFFFFL;
 
-    public static void appendValue(@NotNull MemoryA auxMem, @NotNull MemoryA dataMem, @Nullable ArrayView array) {
-        if ((array == null) || array.isNull()) {
+    public static void appendValue(
+            @NotNull MemoryA auxMem,
+            @NotNull MemoryA dataMem,
+            @Nullable ArrayView array
+    ) {
+        if (array == null) {
             appendNullImpl(auxMem, dataMem);
             return;
         }
 
         final long beginOffset = dataMem.getAppendOffset();
-        final short crc = writeDataEntry(dataMem, array);
+        writeDataEntry(dataMem, array);
         final long endOffset = dataMem.getAppendOffset();
         final int size = (int) (endOffset - beginOffset);
-        writeAuxEntry(auxMem, beginOffset, crc, size);
+        writeAuxEntry(auxMem, beginOffset, size);
     }
 
     public static long getAuxVectorOffsetStatic(long row) {
@@ -423,27 +425,8 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         appendNullImpl(auxMem, offset);
     }
 
-    private static short initCrc16FromShape(@NotNull DirectIntSlice shape) {
-        short checksum = CRC16XModem.updateInt(CRC16XModem.init(), shape.length());
-        for (int dimIndex = 0, nDims = shape.length(); dimIndex < nDims; ++dimIndex) {
-            final int dim = shape.get(dimIndex);
-            checksum = CRC16XModem.updateInt(checksum, dim);
-        }
-        return checksum;
-    }
-
-    /**
-     * Determine if the values buffer's values inside the array are all byte aligned.
-     */
-    private static boolean isByteAligned(int bitWidth, @NotNull ArrayView array) {
-        return array.getValuesOffset() * bitWidth % 8 == 0;
-    }
-
     private static void padTo(@NotNull MemoryA dataMem, int byteAlignment) {
-        final int requiredPadding = skipsToAlign(dataMem.getAppendOffset(), byteAlignment);
-        for (int paddingIndex = 0; paddingIndex < requiredPadding; ++paddingIndex) {
-            dataMem.putByte((byte) 0);
-        }
+        dataMem.zeroMem(skipsToAlign(dataMem.getAppendOffset(), byteAlignment));
     }
 
     private static void putIntAlignedLong(MemoryA mem, long value) {
@@ -464,242 +447,41 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         return getIntAlignedLong(address) & OFFSET_MAX;
     }
 
-    private static void writeAuxEntry(MemoryA auxMem, long offset, short crc, int size) {
+    private static void writeAuxEntry(MemoryA auxMem, long offset, int size) {
         assert offset >= 0;
         assert offset <= OFFSET_MAX;
         assert size >= 0;
-        final long crcAndOffset = ((long) crc << CRC16_SHIFT) | offset;
+        final long crcAndOffset = ((long) (short) 0 << CRC16_SHIFT) | offset;
         putIntAlignedLong(auxMem, crcAndOffset);
         auxMem.putInt(size);
     }
 
     /**
      * Write the values and -- while doing so, also calculate the crc value, unless it was already cached.
-     *
-     * @return the CRC16/XModem value
      **/
-    private static short writeDataEntry(@NotNull MemoryA dataMem, @NotNull ArrayView array) {
+    private static void writeDataEntry(@NotNull MemoryA dataMem, @NotNull ArrayView array) {
         writeShape(dataMem, array.getShape());
-
         // We could be storing values of different datatypes.
         // We thus need to align accordingly. I.e., if we store doubles, we need to align on an 8-byte boundary.
         // for shorts, it's on a 2-byte boundary. For booleans, we align to the byte.
         final int bitWidth = 1 << ColumnType.decodeArrayElementTypePrecision(array.getType());
         final int requiredByteAlignment = (bitWidth + 7) / 8;
         padTo(dataMem, requiredByteAlignment);
-        final short crc = writeValues(dataMem, array, bitWidth);
+        array.appendRowMajor(dataMem);
         // We pad at the end, ready for the next entry that starts with an int.
         padTo(dataMem, Integer.BYTES);
-        return crc;
-    }
-
-    private static short writeFlatValueBytes(
-            @NotNull MemoryA dataMem, @NotNull ArrayView array,
-            int bitWidth, ArrayValuesSlice values
-    ) {
-        final int requiredByteAlignment = (bitWidth + 7) / 8;
-        final int bytesToSkip = skipsToAlign(array.getValuesOffset(), requiredByteAlignment);
-        final short cachedCrc = array.getCachedCrc();
-        if (cachedCrc != 0) {
-            // Pre-computed checksum.
-            // Most optimised path - works for all types.
-            dataMem.putBlockOfBytes(values.ptr() + bytesToSkip, values.size() - bytesToSkip);
-            return cachedCrc;
-        } else {
-            // We can still copy the buffer without strides, but we also need to
-            // compute the CRC as we copy the bytes one by one.
-            // We do this intrusively to avoid two passes of the same data.
-            short crc = initCrc16FromShape(array.getShape());
-            for (int index = 0, size = values.size() - bytesToSkip; index < size; ++index) {
-                final byte value = values.getByte(index);
-                crc = CRC16XModem.update(crc, value);
-                dataMem.putByte(value);
-            }
-            return CRC16XModem.finalize(crc);
-        }
     }
 
     /**
      * Write the dimensions.
      */
-    private static void writeShape(@NotNull MemoryA dataMem, @NotNull DirectIntSlice shape) {
+    private static void writeShape(@NotNull MemoryA dataMem, @NotNull ArrayShape shape) {
         assert dataMem.getAppendOffset() % Integer.BYTES == 0; // aligned integer write
-        dataMem.putInt(shape.length());
-        for (int dimIndex = 0, nDims = shape.length(); dimIndex < nDims; ++dimIndex) {
-            final int dim = shape.get(dimIndex);
+        dataMem.putInt(shape.size());
+        for (int dimIndex = 0, nDims = shape.size(); dimIndex < nDims; ++dimIndex) {
+            final int dim = shape.getLength(dimIndex);
             dataMem.putInt(dim);
         }
-    }
-
-    // TODO(amunra): Take traversal as arg, drop use of thread local.
-    private static short writeStrided1ByteValues(@NotNull MemoryA dataMem, @NotNull ArrayView array) {
-        ArrayRowMajorTraversal t = ArrayRowMajorTraversal.LOCAL.get().of(array);
-        DirectIntSlice coordinates;
-        final short cachedCrc = array.getCachedCrc();
-        if (cachedCrc != 0) {
-            while ((coordinates = t.next()) != null) {
-                final byte value = array.getByte(coordinates);
-                dataMem.putByte(value);
-            }
-            return cachedCrc;
-        } else {
-            short crc = initCrc16FromShape(array.getShape());
-            while ((coordinates = t.next()) != null) {
-                final byte value = array.getByte(coordinates);
-                crc = CRC16XModem.update(crc, value);
-                dataMem.putByte(value);
-            }
-            return CRC16XModem.finalize(crc);
-        }
-    }
-
-    private static short writeStrided2ByteValues(@NotNull MemoryA dataMem, @NotNull ArrayView array) {
-        ArrayRowMajorTraversal t = ArrayRowMajorTraversal.LOCAL.get().of(array);
-        DirectIntSlice coordinates;
-        final short cachedCrc = array.getCachedCrc();
-        if (cachedCrc != 0) {
-            while ((coordinates = t.next()) != null) {
-                final short value = array.getShort(coordinates);
-                dataMem.putShort(value);
-            }
-            return cachedCrc;
-        } else {
-            short crc = initCrc16FromShape(array.getShape());
-            while ((coordinates = t.next()) != null) {
-                final short value = array.getShort(coordinates);
-                crc = CRC16XModem.updateShort(crc, value);
-                dataMem.putShort(value);
-            }
-            return CRC16XModem.finalize(crc);
-        }
-    }
-
-    /**
-     * Write INT or FLOAT -- works for both since we're just doing bit-wise copies.
-     */
-    private static short writeStrided4ByteValues(@NotNull MemoryA dataMem, @NotNull ArrayView array) {
-        ArrayRowMajorTraversal t = ArrayRowMajorTraversal.LOCAL.get().of(array);
-        DirectIntSlice coordinates;
-        final short cachedCrc = array.getCachedCrc();
-        if (cachedCrc != 0) {
-            while ((coordinates = t.next()) != null) {
-                // N.B. this will work for FLOAT too, since we're just performing a bitwise copy.
-                final int value = array.getInt(coordinates);
-                dataMem.putInt(value);
-            }
-            return cachedCrc;
-        } else {
-            short crc = initCrc16FromShape(array.getShape());
-            while ((coordinates = t.next()) != null) {
-                final int value = array.getInt(coordinates);
-                crc = CRC16XModem.updateInt(crc, value);
-                dataMem.putInt(value);
-            }
-            return CRC16XModem.finalize(crc);
-        }
-    }
-
-    /**
-     * Write LONG or DOUBLE -- works for both since we're just doing bit-wise copies.
-     */
-    private static short writeStrided8ByteValues(@NotNull MemoryA dataMem, @NotNull ArrayView array) {
-        ArrayRowMajorTraversal t = ArrayRowMajorTraversal.LOCAL.get().of(array);
-        DirectIntSlice coordinates;
-        final short cachedCrc = array.getCachedCrc();
-        if (cachedCrc != 0) {
-            while ((coordinates = t.next()) != null) {
-                final long value = array.getLong(coordinates);
-                dataMem.putLong(value);
-            }
-            return cachedCrc;
-        } else {
-            short crc = initCrc16FromShape(array.getShape());
-            while ((coordinates = t.next()) != null) {
-                final long value = array.getLong(coordinates);
-                crc = CRC16XModem.updateLong(crc, value);
-                dataMem.putLong(value);
-            }
-            return CRC16XModem.finalize(crc);
-        }
-    }
-
-    private static short writeStridedBooleanValues(@NotNull MemoryA dataMem, @NotNull ArrayView array) {
-        // Accumulate the bits into bytes, then write them.
-        byte buf = 0;
-        int bitIndex = 0;
-        ArrayRowMajorTraversal t = ArrayRowMajorTraversal.LOCAL.get().of(array);
-        DirectIntSlice coordinates;
-        final short cachedCrc = array.getCachedCrc();
-        if (cachedCrc != 0) {
-            while ((coordinates = t.next()) != null) {
-                final byte value = array.getBoolean(coordinates) ? (byte) 1 : (byte) 0;
-                buf |= (byte) (value << bitIndex);
-                ++bitIndex;
-                if (bitIndex >= 8) {
-                    dataMem.putByte(buf);
-                    bitIndex = 0;
-                }
-            }
-            // If there's an incompletely written byte, write it.
-            if (bitIndex > 0) {
-                dataMem.putByte(buf);
-            }
-            return cachedCrc;
-        } else {
-            short crc = initCrc16FromShape(array.getShape());
-            while ((coordinates = t.next()) != null) {
-                final byte value = array.getBoolean(coordinates) ? (byte) 1 : (byte) 0;
-                buf |= (byte) (value << bitIndex);
-                ++bitIndex;
-                if (bitIndex >= 8) {
-                    crc = CRC16XModem.update(crc, buf);
-                    dataMem.putByte(buf);
-                    bitIndex = 0;
-                }
-            }
-            // If there's an incompletely written byte, write it.
-            if (bitIndex > 0) {
-                crc = CRC16XModem.update(crc, buf);
-                dataMem.putByte(buf);
-            }
-            return CRC16XModem.finalize(crc);
-        }
-    }
-
-    private static short writeStridedByteAlignedValues(
-            int byteWidth, @NotNull MemoryA dataMem, @NotNull ArrayView array
-    ) {
-        // Yes, the code would be shorter written by striding first, then switching on type,
-        // but this way we avoid conditionals inside a loop.
-        switch (byteWidth) {
-            case 1:  // BYTE
-                return writeStrided1ByteValues(dataMem, array);
-            case 2: // SHORT
-                return writeStrided2ByteValues(dataMem, array);
-            case 4:  // INT & FLOAT
-                return writeStrided4ByteValues(dataMem, array);
-            case 8:  // LONG & DOUBLE
-                return writeStrided8ByteValues(dataMem, array);
-            default:
-                throw new UnsupportedOperationException("unsupported byte width: " + byteWidth);
-        }
-    }
-
-    /**
-     * Writes the values and returns the CRC16 value
-     */
-    private static short writeValues(@NotNull MemoryA dataMem, @NotNull ArrayView array, int bitWidth) {
-        final ArrayValuesSlice values = array.getValues();
-        final short crc;
-        if (array.hasDefaultStrides() && isByteAligned(bitWidth, array)) {
-            crc = writeFlatValueBytes(dataMem, array, bitWidth, values);
-        } else if (bitWidth == 1) {
-            crc = writeStridedBooleanValues(dataMem, array);
-        } else {
-            assert bitWidth >= 8;
-            crc = writeStridedByteAlignedValues(bitWidth / 8, dataMem, array);
-        }
-        return crc;
     }
 
     /**
