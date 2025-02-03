@@ -27,10 +27,10 @@ package io.questdb.test.cairo.mv;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.meta.MetaFileReader;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.sql.TableMetadata;
-import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -744,56 +744,25 @@ public class CreateMatViewTest extends AbstractCairoTest {
         final FilesFacade ff = configuration.getFilesFacade();
         final TableToken matViewToken = engine.getTableTokenIfExists(name);
 
-        long fd = -1;
-        try (MemoryCMR mem = Vm.getCMRInstance();
-             Path path = new Path()) {
-            path.of(configuration.getRoot()).concat(matViewToken.getDirName());
+        try (MetaFileReader reader = new MetaFileReader(ff); Path path = new Path()) {
+            path.of(configuration.getRoot());
             final int rootLen = path.size();
+            MatViewDefinition mvd = TableUtils.loadMatViewDefinition(
+                    reader,
+                    path,
+                    rootLen,
+                    matViewToken
+            );
 
-            try {
-                fd = mapRO(ff, path, mem, TableUtils.MAT_VIEW_QUERY_FILE_NAME);
+            assertEquals(mvd.getMatViewSql(), query);
 
-                final String queryMeta = Chars.toString(mem.getStrA(0L));
-                assertEquals(query, queryMeta);
-            } finally {
-                mem.close();
-                ff.close(fd);
-            }
-
-            path.trimTo(rootLen);
-            try {
-                fd = mapRO(ff, path, mem, TableUtils.MAT_VIEW_FILE_NAME);
-                long offset = TableUtils.MV_HEADER_SIZE;
-
-                final CharSequence baseTableNameMeta = mem.getStrA(offset);
-                offset += Vm.getStorageLength(baseTableNameMeta);
-                assertEquals(baseTableNameMeta, baseTableName);
-
-                final long fromMicrosMeta = mem.getLong(offset);
-                offset += Long.BYTES;
-                assertEquals(fromMicros, fromMicrosMeta);
-
-                final long toMicrosMeta = mem.getLong(offset);
-                offset += Long.BYTES;
-                assertEquals(toMicros, toMicrosMeta);
-
-                final long samplingIntervalMeta = mem.getLong(offset);
-                offset += Long.BYTES;
-                assertEquals(samplingInterval, samplingIntervalMeta);
-
-                final char samplingIntervalUnitMeta = mem.getChar(offset);
-                offset += Character.BYTES;
-                assertEquals(samplingIntervalUnit, samplingIntervalUnitMeta);
-
-                final CharSequence timeZoneMeta = mem.getStrA(offset);
-                offset += Vm.getStorageLength(timeZoneMeta);
-                assertEquals(timeZone, timeZoneMeta != null ? timeZoneMeta.toString() : null);
-
-                final CharSequence timeZoneOffsetMeta = mem.getStrA(offset);
-                assertEquals(timeZoneOffset != null ? timeZoneOffset : "00:00", timeZoneOffsetMeta.toString());
-            } finally {
-                ff.close(fd);
-            }
+            assertEquals(mvd.getBaseTableName(), baseTableName);
+            assertEquals(mvd.getSamplingInterval(), samplingInterval);
+            assertEquals(mvd.getSamplingIntervalUnit(), samplingIntervalUnit);
+            assertEquals(mvd.getFromMicros(), fromMicros);
+            assertEquals(mvd.getToMicros(), toMicros);
+            assertEquals(Chars.toString(mvd.getTimeZone()), timeZone);
+            assertEquals(mvd.getTimeZoneOffset(), timeZoneOffset != null ? timeZoneOffset : "00:00");
         }
     }
 

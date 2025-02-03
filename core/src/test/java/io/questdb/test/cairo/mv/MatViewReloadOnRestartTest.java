@@ -34,6 +34,7 @@ import io.questdb.cutlass.line.LineUdpSender;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.Zip;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.cutlass.http.SendAndReceiveRequestBuilder;
@@ -45,12 +46,69 @@ import org.junit.Test;
 import java.util.HashMap;
 import java.util.Map;
 
-import static io.questdb.cairo.TableUtils.MAT_VIEW_QUERY_FILE_NAME;
+import static io.questdb.cairo.TableUtils.MAT_VIEW_FILE_NAME;
 import static io.questdb.test.tools.TestUtils.assertContains;
 
 
 public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
+    @Test
+    public void testMatViewsReloadOnServerStartCorruptedDefinitionFile() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            String viewDirName;
+            try (final TestServerMain main1 = startWithEnvVariables0(
+                    PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
+                    PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
+            )) {
+                execute(main1, "create table base_price (" +
+                        "sym varchar, price double, ts timestamp" +
+                        ") timestamp(ts) partition by DAY WAL"
+                );
 
+                createMatView(main1, "price_1h", "select sym, last(price) as price, ts from base_price sample by 1h");
+
+                execute(main1, "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                        ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                        ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                        ",('gbpusd', 1.321, '2024-09-10T13:02')"
+                );
+                drainWalQueue(main1.getEngine());
+
+                MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main1.getEngine());
+                refreshJob.run(0);
+                drainWalQueue(main1.getEngine());
+
+                assertSql(main1,
+                        "sym\tprice\tts\n" +
+                                "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                                "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
+                        "price_1h order by ts, sym"
+                );
+
+                TableToken tableToken = main1.getEngine().getTableTokenIfExists("price_1h");
+                viewDirName = tableToken.getDirName();
+            }
+
+            // Delete _mv file.
+            TestFilesFacadeImpl.INSTANCE.remove(dbPath.trimTo(dbPathLen).concat(viewDirName).concat(MAT_VIEW_FILE_NAME).$());
+
+            // The mat view should be skipped on server start.
+            try (final TestServerMain main2 = startWithEnvVariables0(
+                    PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
+                    PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
+            )) {
+                MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main2.getEngine());
+                refreshJob.run(0);
+
+                assertSql(
+                        main2,
+                        "count\n" +
+                                "0\n",
+                        "select count() from views();"
+                );
+            }
+        });
+    }
     @Before
     public void setUp() {
         super.setUp();
@@ -224,63 +282,8 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
         });
     }
 
-    @Test
-    public void testMatViewsReloadOnServerStartCorruptedDefinitionFile() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            String viewDirName;
-            try (final TestServerMain main1 = startWithEnvVariables0(
-                    PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
-                    PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
-            )) {
-                execute(main1, "create table base_price (" +
-                        "sym varchar, price double, ts timestamp" +
-                        ") timestamp(ts) partition by DAY WAL"
-                );
-
-                createMatView(main1, "price_1h", "select sym, last(price) as price, ts from base_price sample by 1h");
-
-                execute(main1, "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
-                        ",('gbpusd', 1.323, '2024-09-10T12:02')" +
-                        ",('jpyusd', 103.21, '2024-09-10T12:02')" +
-                        ",('gbpusd', 1.321, '2024-09-10T13:02')"
-                );
-                drainWalQueue(main1.getEngine());
-
-                MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main1.getEngine());
-                refreshJob.run(0);
-                drainWalQueue(main1.getEngine());
-
-                assertSql(main1,
-                        "sym\tprice\tts\n" +
-                                "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                                "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
-                                "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
-                        "price_1h order by ts, sym"
-                );
-
-                TableToken tableToken = main1.getEngine().getTableTokenIfExists("price_1h");
-                viewDirName = tableToken.getDirName();
-            }
-
-            // Delete query text file.
-            TestFilesFacadeImpl.INSTANCE.remove(dbPath.trimTo(dbPathLen).concat(viewDirName).concat(MAT_VIEW_QUERY_FILE_NAME).$());
-
-            // The mat view should be skipped on server start.
-            try (final TestServerMain main2 = startWithEnvVariables0(
-                    PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
-                    PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
-            )) {
-                MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main2.getEngine());
-                refreshJob.run(0);
-
-                assertSql(
-                        main2,
-                        "count\n" +
-                                "0\n",
-                        "select count() from views();"
-                );
-            }
-        });
+    static {
+        Zip.init();
     }
 
     @Test

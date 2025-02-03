@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.mv;
+package io.questdb.cairo.meta;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.VarcharTypeDriver;
@@ -45,17 +45,16 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8Sequence;
 
 import java.io.Closeable;
-import java.io.IOException;
 
-import static io.questdb.cairo.mv.DefinitionFileUtils.*;
+import static io.questdb.cairo.meta.MetaFileUtils.*;
 
-public class DefinitionFileReader implements Closeable, Mutable {
-    private final BlocksCursor blocksCursor = new BlocksCursor();
+public class MetaFileReader implements Closeable, Mutable {
+    private final BlockCursor blockCursor = new BlockCursor();
     private final FilesFacade ff;
     private MemoryCMR file;
     private MemoryCR memory;
 
-    public DefinitionFileReader(FilesFacade ff) {
+    public MetaFileReader(FilesFacade ff) {
         this.ff = ff;
     }
 
@@ -66,14 +65,13 @@ public class DefinitionFileReader implements Closeable, Mutable {
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         clear();
-        memory = null;
-        file = null;
     }
 
-    public BlocksCursor getCursor() {
+    public BlockCursor getCursor() {
         long regionLength;
+        // TODO: timeout
         while (true) {
             long currentVersion = getVersionVolatile();
             final long regionOffset = HEADER_SIZE + file.getLong(getRegionOffsetOffset(currentVersion));
@@ -106,8 +104,8 @@ public class DefinitionFileReader implements Closeable, Mutable {
         final int blockCount = memory.getInt(REGION_BLOCK_COUNT_OFFSET);
         assert blockCount > 0;
         final long blocksLength = regionLength - REGION_HEADER_SIZE;
-        blocksCursor.of(blockCount, REGION_HEADER_SIZE, blocksLength);
-        return blocksCursor;
+        blockCursor.of(blockCount, REGION_HEADER_SIZE, blocksLength);
+        return blockCursor;
     }
 
     public long getVersionVolatile() {
@@ -143,7 +141,7 @@ public class DefinitionFileReader implements Closeable, Mutable {
         }
     }
 
-    public class BlocksCursor {
+    public class BlockCursor {
         private final Block block = new Block();
         private int blockCount;
         private long blocksLimit;

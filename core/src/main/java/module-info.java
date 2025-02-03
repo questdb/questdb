@@ -121,6 +121,7 @@ open module io.questdb {
     exports io.questdb.griffin.engine.table.parquet;
     exports io.questdb.cairo.mv;
     exports io.questdb.cutlass.pgwire.modern;
+    exports io.questdb.cairo.meta;
 
     provides io.questdb.griffin.FunctionFactory with
 

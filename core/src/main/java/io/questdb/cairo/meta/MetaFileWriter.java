@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.mv;
+package io.questdb.cairo.meta;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.VarcharTypeDriver;
@@ -44,11 +44,10 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
-import java.io.IOException;
 
-import static io.questdb.cairo.mv.DefinitionFileUtils.*;
+import static io.questdb.cairo.meta.MetaFileUtils.*;
 
-public class DefinitionFileWriter implements Closeable, Mutable {
+public class MetaFileWriter implements Closeable, Mutable {
     private final BlockMemoryHandleImpl blockMemoryHandle = new BlockMemoryHandleImpl();
     private final FilesFacade ff;
     private int blockCount;
@@ -57,11 +56,11 @@ public class DefinitionFileWriter implements Closeable, Mutable {
     private boolean isCommitted;
     private MemoryCARW memory;
 
-    public DefinitionFileWriter(FilesFacade ff) {
+    public MetaFileWriter(FilesFacade ff) {
         this.ff = ff;
     }
 
-    public AppendOnlyBlock append() {
+    public AppendableBlock append() {
         return blockMemoryHandle.reset(0);
     }
 
@@ -75,10 +74,8 @@ public class DefinitionFileWriter implements Closeable, Mutable {
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         clear();
-        memory = null;
-        file = null;
     }
 
     public boolean commit() {
@@ -86,7 +83,6 @@ public class DefinitionFileWriter implements Closeable, Mutable {
             return false;
         }
 
-        // exclude checksum but include block count
         final long memoryBaseAddress = memory.getPageAddress(0);
         final long checksumAddress = memoryBaseAddress + REGION_HEADER_SIZE + REGION_BLOCK_COUNT_OFFSET;
         final long checksumSize = blockOffset - REGION_HEADER_SIZE - REGION_BLOCK_COUNT_OFFSET;
@@ -111,6 +107,7 @@ public class DefinitionFileWriter implements Closeable, Mutable {
         setVersionVolatile(currentVersion);
 
         isCommitted = true;
+        //TODO: no sync
         file.sync(false);
         return true;
     }
@@ -150,7 +147,7 @@ public class DefinitionFileWriter implements Closeable, Mutable {
         blockCount = 0;
     }
 
-    public RandomAccessBlock reserve(int bytes) {
+    public WritableBlock reserve(int bytes) {
         return blockMemoryHandle.reset(bytes);
     }
 
@@ -167,7 +164,7 @@ public class DefinitionFileWriter implements Closeable, Mutable {
     }
 
     // Depends on the state of memory, blockOffset and blockCount from the outer scope
-    class BlockMemoryHandleImpl implements RandomAccessBlock, AppendOnlyBlock {
+    class BlockMemoryHandleImpl implements WritableBlock, AppendableBlock {
         private boolean isCommitted;
         private long payloadOffset;
 

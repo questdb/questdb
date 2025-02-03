@@ -57,6 +57,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.VacuumColumnVersions;
+import io.questdb.cairo.meta.MetaFileWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
 import io.questdb.cairo.mv.MatViewRefreshTask;
@@ -135,7 +136,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
-import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.griffin.SqlKeywords.*;
 
 public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallback {
@@ -3823,7 +3824,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         if (tableToken.isMatView()) {
                             MatViewDefinition matViewDefinition = engine.getMatViewGraph().getMatViewDefinition(tableToken);
                             if (matViewDefinition != null) {
-                                TableUtils.createMatViewMetaFiles(ff, mem, auxPath, tableRootLen, matViewDefinition);
+                                try (MetaFileWriter writer = new MetaFileWriter(ff)) {
+                                    writer.of(path.trimTo(tableRootLen).concat(MAT_VIEW_FILE_NAME).$());
+                                    createMatViewDefinition(writer.append(), matViewDefinition);
+                                    writer.commit();
+                                }
                             } else {
                                 LOG.info().$("mat view definition for backup not found [view=").$(tableToken).I$();
                             }

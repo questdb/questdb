@@ -29,6 +29,7 @@ import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
 import io.questdb.Telemetry;
+import io.questdb.cairo.meta.MetaFileReader;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
@@ -55,8 +56,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
-import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryCMOR;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.DefaultWalListener;
@@ -1379,15 +1378,14 @@ public class CairoEngine implements Closeable, WriterSource {
 
         Path path = Path.getThreadLocal(configuration.getRoot());
         final int pathLen = path.size();
-        try (MemoryCMOR memory = Vm.getMemoryCMOR()) {
+        try (MetaFileReader reader = new MetaFileReader(configuration.getFilesFacade())) {
             for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
                 final TableToken tableToken = tableTokenBucket.get(i);
                 final FilesFacade ff = configuration.getFilesFacade();
                 if (tableToken.isMatView() && TableUtils.matViewFileExists(configuration, path, tableToken.getDirName(), ff)) {
                     try {
                         final MatViewDefinition matViewDefinition = TableUtils.loadMatViewDefinition(
-                                ff,
-                                memory,
+                                reader,
                                 path,
                                 pathLen,
                                 tableToken

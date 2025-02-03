@@ -28,6 +28,10 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.meta.AppendableBlock;
+import io.questdb.cairo.meta.MetaFileReader;
+import io.questdb.cairo.meta.MetaFileWriter;
+import io.questdb.cairo.meta.ReadableBlock;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -139,7 +143,6 @@ public final class TableUtils {
     public static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
     // 24-byte header left empty for possible future use
     // in case we decide to support ALTER MAT VIEW, and modify mat view metadata
-    public static final int MV_HEADER_SIZE = 24;
     public static final int NULL_LEN = -1;
     public static final String PARQUET_PARTITION_NAME = "data.parquet";
     public static final String RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME = "_restore";
@@ -378,9 +381,11 @@ public final class TableUtils {
         return function;
     }
 
-    public static void createMatViewDefinitionFile(MemoryMARW mem, MatViewDefinition matViewDefinition) {
-        mem.extend(MV_HEADER_SIZE);
-        mem.jumpTo(MV_HEADER_SIZE);
+    public static void createMatViewDefinition(AppendableBlock mem, MatViewDefinition matViewDefinition) {
+        final short TYPE = 0;
+        final byte VERSION = 0;
+        final byte FLAGS = 0;
+
         mem.putStr(matViewDefinition.getBaseTableName());
         mem.putLong(matViewDefinition.getFromMicros());
         mem.putLong(matViewDefinition.getToMicros());
@@ -388,28 +393,8 @@ public final class TableUtils {
         mem.putChar(matViewDefinition.getSamplingIntervalUnit());
         mem.putStr(matViewDefinition.getTimeZone());
         mem.putStr(matViewDefinition.getTimeZoneOffset());
-    }
-
-    public static void createMatViewMetaFiles(
-            FilesFacade ff,
-            MemoryMARW mem,
-            Path path,
-            int rootLen,
-            MatViewDefinition matViewDefinition
-    ) {
-        mem.smallFile(ff, path.trimTo(rootLen).concat(MAT_VIEW_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-        createMatViewDefinitionFile(mem, matViewDefinition);
-        mem.sync(false);
-        mem.close(true, Vm.TRUNCATE_TO_POINTER);
-
-        mem.smallFile(ff, path.trimTo(rootLen).concat(MAT_VIEW_QUERY_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-        createMatViewQueryFile(mem, matViewDefinition);
-        mem.sync(false);
-        mem.close(true, Vm.TRUNCATE_TO_POINTER);
-    }
-
-    public static void createMatViewQueryFile(MemoryMARW mem, MatViewDefinition matViewDefinition) {
         mem.putStr(matViewDefinition.getMatViewSql());
+        mem.commit(TYPE, VERSION, FLAGS);
     }
 
     public static void createTable(
@@ -554,7 +539,11 @@ public final class TableUtils {
             createTableNameFile(mem, getTableNameFromDirName(tableDir));
 
             if (structure.isMatView()) {
-                createMatViewMetaFiles(ff, mem, path, rootLen, structure.getMatViewDefinition());
+                try (MetaFileWriter writer = new MetaFileWriter(ff)) {
+                    writer.of(path.trimTo(rootLen).concat(MAT_VIEW_FILE_NAME).$());
+                    createMatViewDefinition(writer.append(), structure.getMatViewDefinition());
+                    writer.commit();
+                }
             }
 
             // Create TXN file last, it's used to determine if table exists
@@ -1044,26 +1033,27 @@ public final class TableUtils {
     }
 
     public static @NotNull MatViewDefinition loadMatViewDefinition(
-            FilesFacade ff,
-            MemoryCMR mem,
+            MetaFileReader reader,
             Path path,
             int rootLen,
             TableToken matViewToken
     ) {
-        path.trimTo(rootLen)
-                .concat(matViewToken.getDirName())
-                .concat(MAT_VIEW_FILE_NAME);
-        mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
-        if (mem.size() < MV_HEADER_SIZE + 3 * Long.BYTES + 3 * Integer.BYTES + Character.BYTES) {
+        path.trimTo(rootLen).concat(matViewToken.getDirName()).concat(MAT_VIEW_FILE_NAME);
+        reader.of(path.$());
+        MetaFileReader.BlockCursor cursor = reader.getCursor();
+        if (cursor.hasNext()) {
+            return loadMatViewDefinitionMessage(cursor.next(), matViewToken);
+        } else {
             throw CairoException.critical(0)
-                    .put("cannot read materialized view definition, file is too small [path=")
+                    .put("cannot read materialized view definition, file is empty [path=")
                     .put(path)
                     .put(']');
         }
+    }
 
-        long offset = MV_HEADER_SIZE;
-
-        final CharSequence baseTableName = mem.getStrA(offset);
+    private static MatViewDefinition loadMatViewDefinitionMessage(final ReadableBlock mem, final TableToken matViewToken) {
+        long offset = 0;
+        final CharSequence baseTableName = mem.getStr(offset);
         if (baseTableName == null || baseTableName.length() == 0) {
             throw CairoException.critical(0)
                     .put("base table name for materialized view is empty [view=")
@@ -1085,30 +1075,22 @@ public final class TableUtils {
         final char samplingIntervalUnit = mem.getChar(offset);
         offset += Character.BYTES;
 
-        final CharSequence timeZone = mem.getStrA(offset);
+        final CharSequence timeZone = mem.getStr(offset);
         offset += Vm.getStorageLength(timeZone);
         final String timeZoneStr = Chars.toString(timeZone);
 
-        final CharSequence timeZoneOffset = mem.getStrA(offset);
+        final CharSequence timeZoneOffset = mem.getStr(offset);
+        offset += Vm.getStorageLength(timeZoneOffset);
         final String timeZoneOffsetStr = Chars.toString(timeZoneOffset);
 
-        path.trimTo(rootLen)
-                .concat(matViewToken.getDirName())
-                .concat(MAT_VIEW_QUERY_FILE_NAME);
-        mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
-        if (mem.size() < Integer.BYTES) {
-            throw CairoException.critical(0)
-                    .put("cannot read materialized view SQL, file is too small [path=")
-                    .put(path)
-                    .put(']');
-        }
-        final CharSequence matViewSql = mem.getStrA(0);
+        final CharSequence matViewSql = mem.getStr(offset);
         if (matViewSql == null || matViewSql.length() == 0) {
             throw CairoException.critical(0)
                     .put("materialized view SQL is empty [view=")
                     .put(matViewToken.getTableName())
                     .put(']');
         }
+
         final String matViewSqlStr = Chars.toString(matViewSql);
 
         return new MatViewDefinition(

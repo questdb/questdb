@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.meta.MetaFileWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -63,8 +64,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 
-import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
-import static io.questdb.cairo.TableUtils.openSmallFile;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.*;
 
 public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietCloseable {
@@ -274,7 +274,11 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                     if (tableToken.isMatView()) {
                                         MatViewDefinition matViewDefinition = engine.getMatViewGraph().getMatViewDefinition(tableToken);
                                         if (matViewDefinition != null) {
-                                            TableUtils.createMatViewMetaFiles(ff, mem, path, rootLen, matViewDefinition);
+                                            try (MetaFileWriter writer = new MetaFileWriter(ff)) {
+                                                writer.of(path.trimTo(rootLen).concat(MAT_VIEW_FILE_NAME).$());
+                                                createMatViewDefinition(writer.append(), matViewDefinition);
+                                                writer.commit();
+                                            }
                                         } else {
                                             LOG.info().$("mat view definition not found [view=").$(tableToken).I$();
                                         }

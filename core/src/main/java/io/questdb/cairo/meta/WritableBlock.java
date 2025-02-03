@@ -22,60 +22,40 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.mv;
+package io.questdb.cairo.meta;
 
-import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.Utf8Sequence;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public interface AppendOnlyBlock {
+public interface WritableBlock {
     boolean commit(short type, byte version, byte flags);
 
     int length();
 
-    long putBin(BinarySequence value);
+    void putBool(long offset, boolean value);
 
-    long putBin(long from, long len);
+    void putByte(long offset, byte value);
 
-    void putBool(boolean value);
+    void putChar(long offset, char value);
 
-    void putByte(byte value);
+    void putDouble(long offset, double value);
 
-    void putChar(char value);
+    void putFloat(long offset, float value);
 
-    void putDouble(double value);
+    void putInt(long offset, int value);
 
-    void putFloat(float value);
+    void putLong(long offset, long value);
 
-    void putInt(int value);
+    void putLong256(long offset, Long256 value);
 
-    void putLong(long value);
+    void putLong256(long offset, long l0, long l1, long l2, long l3);
 
-    void putLong128(long lo, long hi);
+    void putShort(long offset, short value);
 
-    void putLong256(long l0, long l1, long l2, long l3);
+    void putStr(long offset, CharSequence value);
 
-    void putLong256(Long256 value);
+    void putStr(long offset, CharSequence value, int pos, int len);
 
-    void putLong256(@Nullable CharSequence hexString);
-
-    void putLong256(@NotNull CharSequence hexString, int start, int end);
-
-    void putLong256Utf8(@Nullable Utf8Sequence hexString);
-
-    void putRawBytes(long from, long len);
-
-    void putShort(short value);
-
-    long putStr(CharSequence value);
-
-    long putStr(char value);
-
-    long putStr(CharSequence value, int pos, int len);
-
-    long putVarchar(@Nullable Utf8Sequence value);
-
-    void skip(long bytes);
+    void putVarchar(long offset, @Nullable Utf8Sequence value);
 }

@@ -22,14 +22,14 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.cairo.mv;
+package io.questdb.test.cairo.meta;
 
-import io.questdb.cairo.mv.AppendOnlyBlock;
-import io.questdb.cairo.mv.DefinitionFileReader;
-import io.questdb.cairo.mv.DefinitionFileUtils;
-import io.questdb.cairo.mv.DefinitionFileWriter;
-import io.questdb.cairo.mv.RandomAccessBlock;
-import io.questdb.cairo.mv.ReadableBlock;
+import io.questdb.cairo.meta.AppendableBlock;
+import io.questdb.cairo.meta.MetaFileReader;
+import io.questdb.cairo.meta.MetaFileUtils;
+import io.questdb.cairo.meta.MetaFileWriter;
+import io.questdb.cairo.meta.ReadableBlock;
+import io.questdb.cairo.meta.WritableBlock;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -53,8 +53,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static io.questdb.cairo.TableUtils.MAT_VIEW_FILE_NAME;
 import static io.questdb.cairo.vm.Vm.STRING_LENGTH_BYTES;
 
-public class DefinitionFileTest extends AbstractCairoTest {
-    protected final static Log LOG = LogFactory.getLog(DefinitionFileTest.class);
+public class MetaFileTest extends AbstractCairoTest {
+    protected final static Log LOG = LogFactory.getLog(MetaFileTest.class);
     private static final short MSG_TYPE_A = 1;
     private static final byte MSG_TYPE_A_VERSION_1 = 1;
     private static final byte MSG_TYPE_A_VERSION_2 = 2;
@@ -76,7 +76,7 @@ public class DefinitionFileTest extends AbstractCairoTest {
                 FilesFacade ff = configuration.getFilesFacade();
                 Assert.assertTrue(ff.touch(path.$()));
 
-                try (DefinitionFileWriter writer = new DefinitionFileWriter(ff)) {
+                try (MetaFileWriter writer = new MetaFileWriter(ff)) {
                     writer.of(path.$());
                     Assert.assertEquals(ff.getPageSize(), ff.length(path.$()));
                     Assert.assertEquals(0, writer.getVersionVolatile());
@@ -96,7 +96,7 @@ public class DefinitionFileTest extends AbstractCairoTest {
                 FilesFacade ff = configuration.getFilesFacade();
                 Assert.assertTrue(ff.touch(path.$()));
 
-                try (DefinitionFileReader reader = new DefinitionFileReader(ff)) {
+                try (MetaFileReader reader = new MetaFileReader(ff)) {
                     reader.of(path.$());
                 } catch (Exception e) {
                     Assert.assertTrue(e.getMessage().contains("Expected at least 1 block"));
@@ -111,11 +111,11 @@ public class DefinitionFileTest extends AbstractCairoTest {
             try (Path path = getDefinitionFilePath("test")) {
                 FilesFacade ff = configuration.getFilesFacade();
 
-                try (DefinitionFileWriter writer = new DefinitionFileWriter(ff)) {
+                try (MetaFileWriter writer = new MetaFileWriter(ff)) {
                     writer.of(path.$());
                 }
 
-                try (DefinitionFileReader reader = new DefinitionFileReader(ff)) {
+                try (MetaFileReader reader = new MetaFileReader(ff)) {
                     reader.of(path.$());
                 } catch (Exception e) {
                     Assert.assertTrue(e.getMessage().contains("Expected at least 1 block"));
@@ -129,7 +129,7 @@ public class DefinitionFileTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (Path path = getDefinitionFilePath("test")) {
                 FilesFacade ff = configuration.getFilesFacade();
-                try (DefinitionFileReader reader = new DefinitionFileReader(ff)) {
+                try (MetaFileReader reader = new MetaFileReader(ff)) {
                     reader.of(path.$());
                     Assert.fail("Expected exception");
                 } catch (Exception e) {
@@ -146,24 +146,24 @@ public class DefinitionFileTest extends AbstractCairoTest {
                 FilesFacade ff = configuration.getFilesFacade();
                 long prevRegionOffset;
                 long prevRegionLength;
-                try (DefinitionFileWriter writer = new DefinitionFileWriter(ff)) {
+                try (MetaFileWriter writer = new MetaFileWriter(ff)) {
                     writer.of(path.$());
-                    int regionLength = DefinitionFileUtils.REGION_HEADER_SIZE;
+                    int regionLength = MetaFileUtils.REGION_HEADER_SIZE;
                     regionLength += commitMsgAVersion1(writer.append());
-                    regionLength += DefinitionFileUtils.BLOCK_HEADER_SIZE;
+                    regionLength += MetaFileUtils.BLOCK_HEADER_SIZE;
                     regionLength += commitMsgAVersion2(writer.append());
-                    regionLength += DefinitionFileUtils.BLOCK_HEADER_SIZE;
+                    regionLength += MetaFileUtils.BLOCK_HEADER_SIZE;
                     writer.commit();
                     assertRegionOffset(writer, 1, regionLength, 0);
                     prevRegionOffset = writer.getRegionOffset(writer.getVersionVolatile());
                     prevRegionLength = writer.getRegionLength(writer.getVersionVolatile());
                 }
 
-                try (DefinitionFileWriter writer = new DefinitionFileWriter(ff)) {
+                try (MetaFileWriter writer = new MetaFileWriter(ff)) {
                     writer.of(path.$());
-                    int regionLength = DefinitionFileUtils.REGION_HEADER_SIZE;
+                    int regionLength = MetaFileUtils.REGION_HEADER_SIZE;
                     regionLength += commitMsgAVersion1(writer.append());
-                    regionLength += DefinitionFileUtils.BLOCK_HEADER_SIZE;
+                    regionLength += MetaFileUtils.BLOCK_HEADER_SIZE;
                     writer.commit();
                     assertRegionOffset(writer, 2, regionLength, prevRegionOffset + prevRegionLength);
                 }
@@ -180,24 +180,24 @@ public class DefinitionFileTest extends AbstractCairoTest {
                 FilesFacade ff = configuration.getFilesFacade();
                 long prevRegionOffset;
                 long prevRegionLength;
-                try (DefinitionFileWriter writer = new DefinitionFileWriter(ff)) {
+                try (MetaFileWriter writer = new MetaFileWriter(ff)) {
                     writer.of(path.$());
-                    int regionLength = DefinitionFileUtils.REGION_HEADER_SIZE;
+                    int regionLength = MetaFileUtils.REGION_HEADER_SIZE;
                     regionLength += commitMsgAVersion1(writer.append());
-                    regionLength += DefinitionFileUtils.BLOCK_HEADER_SIZE;
+                    regionLength += MetaFileUtils.BLOCK_HEADER_SIZE;
                     regionLength += commitMsgAVersion2(writer.append());
-                    regionLength += DefinitionFileUtils.BLOCK_HEADER_SIZE;
+                    regionLength += MetaFileUtils.BLOCK_HEADER_SIZE;
                     writer.commit();
                     assertRegionOffset(writer, 1, regionLength, 0);
                     prevRegionOffset = writer.getRegionOffset(writer.getVersionVolatile());
                     prevRegionLength = writer.getRegionLength(writer.getVersionVolatile());
                 }
 
-                try (DefinitionFileWriter writer = new DefinitionFileWriter(ff)) {
+                try (MetaFileWriter writer = new MetaFileWriter(ff)) {
                     writer.of(path.$());
-                    int regionLength = DefinitionFileUtils.REGION_HEADER_SIZE;
+                    int regionLength = MetaFileUtils.REGION_HEADER_SIZE;
                     regionLength += commitMsgAVersion1(writer.append());
-                    regionLength += DefinitionFileUtils.BLOCK_HEADER_SIZE;
+                    regionLength += MetaFileUtils.BLOCK_HEADER_SIZE;
                     writer.commit();
                     assertRegionOffset(writer, 2, regionLength, prevRegionOffset + prevRegionLength);
                     prevRegionOffset = writer.getRegionOffset(writer.getVersionVolatile());
@@ -205,11 +205,11 @@ public class DefinitionFileTest extends AbstractCairoTest {
                 }
 
                 // message C will not fit into the same region
-                try (DefinitionFileWriter writer = new DefinitionFileWriter(ff)) {
+                try (MetaFileWriter writer = new MetaFileWriter(ff)) {
                     writer.of(path.$());
-                    int regionLength = DefinitionFileUtils.REGION_HEADER_SIZE;
+                    int regionLength = MetaFileUtils.REGION_HEADER_SIZE;
                     regionLength += commitMsgCVersion1(writer.append());
-                    regionLength += DefinitionFileUtils.BLOCK_HEADER_SIZE;
+                    regionLength += MetaFileUtils.BLOCK_HEADER_SIZE;
                     writer.commit();
                     assertRegionOffset(writer, 3, regionLength, prevRegionOffset + prevRegionLength);
                 }
@@ -233,7 +233,7 @@ public class DefinitionFileTest extends AbstractCairoTest {
                     start.await();
                     for (int i = 0; i < iterations; i++) {
                         int msg = rnd.nextInt(4);
-                        try (DefinitionFileWriter writer = new DefinitionFileWriter(ff)) {
+                        try (MetaFileWriter writer = new MetaFileWriter(ff)) {
                             writer.of(path.$());
                             switch (msg) {
                                 case 0:
@@ -291,34 +291,34 @@ public class DefinitionFileTest extends AbstractCairoTest {
                 FilesFacade ff = configuration.getFilesFacade();
                 long prevRegionOffset;
                 long prevRegionLength;
-                try (DefinitionFileWriter writer = new DefinitionFileWriter(ff)) {
+                try (MetaFileWriter writer = new MetaFileWriter(ff)) {
                     writer.of(path.$());
-                    int regionLength = DefinitionFileUtils.REGION_HEADER_SIZE;
+                    int regionLength = MetaFileUtils.REGION_HEADER_SIZE;
                     regionLength += commitMsgAVersion1(writer.append());
-                    regionLength += DefinitionFileUtils.BLOCK_HEADER_SIZE;
+                    regionLength += MetaFileUtils.BLOCK_HEADER_SIZE;
                     regionLength += commitMsgAVersion2(writer.append());
-                    regionLength += DefinitionFileUtils.BLOCK_HEADER_SIZE;
+                    regionLength += MetaFileUtils.BLOCK_HEADER_SIZE;
                     writer.commit();
                     assertRegionOffset(writer, 1, regionLength, 0);
                     prevRegionOffset = writer.getRegionOffset(writer.getVersionVolatile());
                     prevRegionLength = writer.getRegionLength(writer.getVersionVolatile());
                 }
 
-                try (DefinitionFileWriter writer = new DefinitionFileWriter(ff)) {
+                try (MetaFileWriter writer = new MetaFileWriter(ff)) {
                     writer.of(path.$());
-                    int regionLength = DefinitionFileUtils.REGION_HEADER_SIZE;
+                    int regionLength = MetaFileUtils.REGION_HEADER_SIZE;
                     regionLength += commitMsgAVersion1(writer.append());
-                    regionLength += DefinitionFileUtils.BLOCK_HEADER_SIZE;
+                    regionLength += MetaFileUtils.BLOCK_HEADER_SIZE;
                     writer.commit();
                     assertRegionOffset(writer, 2, regionLength, prevRegionOffset + prevRegionLength);
                 }
 
                 // this version will overwrite the previous region
-                try (DefinitionFileWriter writer = new DefinitionFileWriter(ff)) {
+                try (MetaFileWriter writer = new MetaFileWriter(ff)) {
                     writer.of(path.$());
-                    int regionLength = DefinitionFileUtils.REGION_HEADER_SIZE;
+                    int regionLength = MetaFileUtils.REGION_HEADER_SIZE;
                     regionLength += commitMsgBVersion1(writer.append());
-                    regionLength += DefinitionFileUtils.BLOCK_HEADER_SIZE;
+                    regionLength += MetaFileUtils.BLOCK_HEADER_SIZE;
                     writer.commit();
                     assertRegionOffset(writer, 3, regionLength, 0);
                 }
@@ -333,18 +333,18 @@ public class DefinitionFileTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (Path path = getDefinitionFilePath("test")) {
                 FilesFacade ff = configuration.getFilesFacade();
-                try (DefinitionFileWriter writer = new DefinitionFileWriter(ff)) {
+                try (MetaFileWriter writer = new MetaFileWriter(ff)) {
                     writer.of(path.$());
 
-                    AppendOnlyBlock memory1 = writer.append();
+                    AppendableBlock memory1 = writer.append();
                     commitMsgAVersion1(memory1);
                     final int commitedLength = memory1.length();
 
-                    RandomAccessBlock memory2 = writer.reserve(commitedLength);
+                    WritableBlock memory2 = writer.reserve(commitedLength);
                     Assert.assertEquals(commitedLength, memory2.length());
                     commitMsgAVersion1RW(memory2);
 
-                    AppendOnlyBlock memory3 = writer.append();
+                    AppendableBlock memory3 = writer.append();
                     commitMsgAVersion2(memory3);
 
                     writer.commit();
@@ -355,7 +355,7 @@ public class DefinitionFileTest extends AbstractCairoTest {
         });
     }
 
-    private static void assertRegionOffset(DefinitionFileWriter writer, long expectedVersion, int expectedRegionLength, long expectedRegionOffset) {
+    private static void assertRegionOffset(MetaFileWriter writer, long expectedVersion, int expectedRegionLength, long expectedRegionOffset) {
         final long version = writer.getVersionVolatile();
         Assert.assertEquals(expectedVersion, version);
         final long regionOffset = writer.getRegionOffset(version);
@@ -364,7 +364,7 @@ public class DefinitionFileTest extends AbstractCairoTest {
         Assert.assertEquals(expectedRegionLength, regionLength);
     }
 
-    private static int commitMsgAVersion1(AppendOnlyBlock memory) {
+    private static int commitMsgAVersion1(AppendableBlock memory) {
         memory.putStr("Hello");
         memory.putInt(123);
         memory.putVarchar(new GcUtf8String("World"));
@@ -373,23 +373,7 @@ public class DefinitionFileTest extends AbstractCairoTest {
         return memory.length();
     }
 
-    private static int commitMsgAVersion2(AppendOnlyBlock memory) {
-        memory.putInt(123);
-        memory.putStr("Hello");
-        memory.putInt(456);
-        memory.putStr("World");
-        memory.commit(MSG_TYPE_A, MSG_TYPE_A_VERSION_2, (byte) 0);
-        return memory.length();
-    }
-
-    private static int commitMsgBVersion1(AppendOnlyBlock memory) {
-        memory.putStr("Hello");
-        memory.putStr("World");
-        memory.commit(MSG_TYPE_B, MSG_TYPE_B_VERSION_1, (byte) 0);
-        return memory.length();
-    }
-
-    private static void commitMsgAVersion1RW(RandomAccessBlock memory) {
+    private static void commitMsgAVersion1RW(WritableBlock memory) {
         String hello = "Hello";
         Utf8Sequence worldUtf8 = new GcUtf8String("World");
         int offset = 0;
@@ -403,7 +387,23 @@ public class DefinitionFileTest extends AbstractCairoTest {
         memory.commit(MSG_TYPE_A, MSG_TYPE_A_VERSION_1, (byte) 0);
     }
 
-    private static int commitMsgCVersion1(AppendOnlyBlock memory) {
+    private static int commitMsgAVersion2(AppendableBlock memory) {
+        memory.putInt(123);
+        memory.putStr("Hello");
+        memory.putInt(456);
+        memory.putStr("World");
+        memory.commit(MSG_TYPE_A, MSG_TYPE_A_VERSION_2, (byte) 0);
+        return memory.length();
+    }
+
+    private static int commitMsgBVersion1(AppendableBlock memory) {
+        memory.putStr("Hello");
+        memory.putStr("World");
+        memory.commit(MSG_TYPE_B, MSG_TYPE_B_VERSION_1, (byte) 0);
+        return memory.length();
+    }
+
+    private static int commitMsgCVersion1(AppendableBlock memory) {
         memory.putStr("Hello");
         final int count = 10;
         for (int i = 0; i < count; i++) {
@@ -422,10 +422,10 @@ public class DefinitionFileTest extends AbstractCairoTest {
     }
 
     private static void readAllBlocks(FilesFacade ff, Path path, int expectedBlocks) throws IOException {
-        try (DefinitionFileReader reader = new DefinitionFileReader(ff)) {
+        try (MetaFileReader reader = new MetaFileReader(ff)) {
             reader.of(path.$());
             int blockCount = 0;
-            DefinitionFileReader.BlocksCursor cursor = reader.getCursor();
+            MetaFileReader.BlockCursor cursor = reader.getCursor();
             while (cursor.hasNext()) {
                 ReadableBlock block = cursor.next();
                 final short type = block.type();

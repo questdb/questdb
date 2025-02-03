@@ -22,40 +22,57 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.mv;
+package io.questdb.cairo.meta;
 
+import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
+import io.questdb.std.Long256Acceptor;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
-import org.jetbrains.annotations.Nullable;
 
-public interface RandomAccessBlock {
-    boolean commit(short type, byte version, byte flags);
 
-    int length();
+public interface ReadableBlock {
+    long addressOf(long offset);
 
-    void putBool(long offset, boolean value);
+    byte flags();
 
-    void putByte(long offset, byte value);
+    BinarySequence getBin(long offset);
 
-    void putChar(long offset, char value);
+    long getBinLen(long offset);
 
-    void putDouble(long offset, double value);
+    boolean getBool(long offset);
 
-    void putFloat(long offset, float value);
+    byte getByte(long offset);
 
-    void putInt(long offset, int value);
+    char getChar(long offset);
 
-    void putLong(long offset, long value);
+    double getDouble(long offset);
 
-    void putLong256(long offset, Long256 value);
+    float getFloat(long offset);
 
-    void putLong256(long offset, long l0, long l1, long l2, long l3);
+    int getIPv4(long offset);
 
-    void putShort(long offset, short value);
+    int getInt(long offset);
 
-    void putStr(long offset, CharSequence value);
+    long getLong(long offset);
 
-    void putStr(long offset, CharSequence value, int pos, int len);
+    void getLong256(long offset, CharSink<?> sink);
 
-    void putVarchar(long offset, @Nullable Utf8Sequence value);
+    void getLong256(long offset, Long256Acceptor sink);
+
+    Long256 getLong256(long offset);
+
+    short getShort(long offset);
+
+    CharSequence getStr(long offset);
+
+    int getStrLen(long offset);
+
+    Utf8Sequence getVarchar(long offset);
+
+    long length();
+
+    short type();
+
+    byte version();
 }

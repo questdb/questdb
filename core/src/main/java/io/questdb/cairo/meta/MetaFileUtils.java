@@ -22,11 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.mv;
+package io.questdb.cairo.meta;
 
 import io.questdb.std.Zip;
 
-public class DefinitionFileUtils {
+public class MetaFileUtils {
     /**
      * +---------------------------------------------------------------------+
      * |                        Block Length (4 bytes)                       |
@@ -92,5 +92,9 @@ public class DefinitionFileUtils {
 
     public static boolean isRegionA(final long version) {
         return (version & 1) != 0; // 0 - empty file, 1 - region A, 2 - region B, ...
+    }
+
+    static {
+        Zip.init();
     }
 }

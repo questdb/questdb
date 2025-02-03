@@ -22,57 +22,60 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.mv;
+package io.questdb.cairo.meta;
 
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
-import io.questdb.std.Long256Acceptor;
-import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
+public interface AppendableBlock {
+    boolean commit(short type, byte version, byte flags);
 
-public interface ReadableBlock {
-    long addressOf(long offset);
+    int length();
 
-    byte flags();
+    long putBin(BinarySequence value);
 
-    BinarySequence getBin(long offset);
+    long putBin(long from, long len);
 
-    long getBinLen(long offset);
+    void putBool(boolean value);
 
-    boolean getBool(long offset);
+    void putByte(byte value);
 
-    byte getByte(long offset);
+    void putChar(char value);
 
-    char getChar(long offset);
+    void putDouble(double value);
 
-    double getDouble(long offset);
+    void putFloat(float value);
 
-    float getFloat(long offset);
+    void putInt(int value);
 
-    int getIPv4(long offset);
+    void putLong(long value);
 
-    int getInt(long offset);
+    void putLong128(long lo, long hi);
 
-    long getLong(long offset);
+    void putLong256(long l0, long l1, long l2, long l3);
 
-    void getLong256(long offset, CharSink<?> sink);
+    void putLong256(Long256 value);
 
-    void getLong256(long offset, Long256Acceptor sink);
+    void putLong256(@Nullable CharSequence hexString);
 
-    Long256 getLong256(long offset);
+    void putLong256(@NotNull CharSequence hexString, int start, int end);
 
-    short getShort(long offset);
+    void putLong256Utf8(@Nullable Utf8Sequence hexString);
 
-    CharSequence getStr(long offset);
+    void putRawBytes(long from, long len);
 
-    int getStrLen(long offset);
+    void putShort(short value);
 
-    Utf8Sequence getVarchar(long offset);
+    long putStr(CharSequence value);
 
-    long length();
+    long putStr(char value);
 
-    short type();
+    long putStr(CharSequence value, int pos, int len);
 
-    byte version();
+    long putVarchar(@Nullable Utf8Sequence value);
+
+    void skip(long bytes);
 }
