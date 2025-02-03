@@ -110,6 +110,7 @@ public class DefinitionFileWriter implements Closeable, Mutable {
         setVersionVolatile(currentVersion);
 
         isCommitted = true;
+        file.sync(false);
         return true;
     }
 
@@ -157,7 +158,7 @@ public class DefinitionFileWriter implements Closeable, Mutable {
     }
 
     private void setRegionOffset(final long version, final long offset) {
-        file.putLong(getRegionLengthOffset(version), offset);
+        file.putLong(getRegionOffsetOffset(version), offset);
     }
 
     private void setVersionVolatile(final long version) {

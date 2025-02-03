@@ -26,6 +26,7 @@ package io.questdb.test.cairo.mv;
 
 import io.questdb.cairo.mv.AppendOnlyBlock;
 import io.questdb.cairo.mv.DefinitionFileReader;
+import io.questdb.cairo.mv.DefinitionFileUtils;
 import io.questdb.cairo.mv.DefinitionFileWriter;
 import io.questdb.cairo.mv.RandomAccessBlock;
 import io.questdb.cairo.mv.ReadableBlock;
@@ -33,12 +34,19 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.Zip;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
+
+import java.io.IOException;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.TableUtils.MAT_VIEW_FILE_NAME;
 
@@ -61,12 +69,8 @@ public class DefinitionFileTest extends AbstractCairoTest {
     @Test
     public void testCreateEmptyDefinitionFile() throws Exception {
         assertMemoryLeak(() -> {
-            try (Path path = new Path()) {
+            try (Path path = getDefinitionFilePath("test")) {
                 FilesFacade ff = configuration.getFilesFacade();
-                path.of(configuration.getRoot()).concat("test").slash();
-                ff.mkdirs(path, configuration.getMkDirMode());
-
-                path.of(configuration.getRoot()).concat("test").concat(MAT_VIEW_FILE_NAME).$();
                 Assert.assertTrue(ff.touch(path.$()));
 
                 try (DefinitionFileWriter writer = new DefinitionFileWriter(ff)) {
@@ -85,12 +89,8 @@ public class DefinitionFileTest extends AbstractCairoTest {
     @Test
     public void testReadEmptyDefinitionFile() throws Exception {
         assertMemoryLeak(() -> {
-            try (Path path = new Path()) {
+            try (Path path = getDefinitionFilePath("test")) {
                 FilesFacade ff = configuration.getFilesFacade();
-                path.of(configuration.getRoot()).concat("test").slash();
-                ff.mkdirs(path, configuration.getMkDirMode());
-
-                path.of(configuration.getRoot()).concat("test").concat(MAT_VIEW_FILE_NAME).$();
                 Assert.assertTrue(ff.touch(path.$()));
 
                 try (DefinitionFileReader reader = new DefinitionFileReader(ff)) {
@@ -105,12 +105,9 @@ public class DefinitionFileTest extends AbstractCairoTest {
     @Test
     public void testReadEmptyDefinitionFile2() throws Exception {
         assertMemoryLeak(() -> {
-            try (Path path = new Path()) {
+            try (Path path = getDefinitionFilePath("test")) {
                 FilesFacade ff = configuration.getFilesFacade();
-                path.of(configuration.getRoot()).concat("test").slash();
-                ff.mkdirs(path, configuration.getMkDirMode());
 
-                path.of(configuration.getRoot()).concat("test").concat(MAT_VIEW_FILE_NAME).$();
                 try (DefinitionFileWriter writer = new DefinitionFileWriter(ff)) {
                     writer.of(path.$());
                 }
@@ -127,9 +124,8 @@ public class DefinitionFileTest extends AbstractCairoTest {
     @Test
     public void testReadNonExistingDefinitionFile() throws Exception {
         assertMemoryLeak(() -> {
-            try (Path path = new Path()) {
+            try (Path path = getDefinitionFilePath("test")) {
                 FilesFacade ff = configuration.getFilesFacade();
-                path.of(configuration.getRoot()).concat("test").concat(MAT_VIEW_FILE_NAME).$();
                 try (DefinitionFileReader reader = new DefinitionFileReader(ff)) {
                     reader.of(path.$());
                     Assert.fail("Expected exception");
@@ -141,13 +137,199 @@ public class DefinitionFileTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReadWriteAppendNewRegion() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = getDefinitionFilePath("test")) {
+                FilesFacade ff = configuration.getFilesFacade();
+                long prevRegionOffset;
+                long prevRegionLength;
+                try (DefinitionFileWriter writer = new DefinitionFileWriter(ff)) {
+                    writer.of(path.$());
+                    int regionLength = DefinitionFileUtils.REGION_HEADER_SIZE;
+                    regionLength += commitMsgAVersion1(writer.append());
+                    regionLength += DefinitionFileUtils.BLOCK_HEADER_SIZE;
+                    regionLength += commitMsgAVersion2(writer.append());
+                    regionLength += DefinitionFileUtils.BLOCK_HEADER_SIZE;
+                    writer.commit();
+                    assertRegionOffset(writer, 1, regionLength, 0);
+                    prevRegionOffset = writer.getRegionOffset(writer.getVersionVolatile());
+                    prevRegionLength = writer.getRegionLength(writer.getVersionVolatile());
+                }
+
+                try (DefinitionFileWriter writer = new DefinitionFileWriter(ff)) {
+                    writer.of(path.$());
+                    int regionLength = DefinitionFileUtils.REGION_HEADER_SIZE;
+                    regionLength += commitMsgAVersion1(writer.append());
+                    regionLength += DefinitionFileUtils.BLOCK_HEADER_SIZE;
+                    writer.commit();
+                    assertRegionOffset(writer, 2, regionLength, prevRegionOffset + prevRegionLength);
+                }
+
+                readAllBlocks(ff, path, 1);
+            }
+        });
+    }
+
+    @Test
+    public void testReadWriteAppendNewRegionNoSpace() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = getDefinitionFilePath("test")) {
+                FilesFacade ff = configuration.getFilesFacade();
+                long prevRegionOffset;
+                long prevRegionLength;
+                try (DefinitionFileWriter writer = new DefinitionFileWriter(ff)) {
+                    writer.of(path.$());
+                    int regionLength = DefinitionFileUtils.REGION_HEADER_SIZE;
+                    regionLength += commitMsgAVersion1(writer.append());
+                    regionLength += DefinitionFileUtils.BLOCK_HEADER_SIZE;
+                    regionLength += commitMsgAVersion2(writer.append());
+                    regionLength += DefinitionFileUtils.BLOCK_HEADER_SIZE;
+                    writer.commit();
+                    assertRegionOffset(writer, 1, regionLength, 0);
+                    prevRegionOffset = writer.getRegionOffset(writer.getVersionVolatile());
+                    prevRegionLength = writer.getRegionLength(writer.getVersionVolatile());
+                }
+
+                try (DefinitionFileWriter writer = new DefinitionFileWriter(ff)) {
+                    writer.of(path.$());
+                    int regionLength = DefinitionFileUtils.REGION_HEADER_SIZE;
+                    regionLength += commitMsgAVersion1(writer.append());
+                    regionLength += DefinitionFileUtils.BLOCK_HEADER_SIZE;
+                    writer.commit();
+                    assertRegionOffset(writer, 2, regionLength, prevRegionOffset + prevRegionLength);
+                    prevRegionOffset = writer.getRegionOffset(writer.getVersionVolatile());
+                    prevRegionLength = writer.getRegionLength(writer.getVersionVolatile());
+                }
+
+                // message C will not fit into the same region
+                try (DefinitionFileWriter writer = new DefinitionFileWriter(ff)) {
+                    writer.of(path.$());
+                    int regionLength = DefinitionFileUtils.REGION_HEADER_SIZE;
+                    regionLength += commitMsgCVersion1(writer.append());
+                    regionLength += DefinitionFileUtils.BLOCK_HEADER_SIZE;
+                    writer.commit();
+                    assertRegionOffset(writer, 3, regionLength, prevRegionOffset + prevRegionLength);
+                }
+
+                readAllBlocks(ff, path, 1);
+            }
+        });
+    }
+
+    @Test
+    public void testReadWriteConcurrently() throws Exception {
+        assertMemoryLeak(() -> {
+            FilesFacade ff = configuration.getFilesFacade();
+            Rnd rnd = TestUtils.generateRandom(LOG);
+            int readerThreads = 4;
+            CyclicBarrier start = new CyclicBarrier(readerThreads + 1);
+            AtomicInteger done = new AtomicInteger();
+            int iterations = 1000;
+            Thread writerThread = new Thread(() -> {
+                try (Path path = getDefinitionFilePath("test")) {
+                    start.await();
+                    for (int i = 0; i < iterations; i++) {
+                        int msg = rnd.nextInt(4);
+                        try (DefinitionFileWriter writer = new DefinitionFileWriter(ff)) {
+                            writer.of(path.$());
+                            switch (msg) {
+                                case 0:
+                                    commitMsgAVersion1(writer.append());
+                                    break;
+                                case 1:
+                                    commitMsgAVersion2(writer.append());
+                                    break;
+                                case 2:
+                                    commitMsgBVersion1(writer.append());
+                                    break;
+                                case 3:
+                                    commitMsgCVersion1(writer.append());
+                                    break;
+                            }
+                            writer.commit();
+                        }
+                    }
+                } catch (Exception e) {
+                    LOG.error().$("Error in writer thread: ").$(e).$();
+                } finally {
+                    done.incrementAndGet();
+                }
+            });
+
+            Thread[] readers = new Thread[readerThreads];
+            for (int th = 0; th < readerThreads; th++) {
+                Thread readerThread = new Thread(() -> {
+                    try (Path path = getDefinitionFilePath("test")) {
+                        start.await();
+                        for (int i = 0; i < iterations; i++) {
+                            Os.sleep(1); // interleave reads and writes
+                            readAllBlocks(ff, path, 1);
+                        }
+                    } catch (Exception e) {
+                        LOG.error().$("Error in reader thread: ").$(e).$();
+                    }
+                });
+                readers[th] = readerThread;
+                readerThread.start();
+            }
+
+            writerThread.start();
+            writerThread.join();
+            for (int th = 0; th < readerThreads; th++) {
+                readers[th].join();
+            }
+        });
+    }
+
+    @Test
+    public void testReadWriteOverwriteNewRegion() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = getDefinitionFilePath("test")) {
+                FilesFacade ff = configuration.getFilesFacade();
+                long prevRegionOffset;
+                long prevRegionLength;
+                try (DefinitionFileWriter writer = new DefinitionFileWriter(ff)) {
+                    writer.of(path.$());
+                    int regionLength = DefinitionFileUtils.REGION_HEADER_SIZE;
+                    regionLength += commitMsgAVersion1(writer.append());
+                    regionLength += DefinitionFileUtils.BLOCK_HEADER_SIZE;
+                    regionLength += commitMsgAVersion2(writer.append());
+                    regionLength += DefinitionFileUtils.BLOCK_HEADER_SIZE;
+                    writer.commit();
+                    assertRegionOffset(writer, 1, regionLength, 0);
+                    prevRegionOffset = writer.getRegionOffset(writer.getVersionVolatile());
+                    prevRegionLength = writer.getRegionLength(writer.getVersionVolatile());
+                }
+
+                try (DefinitionFileWriter writer = new DefinitionFileWriter(ff)) {
+                    writer.of(path.$());
+                    int regionLength = DefinitionFileUtils.REGION_HEADER_SIZE;
+                    regionLength += commitMsgAVersion1(writer.append());
+                    regionLength += DefinitionFileUtils.BLOCK_HEADER_SIZE;
+                    writer.commit();
+                    assertRegionOffset(writer, 2, regionLength, prevRegionOffset + prevRegionLength);
+                }
+
+                // this version will overwrite the previous region
+                try (DefinitionFileWriter writer = new DefinitionFileWriter(ff)) {
+                    writer.of(path.$());
+                    int regionLength = DefinitionFileUtils.REGION_HEADER_SIZE;
+                    regionLength += commitMsgBVersion1(writer.append());
+                    regionLength += DefinitionFileUtils.BLOCK_HEADER_SIZE;
+                    writer.commit();
+                    assertRegionOffset(writer, 3, regionLength, 0);
+                }
+
+                readAllBlocks(ff, path, 1);
+            }
+        });
+    }
+
+    @Test
     public void testReadWriteSimple() throws Exception {
         assertMemoryLeak(() -> {
-            try (Path path = new Path()) {
+            try (Path path = getDefinitionFilePath("test")) {
                 FilesFacade ff = configuration.getFilesFacade();
-                path.of(configuration.getRoot()).concat("test").slash();
-                ff.mkdirs(path, configuration.getMkDirMode());
-                path.of(configuration.getRoot()).concat("test").concat(MAT_VIEW_FILE_NAME).$();
                 try (DefinitionFileWriter writer = new DefinitionFileWriter(ff)) {
                     writer.of(path.$());
 
@@ -165,60 +347,43 @@ public class DefinitionFileTest extends AbstractCairoTest {
                     writer.commit();
                 }
 
-                try (DefinitionFileReader reader = new DefinitionFileReader(ff)) {
-                    reader.of(path.$());
-                    int blockCount = 0;
-                    DefinitionFileReader.BlocksCursor cursor = reader.getCursor();
-                    while (cursor.hasNext()) {
-                        ReadableBlock block = cursor.next();
-                        final short type = block.type();
-                        final byte version = block.version();
-                        final byte flags = block.flags();
-                        Assert.assertEquals(0, flags);
-                        switch (type) {
-                            case MSG_TYPE_A:
-                                switch (version) {
-                                    case MSG_TYPE_A_VERSION_1:
-                                        readMsgAVersion1(block);
-                                        break;
-                                    case MSG_TYPE_A_VERSION_2:
-                                        readMsgAVersion2(block);
-                                        break;
-                                    default:
-                                        Assert.fail("Unexpected version");
-                                }
-                                break;
-                            case MSG_TYPE_B:
-                                if (version == MSG_TYPE_B_VERSION_1) {
-                                    readMsgBVersion1(block);
-                                } else {
-                                    Assert.fail("Unexpected version");
-                                }
-                                break;
-                            case MSG_TYPE_C:
-                                if (version == MSG_TYPE_C_VERSION_1) {
-                                    readMsgCVersion1(block);
-                                } else {
-                                    Assert.fail("Unexpected version");
-                                }
-                                break;
-                            default:
-                                Assert.fail("Unexpected type");
-                        }
-                        blockCount++;
-                    }
-                    Assert.assertEquals(3, blockCount);
-                }
+                readAllBlocks(ff, path, 3);
             }
         });
     }
 
-    private static void commitMsgAVersion1(AppendOnlyBlock memory) {
+    private static void assertRegionOffset(DefinitionFileWriter writer, long expectedVersion, int expectedRegionLength, long expectedRegionOffset) {
+        final long version = writer.getVersionVolatile();
+        Assert.assertEquals(expectedVersion, version);
+        final long regionOffset = writer.getRegionOffset(version);
+        final long regionLength = writer.getRegionLength(version);
+        Assert.assertEquals(expectedRegionOffset, regionOffset);
+        Assert.assertEquals(expectedRegionLength, regionLength);
+    }
+
+    private static int commitMsgAVersion1(AppendOnlyBlock memory) {
         memory.putStr("Hello");
         memory.putInt(123);
         memory.putStr("World");
         memory.putInt(456);
         memory.commit(MSG_TYPE_A, MSG_TYPE_A_VERSION_1, (byte) 0);
+        return memory.length();
+    }
+
+    private static int commitMsgAVersion2(AppendOnlyBlock memory) {
+        memory.putInt(123);
+        memory.putStr("Hello");
+        memory.putInt(456);
+        memory.putStr("World");
+        memory.commit(MSG_TYPE_A, MSG_TYPE_A_VERSION_2, (byte) 0);
+        return memory.length();
+    }
+
+    private static int commitMsgBVersion1(AppendOnlyBlock memory) {
+        memory.putStr("Hello");
+        memory.putStr("World");
+        memory.commit(MSG_TYPE_B, MSG_TYPE_B_VERSION_1, (byte) 0);
+        return memory.length();
     }
 
     private static void commitMsgAVersion1RW(RandomAccessBlock memory) {
@@ -235,21 +400,7 @@ public class DefinitionFileTest extends AbstractCairoTest {
         memory.commit(MSG_TYPE_A, MSG_TYPE_A_VERSION_1, (byte) 0);
     }
 
-    private static void commitMsgAVersion2(AppendOnlyBlock memory) {
-        memory.putInt(123);
-        memory.putStr("Hello");
-        memory.putInt(456);
-        memory.putStr("World");
-        memory.commit(MSG_TYPE_A, MSG_TYPE_A_VERSION_2, (byte) 0);
-    }
-
-    private static void commitMsgBVersion1(AppendOnlyBlock memory) {
-        memory.putStr("Hello");
-        memory.putStr("World");
-        memory.commit(MSG_TYPE_B, MSG_TYPE_B_VERSION_1, (byte) 0);
-    }
-
-    private static void commitMsgCVersion1(AppendOnlyBlock memory) {
+    private static int commitMsgCVersion1(AppendOnlyBlock memory) {
         memory.putStr("Hello");
         final int count = 10;
         for (int i = 0; i < count; i++) {
@@ -257,6 +408,61 @@ public class DefinitionFileTest extends AbstractCairoTest {
             memory.putStr("World");
         }
         memory.commit(MSG_TYPE_C, MSG_TYPE_C_VERSION_1, (byte) 0);
+        return memory.length();
+    }
+
+    private static Path getDefinitionFilePath(final String tableName) {
+        Path path = new Path().of(configuration.getRoot()).concat(tableName).slash();
+        FilesFacade ff = configuration.getFilesFacade();
+        ff.mkdirs(path, configuration.getMkDirMode());
+        return path.of(configuration.getRoot()).concat(tableName).concat(MAT_VIEW_FILE_NAME);
+    }
+
+    private static void readAllBlocks(FilesFacade ff, Path path, int expectedBlocks) throws IOException {
+        try (DefinitionFileReader reader = new DefinitionFileReader(ff)) {
+            reader.of(path.$());
+            int blockCount = 0;
+            DefinitionFileReader.BlocksCursor cursor = reader.getCursor();
+            while (cursor.hasNext()) {
+                ReadableBlock block = cursor.next();
+                final short type = block.type();
+                final byte version = block.version();
+                final byte flags = block.flags();
+                Assert.assertEquals(0, flags);
+                switch (type) {
+                    case MSG_TYPE_A:
+                        switch (version) {
+                            case MSG_TYPE_A_VERSION_1:
+                                readMsgAVersion1(block);
+                                break;
+                            case MSG_TYPE_A_VERSION_2:
+                                readMsgAVersion2(block);
+                                break;
+                            default:
+                                Assert.fail("Unexpected version");
+                        }
+                        break;
+                    case MSG_TYPE_B:
+                        if (version == MSG_TYPE_B_VERSION_1) {
+                            readMsgBVersion1(block);
+                        } else {
+                            Assert.fail("Unexpected version");
+                        }
+                        break;
+                    case MSG_TYPE_C:
+                        if (version == MSG_TYPE_C_VERSION_1) {
+                            readMsgCVersion1(block);
+                        } else {
+                            Assert.fail("Unexpected version");
+                        }
+                        break;
+                    default:
+                        Assert.fail("Unexpected type");
+                }
+                blockCount++;
+            }
+            Assert.assertEquals(expectedBlocks, blockCount);
+        }
     }
 
     private static void readMsgAVersion1(ReadableBlock memory) {
