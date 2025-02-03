@@ -68,10 +68,10 @@ public class WalWriterTest extends AbstractCairoTest {
             execute("create table sm (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("sm");
             long startTs = IntervalUtils.parseFloorPartialTimestamp("2022-02-24");
-            long tsIncrement = Timestamps.MINUTE_MICROS;
+            long tsIncrement = Timestamps.SECOND_MICROS;
 
             long ts = startTs;
-            int totalRows = 500_000;
+            int totalRows = 1_000_000;
             int walWriters = 16;
             int symbolCount = 75;
 
