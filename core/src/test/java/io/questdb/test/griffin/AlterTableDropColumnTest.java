@@ -41,6 +41,16 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class AlterTableDropColumnTest extends AbstractCairoTest {
 
     @Test
+    public void testDropArrayColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (arr int[]);");
+            execute("alter table x drop column arr;");
+            assertSql("column\ttype\n",
+                    "select \"column\", \"type\" from table_columns('x')");
+        });
+    }
+
+    @Test
     public void testBadSyntax() throws Exception {
         assertFailure("alter table x drop column l m", 28, "',' expected");
     }
