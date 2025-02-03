@@ -819,7 +819,7 @@ public class WalTxnDetails implements QuietCloseable {
     public class WalTxnDetailsSlice {
         IntList txnsOrder = new IntList();
         private long lo;
-        private final IntBinaryOperator comparerByWalSegmentId = this::compareByWalSegmentId;
+        private final IntBinaryOperator comparerByWalSegmentId = this::compareByWalIdSegmentId;
 
         public long getMaxTimestamp(int txn) {
             return WalTxnDetails.this.getMaxTimestamp(lo + txnsOrder.get(txn));
@@ -862,7 +862,7 @@ public class WalTxnDetails implements QuietCloseable {
             return this;
         }
 
-        private int compareByWalSegmentId(int txn1, int txn2) {
+        private int compareByWalIdSegmentId(int txn1, int txn2) {
             var segWalId1 = transactionMeta.get((int) ((txn1 + lo - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ID_WAL_SEG_ID_OFFSET));
             var segWalId2 = transactionMeta.get((int) ((txn2 + lo - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ID_WAL_SEG_ID_OFFSET));
 

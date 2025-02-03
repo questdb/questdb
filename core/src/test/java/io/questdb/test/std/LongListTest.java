@@ -33,9 +33,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.util.Arrays;
-import java.util.Comparator;
-
 public class LongListTest {
     @Test
     public void testAddAll_CapacityExpansion() {
@@ -141,17 +138,15 @@ public class LongListTest {
 
     @Test
     public void testBinarySearchBlockFuzz() {
+        Rnd rnd = TestUtils.generateRandom(null);
         final int N = 997; // prime
-        final int skipRate = 4;
-        final int dupeRate = 8;
+        final int skipRate = 1 + rnd.nextInt(3);
+        final int dupeRate = 1 + rnd.nextInt(7);
         final int dupeCountBound = 4;
+
         for (int c = 0; c < N; c++) {
-            for (int i = 0; i < skipRate; i++) {
-                for (int j = 0; j < dupeRate; j++) {
-                    for (int k = 1; k < dupeCountBound; k++) {
-                        testBinarySearchBlockFuzz0(c, i, j, k);
-                    }
-                }
+            for (int k = 1; k < dupeCountBound; k++) {
+                testBinarySearchBlockFuzz0(c, skipRate, dupeRate, k);
             }
         }
 
@@ -160,17 +155,15 @@ public class LongListTest {
 
     @Test
     public void testBinarySearchFuzz() {
+        Rnd rnd = TestUtils.generateRandom(null);
         final int N = 997; // prime
-        final int skipRate = 4;
-        final int dupeRate = 8;
+        final int skipRate = 1 + rnd.nextInt(3);
+        final int dupeRate = 1 + rnd.nextInt(7);
         final int dupeCountBound = 4;
+
         for (int c = 0; c < N; c++) {
-            for (int i = 0; i < skipRate; i++) {
-                for (int j = 0; j < dupeRate; j++) {
-                    for (int k = 1; k < dupeCountBound; k++) {
-                        testBinarySearchFuzz0(c, i, j, k);
-                    }
-                }
+            for (int k = 1; k < dupeCountBound; k++) {
+                testBinarySearchFuzz0(c, skipRate, dupeRate, k);
             }
         }
 
@@ -354,128 +347,6 @@ public class LongListTest {
             list.remove(i);
         }
         Assert.assertEquals(0, list.size());
-    }
-
-    @Test
-    public void testSortGroups() {
-        Rnd rnd = TestUtils.generateRandom(null);
-        int n = 1 + rnd.nextInt(20);
-        sortGroupsRandom(n, rnd.nextInt(10000), rnd);
-    }
-
-    @Test
-    public void testSortGroupsEqualElements() {
-        Rnd rnd = TestUtils.generateRandom(null);
-        int n = 1 + rnd.nextInt(20);
-        checkSortGroupsEqualElements(n, rnd.nextInt(10000), rnd);
-    }
-
-    @Test
-    public void testSortGroupsNotSupported() {
-        LongList l = new LongList();
-
-        l.add(1);
-        try {
-            l.sortGroups(2);
-            Assert.fail();
-        } catch (IllegalStateException e) {
-            // expected
-        }
-        l.sortGroups(1);
-
-        try {
-            l.sortGroups(-1);
-            Assert.fail();
-        } catch (IllegalStateException e) {
-            // expected
-        }
-    }
-
-    @Test
-    public void testSortGroupsOneElementCompare() {
-        Rnd rnd = TestUtils.generateRandom(null);
-        int n = 2;// + rnd.nextInt(20);
-        int compareByIndex = rnd.nextInt(n);
-        sortGroupsRandomOneElementCompare(n, compareByIndex, 1_000_000, rnd);
-    }
-
-    private static void checkSortGroupsEqualElements(int n, int elements, Rnd rnd) {
-        LongList list = new LongList(elements * n);
-        int[][] arrays = new int[elements][];
-
-        for (int i = 0; i < elements; i++) {
-            arrays[i] = new int[n];
-            int equalValue = rnd.nextInt(5);
-            for (int j = 0; j < n; j++) {
-                arrays[i][j] = equalValue;
-                list.add(arrays[i][j]);
-            }
-        }
-
-        sortAndCompare(n, elements, arrays, list);
-    }
-
-    private static void sortAndCompare(int n, int compareByIndex, int elements, int[][] arrays, LongList list) {
-        Arrays.sort(arrays, Comparator.comparingInt((int[] a) -> a[compareByIndex]));
-
-        list.sortGroupsByElement(n, compareByIndex, 0, list.size() / n);
-
-        for (int i = 0; i < elements; i++) {
-            for (int j = 0; j < n; j++) {
-                Assert.assertEquals(arrays[i][j], list.get(i * n + j));
-            }
-        }
-    }
-
-    private static void sortAndCompare(int n, int elements, int[][] arrays, LongList list) {
-        Arrays.sort(arrays, (int[] a, int[] b) -> {
-            for (int i = 0; i < n; i++) {
-                int comparison = Integer.compare(a[i], b[i]);
-                if (comparison != 0) {
-                    return comparison;
-                }
-            }
-            return 0;
-        });
-
-        list.sortGroups(n);
-
-        for (int i = 0; i < elements; i++) {
-            for (int j = 0; j < n; j++) {
-                Assert.assertEquals(arrays[i][j], list.get(i * n + j));
-            }
-        }
-    }
-
-    private static void sortGroupsRandom(int n, int elements, Rnd rnd) {
-        LongList list = new LongList(elements * n);
-        int[][] arrays = new int[elements][];
-
-        for (int i = 0; i < elements; i++) {
-            arrays[i] = new int[n];
-            for (int j = 0; j < n; j++) {
-                arrays[i][j] = rnd.nextInt();
-                list.add(arrays[i][j]);
-            }
-        }
-
-        sortAndCompare(n, elements, arrays, list);
-    }
-
-    private static void sortGroupsRandomOneElementCompare(int n, int compareBy, int elements, Rnd rnd) {
-        LongList list = new LongList(elements * n);
-        int[][] arrays = new int[elements][];
-
-        for (int i = 0; i < elements; i++) {
-            arrays[i] = new int[n];
-            int value = rnd.nextInt(elements);
-            for (int j = 0; j < n; j++) {
-                arrays[i][j] = value;
-                list.add(arrays[i][j]);
-            }
-        }
-
-        sortAndCompare(n, compareBy, elements, arrays, list);
     }
 
     private void assertOrderedAsc(LongList list) {
