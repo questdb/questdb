@@ -26,7 +26,6 @@ package io.questdb.cairo.mv;
 
 import io.questdb.std.Long256;
 import io.questdb.std.str.Utf8Sequence;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public interface RandomAccessBlock {
@@ -52,8 +51,6 @@ public interface RandomAccessBlock {
 
     void putLong256(long offset, long l0, long l1, long l2, long l3);
 
-    void putNullStr(long offset);
-
     void putShort(long offset, short value);
 
     void putStr(long offset, CharSequence value);
@@ -61,6 +58,4 @@ public interface RandomAccessBlock {
     void putStr(long offset, CharSequence value, int pos, int len);
 
     void putVarchar(long offset, @Nullable Utf8Sequence value);
-
-    void putVarchar(long offset, @NotNull Utf8Sequence value, int lo, int hi);
 }

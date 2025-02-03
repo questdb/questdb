@@ -65,10 +65,6 @@ public interface AppendOnlyBlock {
 
     void putLong256Utf8(@Nullable Utf8Sequence hexString);
 
-    long putNullBin();
-
-    long putNullStr();
-
     void putRawBytes(long from, long len);
 
     void putShort(short value);
@@ -80,8 +76,6 @@ public interface AppendOnlyBlock {
     long putStr(CharSequence value, int pos, int len);
 
     long putVarchar(@Nullable Utf8Sequence value);
-
-    long putVarchar(@NotNull Utf8Sequence value, int lo, int hi);
 
     void skip(long bytes);
 }

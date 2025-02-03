@@ -37,7 +37,9 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Zip;
+import io.questdb.std.str.GcUtf8String;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -49,6 +51,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.TableUtils.MAT_VIEW_FILE_NAME;
+import static io.questdb.cairo.vm.Vm.STRING_LENGTH_BYTES;
 
 public class DefinitionFileTest extends AbstractCairoTest {
     protected final static Log LOG = LogFactory.getLog(DefinitionFileTest.class);
@@ -364,7 +367,7 @@ public class DefinitionFileTest extends AbstractCairoTest {
     private static int commitMsgAVersion1(AppendOnlyBlock memory) {
         memory.putStr("Hello");
         memory.putInt(123);
-        memory.putStr("World");
+        memory.putVarchar(new GcUtf8String("World"));
         memory.putInt(456);
         memory.commit(MSG_TYPE_A, MSG_TYPE_A_VERSION_1, (byte) 0);
         return memory.length();
@@ -388,14 +391,14 @@ public class DefinitionFileTest extends AbstractCairoTest {
 
     private static void commitMsgAVersion1RW(RandomAccessBlock memory) {
         String hello = "Hello";
-        String world = "World";
+        Utf8Sequence worldUtf8 = new GcUtf8String("World");
         int offset = 0;
         memory.putStr(offset, hello);
-        offset += Vm.getStorageLength(world);
+        offset += Vm.getStorageLength(hello);
         memory.putInt(offset, 123);
         offset += Integer.BYTES;
-        memory.putStr(offset, world);
-        offset += Vm.getStorageLength(world);
+        memory.putVarchar(offset, worldUtf8);
+        offset += STRING_LENGTH_BYTES + worldUtf8.size();
         memory.putInt(offset, 456);
         memory.commit(MSG_TYPE_A, MSG_TYPE_A_VERSION_1, (byte) 0);
     }
@@ -475,9 +478,9 @@ public class DefinitionFileTest extends AbstractCairoTest {
         offset += Vm.getStorageLength(str);
         Assert.assertEquals(123, memory.getInt(offset));
         offset += Integer.BYTES;
-        str = memory.getStr(offset);
-        Assert.assertEquals("World", str.toString());
-        offset += Vm.getStorageLength(str);
+        Utf8Sequence var = memory.getVarchar(offset);
+        Assert.assertEquals("World", var.toString());
+        offset += (STRING_LENGTH_BYTES + var.size());
         Assert.assertEquals(456, memory.getInt(offset));
     }
 

@@ -25,6 +25,7 @@
 package io.questdb.cairo.mv;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.vm.api.MemoryCMARW;
@@ -346,24 +347,6 @@ public class DefinitionFileWriter implements Closeable, Mutable {
         }
 
         @Override
-        public long putNullBin() {
-            assert !isCommitted;
-            return memory.putNullBin();
-        }
-
-        @Override
-        public void putNullStr(long offset) {
-            assert !isCommitted;
-            memory.putNullStr(payloadOffset + offset);
-        }
-
-        @Override
-        public long putNullStr() {
-            assert !isCommitted;
-            return memory.putNullStr();
-        }
-
-        @Override
         public void putRawBytes(long from, long len) {
             assert !isCommitted;
             memory.putBlockOfBytes(from, len);
@@ -414,26 +397,18 @@ public class DefinitionFileWriter implements Closeable, Mutable {
         @Override
         public void putVarchar(long offset, @Nullable Utf8Sequence value) {
             assert !isCommitted;
-            memory.putVarchar(payloadOffset + offset, value);
-        }
-
-        @Override
-        public void putVarchar(long offset, @NotNull Utf8Sequence value, int lo, int hi) {
-            assert !isCommitted;
-            memory.putVarchar(payloadOffset + offset, value, lo, hi);
+            // reuse append API
+            final long appendOffset = memory.getAppendOffset();
+            memory.jumpTo(payloadOffset + offset);
+            putVarchar(value);
+            memory.jumpTo(appendOffset);
         }
 
         @Override
         public long putVarchar(@Nullable Utf8Sequence value) {
             assert !isCommitted;
-            //TODO: check serialization format
-            return memory.putVarchar(value);
-        }
-
-        @Override
-        public long putVarchar(@NotNull Utf8Sequence value, int lo, int hi) {
-            assert !isCommitted;
-            return memory.putVarchar(value, lo, hi);
+            VarcharTypeDriver.appendPlainValue(memory, value);
+            return memory.getAppendOffset();
         }
 
         public BlockMemoryHandleImpl reset(int length) {

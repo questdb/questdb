@@ -25,6 +25,7 @@
 package io.questdb.cairo.mv;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.cairo.vm.MemoryCMRImpl;
 import io.questdb.cairo.vm.api.MemoryCMR;
@@ -40,9 +41,8 @@ import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Utf8SplitString;
+import io.questdb.std.str.Utf8Sequence;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -279,12 +279,6 @@ public class DefinitionFileReader implements Closeable, Mutable {
             }
 
             @Override
-            public Utf8SplitString getSplitVarchar(long auxLo, long dataLo, long dataLim, int size, boolean ascii) {
-                assert auxLo >= 0 && dataLo >= 0 && dataLim >= 0 && size >= 0;
-                return memory.getSplitVarcharA(auxLo, dataLo, dataLim, size, ascii);
-            }
-
-            @Override
             public CharSequence getStr(long offset) {
                 assert offset >= 0 && offset < length;
                 return memory.getStrA(payloadOffset + offset);
@@ -297,9 +291,9 @@ public class DefinitionFileReader implements Closeable, Mutable {
             }
 
             @Override
-            public DirectUtf8Sequence getVarchar(long offset, int size, boolean ascii) {
+            public Utf8Sequence getVarchar(long offset) {
                 assert offset >= 0 && offset < length;
-                return memory.getDirectVarcharA(payloadOffset + offset, size, ascii);
+                return VarcharTypeDriver.getPlainValue(memory, payloadOffset + offset, 1);
             }
 
 

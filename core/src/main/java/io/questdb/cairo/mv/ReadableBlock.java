@@ -28,8 +28,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.DirectUtf8Sequence;
-import io.questdb.std.str.Utf8SplitString;
+import io.questdb.std.str.Utf8Sequence;
 
 
 public interface ReadableBlock {
@@ -65,13 +64,11 @@ public interface ReadableBlock {
 
     short getShort(long offset);
 
-    Utf8SplitString getSplitVarchar(long auxLo, long dataLo, long dataLim, int size, boolean ascii);
-
     CharSequence getStr(long offset);
 
     int getStrLen(long offset);
 
-    DirectUtf8Sequence getVarchar(long offset, int size, boolean ascii);
+    Utf8Sequence getVarchar(long offset);
 
     long length();
 
