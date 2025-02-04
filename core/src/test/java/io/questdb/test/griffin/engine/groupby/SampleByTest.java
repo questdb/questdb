@@ -2948,6 +2948,31 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRedundantGroupByInKeyedFromTo() throws Exception {
+        assertException(
+                "SELECT" +
+                        "  day(ts) AS day, " +
+                        "  sym2, " +
+                        "  COUNT(*) AS c " +
+                        "FROM x " +
+                        "WHERE sym = 'abc' " +
+                        "SAMPLE BY 1d FROM dateadd('d', -31, now()) to now() FILL(NULL) " +
+                        "GROUP BY day, sym2 " +
+                        "ORDER BY day(ts) DESC, sym2;",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_symbol(5,4,4,1) sym," +
+                        " rnd_symbol(5,4,4,1) sym2," +
+                        " timestamp_sequence(172800000000, 3600000000) ts" +
+                        " from long_sequence(20)" +
+                        ") timestamp(ts) partition by day",
+                10,
+                "key functions are supported in group by only"
+        );
+    }
+
+    @Test
     public void testSampleBadFunction() throws Exception {
         String stringType = ColumnType.nameOf(ColumnType.STRING);
         assertException(

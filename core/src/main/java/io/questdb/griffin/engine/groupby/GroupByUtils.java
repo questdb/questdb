@@ -168,7 +168,10 @@ public class GroupByUtils {
                         func.initValueTypes(outValueTypes);
                     } else {
                         // it's a key function
-                        assert outKeyFunctions != null && outKeyFunctionNodes != null : "key functions are supported in group by only";
+                        if (outKeyFunctions == null || outKeyFunctionNodes == null) {
+                            throw SqlException.$(node.position, "key functions are supported in group by only [function=").put(node)
+                                    .put(']');
+                        }
                         outKeyFunctions.add(function);
                         outKeyFunctionNodes.add(node);
                     }
