@@ -85,7 +85,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     @Parameterized.Parameters(name = "parquet={0}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-//                {true},
+                {true},
                 {false},
         });
     }
@@ -317,7 +317,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testRandomColumnsDedupMultipleKeyCol() throws Exception {
-        Rnd rnd = generateRandomAndProps(1196343701857791L, 1738144161751L);
+        Rnd rnd = generateRandomAndProps();
         setFuzzProbabilities(
                 rnd.nextDouble() / 100,
                 rnd.nextDouble(),
