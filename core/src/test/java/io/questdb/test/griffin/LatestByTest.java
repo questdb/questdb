@@ -1202,6 +1202,15 @@ public class LatestByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestOnWithArray() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (select x::timestamp as ts, rnd_double_array(2) as arr from long_sequence(100)) timestamp(ts)");
+            assertSql("", "select * from x latest on ts partition by arr");
+        });
+        // todo: make this work for arrays
+    }
+
+    @Test
     public void testLatestWithFilterByDoesNotNeedFullScan() throws Exception {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {

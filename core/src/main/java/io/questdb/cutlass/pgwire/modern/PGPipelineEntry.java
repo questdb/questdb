@@ -32,6 +32,8 @@ import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.arr.ArrayShape;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
@@ -995,6 +997,27 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.stateParse = stateParse;
     }
 
+    private static int arrayToString(ArrayView arrayView, ArrayShape shape, int dim, int currentIndex, PGResponseSink response) {
+        response.putAscii('{');
+        int count = shape.getLength(dim); // Number of elements or subarrays at this dimension.
+        for (int i = 0; i < count; i++) {
+            if (dim == shape.getDimensionCount() - 1) {
+                // If we're at the last dimension, append the flat array element.
+                response.put(arrayView.getDoubleFromRowMajor(currentIndex));
+                currentIndex++; // Move to the next element in the flat array.
+            } else {
+                // Recursively build the array string for the next dimension.
+                currentIndex = arrayToString(arrayView, shape, dim + 1, currentIndex, response);
+            }
+            // Append a comma if this is not the last element in the current dimension.
+            if (i < count - 1) {
+                response.putAscii(',');
+            }
+        }
+        response.putAscii('}');
+        return currentIndex;
+    }
+
     private static void outBindComplete(PGResponseSink utf8Sink) {
         outSimpleMsg(utf8Sink, MESSAGE_TYPE_BIND_COMPLETE);
     }
@@ -1634,6 +1657,54 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
+    private void outColBinArray(PGResponseSink utf8Sink, Record record, int columnIndex, int columnType) {
+        ArrayView arrayView = record.getArray(columnIndex, columnType);
+        if (arrayView == null) {
+            utf8Sink.setNullValue();
+            return;
+        }
+
+        ArrayShape shape = arrayView.getShape();
+        int ndims = shape.getDimensionCount();
+        int totalElements = 1;
+        for (int i = 0; i < ndims; i++) {
+            totalElements *= shape.getLength(i);
+        }
+
+        int typeTag = ColumnType.decodeArrayElementType(columnType);
+        int componentTypeOid = getTypeOid(typeTag);
+        short pgElementSize = PG_TYPE_TO_SIZE_MAP.get(componentTypeOid);
+
+        int elementSize = Integer.BYTES // size of each element
+                + pgElementSize; // array elements
+        int totalSize = Integer.BYTES // total size
+                + Integer.BYTES  // ndims
+                + Integer.BYTES  // has_nulls
+                + (ndims * (Integer.BYTES + Integer.BYTES))  // dimension information: length and lower bound
+                + (elementSize * totalElements); // array elements
+
+        // array header
+        utf8Sink.putNetworkInt(totalSize);
+        utf8Sink.putNetworkInt(ndims);
+        utf8Sink.putNetworkInt(0); // has_nulls = 0
+        utf8Sink.putNetworkInt(componentTypeOid);
+
+        // Write dimension information
+        for (int i = 0; i < ndims; i++) {
+            utf8Sink.putNetworkInt(shape.getLength(i)); // length of each dimension
+            utf8Sink.putNetworkInt(1); // lower bound, always 1 in PostgreSQL
+        }
+
+        if (ColumnType.decodeArrayElementType(columnType) == ColumnType.DOUBLE) {
+            // Write array elements in row-major order, which is native to both
+            // PostgreSQL wire protocol and our ArrayView
+            for (int i = 0; i < totalElements; i++) {
+                utf8Sink.putNetworkInt(8);
+                utf8Sink.putNetworkDouble(arrayView.getDoubleFromRowMajor(i));
+            }
+        }
+    }
+
     private void outColBinBool(PGResponseSink utf8Sink, Record record, int columnIndex) {
         utf8Sink.putNetworkInt(Byte.BYTES);
         utf8Sink.put(record.getBool(columnIndex) ? (byte) 1 : (byte) 0);
@@ -1788,6 +1859,22 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             utf8Sink.put(strValue);
             utf8Sink.putLenEx(a);
         }
+    }
+
+    private void outColTxtArr(PGResponseSink utf8Sink, Record record, int columnIndex, int columnType) {
+        ArrayView arrayView = record.getArray(columnIndex, columnType);
+        if (arrayView == null) {
+            utf8Sink.setNullValue();
+            return;
+        }
+
+        final long a = utf8Sink.skipInt();
+        switch (ColumnType.decodeArrayElementType(columnType)) {
+            case ColumnType.DOUBLE:
+                arrayToString(arrayView, arrayView.getShape(), 0, 0, utf8Sink);
+                break;
+        }
+        utf8Sink.putLenEx(a);
     }
 
     private void outColTxtBool(PGResponseSink utf8Sink, Record record, int columnIndex) {
@@ -2238,6 +2325,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     case ColumnType.UUID:
                         outColTxtUuid(utf8Sink, record, i);
                         break;
+                    case ColumnType.ARRAY:
+                        outColTxtArr(utf8Sink, record, i, type);
+                        break;
+                    case BINARY_TYPE_ARRAY:
+                        outColBinArray(utf8Sink, record, i, type);
+                        break;
+
                     default:
                         assert false;
                 }

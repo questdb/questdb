@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnFilter;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
@@ -982,6 +983,8 @@ public class RecordToRowCopierUtils {
                         assert false;
                     }
                     break;
+                case ColumnType.ARRAY:
+                    throw CairoException.nonCritical().position(0).put("type ").put(ColumnType.nameOf(toColumnTypeTag)).put(" not supported by record-to-row copier.");
                 default:
                     // we don't need to do anything for null as null is already written by TableWriter/WalWriter NullSetters
                     // every non-null-type is an error

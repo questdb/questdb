@@ -314,4 +314,13 @@ public class OrderByExpressionTest extends AbstractCairoTest {
                 true
         );
     }
+
+    @Test
+    public void testOrderingWithArrays() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (select x::timestamp as ts, rnd_double_array(2) as arr from long_sequence(100)) timestamp(ts)");
+            assertSql("", "select * from x order by arr;");
+        });
+        // todo: make this work for arrays
+    }
 }

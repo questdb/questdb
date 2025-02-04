@@ -24,11 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.conditional;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.test.AbstractCairoTest;
-import org.junit.Assert;
 import org.junit.Test;
 
 public class CaseFunctionFactoryTest extends AbstractCairoTest {
@@ -416,6 +412,16 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
         assertException("select case when x then end from long_sequence(1)", 24, "missing arguments");
         assertException("select case when x then else end from long_sequence(1)", 24, "missing arguments");
         assertException("select case when x then x else end from long_sequence(1)", 31, "missing arguments");
+    }
+
+    @Test
+    public void testCaseStatementWithArrayColumns() throws Exception {
+        // todo
+    }
+
+    @Test
+    public void testCaseStatementWithArrayLiterals() throws Exception {
+        // todo
     }
 
     @Test

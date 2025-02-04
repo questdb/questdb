@@ -63,6 +63,7 @@ import org.postgresql.util.PSQLException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.BindException;
+import java.sql.Array;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.JDBCType;
@@ -272,6 +273,14 @@ public abstract class BasePGTest extends AbstractCairoTest {
                             sink.put(object.toString());
                         }
                         break;
+                    case ARRAY:
+                        Array array = rs.getArray(i);
+                        if (array == null) {
+                            sink.put("null");
+                        } else {
+                            writeArray(sink, array);
+                        }
+                        break;
                     default:
                         assert false;
                 }
@@ -321,6 +330,56 @@ public abstract class BasePGTest extends AbstractCairoTest {
             }
 
             i++;
+        }
+    }
+
+    private static void writeArray(StringSink sink, Array array) throws SQLException {
+        Object arrayData = array.getArray();
+        if (arrayData == null) {
+            sink.put("null");
+            return;
+        }
+
+        writeArrayContent(sink, arrayData);
+    }
+
+    private static void writeArrayContent(StringSink sink, Object arrayData) throws SQLException {
+        if (!arrayData.getClass().isArray()) {
+            // Base case: not an array, write the value
+            writeValue(sink, arrayData);
+            return;
+        }
+
+        sink.put('{');
+        int length = java.lang.reflect.Array.getLength(arrayData);
+        for (int i = 0; i < length; i++) {
+            Object element = java.lang.reflect.Array.get(arrayData, i);
+            if (element == null) {
+                sink.put("null");
+            } else {
+                writeArrayContent(sink, element);
+            }
+
+            if (i < length - 1) {
+                sink.put(',');
+            }
+        }
+        sink.put('}');
+    }
+
+    private static void writeValue(StringSink sink, Object value) {
+        if (value == null) {
+            sink.put("null");
+        } else if (value instanceof Number) {
+            if (value instanceof Double || value instanceof Float) {
+                sink.put(((Number) value).doubleValue());
+            } else {
+                sink.put(((Number) value).longValue());
+            }
+        } else if (value instanceof Boolean) {
+            sink.put((Boolean) value);
+        } else {
+            sink.put(value.toString());
         }
     }
 
