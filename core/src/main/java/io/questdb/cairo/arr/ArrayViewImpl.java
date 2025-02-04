@@ -89,6 +89,16 @@ public class ArrayViewImpl implements ArrayView {
         return crc;
     }
 
+    @Override
+    public int getDim() {
+        return shape.getDimensionCount();
+    }
+
+    @Override
+    public int getDimLength(int dim) {
+        return shape.getLength(dim);
+    }
+
     public double getDouble(DirectIntSlice coordinates) {
         return values.getDouble(flatIndex(coordinates));
     }
@@ -110,18 +120,6 @@ public class ArrayViewImpl implements ArrayView {
         return values.getLong(flatIndex(coordinates));
     }
 
-    /**
-     * Get the dimensions (<i>aka shape</i>) of the array.
-     * <p>Examples shapes:
-     * <ul>
-     *     <li>A 1-D vector of 100 elements: <code>[100]</code>.</li>
-     *     <li>A 2-D matrix of 50 rows and 2 columns: <code>[50, 2]</code>.</li>
-     * </ul>
-     */
-    public ArrayShape getShape() {
-        return shape;
-    }
-
     public short getShort(DirectIntSlice coordinates) {
         return values.getShort(flatIndex(coordinates));
     }
@@ -134,24 +132,6 @@ public class ArrayViewImpl implements ArrayView {
     @Override
     public int getStride(int dimension) {
         return strides.get(dimension);
-    }
-
-    /**
-     * Get the array's strides, in element space.
-     * <p>The returned strides expresses the number of elements to skip
-     * to read the next element in each dimension.</p>
-     * <p><strong>IMPORTANT:</strong>
-     * <ul>
-     *     <li>A stride can be <code>0</code>, in case of broadcasting, or
-     *         <code>&lt; 0</code> in case of reversing of data.</li>
-     *     <li>Most libraries support strides expressed in the byte space.
-     *         Since we also support packed arrays (e.g. bool bit arrays),
-     *         the strides here are expressed in the element count space
-     *         instead.</li>
-     * </ul>
-     */
-    public DirectIntSlice getStrides() {
-        return strides;
     }
 
     /**

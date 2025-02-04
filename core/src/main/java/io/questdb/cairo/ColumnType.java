@@ -54,6 +54,7 @@ import io.questdb.std.str.StringSink;
  * Column types as numeric (integer) values
  */
 public final class ColumnType {
+    public static final int ARRAY_DIMENSION_LIMIT = 16; // inclusive
     public static final int GEOBYTE_MAX_BITS = 7;
     // geohash bits <-> backing primitive types bit boundaries
     public static final int GEOBYTE_MIN_BITS = 1;
@@ -121,7 +122,6 @@ public final class ColumnType {
     public static final int VERSION = 426;
     static final int[] GEO_TYPE_SIZE_POW2;
     private static final boolean ALLOW_DEFAULT_STRING_CHANGE = false;
-    private static final int ARRAY_DIMENSION_LIMIT = 16; // inclusive
     private static final int BYTE_BITS = 8;
     private static final short[][] OVERLOAD_PRIORITY;
     private static final int TYPE_FLAG_DESIGNATED_TIMESTAMP = (1 << 17);
@@ -380,13 +380,20 @@ public final class ColumnType {
     }
 
     public static boolean isToSameOrWider(int fromType, int toType) {
-        return (tagOf(fromType) == tagOf(toType) && (getGeoHashBits(fromType) == 0 || getGeoHashBits(fromType) >= getGeoHashBits(toType)))
+        return (tagOf(fromType) == tagOf(toType) && !isArray(fromType) && (getGeoHashBits(fromType) == 0 || getGeoHashBits(fromType) >= getGeoHashBits(toType)))
                 || isBuiltInWideningCast(fromType, toType)
                 || isStringCast(fromType, toType)
                 || isVarcharCast(fromType, toType)
                 || isGeoHashWideningCast(fromType, toType)
                 || isImplicitParsingCast(fromType, toType)
-                || isIPv4Cast(fromType, toType);
+                || isIPv4Cast(fromType, toType)
+                || isArrayCast(fromType, toType);
+    }
+
+    private static boolean isArrayCast(int fromType, int toType) {
+        return isArray(fromType) && isArray(toType)
+                && decodeArrayElementType(fromType) == decodeArrayElementType(toType)
+                && decodeArrayDimensionality(fromType) == decodeArrayDimensionality(toType);
     }
 
     public static boolean isUndefined(int columnType) {

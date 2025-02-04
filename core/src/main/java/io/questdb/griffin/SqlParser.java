@@ -972,7 +972,7 @@ public class SqlParser {
                                 .put("duplicate dedup column [column=").put(columnName).put(']');
                     } else if (ColumnType.isArray(model.getColumnType())) {
                         throw SqlException.position(lexer.lastTokenPosition())
-                                .put("dedup key columns cannot include ARRAYs [column=")
+                                .put("dedup key columns cannot include ARRAY [column=")
                                 .put(columnName).put(", type=")
                                 .put(ColumnType.nameOf(model.getColumnType())).put(']');
                     }
@@ -3247,7 +3247,11 @@ public class SqlParser {
         int dim = SqlUtil.parseArrayDimensions(lexer);
         if (dim > 0) {
             if (ColumnType.isSupportedArrayType(typeTag)) {
-                return ColumnType.encodeArrayType(typeTag, dim); // dim is 0 - based here, but 1-based in ColumnType
+                if (dim <= ColumnType.ARRAY_DIMENSION_LIMIT) {
+                    return ColumnType.encodeArrayType(typeTag, dim);
+                } else {
+                    throw SqlException.position(typePosition).put("array dimension limit is ").put(ColumnType.ARRAY_DIMENSION_LIMIT);
+                }
             }
             throw SqlException.position(typePosition).put(ColumnType.nameOf(typeTag)).put(" array type is not supported");
         } else if (typeTag == ColumnType.GEOHASH) {

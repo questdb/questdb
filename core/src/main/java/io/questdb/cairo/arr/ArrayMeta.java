@@ -59,9 +59,7 @@ public class ArrayMeta {  // TODO(amunra): Rename to `ArrayMetaUtils`.
      */
     public static int calcRequiredValuesByteSize(int type, int elementsCount) {
         assert ColumnType.isArray(type) : "type class is not Array";
-        final int bitWidth = Math.max(8, 1 << ColumnType.decodeArrayElementTypePrecision(type));
-        final int requiredBits = elementsCount * bitWidth;
-        return (requiredBits + 7) / 8;
+        return elementsCount << ColumnType.decodeArrayElementTypePrecision(type);
     }
 
     /**

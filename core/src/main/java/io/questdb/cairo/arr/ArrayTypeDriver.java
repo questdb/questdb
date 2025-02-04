@@ -37,6 +37,7 @@ import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -425,6 +426,36 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         appendNullImpl(auxMem, offset);
     }
 
+    /**
+     * Recursively builds a JSON string representation of a multi-dimensional array stored in row‑major order.
+     *
+     * @param arrayView    the flat array containing all the elements
+     * @param dim          the current dimension being processed (0 for the outermost dimension)
+     * @param currentIndex the current index in the flat array to process
+     * @param sink         the StringBuilder used to accumulate the JSON string
+     * @return the updated flat array index after processing the current dimension
+     */
+    public static int doubleArrayToJson(ArrayView arrayView, int dim, int currentIndex, CharSink<?> sink) {
+        sink.putAscii('[');
+        int count = arrayView.getDimLength(dim); // Number of elements or subarrays at this dimension.
+        for (int i = 0; i < count; i++) {
+            if (dim == arrayView.getDim() - 1) {
+                // If we're at the last dimension, append the flat array element.
+                sink.put(arrayView.getDoubleFromRowMajor(currentIndex));
+                currentIndex++; // Move to the next element in the flat array.
+            } else {
+                // Recursively build the JSON for the next dimension.
+                currentIndex = doubleArrayToJson(arrayView, dim + 1, currentIndex, sink);
+            }
+            // Append a comma if this is not the last element in the current dimension.
+            if (i < count - 1) {
+                sink.putAscii(',');
+            }
+        }
+        sink.putAscii(']');
+        return currentIndex;
+    }
+
     private static void padTo(@NotNull MemoryA dataMem, int byteAlignment) {
         dataMem.zeroMem(skipsToAlign(dataMem.getAppendOffset(), byteAlignment));
     }
@@ -459,15 +490,15 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     /**
      * Write the values and -- while doing so, also calculate the crc value, unless it was already cached.
      **/
-    private static void writeDataEntry(@NotNull MemoryA dataMem, @NotNull ArrayView array) {
-        writeShape(dataMem, array.getShape());
+    private static void writeDataEntry(@NotNull MemoryA dataMem, @NotNull ArrayView arrayView) {
+        writeShape(dataMem, arrayView);
         // We could be storing values of different datatypes.
         // We thus need to align accordingly. I.e., if we store doubles, we need to align on an 8-byte boundary.
         // for shorts, it's on a 2-byte boundary. For booleans, we align to the byte.
-        final int bitWidth = 1 << ColumnType.decodeArrayElementTypePrecision(array.getType());
+        final int bitWidth = 1 << ColumnType.decodeArrayElementTypePrecision(arrayView.getType());
         final int requiredByteAlignment = (bitWidth + 7) / 8;
         padTo(dataMem, requiredByteAlignment);
-        array.appendRowMajor(dataMem);
+        arrayView.appendRowMajor(dataMem);
         // We pad at the end, ready for the next entry that starts with an int.
         padTo(dataMem, Integer.BYTES);
     }
@@ -475,12 +506,12 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     /**
      * Write the dimensions.
      */
-    private static void writeShape(@NotNull MemoryA dataMem, @NotNull ArrayShape shape) {
+    private static void writeShape(@NotNull MemoryA dataMem, @NotNull ArrayView arrayView) {
         assert dataMem.getAppendOffset() % Integer.BYTES == 0; // aligned integer write
-        dataMem.putInt(shape.getDimensionCount());
-        for (int dimIndex = 0, nDims = shape.getDimensionCount(); dimIndex < nDims; ++dimIndex) {
-            final int dim = shape.getLength(dimIndex);
-            dataMem.putInt(dim);
+        int dim = arrayView.getDim();
+        dataMem.putInt(dim);
+        for (int i = 0; i < dim; ++i) {
+            dataMem.putInt(arrayView.getDimLength(i));
         }
     }
 

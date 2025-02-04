@@ -48,12 +48,9 @@ public interface ArrayView {
      */
     double getDoubleFromRowMajor(int flatIndex);
 
-    /**
-     * This is array dimensionality, the length of the shape is the number of dimensions.
-     *
-     * @return array shape
-     */
-    ArrayShape getShape();
+    int getDim();
+
+    int getDimLength(int dim);
 
     int getStride(int dimension);
 

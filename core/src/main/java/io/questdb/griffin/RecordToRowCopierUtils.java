@@ -91,6 +91,7 @@ public class RecordToRowCopierUtils {
         int rGetStrA = asm.poolInterfaceMethod(Record.class, "getStrA", "(I)Ljava/lang/CharSequence;");
         int rGetBin = asm.poolInterfaceMethod(Record.class, "getBin", "(I)Lio/questdb/std/BinarySequence;");
         int rGetVarchar = asm.poolInterfaceMethod(Record.class, "getVarcharA", "(I)Lio/questdb/std/str/Utf8Sequence;");
+        int rGetArray = asm.poolInterfaceMethod(Record.class, "getArray", "(II)Lio/questdb/cairo/arr/ArrayView;");
         //
         int wPutInt = asm.poolInterfaceMethod(TableWriter.Row.class, "putInt", "(II)V");
         int wPutIPv4 = asm.poolInterfaceMethod(TableWriter.Row.class, "putIPv4", "(II)V");
@@ -114,6 +115,7 @@ public class RecordToRowCopierUtils {
         int wPutGeoStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putGeoStr", "(ILjava/lang/CharSequence;)V");
         int wPutGeoVarchar = asm.poolInterfaceMethod(TableWriter.Row.class, "putGeoVarchar", "(ILio/questdb/std/str/Utf8Sequence;)V");
         int wPutVarchar = asm.poolInterfaceMethod(TableWriter.Row.class, "putVarchar", "(ILio/questdb/std/str/Utf8Sequence;)V");
+        int wPutArray = asm.poolInterfaceMethod(TableWriter.Row.class, "putArray", "(ILio/questdb/cairo/arr/ArrayView;)V");
 
         int implicitCastCharAsByte = asm.poolMethod(SqlUtil.class, "implicitCastCharAsByte", "(CI)B");
         int implicitCastCharAsGeoHash = asm.poolMethod(SqlUtil.class, "implicitCastCharAsGeoHash", "(CI)B");
@@ -966,6 +968,18 @@ public class RecordToRowCopierUtils {
                         default:
                             assert false;
                             break;
+                    }
+                    break;
+                case ColumnType.ARRAY:
+                    // we are going to assume (and prior validation is required) that the array is of the same type
+                    // as in dimensions and element type. The actual validation is not a responsibility of this code
+                    // it has to be done upstream to this call
+                    if (ColumnType.tagOf(toColumnType) == ColumnType.ARRAY) {
+                        asm.ldc(fromColumnType_0 + i * 2);
+                        asm.invokeInterface(rGetArray, 2);
+                        asm.invokeInterface(wPutArray, 2);
+                    } else {
+                        assert false;
                     }
                     break;
                 default:

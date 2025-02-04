@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -169,15 +170,12 @@ public class CursorPrinter {
                 }
                 break;
             case ColumnType.ARRAY:
-//                final ArrayView array = record.getArray(columnIndex, columnType);
-//                if (array != null) {
-//                    try (ArrayRowMajorTraversal traversal = new ArrayRowMajorTraversal()) {
-//                        traversal.of(array);
-//                        ArrayJsonSerializer.serialize(sink, array, traversal, columnType);
-//                    }
-//                } else {
-//                    sink.put(nullStringValue);
-//                }
+                ArrayTypeDriver.doubleArrayToJson(
+                        record.getArray(columnIndex, columnType),
+                        0,
+                        0,
+                        sink
+                );
                 break;
             default:
                 break;

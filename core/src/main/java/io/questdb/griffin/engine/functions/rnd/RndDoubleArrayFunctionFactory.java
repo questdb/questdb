@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.functions.rnd;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.arr.ArrayShape;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
@@ -67,7 +66,6 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
         private static final int MAX_LEN = 16;
         private final int dimensionCount;
         private final int[] shape;
-        private final ArrayArrayShape shapeImpl = new ArrayArrayShape();
         private final int[] strides;
         private final int type;
         private Rnd rnd;
@@ -83,17 +81,24 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
 
         @Override
         public void appendRowMajor(MemoryA mem) {
+            for (int i = 0; i < size; i++) {
+                mem.putDouble(values[i]);
+            }
+        }
 
+        @Override
+        public int getDim() {
+            return dimensionCount;
+        }
+
+        @Override
+        public int getDimLength(int dim) {
+            return shape[dim];
         }
 
         @Override
         public double getDoubleFromRowMajor(int flatIndex) {
             return values[flatIndex];
-        }
-
-        @Override
-        public ArrayShape getShape() {
-            return shapeImpl;
         }
 
         @Override
@@ -136,18 +141,6 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
                 values[i] = rnd.nextDouble();
             }
             return this;
-        }
-
-        public class ArrayArrayShape implements ArrayShape {
-            @Override
-            public int getDimensionCount() {
-                return dimensionCount;
-            }
-
-            @Override
-            public int getLength(int dimension) {
-                return shape[dimension];
-            }
         }
     }
 

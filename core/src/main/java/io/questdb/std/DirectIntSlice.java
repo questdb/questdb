@@ -44,7 +44,7 @@ public class DirectIntSlice implements DirectSequence, ArrayShape {
 
     @Override
     public int getDimensionCount() {
-        return size();
+        return length;
     }
 
     @Override

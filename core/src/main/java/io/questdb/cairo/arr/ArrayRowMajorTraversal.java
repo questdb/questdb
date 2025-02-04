@@ -58,13 +58,10 @@ public class ArrayRowMajorTraversal implements QuietCloseable {
     public static final io.questdb.std.ThreadLocal<ArrayRowMajorTraversal> LOCAL = new io.questdb.std.ThreadLocal<>(ArrayRowMajorTraversal::new);
     public static final Closeable THREAD_LOCAL_CLEANER = ArrayRowMajorTraversal::clearThreadLocals;
     private final DirectIntList coordinates = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY_DBG4);
+    private ArrayView arrayView;
     private boolean done = false;
     private int in = 0;
     private int out = 0;
-    /**
-     * The array's shape
-     */
-    private ArrayShape shape;
 
     public static void clearThreadLocals() {
         LOCAL.close();
@@ -114,9 +111,9 @@ public class ArrayRowMajorTraversal implements QuietCloseable {
         out = 0;
 
         // The `out` variable counts how many dims _will be_ reset to zero in the call to `next()` after this one.
-        final int lastDimIndex = shape.getDimensionCount() - 1;
+        final int lastDimIndex = arrayView.getDim() - 1;
         for (int dimIndex = lastDimIndex; dimIndex >= 0; --dimIndex) {
-            final int dim = shape.getLength(dimIndex);
+            final int dim = arrayView.getDimLength(dimIndex);
             final int current = coordinates.get(dimIndex);
             if (out > 0) {
                 if (current + 1 == dim) {
@@ -135,21 +132,17 @@ public class ArrayRowMajorTraversal implements QuietCloseable {
             }
         }
 
-        if (out == shape.getDimensionCount()) {
+        if (out == arrayView.getDim()) {
             done = true;
         }
 
         return coordinates.asSlice();
     }
 
-    public ArrayRowMajorTraversal of(ArrayView array) {
-        return of(array.getShape());
-    }
-
-    public ArrayRowMajorTraversal of(ArrayShape shape) {
+    public ArrayRowMajorTraversal of(ArrayView arrayView) {
         reset();
-        this.shape = shape;
-        for (int dimIndex = shape.getDimensionCount() - 1; dimIndex >= 0; --dimIndex) {
+        this.arrayView = arrayView;
+        for (int dimIndex = arrayView.getDim() - 1; dimIndex >= 0; --dimIndex) {
             coordinates.add(0);
         }
         if (coordinates.size() > 0) {
@@ -158,13 +151,13 @@ public class ArrayRowMajorTraversal implements QuietCloseable {
         }
 
         // will be converted to `in == shape.length()` on first iteration.
-        out = shape.getDimensionCount();
+        out = arrayView.getDim();
         return this;
     }
 
     private void reset() {
         coordinates.clear();
-        shape = null;
+        arrayView = null;
         done = true;
         in = 0;
         out = 0;
