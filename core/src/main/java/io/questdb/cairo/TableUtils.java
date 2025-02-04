@@ -240,7 +240,8 @@ public final class TableUtils {
         // to decide whether to trust the version stored in this field.
         return Numbers.encodeLowHighShorts(
                 checksumForMetaFormatMinorVersionField(metadataVersion, columnCount),
-                META_FORMAT_MINOR_VERSION_LATEST);
+                META_FORMAT_MINOR_VERSION_LATEST
+        );
     }
 
     public static int calculateTxRecordSize(int bytesSymbols, int bytesPartitions) {
@@ -452,6 +453,13 @@ public final class TableUtils {
         createTableOrMatViewInVolume(ff, root, mkDirMode, memory, null, path, tableDir, structure, tableVersion, tableId);
     }
 
+    public static void createTableNameFile(MemoryMAR mem, CharSequence charSequence) {
+        mem.putStr(charSequence);
+        mem.putByte((byte) 0);
+        mem.sync(false);
+        mem.close(true, Vm.TRUNCATE_TO_POINTER);
+    }
+
     public static void createTableOrMatView(
             FilesFacade ff,
             CharSequence root,
@@ -497,6 +505,21 @@ public final class TableUtils {
             TableStructure structure,
             int tableVersion,
             int tableId
+    ) {
+        createTableOrMatViewFiles(ff, memory, metaFileWriter, path, rootLen, tableDir, structure, tableVersion, tableId, TXN_FILE_NAME);
+    }
+
+    public static void createTableOrMatViewFiles(
+            FilesFacade ff,
+            MemoryMARW memory,
+            @Nullable MetaFileWriter metaFileWriter,
+            Path path,
+            int rootLen,
+            CharSequence tableDir,
+            TableStructure structure,
+            int tableVersion,
+            int tableId,
+            CharSequence txnFileName
     ) {
         final long dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRO(ff, path.trimTo(rootLen).$(), LOG) : 0;
         try (MemoryMARW mem = memory) {
@@ -544,7 +567,7 @@ public final class TableUtils {
             }
 
             // Create TXN file last, it's used to determine if table exists
-            mem.smallFile(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+            mem.smallFile(ff, path.trimTo(rootLen).concat(txnFileName).$(), MemoryTag.MMAP_DEFAULT);
             createTxn(mem, symbolMapCount, 0L, 0L, INITIAL_TXN, 0L, 0L, 0L, 0L);
             mem.sync(false);
         } finally {
@@ -592,13 +615,6 @@ public final class TableUtils {
         } finally {
             path.trimTo(rootLen);
         }
-    }
-
-    public static void createTableNameFile(MemoryMAR mem, CharSequence charSequence) {
-        mem.putStr(charSequence);
-        mem.putByte((byte) 0);
-        mem.sync(false);
-        mem.close(true, Vm.TRUNCATE_TO_POINTER);
     }
 
     public static void createTxn(
@@ -1050,12 +1066,6 @@ public final class TableUtils {
         }
     }
 
-    public static boolean matViewFileExists(CairoConfiguration configuration, Path path, CharSequence dirName) {
-        FilesFacade ff = configuration.getFilesFacade();
-        path.of(configuration.getRoot()).concat(dirName).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME);
-        return ff.exists(path.$());
-    }
-
     public static long lock(FilesFacade ff, LPSZ path, boolean verbose) {
         // workaround for https://github.com/docker/for-mac/issues/7004
         if (Files.VIRTIO_FS_DETECTED) {
@@ -1213,72 +1223,10 @@ public final class TableUtils {
         }
     }
 
-    private static MatViewDefinition loadMatViewDefinitionMessage(final ReadableBlock mem, final TableToken matViewToken) {
-        if (mem.version() != MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_MSG_VERSION
-                || mem.type() != MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE
-        ) {
-            throw CairoException.critical(0)
-                    .put("unsupported materialized view definition format [view=")
-                    .put(matViewToken.getTableName())
-                    .put(", msgVersion=")
-                    .put(mem.version())
-                    .put(", msgType=")
-                    .put(mem.type())
-                    .put(']');
-        }
-
-        long offset = 0;
-        final CharSequence baseTableName = mem.getStr(offset);
-        if (baseTableName == null || baseTableName.length() == 0) {
-            throw CairoException.critical(0)
-                    .put("base table name for materialized view is empty [view=")
-                    .put(matViewToken.getTableName())
-                    .put(']');
-        }
-        offset += Vm.getStorageLength(baseTableName);
-        final String baseTableNameStr = Chars.toString(baseTableName);
-
-        final long fromMicros = mem.getLong(offset);
-        offset += Long.BYTES;
-
-        final long toMicros = mem.getLong(offset);
-        offset += Long.BYTES;
-
-        final long samplingInterval = mem.getLong(offset);
-        offset += Long.BYTES;
-
-        final char samplingIntervalUnit = mem.getChar(offset);
-        offset += Character.BYTES;
-
-        final CharSequence timeZone = mem.getStr(offset);
-        offset += Vm.getStorageLength(timeZone);
-        final String timeZoneStr = Chars.toString(timeZone);
-
-        final CharSequence timeZoneOffset = mem.getStr(offset);
-        offset += Vm.getStorageLength(timeZoneOffset);
-        final String timeZoneOffsetStr = Chars.toString(timeZoneOffset);
-
-        final CharSequence matViewSql = mem.getStr(offset);
-        if (matViewSql == null || matViewSql.length() == 0) {
-            throw CairoException.critical(0)
-                    .put("materialized view SQL is empty [view=")
-                    .put(matViewToken.getTableName())
-                    .put(']');
-        }
-
-        final String matViewSqlStr = Chars.toString(matViewSql);
-
-        return new MatViewDefinition(
-                matViewToken,
-                matViewSqlStr,
-                baseTableNameStr,
-                samplingInterval,
-                samplingIntervalUnit,
-                fromMicros,
-                toMicros,
-                timeZoneStr,
-                timeZoneOffsetStr
-        );
+    public static boolean matViewFileExists(CairoConfiguration configuration, Path path, CharSequence dirName) {
+        FilesFacade ff = configuration.getFilesFacade();
+        path.of(configuration.getRoot()).concat(dirName).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME);
+        return ff.exists(path.$());
     }
 
     public static long mremap(
@@ -1967,6 +1915,74 @@ public final class TableUtils {
             throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(offset + storageLength);
         }
         return metaMem.getStrA(offset);
+    }
+
+    private static MatViewDefinition loadMatViewDefinitionMessage(final ReadableBlock mem, final TableToken matViewToken) {
+        if (mem.version() != MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_MSG_VERSION
+                || mem.type() != MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE
+        ) {
+            throw CairoException.critical(0)
+                    .put("unsupported materialized view definition format [view=")
+                    .put(matViewToken.getTableName())
+                    .put(", msgVersion=")
+                    .put(mem.version())
+                    .put(", msgType=")
+                    .put(mem.type())
+                    .put(']');
+        }
+
+        long offset = 0;
+        final CharSequence baseTableName = mem.getStr(offset);
+        if (baseTableName == null || baseTableName.length() == 0) {
+            throw CairoException.critical(0)
+                    .put("base table name for materialized view is empty [view=")
+                    .put(matViewToken.getTableName())
+                    .put(']');
+        }
+        offset += Vm.getStorageLength(baseTableName);
+        final String baseTableNameStr = Chars.toString(baseTableName);
+
+        final long fromMicros = mem.getLong(offset);
+        offset += Long.BYTES;
+
+        final long toMicros = mem.getLong(offset);
+        offset += Long.BYTES;
+
+        final long samplingInterval = mem.getLong(offset);
+        offset += Long.BYTES;
+
+        final char samplingIntervalUnit = mem.getChar(offset);
+        offset += Character.BYTES;
+
+        final CharSequence timeZone = mem.getStr(offset);
+        offset += Vm.getStorageLength(timeZone);
+        final String timeZoneStr = Chars.toString(timeZone);
+
+        final CharSequence timeZoneOffset = mem.getStr(offset);
+        offset += Vm.getStorageLength(timeZoneOffset);
+        final String timeZoneOffsetStr = Chars.toString(timeZoneOffset);
+
+        final CharSequence matViewSql = mem.getStr(offset);
+        if (matViewSql == null || matViewSql.length() == 0) {
+            throw CairoException.critical(0)
+                    .put("materialized view SQL is empty [view=")
+                    .put(matViewToken.getTableName())
+                    .put(']');
+        }
+
+        final String matViewSqlStr = Chars.toString(matViewSql);
+
+        return new MatViewDefinition(
+                matViewToken,
+                matViewSqlStr,
+                baseTableNameStr,
+                samplingInterval,
+                samplingIntervalUnit,
+                fromMicros,
+                toMicros,
+                timeZoneStr,
+                timeZoneOffsetStr
+        );
     }
 
     // Utility method for debugging. This method is not used in production.
