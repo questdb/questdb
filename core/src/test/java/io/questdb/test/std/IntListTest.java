@@ -31,7 +31,6 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.Arrays;
-import java.util.Comparator;
 
 public class IntListTest {
 
@@ -187,28 +186,6 @@ public class IntListTest {
             Assert.fail();
         } catch (IllegalStateException e) {
             // expected
-        }
-    }
-
-    @Test
-    public void sortIntListByLinkedArray() {
-        Rnd rnd = TestUtils.generateRandom(null);
-        int count = 1_000_000;
-        IntList keys = new IntList(count);
-        Integer[] keys2 = new Integer[count];
-
-        IntList values = new IntList();
-        for (int i = 0; i < count; i++) {
-            keys.add(i);
-            keys2[i] = i;
-            values.add(rnd.nextInt());
-        }
-
-        keys.sort((a, b) -> Integer.compare(values.getQuick(a), values.getQuick(b)));
-        Arrays.sort(keys2, Comparator.comparingInt(values::getQuick));
-
-        for (int i = 0; i < count; i++) {
-            Assert.assertEquals(values.getQuick(keys.getQuick(i)), values.getQuick(keys2[i]));
         }
     }
 

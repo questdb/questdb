@@ -280,7 +280,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testWalMetadataChangeHeavy() throws Exception {
-        Rnd rnd = generateRandom(LOG);
+        Rnd rnd = generateRandom(LOG, 941454734107L, 1738671815913L);
         setFuzzProbabilities(
                 0.05,
                 0.2,

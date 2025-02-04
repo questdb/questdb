@@ -442,7 +442,9 @@ public class WalTxnDetails implements QuietCloseable {
 
     }
 
-    public void setLoadedRowsCommitted(long rowsCommitted) {
+    public void setIncrementRowsCommitted(long rowsCommitted) {
+        // This tracks how many transactions rows are loaded from sequencer and WAL-e files
+        // to load incrementally just enough to go forward
         totalRowsLoadedToApply -= rowsCommitted;
         assert totalRowsLoadedToApply >= 0;
     }
