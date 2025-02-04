@@ -72,7 +72,6 @@ public class ExpressionParser {
     private final OperatorRegistry activeRegistry;
     private final IntStack argStackDepthStack = new IntStack();
     private final IntStack backupArgStackDepthStack = new IntStack();
-    private final IntStack backupParamCountStack = new IntStack();
     private final CharacterStore characterStore;
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final ObjStack<ExpressionNode> opStack = new ObjStack<>();
@@ -197,7 +196,8 @@ public class ExpressionParser {
         // consumed as parameter to a greedy function
         opStack.push(expressionNodePool.next().of(ExpressionNode.CONTROL, "|", Integer.MAX_VALUE, lexer.lastTokenPosition()));
 
-        final int paramCountStackSize = copyToBackup(paramCountStack, backupParamCountStack);
+        final int savedParamCountStackBottom = paramCountStack.getBottom();
+        paramCountStack.setBottom(paramCountStack.sizeRaw());
         final int argStackDepthStackSize = copyToBackup(argStackDepthStack, backupArgStackDepthStack);
 
         int pos = lexer.lastTokenPosition();
@@ -217,7 +217,7 @@ public class ExpressionParser {
             opStack.pop();
         }
 
-        backupParamCountStack.copyTo(paramCountStack, paramCountStackSize);
+        paramCountStack.setBottom(savedParamCountStackBottom);
         backupArgStackDepthStack.copyTo(argStackDepthStack, argStackDepthStackSize);
         return argStackDepth;
     }
@@ -1459,7 +1459,6 @@ public class ExpressionParser {
         } catch (SqlException e) {
             opStack.clear();
             wrapperStack.clear();
-            backupParamCountStack.clear();
             backupArgStackDepthStack.clear();
             throw e;
         } finally {
