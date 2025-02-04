@@ -1239,6 +1239,12 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampWithTimezone() throws SqlException {
+        x("'2021-12-31 15:15:51.663+00:00' timestamp cast",
+                "cast('2021-12-31 15:15:51.663+00:00' as timestamp with time zone)");
+    }
+
+    @Test
     public void testTooManyDots() {
         assertFail("a..b",
                 2,

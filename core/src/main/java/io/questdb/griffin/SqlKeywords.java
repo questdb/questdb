@@ -31,6 +31,7 @@ import org.jetbrains.annotations.NotNull;
 
 public class SqlKeywords {
     public static final int CASE_KEYWORD_LENGTH = 4;
+    public static final int CAST_KEYWORD_LENGTH = 4;
     public static final String CONCAT_FUNC_NAME = "concat";
     public static final int GEOHASH_KEYWORD_LENGTH = 7;
     protected static final LowerCaseCharSequenceHashSet KEYWORDS = new LowerCaseCharSequenceHashSet();
