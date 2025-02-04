@@ -25,13 +25,13 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.IntShortHashMap;
 import io.questdb.std.Numbers;
 
 public class PGOids {
 
+    public static final int BINARY_TYPE_ARRAY = (1 << 31) | ColumnType.ARRAY;
     public static final int BINARY_TYPE_BINARY = (1 << 31) | ColumnType.BINARY;
     public static final int BINARY_TYPE_BOOLEAN = (1 << 31) | ColumnType.BOOLEAN;
     public static final int BINARY_TYPE_BYTE = (1 << 31) | ColumnType.BYTE;
@@ -49,6 +49,7 @@ public class PGOids {
     public static final int BINARY_TYPE_TIMESTAMP = (1 << 31) | ColumnType.TIMESTAMP;
     public static final int BINARY_TYPE_UUID = (1 << 31) | ColumnType.UUID;
     public static final int BINARY_TYPE_VARCHAR = (1 << 31) | ColumnType.VARCHAR;
+    public static final int PG_ARR_FLOAT8 = 1022;
     public static final int PG_BOOL = 16;
     public static final int PG_BYTEA = 17;
     public static final int PG_CATALOG_OID = 11;
@@ -79,6 +80,8 @@ public class PGOids {
     public static final int PG_UUID = 2950;
     public static final int PG_VARCHAR = 1043;
     public static final int PG_VOID = 2278;
+    public static final int X_PG_ARR_FLOAT8 = ((PG_ARR_FLOAT8 >> 24) & 0xff) | ((PG_ARR_FLOAT8 << 8) & 0xff0000) | ((PG_ARR_FLOAT8 >> 8) & 0xff00) | ((PG_ARR_FLOAT8 << 24) & 0xff000000);
+    public static final int X_B_PG_ARR_FLOAT8 = 1 | X_PG_ARR_FLOAT8;
     public static final int X_PG_BOOL = ((PG_BOOL >> 24) & 0xff) | ((PG_BOOL << 8) & 0xff0000) | ((PG_BOOL >> 8) & 0xff00) | ((PG_BOOL << 24) & 0xff000000);
     public static final int X_B_PG_BOOL = 1 | X_PG_BOOL;
     public static final int X_PG_BYTEA = ((PG_BYTEA >> 24) & 0xff) | ((PG_BYTEA << 8) & 0xff0000) | ((PG_BYTEA >> 8) & 0xff00) | ((PG_BYTEA << 24) & 0xff000000);
@@ -112,6 +115,7 @@ public class PGOids {
     @SuppressWarnings("NumericOverflow")
     public static final int X_PG_VOID = ((PG_VOID >> 24) & 0xff) | ((PG_VOID << 8) & 0xff0000) | ((PG_VOID >> 8) & 0xff00) | ((PG_VOID << 24) & 0xff000000);
     private static final int CHAR_ATT_TYP_MOD = 5; // CHAR(n) in PostgreSQL has n+4 as type modifier
+    private static final IntList TYPE_ARR_OIDS = new IntList();
     private static final IntList TYPE_OIDS = new IntList();
     private static final int X_CHAR_ATT_TYP_MOD = Numbers.bswap(CHAR_ATT_TYP_MOD);
 
@@ -133,7 +137,11 @@ public class PGOids {
     }
 
     public static int getTypeOid(int type) {
-        return TYPE_OIDS.getQuick(ColumnType.tagOf(type));
+        if (!ColumnType.isArray(type)) {
+            return TYPE_OIDS.getQuick(ColumnType.tagOf(type));
+        }
+        int elType = ColumnType.decodeArrayElementType(type);
+        return TYPE_ARR_OIDS.getQuick(elType);
     }
 
     public static int getXAttTypMod(int pgOidType) {
@@ -185,6 +193,8 @@ public class PGOids {
         TYPE_OIDS.extendAndSet(ColumnType.IPv4, PG_VARCHAR); //IPv4
         TYPE_OIDS.extendAndSet(ColumnType.VARCHAR, PG_VARCHAR); // VARCHAR
         TYPE_OIDS.extendAndSet(ColumnType.INTERVAL, PG_VARCHAR); // VARCHAR
+
+        TYPE_ARR_OIDS.extendAndSet(ColumnType.DOUBLE, PG_ARR_FLOAT8); // FLOAT8[]
 
         PG_TYPE_OIDS.add(PG_VARCHAR);
         PG_TYPE_OIDS.add(PG_TIMESTAMP);
