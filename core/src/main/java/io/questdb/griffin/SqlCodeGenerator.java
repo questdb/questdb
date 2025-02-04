@@ -5486,7 +5486,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
 
                 if (nKeyExcludedValues == 0) {
-                    Function filter = compileFilter(intrinsicModel, myMeta, executionContext);
+                    Function filter;
+                    try {
+                        filter = compileFilter(intrinsicModel, myMeta, executionContext);
+                    } catch (Throwable th) {
+                        Misc.free(dfcFactory);
+                        throw th;
+                    }
                     if (filter != null && filter.isConstant()) {
                         try {
                             if (!filter.getBool(null)) {
@@ -5497,6 +5503,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             filter = Misc.free(filter);
                         }
                     }
+
                     if (nKeyValues == 1) {
                         final RowCursorFactory rcf;
                         final Function symbolFunc = intrinsicModel.keyValueFuncs.get(0);
@@ -5595,7 +5602,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     );
                 } else if (nKeyExcludedValues > 0) {
                     if (reader.getSymbolMapReader(columnIndexes.getQuick(keyColumnIndex)).getSymbolCount() < configuration.getMaxSymbolNotEqualsCount()) {
-                        Function filter = compileFilter(intrinsicModel, myMeta, executionContext);
+                        Function filter;
+                        try {
+                            filter = compileFilter(intrinsicModel, myMeta, executionContext);
+                        } catch (Throwable th) {
+                            Misc.free(dfcFactory);
+                            throw th;
+                        }
                         if (filter != null && filter.isConstant()) {
                             try {
                                 if (!filter.getBool(null)) {
