@@ -92,6 +92,7 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
 
     @Override
     protected void _close() {
+        Misc.free(pageFrameCursor);
         Misc.free(partitionFrameCursorFactory);
     }
 

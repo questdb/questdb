@@ -175,6 +175,7 @@ public class PageFrameReduceJob implements Job, Closeable {
             if (cursor > -1) {
                 final PageFrameReduceTask task = queue.get(cursor);
                 final PageFrameSequence<?> frameSequence = task.getFrameSequence();
+                boolean circuitBreakerRestorePending = false;
                 try {
                     LOG.debug()
                             .$("reducing [shard=").$(frameSequence.getShard())
@@ -193,7 +194,11 @@ public class PageFrameReduceJob implements Job, Closeable {
                         // If this is not work stealing, or the stealing frame sequence is not working on its own task,
                         // we need to initialize the circuit breaker wrapper with the task's circuit breaker.
                         if (workerId != -1 || frameSequence != stealingFrameSequence) {
-                            circuitBreaker.init(frameSequence.getCircuitBreaker());
+                            circuitBreaker.backup();
+                            circuitBreaker.init(frameSequence.getWorkStealCircuitBreaker());
+                            circuitBreakerRestorePending = true;
+                        } else { // workerId == -1 here
+                            frameSequence.validateWorkStealingCircuitBreaker();
                         }
                         reduce(workerId, record, circuitBreaker, task, frameSequence, stealingFrameSequence);
                     }
@@ -217,6 +222,10 @@ public class PageFrameReduceJob implements Job, Closeable {
                     // Reduced counter has to be incremented only when we make
                     // sure that the task is available for consumers.
                     frameSequence.getReduceFinishedCounter().incrementAndGet();
+                    // Restore frame sequence's circuit breaker to the original state.
+                    if (circuitBreakerRestorePending) {
+                        circuitBreaker.restore();
+                    }
                 }
                 return false;
             } else if (cursor == -1) {
