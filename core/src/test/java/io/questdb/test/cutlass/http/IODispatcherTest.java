@@ -901,7 +901,9 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testExpNull() throws Exception {
-        testJsonQuery(0, "GET /exp?query=select+null+from+long_sequence(1)&limit=1&src=con HTTP/1.1\r\n" +
+        testJsonQuery(
+                0,
+                "GET /exp?query=select+null+from+long_sequence(1)&limit=1&src=con HTTP/1.1\r\n" +
                         "Host: localhost:9000\r\n" +
                         "Connection: keep-alive\r\n" +
                         "Accept: */*\r\n" +
@@ -5543,8 +5545,18 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testJsonTableReferenceOutOfDate() throws Exception {
+        getSimpleTester().run((engine, sqlExecutionContext) -> testHttpClient.assertGet(
+                "{\"query\":\"select * from test_table_reference_out_of_date();\",\"error\":\"cached query plan cannot be used because table schema has changed [table='test_table_reference_out_of_date']\",\"position\":0}",
+                "select * from test_table_reference_out_of_date();"
+        ));
+    }
+
+    @Test
     public void testJsonUtf8EncodedColumnName() throws Exception {
-        testJsonQuery(0, "GET /query?query=select+0+%D1%80%D0%B5%D0%BA%D0%BE%D1%80%D0%B4%D0%BD%D0%BE+from+long_sequence(10)&limit=0%2C1000&count=true&src=con HTTP/1.1\r\n" +
+        testJsonQuery(
+                0,
+                "GET /query?query=select+0+%D1%80%D0%B5%D0%BA%D0%BE%D1%80%D0%B4%D0%BD%D0%BE+from+long_sequence(10)&limit=0%2C1000&count=true&src=con HTTP/1.1\r\n" +
                         "Host: localhost:9000\r\n" +
                         "Connection: keep-alive\r\n" +
                         "Accept: */*\r\n" +
@@ -7819,6 +7831,15 @@ public class IODispatcherTest extends AbstractTest {
                         "00\r\n" +
                         "\r\n"
         );
+    }
+
+    @Test
+    public void testTextTableReferenceOutOfDate() throws Exception {
+        getSimpleTester().run((engine, sqlExecutionContext) -> testHttpClient.assertGet(
+                "/exp",
+                "{\"query\":\"select * from test_table_reference_out_of_date();\",\"error\":\"cached query plan cannot be used because table schema has changed [table='test_table_reference_out_of_date']\",\"position\":0}",
+                "select * from test_table_reference_out_of_date();"
+        ));
     }
 
     @Test
