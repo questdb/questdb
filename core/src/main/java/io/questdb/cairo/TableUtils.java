@@ -454,27 +454,7 @@ public final class TableUtils {
             int tableVersion,
             int tableId
     ) {
-        LOG.debug().$("create table [name=").utf8(tableDir).I$();
-        path.of(root).concat(tableDir).$();
-        if (ff.isDirOrSoftLinkDir(path.$())) {
-            throw CairoException.critical(ff.errno()).put("table directory already exists [path=").put(path).put(']');
-        }
-        int rootLen = path.size();
-        boolean dirCreated = false;
-        try {
-            if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
-                throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path.trimTo(rootLen).$()).put(']');
-            }
-            dirCreated = true;
-            createTableFiles(ff, memory, path, rootLen, tableDir, structure, tableVersion, tableId);
-        } catch (Throwable e) {
-            if (dirCreated) {
-                ff.rmdir(path.trimTo(rootLen).slash());
-            }
-            throw e;
-        } finally {
-            path.trimTo(rootLen);
-        }
+        createTableOrMatView(ff, root, mkDirMode, memory, null, path, tableDir, structure, tableVersion, tableId);
     }
 
     public static void createTableFiles(
@@ -487,19 +467,68 @@ public final class TableUtils {
             int tableVersion,
             int tableId
     ) {
-        createTableFiles(ff, memory, path, rootLen, tableDir, structure, tableVersion, tableId, TXN_FILE_NAME);
+        createTableOrMatViewFiles(ff, memory, null, path, rootLen, tableDir, structure, tableVersion, tableId);
     }
 
-    public static void createTableFiles(
+    public static void createTableInVolume(
+            FilesFacade ff,
+            CharSequence root,
+            int mkDirMode,
+            MemoryMARW memory,
+            Path path,
+            CharSequence tableDir,
+            TableStructure structure,
+            int tableVersion,
+            int tableId
+    ) {
+        createTableOrMatViewInVolume(ff, root, mkDirMode, memory, null, path, tableDir, structure, tableVersion, tableId);
+    }
+
+    public static void createTableOrMatView(
+            FilesFacade ff,
+            CharSequence root,
+            int mkDirMode,
+            MemoryMARW memory,
+            @Nullable MetaFileWriter metaFileWriter,
+            Path path,
+            CharSequence tableDir,
+            TableStructure structure,
+            int tableVersion,
+            int tableId
+    ) {
+        LOG.debug().$("create table [name=").utf8(tableDir).I$();
+        path.of(root).concat(tableDir).$();
+        if (ff.isDirOrSoftLinkDir(path.$())) {
+            throw CairoException.critical(ff.errno()).put("table directory already exists [path=").put(path).put(']');
+        }
+        int rootLen = path.size();
+        boolean dirCreated = false;
+        try {
+            if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
+                throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path.trimTo(rootLen).$()).put(']');
+            }
+            dirCreated = true;
+            createTableOrMatViewFiles(ff, memory, metaFileWriter, path, rootLen, tableDir, structure, tableVersion, tableId);
+        } catch (Throwable e) {
+            if (dirCreated) {
+                ff.rmdir(path.trimTo(rootLen).slash());
+            }
+            throw e;
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
+    public static void createTableOrMatViewFiles(
             FilesFacade ff,
             MemoryMARW memory,
+            @Nullable MetaFileWriter metaFileWriter,
             Path path,
             int rootLen,
             CharSequence tableDir,
             TableStructure structure,
             int tableVersion,
-            int tableId,
-            CharSequence txnFileName
+            int tableId
     ) {
         final long dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRO(ff, path.trimTo(rootLen).$(), LOG) : 0;
         try (MemoryMARW mem = memory) {
@@ -539,7 +568,8 @@ public final class TableUtils {
             createTableNameFile(mem, getTableNameFromDirName(tableDir));
 
             if (structure.isMatView()) {
-                try (MetaFileWriter writer = new MetaFileWriter(ff)) {
+                assert metaFileWriter != null;
+                try (MetaFileWriter writer = metaFileWriter) {
                     writer.of(path.trimTo(rootLen).concat(MAT_VIEW_FILE_NAME).$());
                     createMatViewDefinition(writer.append(), structure.getMatViewDefinition());
                     writer.commit();
@@ -547,7 +577,7 @@ public final class TableUtils {
             }
 
             // Create TXN file last, it's used to determine if table exists
-            mem.smallFile(ff, path.trimTo(rootLen).concat(txnFileName).$(), MemoryTag.MMAP_DEFAULT);
+            mem.smallFile(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
             createTxn(mem, symbolMapCount, 0L, 0L, INITIAL_TXN, 0L, 0L, 0L, 0L);
             mem.sync(false);
         } finally {
@@ -557,11 +587,12 @@ public final class TableUtils {
         }
     }
 
-    public static void createTableInVolume(
+    public static void createTableOrMatViewInVolume(
             FilesFacade ff,
             CharSequence root,
             int mkDirMode,
             MemoryMARW memory,
+            @Nullable MetaFileWriter metaFileWriter,
             Path path,
             CharSequence tableDir,
             TableStructure structure,
@@ -590,7 +621,7 @@ public final class TableUtils {
                 }
                 throw CairoException.critical(ff.errno()).put("could not create soft link [src=").put(path.trimTo(rootLen).$()).put(", tableDir=").put(tableDir).put(']');
             }
-            createTableFiles(ff, memory, path, rootLen, tableDir, structure, tableVersion, tableId);
+            createTableOrMatViewFiles(ff, memory, metaFileWriter, path, rootLen, tableDir, structure, tableVersion, tableId);
         } finally {
             path.trimTo(rootLen);
         }

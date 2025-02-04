@@ -192,6 +192,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final ObjList<TableWriterAPI> tableWriters = new ObjList<>();
     private final IntIntHashMap typeCast = new IntIntHashMap();
     private final VacuumColumnVersions vacuumColumnVersions;
+    private final MetaFileWriter metaFileWriter;
     protected CharSequence sqlText;
     private final ExecutableMethod insertAsSelectMethod = this::insertAsSelect;
     private boolean closed = false;
@@ -262,6 +263,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             dropTableOperationBuilder = new DropTableOperationBuilder();
             dropMatViewOperationBuilder = new DropMatViewOperationBuilder();
             queryRegistry = engine.getQueryRegistry();
+            metaFileWriter = new MetaFileWriter(ff);
         } catch (Throwable th) {
             close();
             throw th;
@@ -297,6 +299,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         Misc.free(codeGenerator);
         Misc.free(mem);
         Misc.freeObjList(tableWriters);
+        Misc.free(metaFileWriter);
     }
 
     @NotNull
@@ -2647,6 +2650,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         matViewDefinition = engine.createMatView(
                                 executionContext.getSecurityContext(),
                                 mem,
+                                metaFileWriter,
                                 path,
                                 createMatViewOp.ignoreIfExists(),
                                 createMatViewOp,
