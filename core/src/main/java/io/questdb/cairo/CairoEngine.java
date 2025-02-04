@@ -29,6 +29,8 @@ import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
 import io.questdb.Telemetry;
+import io.questdb.cairo.meta.MetaFileReader;
+import io.questdb.cairo.meta.MetaFileWriter;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
@@ -55,8 +57,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
-import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryCMOR;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.DefaultWalListener;
@@ -396,6 +396,7 @@ public class CairoEngine implements Closeable, WriterSource {
     public @NotNull MatViewDefinition createMatView(
             SecurityContext securityContext,
             MemoryMARW mem,
+            MetaFileWriter metaFileWriter,
             Path path,
             boolean ifNotExists,
             CreateMatViewOperation struct,
@@ -405,7 +406,7 @@ public class CairoEngine implements Closeable, WriterSource {
         // todo(glasstiger): add securityContext.authorizeMatViewCreate();
         securityContext.authorizeTableCreate();
 
-        final TableToken tableToken = createTableUnsecure(mem, path, ifNotExists, struct, keepLock, inVolume);
+        final TableToken tableToken = createTableOrMatViewUnsecure(mem, metaFileWriter, path, ifNotExists, struct, keepLock, inVolume);
 
         // todo(glasstiger): add getDdlListener(tableToken).onMatViewCreated(securityContext, tableToken);
         getDdlListener(tableToken).onTableCreated(securityContext, tableToken);
@@ -434,7 +435,7 @@ public class CairoEngine implements Closeable, WriterSource {
             boolean inVolume
     ) {
         securityContext.authorizeTableCreate();
-        final TableToken tableToken = createTableUnsecure(mem, path, ifNotExists, struct, keepLock, inVolume);
+        final TableToken tableToken = createTableOrMatViewUnsecure(mem, null, path, ifNotExists, struct, keepLock, inVolume);
         getDdlListener(tableToken).onTableCreated(securityContext, tableToken);
         return tableToken;
     }
@@ -1379,15 +1380,13 @@ public class CairoEngine implements Closeable, WriterSource {
 
         Path path = Path.getThreadLocal(configuration.getRoot());
         final int pathLen = path.size();
-        try (MemoryCMOR memory = Vm.getMemoryCMOR()) {
+        try (MetaFileReader reader = new MetaFileReader(configuration)) {
             for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
                 final TableToken tableToken = tableTokenBucket.get(i);
-                final FilesFacade ff = configuration.getFilesFacade();
-                if (tableToken.isMatView() && TableUtils.matViewFileExists(configuration, path, tableToken.getDirName(), ff)) {
+                if (tableToken.isMatView() && TableUtils.matViewFileExists(configuration, path, tableToken.getDirName())) {
                     try {
                         final MatViewDefinition matViewDefinition = TableUtils.loadMatViewDefinition(
-                                ff,
-                                memory,
+                                reader,
                                 path,
                                 pathLen,
                                 tableToken
@@ -1413,17 +1412,18 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     // caller has to acquire the lock before this method is called and release the lock after the call
-    private void createTableInVolumeUnsafe(MemoryMARW mem, Path path, TableStructure struct, TableToken tableToken) {
+    private void createTableOrMatViewInVolumeUnsafe(MemoryMARW mem, @Nullable MetaFileWriter metaFileWriter, Path path, TableStructure struct, TableToken tableToken) {
         if (TableUtils.TABLE_DOES_NOT_EXIST != TableUtils.existsInVolume(configuration.getFilesFacade(), path, tableToken.getDirName())) {
             throw CairoException.nonCritical().put("name is reserved [table=").put(tableToken.getTableName()).put(']');
         }
 
         // only create the table after it has been registered
-        TableUtils.createTableInVolume(
+        TableUtils.createTableOrMatViewInVolume(
                 configuration.getFilesFacade(),
                 configuration.getRoot(),
                 configuration.getMkDirMode(),
                 mem,
+                metaFileWriter,
                 path,
                 tableToken.getDirName(),
                 struct,
@@ -1433,17 +1433,18 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     // caller has to acquire the lock before this method is called and release the lock after the call
-    private void createTableUnsafe(MemoryMARW mem, Path path, TableStructure struct, TableToken tableToken) {
+    private void createTableOrMatViewUnsafe(MemoryMARW mem, @Nullable MetaFileWriter metaFileWriter, Path path, TableStructure struct, TableToken tableToken) {
         if (TableUtils.TABLE_DOES_NOT_EXIST != TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), tableToken.getDirName())) {
             throw CairoException.nonCritical().put("name is reserved [table=").put(tableToken.getTableName()).put(']');
         }
 
         // only create the table after it has been registered
-        TableUtils.createTable(
+        TableUtils.createTableOrMatView(
                 configuration.getFilesFacade(),
                 configuration.getRoot(),
                 configuration.getMkDirMode(),
                 mem,
+                metaFileWriter,
                 path,
                 tableToken.getDirName(),
                 struct,
@@ -1452,8 +1453,9 @@ public class CairoEngine implements Closeable, WriterSource {
         );
     }
 
-    private @NotNull TableToken createTableUnsecure(
+    private @NotNull TableToken createTableOrMatViewUnsecure(
             MemoryMARW mem,
+            @Nullable MetaFileWriter metaFileWriter,
             Path path,
             boolean ifNotExists,
             TableStructure struct,
@@ -1490,9 +1492,9 @@ public class CairoEngine implements Closeable, WriterSource {
                     boolean tableCreated = false;
                     try {
                         if (inVolume) {
-                            createTableInVolumeUnsafe(mem, path, struct, tableToken);
+                            createTableOrMatViewInVolumeUnsafe(mem, metaFileWriter, path, struct, tableToken);
                         } else {
-                            createTableUnsafe(mem, path, struct, tableToken);
+                            createTableOrMatViewUnsafe(mem, metaFileWriter, path, struct, tableToken);
                         }
 
                         if (struct.isWalEnabled()) {

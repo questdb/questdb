@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.meta.MetaFileWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -274,7 +275,10 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                     if (tableToken.isMatView()) {
                                         MatViewDefinition matViewDefinition = engine.getMatViewGraph().getMatViewDefinition(tableToken);
                                         if (matViewDefinition != null) {
-                                            TableUtils.createMatViewMetaFiles(ff, mem, path, rootLen, matViewDefinition);
+                                            try (MetaFileWriter writer = new MetaFileWriter(ff)) {
+                                                writer.of(path.trimTo(rootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
+                                                MatViewDefinition.dumpTo(writer, matViewDefinition);
+                                            }
                                         } else {
                                             LOG.info().$("materialized view definition not found [view=").$(tableToken).I$();
                                         }

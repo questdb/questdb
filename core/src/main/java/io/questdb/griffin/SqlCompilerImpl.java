@@ -57,6 +57,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.VacuumColumnVersions;
+import io.questdb.cairo.meta.MetaFileWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
 import io.questdb.cairo.mv.MatViewRefreshTask;
@@ -191,6 +192,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final ObjList<TableWriterAPI> tableWriters = new ObjList<>();
     private final IntIntHashMap typeCast = new IntIntHashMap();
     private final VacuumColumnVersions vacuumColumnVersions;
+    private final MetaFileWriter metaFileWriter;
     protected CharSequence sqlText;
     private final ExecutableMethod insertAsSelectMethod = this::insertAsSelect;
     private boolean closed = false;
@@ -261,6 +263,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             dropTableOperationBuilder = new DropTableOperationBuilder();
             dropMatViewOperationBuilder = new DropMatViewOperationBuilder();
             queryRegistry = engine.getQueryRegistry();
+            metaFileWriter = new MetaFileWriter(ff);
         } catch (Throwable th) {
             close();
             throw th;
@@ -296,6 +299,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         Misc.free(codeGenerator);
         Misc.free(mem);
         Misc.freeObjList(tableWriters);
+        Misc.free(metaFileWriter);
     }
 
     @NotNull
@@ -2646,6 +2650,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         matViewDefinition = engine.createMatView(
                                 executionContext.getSecurityContext(),
                                 mem,
+                                metaFileWriter,
                                 path,
                                 createMatViewOp.ignoreIfExists(),
                                 createMatViewOp,
@@ -3823,7 +3828,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         if (tableToken.isMatView()) {
                             MatViewDefinition matViewDefinition = engine.getMatViewGraph().getMatViewDefinition(tableToken);
                             if (matViewDefinition != null) {
-                                TableUtils.createMatViewMetaFiles(ff, mem, auxPath, tableRootLen, matViewDefinition);
+                                try (MetaFileWriter writer = metaFileWriter) {
+                                    writer.of(auxPath.trimTo(tableRootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
+                                    MatViewDefinition.dumpTo(writer, matViewDefinition);
+                                }
                             } else {
                                 LOG.info().$("materialized view definition for backup not found [view=").$(tableToken).I$();
                             }

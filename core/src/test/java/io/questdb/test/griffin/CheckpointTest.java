@@ -35,6 +35,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
@@ -54,6 +55,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.Zip;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -86,6 +88,7 @@ public class CheckpointTest extends AbstractCairoTest {
         ff = testFilesFacade;
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
         AbstractCairoTest.setUpStatic();
+        Zip.init();
     }
 
     @AfterClass
@@ -1380,11 +1383,8 @@ public class CheckpointTest extends AbstractCairoTest {
             TestUtils.assertFileContentsEquals(path, copyPath);
 
             if (tableToken.isMatView()) {
-                path.trimTo(tableNameLen).concat(TableUtils.MAT_VIEW_FILE_NAME).$();
-                copyPath.trimTo(copyTableNameLen).concat(TableUtils.MAT_VIEW_FILE_NAME).$();
-                TestUtils.assertFileContentsEquals(path, copyPath);
-                path.trimTo(tableNameLen).concat(TableUtils.MAT_VIEW_QUERY_FILE_NAME).$();
-                copyPath.trimTo(copyTableNameLen).concat(TableUtils.MAT_VIEW_QUERY_FILE_NAME).$();
+                path.trimTo(tableNameLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$();
+                copyPath.trimTo(copyTableNameLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$();
                 TestUtils.assertFileContentsEquals(path, copyPath);
             }
             execute("checkpoint release");

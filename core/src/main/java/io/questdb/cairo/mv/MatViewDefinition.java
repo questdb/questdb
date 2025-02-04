@@ -26,6 +26,8 @@ package io.questdb.cairo.mv;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.meta.AppendableBlock;
+import io.questdb.cairo.meta.MetaFileWriter;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.TimeZoneRules;
@@ -37,6 +39,11 @@ import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 import static io.questdb.std.datetime.microtime.Timestamps.MINUTE_MICROS;
 
 public class MatViewDefinition {
+    public static final String MAT_VIEW_DEFINITION_FILE_NAME = "_mv";
+    public static final byte MAT_VIEW_DEFINITION_FORMAT_FLAGS = 0;
+    public static final short MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE = 0;
+    public static final byte MAT_VIEW_DEFINITION_FORMAT_MSG_VERSION = 0;
+
     private final String baseTableName;
     private final long fromMicros;
     private final String matViewSql;
@@ -140,5 +147,23 @@ public class MatViewDefinition {
 
     public @Nullable TimeZoneRules getTzRules() {
         return rules;
+    }
+
+    public static void dumpTo(MetaFileWriter writer, MatViewDefinition matViewDefinition) {
+        final AppendableBlock mem = writer.append();
+        mem.putStr(matViewDefinition.getBaseTableName());
+        mem.putLong(matViewDefinition.getFromMicros());
+        mem.putLong(matViewDefinition.getToMicros());
+        mem.putLong(matViewDefinition.getSamplingInterval());
+        mem.putChar(matViewDefinition.getSamplingIntervalUnit());
+        mem.putStr(matViewDefinition.getTimeZone());
+        mem.putStr(matViewDefinition.getTimeZoneOffset());
+        mem.putStr(matViewDefinition.getMatViewSql());
+        mem.commit(
+                MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE,
+                MAT_VIEW_DEFINITION_FORMAT_MSG_VERSION,
+                MAT_VIEW_DEFINITION_FORMAT_FLAGS
+        );
+        writer.commit();
     }
 }

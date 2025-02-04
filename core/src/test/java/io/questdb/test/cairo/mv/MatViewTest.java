@@ -35,6 +35,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
 import io.questdb.std.Rnd;
+import io.questdb.std.Zip;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -53,6 +54,10 @@ import static io.questdb.griffin.model.IntervalUtils.parseFloorPartialTimestamp;
 
 
 public class MatViewTest extends AbstractCairoTest {
+    static {
+        // crc memory leak
+        Zip.init();
+    }
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
