@@ -28,7 +28,11 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.BitSet;
+import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import io.questdb.std.ex.BytecodeException;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -514,6 +518,8 @@ public class RecordSinkFactory {
                     break;
                 case ColumnType.NULL:
                     break; // ignore
+                case ColumnType.ARRAY:
+                    throw new CairoException().position(0).put("Unexpected array type: ").put(ColumnType.nameOf(type));
                 default:
                     throw new IllegalArgumentException("Unexpected column type: " + ColumnType.nameOf(type));
             }
