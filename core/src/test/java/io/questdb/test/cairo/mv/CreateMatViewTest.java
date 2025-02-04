@@ -92,8 +92,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
             final AtomicInteger createCounter = new AtomicInteger();
 
             final Thread creator = new Thread(() -> {
-                final MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
-                try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
+                     SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                     barrier.await();
                     for (int i = 0; i < iterations; i++) {
                         execute(
@@ -697,19 +697,20 @@ public class CreateMatViewTest extends AbstractCairoTest {
             creator.start();
 
             final Thread refresher = new Thread(() -> {
-                final MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
-                try {
-                    barrier.await();
-                    while (createCounter.get() < iterations) {
-                        if (!refreshJob.run(0)) {
-                            Os.sleep(1);
+                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
+                    try {
+                        barrier.await();
+                        while (createCounter.get() < iterations) {
+                            if (!refreshJob.run(0)) {
+                                Os.sleep(1);
+                            }
                         }
+                    } catch (Exception e) {
+                        e.printStackTrace(System.out);
+                        errorCounter.incrementAndGet();
+                    } finally {
+                        Path.clearThreadLocals();
                     }
-                } catch (Exception e) {
-                    e.printStackTrace(System.out);
-                    errorCounter.incrementAndGet();
-                } finally {
-                    Path.clearThreadLocals();
                 }
             });
             refresher.start();

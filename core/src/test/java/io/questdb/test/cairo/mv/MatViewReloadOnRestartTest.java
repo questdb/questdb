@@ -79,37 +79,38 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 );
                 drainWalQueue(main1.getEngine());
 
-                MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main1.getEngine());
-                refreshJob.run(0);
-                drainWalQueue(main1.getEngine());
+                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main1.getEngine())) {
+                    refreshJob.run(0);
+                    drainWalQueue(main1.getEngine());
 
-                assertSql(main1,
-                        "sym\tprice\tts\n" +
-                                "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                                "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
-                                "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
-                        "price_1h order by ts, sym"
-                );
+                    assertSql(main1,
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
+                            "price_1h order by ts, sym"
+                    );
 
-                execute(main1, "insert into base_price values('gbpusd', 1.319, '2024-09-10T12:05')" +
-                        ",('gbpusd', 1.325, '2024-09-10T13:03')"
-                );
-                drainWalQueue(main1.getEngine());
+                    execute(main1, "insert into base_price values('gbpusd', 1.319, '2024-09-10T12:05')" +
+                            ",('gbpusd', 1.325, '2024-09-10T13:03')"
+                    );
+                    drainWalQueue(main1.getEngine());
 
-                refreshJob.run(0);
-                drainWalQueue(main1.getEngine());
+                    refreshJob.run(0);
+                    drainWalQueue(main1.getEngine());
 
-                String expected = "sym\tprice\tts\n" +
-                        "gbpusd\t1.319\t2024-09-10T12:00:00.000000Z\n" +
-                        "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
-                        "gbpusd\t1.325\t2024-09-10T13:00:00.000000Z\n";
+                    String expected = "sym\tprice\tts\n" +
+                            "gbpusd\t1.319\t2024-09-10T12:00:00.000000Z\n" +
+                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                            "gbpusd\t1.325\t2024-09-10T13:00:00.000000Z\n";
 
-                assertSql(main1, expected, "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
-                assertSql(main1, expected, "price_1h order by ts, sym");
+                    assertSql(main1, expected, "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
+                    assertSql(main1, expected, "price_1h order by ts, sym");
 
-                assertLineError(Transport.HTTP, main1, refreshJob, expected);
-                assertLineError(Transport.UDP, main1, refreshJob, expected);
-                assertLineError(Transport.TCP, main1, refreshJob, expected);
+                    assertLineError(Transport.HTTP, main1, refreshJob, expected);
+                    assertLineError(Transport.UDP, main1, refreshJob, expected);
+                    assertLineError(Transport.TCP, main1, refreshJob, expected);
+                }
 
                 new SendAndReceiveRequestBuilder().withPort(HTTP_PORT).execute(
                         "POST /imp?name=price_1h HTTP/1.1\r\n" +
@@ -162,25 +163,26 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 );
                 drainWalQueue(main1.getEngine());
 
-                MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main1.getEngine());
-                refreshJob.run(0);
-                drainWalQueue(main1.getEngine());
+                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main1.getEngine())) {
+                    refreshJob.run(0);
+                    drainWalQueue(main1.getEngine());
 
-                assertSql(main1,
-                        "sym\tprice\tts\n" +
-                                "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                                "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
-                                "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
-                        "price_1h order by ts, sym"
-                );
+                    assertSql(main1,
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
+                            "price_1h order by ts, sym"
+                    );
 
-                execute(main1, "insert into base_price values('gbpusd', 1.319, '2024-09-10T12:05')" +
-                        ",('gbpusd', 1.325, '2024-09-10T13:03')"
-                );
-                drainWalQueue(main1.getEngine());
+                    execute(main1, "insert into base_price values('gbpusd', 1.319, '2024-09-10T12:05')" +
+                            ",('gbpusd', 1.325, '2024-09-10T13:03')"
+                    );
+                    drainWalQueue(main1.getEngine());
 
-                refreshJob.run(0);
-                drainWalQueue(main1.getEngine());
+                    refreshJob.run(0);
+                    drainWalQueue(main1.getEngine());
+                }
 
                 String expected = "sym\tprice\tts\n" +
                         "gbpusd\t1.319\t2024-09-10T12:00:00.000000Z\n" +
@@ -209,9 +211,10 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
 
                 drainWalQueue(main2.getEngine());
 
-                MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main2.getEngine());
-                refreshJob.run(0);
-                drainWalQueue(main2.getEngine());
+                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main2.getEngine())) {
+                    refreshJob.run(0);
+                    drainWalQueue(main2.getEngine());
+                }
 
                 expected = "sym\tprice\tts\n" +
                         "gbpusd\t1.32\t2024-09-10T12:00:00.000000Z\n" +
@@ -246,9 +249,10 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 );
                 drainWalQueue(main1.getEngine());
 
-                MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main1.getEngine());
-                refreshJob.run(0);
-                drainWalQueue(main1.getEngine());
+                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main1.getEngine())) {
+                    refreshJob.run(0);
+                    drainWalQueue(main1.getEngine());
+                }
 
                 assertSql(main1,
                         "sym\tprice\tts\n" +
@@ -270,8 +274,10 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
                     PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
             )) {
-                MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main2.getEngine());
-                refreshJob.run(0);
+
+                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main2.getEngine())) {
+                    refreshJob.run(0);
+                }
 
                 assertSql(
                         main2,
@@ -304,9 +310,10 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 );
                 drainWalQueue(main1.getEngine());
 
-                MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main1.getEngine());
-                refreshJob.run(0);
-                drainWalQueue(main1.getEngine());
+                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main1.getEngine())) {
+                    refreshJob.run(0);
+                    drainWalQueue(main1.getEngine());
+                }
 
                 assertSql(main1,
                         "sym\tprice\tts\n" +
@@ -325,8 +332,9 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
                     PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
             )) {
-                MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main2.getEngine());
-                refreshJob.run(0);
+                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main2.getEngine())) {
+                    refreshJob.run(0);
+                }
 
                 assertSql(
                         main2,

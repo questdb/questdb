@@ -33,6 +33,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.Zip;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.fuzz.AbstractFuzzTest;
@@ -50,6 +51,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     public static void setUpStatic() throws Exception {
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
         AbstractCairoTest.setUpStatic();
+        Zip.init();
     }
 
     @Before
@@ -231,9 +233,11 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         drainWalQueue();
         fuzzer.checkNoSuspendedTables();
 
-        MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
-        refreshJob.run(0);
-        drainWalQueue();
+        try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
+            refreshJob.run(0);
+            drainWalQueue();
+        }
+
         fuzzer.checkNoSuspendedTables();
 
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -292,17 +296,18 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         Rnd rnd = new Rnd(outsideRnd.nextLong(), outsideRnd.nextLong());
         Thread th = new Thread(() -> {
             try {
-                MatViewRefreshJob refreshJob = new MatViewRefreshJob(workerId, engine);
-                while (!stop.get()) {
-                    refreshJob.run(workerId);
-                    Os.sleep(rnd.nextInt(1000));
-                }
+                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(workerId, engine)) {
+                    while (!stop.get()) {
+                        refreshJob.run(workerId);
+                        Os.sleep(rnd.nextInt(1000));
+                    }
 
-                // Run one final time before stopping
-                try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
-                    do {
-                        drainWalQueue(walApplyJob);
-                    } while (refreshJob.run(workerId));
+                    // Run one final time before stopping
+                    try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+                        do {
+                            drainWalQueue(walApplyJob);
+                        } while (refreshJob.run(workerId));
+                    }
                 }
             } catch (Throwable throwable) {
                 LOG.error().$("Refresh job failed: ").$(throwable).$();

@@ -170,9 +170,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainWalQueue();
 
             currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
-            MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
-            refreshJob.run(0);
-            drainWalQueue();
+            refreshMatView();
 
             assertSql(
                     "name\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tlast_error\tlast_error_code\tinvalid\n" +
@@ -183,8 +181,7 @@ public class MatViewTest extends AbstractCairoTest {
             execute("rename table base_price to base_price2");
             execute("refresh materialized view 'price_1h';");
             currentMicros = parseFloorPartialTimestamp("2024-10-24T18");
-            refreshJob.run(0);
-            drainWalQueue();
+            refreshMatView();
 
             assertSql(
                     "name\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tlast_error\tlast_error_code\tinvalid\n" +
@@ -201,8 +198,7 @@ public class MatViewTest extends AbstractCairoTest {
             );
             execute("refresh materialized view 'price_1h';");
             currentMicros = parseFloorPartialTimestamp("2024-10-24T19");
-            refreshJob.run(0);
-            drainWalQueue();
+            refreshMatView();
 
             assertSql(
                     "name\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tlast_error\tlast_error_code\tinvalid\n" +
@@ -228,9 +224,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
-            refreshJob.run(0);
-            drainWalQueue();
+            refreshMatView();
 
             assertSql(
                     "sym\tprice\tts\n" +
@@ -329,9 +323,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
-            refreshJob.run(0);
-            drainWalQueue();
+            refreshMatView();
 
             assertSql(
                     "sym\tprice\tts\n" +
@@ -342,12 +334,11 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             dropMatView();
-            refreshJob.run(0);
+            refreshMatView();
 
             createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
             TableToken matViewToken2 = engine.verifyTableName("price_1h");
-            refreshJob.run(0);
-            drainWalQueue();
+            refreshMatView();
 
             assertSql(
                     "sym\tprice\tts\n" +
@@ -383,9 +374,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
-            refreshJob.run(0);
-            drainWalQueue();
+            refreshMatView();
 
             assertSql(
                     "sym\tprice\tts\n" +
@@ -398,8 +387,7 @@ public class MatViewTest extends AbstractCairoTest {
             // mat view should be deleted
             execute("drop all;");
 
-            refreshJob.run(0);
-            drainWalQueue();
+            refreshMatView();
 
             assertSql(
                     "count\n" +
@@ -738,9 +726,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainWalQueue();
 
             currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.842574Z");
-            MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
-            refreshJob.run(0);
-            drainWalQueue();
+            refreshMatView();
 
             assertSql(
                     "name\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tlast_error\tlast_error_code\tinvalid\n" +
@@ -755,8 +741,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             execute("alter table base_price drop column extra_col");
             drainWalQueue();
-            refreshJob.run(0);
-            drainWalQueue();
+            refreshMatView();
 
             assertSql(
                     "name\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tlast_error\tlast_error_code\tinvalid\n" +
@@ -765,8 +750,7 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             execute("refresh materialized view price_1h");
-            refreshJob.run(0);
-            drainWalQueue();
+            refreshMatView();
 
             assertSql(
                     "name\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tlast_error\tlast_error_code\tinvalid\n" +
@@ -1052,8 +1036,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             String viewSql = "select sym, last(price) as price, ts from base_price where sleep(120000) sample by 1h";
             createMatView(viewSql);
-            MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
-            refreshJob.run(0);
+            refreshMatView();
 
             execute(
                     "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
@@ -1066,8 +1049,9 @@ public class MatViewTest extends AbstractCairoTest {
             new Thread(() -> {
                 started.countDown();
                 try {
-                    MatViewRefreshJob job = new MatViewRefreshJob(0, engine);
-                    refreshed.set(job.run(0));
+                    try (MatViewRefreshJob job = new MatViewRefreshJob(0, engine)) {
+                        refreshed.set(job.run(0));
+                    }
                 } finally {
                     stopped.countDown();
                 }
@@ -1123,9 +1107,7 @@ public class MatViewTest extends AbstractCairoTest {
             );
             drainWalQueue();
 
-            MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
-            refreshJob.run(0);
-            drainWalQueue();
+            refreshMatView();
 
             assertSql(
                     "sym\tprice\tts\n" +
@@ -1140,9 +1122,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('gbpusd', 1.325, '2024-09-10T13:03')"
             );
             drainWalQueue();
-
-            refreshJob.run(0);
-            drainWalQueue();
+            refreshMatView();
 
             String expected = "sym\tprice\tts\n" +
                     "gbpusd\t1.319\t2024-09-10T12:00:00.000000Z\n" +
@@ -1172,10 +1152,7 @@ public class MatViewTest extends AbstractCairoTest {
                     "from long_sequence(24 * 20 * 5)"
             );
             drainWalQueue();
-
-            MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
-            refreshJob.run(0);
-            drainWalQueue();
+            refreshMatView();
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 TestUtils.assertEquals(
@@ -1207,10 +1184,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('gbpusd', 1.314, '2024-09-14T13:03')"
             );
             drainWalQueue();
-
-            MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
-            refreshJob.run(0);
-            drainWalQueue();
+            refreshMatView();
 
             assertSql(
                     "sym\tprice\tts\n" +
@@ -1289,6 +1263,13 @@ public class MatViewTest extends AbstractCairoTest {
         testBaseTableInvalidateOnOperation(null, operationSql);
     }
 
+    private void refreshMatView() throws Exception {
+        try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
+            refreshJob.run(0);
+            drainWalQueue();
+        }
+    }
+
     private void testBaseTableInvalidateOnOperation(
             @Nullable TestUtils.LeakProneCode runBeforeMatViewCreate,
             String operationSql
@@ -1314,9 +1295,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainWalQueue();
 
             currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
-            MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
-            refreshJob.run(0);
-            drainWalQueue();
+            refreshMatView();
 
             assertSql(
                     "name\tbase_table_name\tinvalid\n" +
@@ -1326,7 +1305,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             execute(operationSql);
             drainWalQueue();
-            refreshJob.run(0);
+            refreshMatView();
 
             assertSql(
                     "name\tbase_table_name\tinvalid\n" +
@@ -1334,6 +1313,14 @@ public class MatViewTest extends AbstractCairoTest {
                     "select name, base_table_name, invalid from views"
             );
         });
+    }
+
+    private void updateViewIncrementally(String viewName, String viewQuery, long startTs, long step, int N, int K) throws SqlException {
+        updateViewIncrementally(viewName, viewQuery, " rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b,", startTs, step, N, K);
+    }
+
+    private void updateViewIncrementally(String viewName, String viewQuery, String columns, long startTs, long step, int N, int K) throws SqlException {
+        updateViewIncrementally(viewName, viewQuery, columns, null, startTs, step, N, K);
     }
 
     private void testIncrementalRefresh0(String viewSql) throws Exception {
@@ -1351,8 +1338,7 @@ public class MatViewTest extends AbstractCairoTest {
             );
             drainWalQueue();
 
-            MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
-            refreshJob.run(0);
+            refreshMatView();
 
             assertSql(
                     "sequencerTxn\tminTimestamp\tmaxTimestamp\n" +
@@ -1364,9 +1350,7 @@ public class MatViewTest extends AbstractCairoTest {
                     ",('gbpusd', 1.325, '2024-09-10T13:03')"
             );
             drainWalQueue();
-
-            refreshJob.run(0);
-            drainWalQueue();
+            refreshMatView();
 
             assertSql(
                     "sequencerTxn\tminTimestamp\tmaxTimestamp\n" +
@@ -1377,14 +1361,6 @@ public class MatViewTest extends AbstractCairoTest {
 
             assertViewMatchesSqlOverBaseTable(viewSql);
         });
-    }
-
-    private void updateViewIncrementally(String viewName, String viewQuery, long startTs, long step, int N, int K) throws SqlException {
-        updateViewIncrementally(viewName, viewQuery, " rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b,", startTs, step, N, K);
-    }
-
-    private void updateViewIncrementally(String viewName, String viewQuery, String columns, long startTs, long step, int N, int K) throws SqlException {
-        updateViewIncrementally(viewName, viewQuery, columns, null, startTs, step, N, K);
     }
 
     private void updateViewIncrementally(String viewName, String viewQuery, String columns, @Nullable String index, long startTs, long step, int N, int K) throws SqlException {
@@ -1402,21 +1378,23 @@ public class MatViewTest extends AbstractCairoTest {
         createMatView(viewName, viewQuery);
         drainWalQueue();
 
-        MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
-        refreshJob.run(0);
-        drainWalQueue();
-
-        int prev = initSize + 1;
-        for (int i = 0; i < K; i++) {
-            int size = chunkSize + (i < tail ? 1 : 0);
-            execute(copyDataSql("x", "tmp", prev, size));
-            prev = prev + size;
-            drainWalQueue();
+        try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
             refreshJob.run(0);
             drainWalQueue();
-            remainingSize -= size;
+
+            int prev = initSize + 1;
+            for (int i = 0; i < K; i++) {
+                int size = chunkSize + (i < tail ? 1 : 0);
+                execute(copyDataSql("x", "tmp", prev, size));
+                prev = prev + size;
+                drainWalQueue();
+                refreshJob.run(0);
+                drainWalQueue();
+                remainingSize -= size;
+            }
         }
 
         Assert.assertEquals(0, remainingSize);
     }
+
 }

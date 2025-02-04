@@ -24,11 +24,13 @@
 
 package io.questdb.cairo.mv;
 
+import io.questdb.cairo.meta.MetaFileWriter;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.str.Path;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -100,19 +102,30 @@ public class MatViewRefreshState implements QuietCloseable {
         telemetryFacade.store(MAT_VIEW_DROP, viewDefinition.getMatViewToken(), -1L, 0L);
     }
 
-    public void markAsInvalid() {
+    public void markAsInvalid(final MetaFileWriter metaFileWriter, final Path dbRoot) {
+        if (!invalid) {
+            dbRoot
+                    .concat(getViewDefinition().getMatViewToken())
+                    .concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME);
+            metaFileWriter.of(dbRoot.$());
+            MatViewDefinition.dumpTo(metaFileWriter, getViewDefinition());
+            //TODO(eugene): update invalid field, should it be part of the MatViewDefinition?
+        }
         invalid = true;
         telemetryFacade.store(MAT_VIEW_INVALIDATE, viewDefinition.getMatViewToken(), -1L, 0L);
     }
 
-    public void markAsValid() {
+    public void markAsValid(final MetaFileWriter metaFileWriter, final Path dbRoot) {
+        if (invalid) {
+            //TODO: update file
+        }
         invalid = false;
     }
 
-    public void refreshFail(long refreshTimestamp) {
+    public void refreshFail(final MetaFileWriter metaFileWriter, final Path dbRoot, long refreshTimestamp) {
         assert latch.get();
+        markAsInvalid(metaFileWriter, dbRoot);
         lastRefreshTimestamp = refreshTimestamp;
-        invalid = true;
         telemetryFacade.store(MAT_VIEW_REFRESH_FAIL, viewDefinition.getMatViewToken(), -1L, 0L);
     }
 

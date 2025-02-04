@@ -63,14 +63,14 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                 createBaseTable("2024-10-24T17:00:00.000000Z");
                 createMatView("2024-10-24T17:00:15.000000Z", telemetryJob);
 
-                final MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
-
-                execute("2024-10-24T17:00:25.000000Z", refreshJob, telemetryJob,
-                        "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
-                                ",('gbpusd', 1.323, '2024-09-10T12:02')" +
-                                ",('jpyusd', 103.21, '2024-09-10T12:02')" +
-                                ",('gbpusd', 1.321, '2024-09-10T13:02')"
-                );
+                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
+                    execute("2024-10-24T17:00:25.000000Z", refreshJob, telemetryJob,
+                            "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                                    ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                                    ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                                    ",('gbpusd', 1.321, '2024-09-10T13:02')"
+                    );
+                }
 
                 assertSql(
                         "sym\tprice\tts\n" +
@@ -100,26 +100,27 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                 createBaseTable("2024-10-24T17:00:00.000000Z");
                 createMatView("2024-10-24T17:00:15.000000Z", telemetryJob);
 
-                final MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
+                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
 
-                execute("2024-10-24T17:00:25.000000Z", refreshJob, telemetryJob,
-                        "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
-                                ",('gbpusd', 1.323, '2024-09-10T12:02')" +
-                                ",('jpyusd', 103.21, '2024-09-10T12:02')" +
-                                ",('gbpusd', 1.321, '2024-09-10T13:02')"
-                );
+                    execute("2024-10-24T17:00:25.000000Z", refreshJob, telemetryJob,
+                            "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                                    ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                                    ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                                    ",('gbpusd', 1.321, '2024-09-10T13:02')"
+                    );
 
-                assertSql(
-                        "sym\tprice\tts\n" +
-                                "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                                "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
-                                "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
-                        "price_1h order by ts, sym"
-                );
+                    assertSql(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
+                            "price_1h order by ts, sym"
+                    );
 
-                execute("2024-10-24T17:00:41.000000Z", refreshJob, telemetryJob,
-                        "truncate table base_price"
-                );
+                    execute("2024-10-24T17:00:41.000000Z", refreshJob, telemetryJob,
+                            "truncate table base_price"
+                    );
+                }
 
                 assertSql(
                         "created\tevent\tviewTableId\tbaseTableTxn\terrorMessage\tlatency\n" +
@@ -139,27 +140,28 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                 createBaseTable("2024-10-24T17:00:00.000000Z");
                 createMatView("2024-10-24T17:00:15.000000Z", telemetryJob);
 
-                final MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
+                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
 
-                execute("2024-10-24T17:00:25.000000Z", refreshJob, telemetryJob,
-                        "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
-                                ",('gbpusd', 1.323, '2024-09-10T12:02')" +
-                                ",('jpyusd', 103.21, '2024-09-10T12:02')" +
-                                ",('gbpusd', 1.321, '2024-09-10T13:02')"
-                );
+                    execute("2024-10-24T17:00:25.000000Z", refreshJob, telemetryJob,
+                            "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                                    ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                                    ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                                    ",('gbpusd', 1.321, '2024-09-10T13:02')"
+                    );
 
-                assertSql(
-                        "sym\tprice\tts\n" +
-                                "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                                "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
-                                "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
-                        "price_1h order by ts, sym"
-                );
+                    assertSql(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
+                            "price_1h order by ts, sym"
+                    );
 
-                execute("2024-10-24T17:00:33.000000Z", refreshJob, telemetryJob,
-                        "rename table base_price to base_price2",
-                        "refresh materialized view 'price_1h';"
-                );
+                    execute("2024-10-24T17:00:33.000000Z", refreshJob, telemetryJob,
+                            "rename table base_price to base_price2",
+                            "refresh materialized view 'price_1h';"
+                    );
+                }
 
                 assertSql(
                         "created\tevent\tviewTableId\tbaseTableTxn\terrorMessage\tlatency\n" +
@@ -179,24 +181,25 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                 createBaseTable("2024-10-24T17:00:10.000000Z");
                 createMatView("2024-10-24T17:00:20.000000Z", telemetryJob);
 
-                final MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
+                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
 
-                execute("2024-10-24T17:01:00.000000Z", refreshJob, telemetryJob,
-                        "insert into base_price " +
-                                "select 'gbpusd', 1.320 + x / 1000.0, timestamp_sequence('2024-09-10T12:02', 1000000*60*5) " +
-                                "from long_sequence(24 * 20 * 5)"
-                );
+                    execute("2024-10-24T17:01:00.000000Z", refreshJob, telemetryJob,
+                            "insert into base_price " +
+                                    "select 'gbpusd', 1.320 + x / 1000.0, timestamp_sequence('2024-09-10T12:02', 1000000*60*5) " +
+                                    "from long_sequence(24 * 20 * 5)"
+                    );
 
-                assertSql(
-                        "sequencerTxn\tminTimestamp\tmaxTimestamp\n" +
-                                "1\t2024-09-10T12:00:00.000000Z\t2024-09-18T19:00:00.000000Z\n",
-                        "select sequencerTxn, minTimestamp, maxTimestamp from wal_transactions('price_1h')"
-                );
+                    assertSql(
+                            "sequencerTxn\tminTimestamp\tmaxTimestamp\n" +
+                                    "1\t2024-09-10T12:00:00.000000Z\t2024-09-18T19:00:00.000000Z\n",
+                            "select sequencerTxn, minTimestamp, maxTimestamp from wal_transactions('price_1h')"
+                    );
 
-                execute("2024-10-24T17:01:30.000000Z", refreshJob, telemetryJob,
-                        "insert into base_price values('gbpusd', 1.319, '2024-09-10T12:05')" +
-                                ",('gbpusd', 1.325, '2024-09-10T13:03')"
-                );
+                    execute("2024-10-24T17:01:30.000000Z", refreshJob, telemetryJob,
+                            "insert into base_price values('gbpusd', 1.319, '2024-09-10T12:05')" +
+                                    ",('gbpusd', 1.325, '2024-09-10T13:03')"
+                    );
+                }
 
                 assertSql(
                         "sequencerTxn\tminTimestamp\tmaxTimestamp\n" +
