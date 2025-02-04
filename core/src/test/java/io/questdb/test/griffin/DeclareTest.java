@@ -716,14 +716,6 @@ public class DeclareTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testDeclareWithArrayTypes() throws Exception {
-        String declareQuery = "DECLARE @x := [1,2,3,4] SELECT @x;";
-        String regularQuery = "SELECT [1,2,3,4];";
-        // todo: assert equivalent i.e assertModel with a known model for both these cases.
-        // todo: expand this for arrays in other positions - where etc.
-    }
-
-    @Test
     public void testDeclareWorksWithIntrinsics01() throws Exception {
         assertMemoryLeak(() -> {
             execute(tradesDdl);

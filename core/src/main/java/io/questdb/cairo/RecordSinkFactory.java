@@ -518,8 +518,6 @@ public class RecordSinkFactory {
                     break;
                 case ColumnType.NULL:
                     break; // ignore
-                case ColumnType.ARRAY:
-                    throw new CairoException().position(0).put("Unexpected array type: ").put(ColumnType.nameOf(type));
                 default:
                     throw new IllegalArgumentException("Unexpected column type: " + ColumnType.nameOf(type));
             }

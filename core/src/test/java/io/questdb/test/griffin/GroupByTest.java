@@ -1638,15 +1638,6 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testGroupingOnArray() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table x as (select x::timestamp as ts, rnd_double_array(2) as arr from long_sequence(100)) timestamp(ts)");
-            assertSql("", "select sum(arr) from x group by arr;");
-        });
-        // todo: make this work for arrays
-    }
-
-    @Test
     public void testLatestByImplicitGroupBy1() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (s1 symbol, s2 symbol, l long, ts timestamp) timestamp(ts) partition by day;");

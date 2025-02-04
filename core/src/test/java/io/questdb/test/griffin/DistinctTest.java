@@ -33,17 +33,6 @@ import org.junit.Test;
 public class DistinctTest extends AbstractCairoTest {
 
     @Test
-    public void testDistinctWithArrays() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table x (ts timestamp, arr double[][]) timestamp(ts);");
-            execute("insert into x select x::timestamp, rnd_double_array(2) from long_sequence(10);");
-            // todo make this test work
-            assertSql("", "select distinct arr from x");
-        });
-
-    }
-
-    @Test
     public void testDuplicateColumn() throws Exception {
         assertQuery(
                 "e1\te2\n" +

@@ -176,8 +176,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
         inputRoot = root;
     }
 
-    // todo: array tests!
-
     @Test
     public void test2686LeftJoinDoesNotMoveOtherInnerJoinPredicate() throws Exception {
         test2686Prepare();

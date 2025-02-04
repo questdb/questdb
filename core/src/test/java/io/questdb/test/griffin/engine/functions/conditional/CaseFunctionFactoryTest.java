@@ -415,16 +415,6 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCaseStatementWithArrayColumns() throws Exception {
-        // todo
-    }
-
-    @Test
-    public void testCaseStatementWithArrayLiterals() throws Exception {
-        // todo
-    }
-
-    @Test
     public void testCaseWithNoElseInSelectClause() throws Exception {
         assertQuery("c\n0\nnull\nnull\n",
                 "select case x when 1 then 0 end c from long_sequence(3)", null, true, true

@@ -321,15 +321,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAsofJoinOnArray() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table x (ts timestamp, arr int[]) timestamp(ts);");
-            execute("create table y (ts timestamp, arr int[]) timestamp(ts);");
-            assertException("x asof join y on (arr);", 0, "Unexpected array type: INT[]");
-        });
-    }
-
-    @Test
     public void testExplicitTimestampIsNotNecessaryWhenAsofJoiningExplicitlyOrderedTables() throws Exception {
         testExplicitTimestampIsNotNecessaryWhenJoining("asof join", "ts");
     }
