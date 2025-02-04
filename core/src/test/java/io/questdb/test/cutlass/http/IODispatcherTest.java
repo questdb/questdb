@@ -5546,12 +5546,10 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testJsonTableReferenceOutOfDate() throws Exception {
-        getSimpleTester().run((engine, sqlExecutionContext) -> {
-            testHttpClient.assertGet(
-                    "{\"query\":\"select * from test_reference_out_of_date();\",\"error\":\"cached query plan cannot be used because table schema has changed [table='test_reference_out_of_date']\",\"position\":0}",
-                    "select * from test_reference_out_of_date();"
-            );
-        });
+        getSimpleTester().run((engine, sqlExecutionContext) -> testHttpClient.assertGet(
+                "{\"query\":\"select * from test_table_reference_out_of_date();\",\"error\":\"cached query plan cannot be used because table schema has changed [table='test_table_reference_out_of_date']\",\"position\":0}",
+                "select * from test_table_reference_out_of_date();"
+        ));
     }
 
     @Test
@@ -7837,13 +7835,11 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testTextTableReferenceOutOfDate() throws Exception {
-        getSimpleTester().run((engine, sqlExecutionContext) -> {
-            testHttpClient.assertGet(
-                    "/exp",
-                    "{\"query\":\"select * from test_reference_out_of_date();\",\"error\":\"cached query plan cannot be used because table schema has changed [table='test_reference_out_of_date']\",\"position\":0}",
-                    "select * from test_reference_out_of_date();"
-            );
-        });
+        getSimpleTester().run((engine, sqlExecutionContext) -> testHttpClient.assertGet(
+                "/exp",
+                "{\"query\":\"select * from test_table_reference_out_of_date();\",\"error\":\"cached query plan cannot be used because table schema has changed [table='test_table_reference_out_of_date']\",\"position\":0}",
+                "select * from test_table_reference_out_of_date();"
+        ));
     }
 
     @Test

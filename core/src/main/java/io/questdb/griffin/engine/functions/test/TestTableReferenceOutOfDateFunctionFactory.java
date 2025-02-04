@@ -45,9 +45,9 @@ import io.questdb.std.ObjList;
  * Throws {@link io.questdb.cairo.sql.TableReferenceOutOfDateException} on getCursor calls
  * while holding some native memory for the factory.
  */
-public class TestReferenceOutOfDateFunctionFactory implements FunctionFactory {
+public class TestTableReferenceOutOfDateFunctionFactory implements FunctionFactory {
     private static final RecordMetadata METADATA = new GenericRecordMetadata();
-    private static final String SIGNATURE = "test_reference_out_of_date()";
+    private static final String SIGNATURE = "test_table_reference_out_of_date()";
 
     @Override
     public String getSignature() {
@@ -62,19 +62,19 @@ public class TestReferenceOutOfDateFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new CursorFunction(new TestReferenceOutOfDateCursorFactory(METADATA));
+        return new CursorFunction(new TestTableReferenceOutOfDateCursorFactory(METADATA));
     }
 
-    private static class TestReferenceOutOfDateCursorFactory extends AbstractRecordCursorFactory {
+    private static class TestTableReferenceOutOfDateCursorFactory extends AbstractRecordCursorFactory {
         private final DirectIntList mem = new DirectIntList(42, MemoryTag.NATIVE_DEFAULT);
 
-        public TestReferenceOutOfDateCursorFactory(RecordMetadata metadata) {
+        public TestTableReferenceOutOfDateCursorFactory(RecordMetadata metadata) {
             super(metadata);
         }
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            throw TableReferenceOutOfDateException.of("test_reference_out_of_date");
+            throw TableReferenceOutOfDateException.of("test_table_reference_out_of_date");
         }
 
         @Override
