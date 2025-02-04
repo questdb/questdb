@@ -33,7 +33,10 @@ import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 
+import java.util.function.IntBinaryOperator;
+
 public class SegmentCopyInfo implements QuietCloseable {
+    private static final IntBinaryOperator assertSeqTxnOrderComparer = (a, b) -> a - b;
     private final IntList seqTxnOrder = new IntList();
     private int distinctWalSegmentCount;
     private long maxTimestamp = Long.MIN_VALUE;
@@ -64,18 +67,6 @@ public class SegmentCopyInfo implements QuietCloseable {
         totalRows += committedRowsCount;
         this.minTimestamp = Math.min(this.minTimestamp, minTimestamp);
         this.maxTimestamp = Math.max(this.maxTimestamp, maxTimestamp);
-    }
-
-    public boolean assertSeqTxnOrder() {
-        IntList copy = new IntList(seqTxnOrder.size());
-        copy.addAll(seqTxnOrder);
-        copy.sortGroups(1);
-        for (int i = 0, n = copy.size(); i < n; i++) {
-            if (copy.getQuick(i) != i) {
-                return false;
-            }
-        }
-        return true;
     }
 
     public void clear() {
@@ -141,6 +132,10 @@ public class SegmentCopyInfo implements QuietCloseable {
         return Math.abs(segments.get(segmentIndex * 4L + 2));
     }
 
+    public int getSegmentCount() {
+        return (int) (segments.size() / 4);
+    }
+
     public int getSegmentId(int segmentIndex) {
         return (int) segments.get(segmentIndex * 4L + 1);
     }
@@ -178,9 +173,5 @@ public class SegmentCopyInfo implements QuietCloseable {
 
     public boolean isLastSegmentUse(int segmentIndex) {
         return segments.get(segmentIndex * 4L + 3) > 0;
-    }
-
-    public int getSegmentCount() {
-        return (int) (segments.size() / 4);
     }
 }

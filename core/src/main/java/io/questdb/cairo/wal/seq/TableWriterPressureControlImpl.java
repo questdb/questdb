@@ -139,6 +139,12 @@ public class TableWriterPressureControlImpl implements TableWriterPressureContro
         inflightBatchRowCount = count;
     }
 
+    @Override
+    public void onApplyBlockError() {
+        inflightBatchRowCount = 1;
+        maxBatchRowCount = inflightBatchRowCount / TXN_COUNT_SCALE_DOWN_FACTOR;
+    }
+
     private static long getTicks() {
         return MillisecondClockImpl.INSTANCE.getTicks();
     }

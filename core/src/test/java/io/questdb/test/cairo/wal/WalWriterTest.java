@@ -64,145 +64,12 @@ public class WalWriterTest extends AbstractCairoTest {
 
     @Test
     public void apply1RowCommitsManyWriters() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table sm (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
-            TableToken tableToken = engine.verifyTableName("sm");
-            long startTs = IntervalUtils.parseFloorPartialTimestamp("2022-02-24");
-            long tsIncrement = Timestamps.SECOND_MICROS;
-
-            long ts = startTs;
-            int totalRows = 1_000_000;
-            int walWriters = 16;
-            int symbolCount = 75;
-
-            Utf8StringSink sink = new Utf8StringSink();
-            StringSink stringSink = new StringSink();
-
-            Rnd rnd = TestUtils.generateRandom(LOG);
-
-            ObjList<WalWriter> writerObjList = new ObjList<>();
-            for (int c = 0; c < walWriters; c++) {
-                writerObjList.add(engine.getWalWriter(tableToken));
-            }
-
-            try {
-                for (int i = 0; i < totalRows; i++) {
-                    var writer = writerObjList.getQuick(rnd.nextInt(walWriters));
-
-                    TableWriter.Row row = writer.newRow(ts);
-                    row.putInt(0, i);
-                    row.putLong(2, i + 1);
-                    stringSink.clear();
-                    stringSink.put(i);
-                    row.putStr(3, stringSink);
-                    sink.clear();
-                    sink.put(i);
-                    row.putVarchar(4, sink);
-                    stringSink.clear();
-                    stringSink.put(i % symbolCount);
-                    row.putSym(5, stringSink);
-                    row.append();
-                    writer.commit();
-
-                    ts += tsIncrement;
-                }
-            } finally {
-                Misc.freeObjListIfCloseable(writerObjList);
-            }
-
-            WorkerPool sharedWorkerPool = null;
-            try {
-                sharedWorkerPool = new TestWorkerPool(4, node1.getMetrics());
-                WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
-                sharedWorkerPool.start(LOG);
-
-                long start = Os.currentTimeMicros();
-                drainWalQueue();
-                long end = Os.currentTimeMicros();
-
-                LOG.info().$("Time to drain WAL queue: ").$((end - start) / 1_000_000.0).$("s").$();
-
-            } finally {
-                sharedWorkerPool.halt();
-            }
-
-            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
-            assertSql("count\tmin\tmax\n" +
-                    totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Timestamps.toUSecString(ts - tsIncrement) + "\n", "select count(*), min(ts), max(ts) from sm");
-            assertSqlCursors("sm", "select * from sm order by id");
-            assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(s as int)");
-            assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(v as int)");
-            assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id % " + symbolCount + " <> cast(m as int)");
-
-        });
+        testApply1RowCommitManyWriters(Timestamps.SECOND_MICROS, 200_000);
     }
 
     @Test
-    public void applyManySmallCommitsHappyDays() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table sm (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
-            TableToken tableToken = engine.verifyTableName("sm");
-            long startTs = IntervalUtils.parseFloorPartialTimestamp("2022-02-24");
-            long tsIncrement = Timestamps.MINUTE_MICROS;
-
-            long ts = startTs;
-            int totalRows = 2000;
-            int iterations = 20;
-            int symbolCount = 75;
-
-            Utf8StringSink sink = new Utf8StringSink();
-            StringSink stringSink = new StringSink();
-            for (int c = 0; c < iterations; c++) {
-                try (WalWriter walWriter1 = engine.getWalWriter(tableToken)) {
-                    try (WalWriter walWriter2 = engine.getWalWriter(tableToken)) {
-
-                        int n = totalRows * (c + 1);
-                        for (int i = c * totalRows; i < n; i += 2) {
-                            TableWriter.Row row = walWriter1.newRow(ts);
-                            row.putInt(0, i);
-                            row.putLong(2, i + 1);
-                            stringSink.clear();
-                            stringSink.put(i);
-                            row.putStr(3, stringSink);
-                            sink.clear();
-                            sink.put(i);
-                            row.putVarchar(4, sink);
-                            stringSink.clear();
-                            stringSink.put(i % symbolCount);
-                            row.putSym(5, stringSink);
-                            row.append();
-                            walWriter1.commit();
-
-                            TableWriter.Row row2 = walWriter2.newRow(ts);
-                            row2.putInt(0, i + 1);
-                            row2.putLong(2, i + 2);
-                            stringSink.clear();
-                            stringSink.put(i + 1);
-                            row2.putStr(3, stringSink);
-                            sink.clear();
-                            sink.put(i + 1);
-                            row2.putVarchar(4, sink);
-                            stringSink.clear();
-                            stringSink.put((i + 1) % symbolCount);
-                            row2.putSym(5, stringSink);
-                            row2.append();
-                            walWriter2.commit();
-
-                            ts += tsIncrement;
-                        }
-                    }
-
-                    drainWalQueue();
-                    Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
-                    assertSql("count\tmin\tmax\n" +
-                            (c + 1) * totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Timestamps.toUSecString(ts - tsIncrement) + "\n", "select count(*), min(ts), max(ts) from sm");
-                    assertSqlCursors("sm", "select * from sm order by id");
-                    assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(s as int)");
-                    assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(v as int)");
-                    assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id % " + symbolCount + " <> cast(m as int)");
-                }
-            }
-        });
+    public void apply1RowCommitsManyWritersExceedsBlockSortRanges() throws Exception {
+        testApply1RowCommitManyWriters(Long.MAX_VALUE / 300, 265);
     }
 
     @Test
@@ -870,6 +737,74 @@ public class WalWriterTest extends AbstractCairoTest {
 
             assertSql("a\tb\tts\tc\n" +
                     "1\t\t1970-01-01T00:00:00.000000Z\tnull\n", tableToken.getTableName());
+        });
+    }
+
+    @Test
+    public void testApplyManySmallCommits2Writers() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table sm (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            TableToken tableToken = engine.verifyTableName("sm");
+            long startTs = IntervalUtils.parseFloorPartialTimestamp("2022-02-24");
+            long tsIncrement = Timestamps.MINUTE_MICROS;
+
+            long ts = startTs;
+            int totalRows = 2000;
+            int iterations = 20;
+            int symbolCount = 75;
+
+            Utf8StringSink sink = new Utf8StringSink();
+            StringSink stringSink = new StringSink();
+            for (int c = 0; c < iterations; c++) {
+                try (WalWriter walWriter1 = engine.getWalWriter(tableToken)) {
+                    try (WalWriter walWriter2 = engine.getWalWriter(tableToken)) {
+
+                        int n = totalRows * (c + 1);
+                        for (int i = c * totalRows; i < n; i += 2) {
+                            TableWriter.Row row = walWriter1.newRow(ts);
+                            row.putInt(0, i);
+                            row.putLong(2, i + 1);
+                            stringSink.clear();
+                            stringSink.put(i);
+                            row.putStr(3, stringSink);
+                            sink.clear();
+                            sink.put(i);
+                            row.putVarchar(4, sink);
+                            stringSink.clear();
+                            stringSink.put(i % symbolCount);
+                            row.putSym(5, stringSink);
+                            row.append();
+                            walWriter1.commit();
+
+                            TableWriter.Row row2 = walWriter2.newRow(ts);
+                            row2.putInt(0, i + 1);
+                            row2.putLong(2, i + 2);
+                            stringSink.clear();
+                            stringSink.put(i + 1);
+                            row2.putStr(3, stringSink);
+                            sink.clear();
+                            sink.put(i + 1);
+                            row2.putVarchar(4, sink);
+                            stringSink.clear();
+                            stringSink.put((i + 1) % symbolCount);
+                            row2.putSym(5, stringSink);
+                            row2.append();
+                            walWriter2.commit();
+
+                            ts += tsIncrement;
+                        }
+                    }
+
+                    drainWalQueue();
+                    Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+                    assertSql("count\tmin\tmax\n" +
+                            (c + 1) * totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Timestamps.toUSecString(ts - tsIncrement) + "\n", "select count(*), min(ts), max(ts) from sm");
+                    assertSqlCursors("sm", "select * from sm order by id");
+                    assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(s as int)");
+                    assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(v as int)");
+                    assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id % " + symbolCount + " <> cast(m as int)");
+                }
+            }
         });
     }
 
@@ -3431,6 +3366,80 @@ public class WalWriterTest extends AbstractCairoTest {
         } finally {
             path.trimTo(pathLen);
         }
+    }
+
+    private void testApply1RowCommitManyWriters(long MAX_VALUE, int totalRows) throws Exception {
+        setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
+        assertMemoryLeak(() -> {
+            execute("create table sm (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            TableToken tableToken = engine.verifyTableName("sm");
+            long startTs = IntervalUtils.parseFloorPartialTimestamp("2022-02-24");
+            long tsIncrement = MAX_VALUE;
+
+            long ts = startTs;
+            int walWriters = 16;
+            int symbolCount = 75;
+
+            Utf8StringSink sink = new Utf8StringSink();
+            StringSink stringSink = new StringSink();
+
+            Rnd rnd = TestUtils.generateRandom(LOG);
+
+            ObjList<WalWriter> writerObjList = new ObjList<>();
+            for (int c = 0; c < walWriters; c++) {
+                writerObjList.add(engine.getWalWriter(tableToken));
+            }
+
+            try {
+                for (int i = 0; i < totalRows; i++) {
+                    var writer = writerObjList.getQuick(rnd.nextInt(walWriters));
+
+                    TableWriter.Row row = writer.newRow(ts);
+                    row.putInt(0, i);
+                    row.putLong(2, i + 1);
+                    stringSink.clear();
+                    stringSink.put(i);
+                    row.putStr(3, stringSink);
+                    sink.clear();
+                    sink.put(i);
+                    row.putVarchar(4, sink);
+                    stringSink.clear();
+                    stringSink.put(i % symbolCount);
+                    row.putSym(5, stringSink);
+                    row.append();
+                    writer.commit();
+
+                    ts += tsIncrement;
+                }
+            } finally {
+                Misc.freeObjListIfCloseable(writerObjList);
+            }
+
+            WorkerPool sharedWorkerPool = null;
+            try {
+                sharedWorkerPool = new TestWorkerPool(4, node1.getMetrics());
+                WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
+                sharedWorkerPool.start(LOG);
+
+                long start = Os.currentTimeMicros();
+                drainWalQueue();
+                long end = Os.currentTimeMicros();
+
+                LOG.info().$("Time to drain WAL queue: ").$((end - start) / 1_000_000.0).$("s").$();
+
+            } finally {
+                sharedWorkerPool.halt();
+            }
+
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertSql("count\tmin\tmax\n" +
+                    totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Timestamps.toUSecString(ts - tsIncrement) + "\n", "select count(*), min(ts), max(ts) from sm");
+            assertSqlCursors("sm", "select * from sm order by id");
+            assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(s as int)");
+            assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(v as int)");
+            assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id % " + symbolCount + " <> cast(m as int)");
+
+        });
     }
 
     private void testDesignatedTimestampIncludesSegmentRowNumber(int[] timestampOffsets, boolean expectedOutOfOrder) throws Exception {

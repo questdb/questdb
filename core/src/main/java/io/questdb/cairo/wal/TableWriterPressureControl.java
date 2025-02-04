@@ -45,6 +45,8 @@ public interface TableWriterPressureControl {
 
     void updateInflightBatchRowCount(long count);
 
+    void onApplyBlockError();
+
     class NoPressureControl implements TableWriterPressureControl {
         @Override
         public long getMaxBatchRowCount() {
@@ -77,7 +79,6 @@ public interface TableWriterPressureControl {
 
         @Override
         public void setMaxBatchRowCount(int count) {
-
         }
 
         @Override
@@ -86,6 +87,10 @@ public interface TableWriterPressureControl {
 
         @Override
         public void updateInflightBatchRowCount(long count) {
+        }
+
+        @Override
+        public void onApplyBlockError() {
         }
     }
 }

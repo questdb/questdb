@@ -47,6 +47,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     public static final int METADATA_VALIDATION_RECOVERABLE = TABLE_DROPPED - 1;
     public static final int PARTITION_MANIPULATION_RECOVERABLE = METADATA_VALIDATION_RECOVERABLE - 1;
     public static final int TABLE_DOES_NOT_EXIST = PARTITION_MANIPULATION_RECOVERABLE - 1;
+    public static final int APPLY_TXN_BLOCK_FAILED = TABLE_DOES_NOT_EXIST - 1;
     public static final int NON_CRITICAL = -1;
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
     private static final ThreadLocal<CairoException> tlException = new ThreadLocal<>(CairoException::new);
@@ -162,6 +163,12 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
                 .put(']');
     }
 
+    public static CairoException txnApplyBlockError(TableToken tableToken) {
+        return critical(APPLY_TXN_BLOCK_FAILED)
+                .put("sorting transaction block failed, need to be re-run in 1 by 1 apply mode [dirName=").put(tableToken.getDirName())
+                .put(", tableName=").put(tableToken.getTableName()).put(']');
+    }
+
     public boolean errnoReadPathDoesNotExist() {
         return errnoReadPathDoesNotExist(errno);
     }
@@ -201,6 +208,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         // This is to have correct stack trace reported in CI
         assert (result = super.getStackTrace()) != null;
         return result;
+    }
+
+    public boolean isApplyBlockError() {
+        return errno == APPLY_TXN_BLOCK_FAILED;
     }
 
     public boolean isAuthorizationError() {

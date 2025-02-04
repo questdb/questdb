@@ -34,7 +34,6 @@ import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -94,12 +93,12 @@ public class WalTxnDetails implements QuietCloseable {
     private DirectIntList symbolIndexes = new DirectIntList(4, MemoryTag.NATIVE_TABLE_WRITER);
     // Stores all symbol strings for the stored transactions. The format is usula STRING format 4 bytes length + string in chars
     private MemoryCARW symbolStringsMem = null;
-    private DirectLongList txnDetails = new DirectLongList(4, MemoryTag.NATIVE_TABLE_WRITER);
-    private int txnsToLoad;
+    private long totalRowsLoadedToApply = 0;
+    private DirectLongList txnOrder = new DirectLongList(10 * 4L, MemoryTag.NATIVE_TABLE_WRITER);
 
     public WalTxnDetails(FilesFacade ff, int maxLookaheadTxns, long maxLookaheadRows) {
         walEventReader = new WalEventReader(ff);
-        this.maxLookaheadTxn = maxLookaheadTxns * 1000;
+        this.maxLookaheadTxn = maxLookaheadTxns;
         this.maxLookaheadRows = maxLookaheadRows;
     }
 
@@ -111,8 +110,6 @@ public class WalTxnDetails implements QuietCloseable {
         int headerInts = 2;
         outMem.jumpTo(txnCount * headerInts * Integer.BYTES);
         DirectString directSymbolString = DIRECT_STRING.get();
-
-        assert transactions.assertSeqTxnOrder();
 
         long startTxn = transactions.getStartTxn();
         // Add symbols in the order of commits to make the int symbol values independent of WAL apply method
@@ -217,7 +214,7 @@ public class WalTxnDetails implements QuietCloseable {
 
         // to force switch to 1 by 1 txn commit, uncomment the following line
         // return 1;
-        pressureControl.updateInflightBatchRowCount(maxBlockRecordCount);
+        pressureControl.updateInflightBatchRowCount(totalRowCount);
         return blockSize;
     }
 
@@ -225,7 +222,7 @@ public class WalTxnDetails implements QuietCloseable {
     public void close() {
         symbolIndexes = Misc.free(symbolIndexes);
         symbolStringsMem = Misc.free(symbolStringsMem);
-        txnDetails = Misc.free(txnDetails);
+        txnOrder = Misc.free(txnOrder);
     }
 
     public long getCommitToTimestamp(long seqTxn) {
@@ -412,9 +409,27 @@ public class WalTxnDetails implements QuietCloseable {
             currentSymbolStringMemStartOffset = 0;
             currentSymbolIndexesStartOffset = 0;
             startSeqTxn = loadFromSeqTxn;
+            totalRowsLoadedToApply = 0;
         }
 
-        loadTransactionDetails(tempPath, transactionLogCursor, loadFromSeqTxn, rootLen, maxCommittedTimestamp);
+        int txnLoadCount = this.maxLookaheadTxn;
+        long rowsToLoad;
+
+        do {
+            long rowsLoaded = loadTransactionDetails(tempPath, transactionLogCursor, loadFromSeqTxn, rootLen, maxCommittedTimestamp, txnLoadCount);
+            totalRowsLoadedToApply += rowsLoaded;
+            loadFromSeqTxn = getLastSeqTxn() + 1;
+
+            rowsToLoad = maxLookaheadRows - totalRowsLoadedToApply;
+            if (totalRowsLoadedToApply > 0 && rowsToLoad > 0) {
+                // Estimate how many transactions to load to reach maxLookaheadRows
+                long loadedTxn = transactionMeta.size() / TXN_METADATA_LONGS_SIZE;
+                txnLoadCount = (int) Math.max(
+                        rowsToLoad * loadedTxn / totalRowsLoadedToApply,
+                        maxLookaheadTxn
+                );
+            }
+        } while (rowsToLoad > 0 && getLastSeqTxn() < transactionLogCursor.getMaxTxn());
 
         // set commit to timestamp moving backwards
         long runningMinTimestamp = LAST_ROW_COMMIT;
@@ -446,6 +461,11 @@ public class WalTxnDetails implements QuietCloseable {
             }
         }
 
+    }
+
+    public void setLoadedRowsCommitted(long rowsCommitted) {
+        totalRowsLoadedToApply -= rowsCommitted;
+        assert totalRowsLoadedToApply >= 0;
     }
 
     private static WalEventCursor openWalEFile(Path tempPath, WalEventReader eventReader, int segmentTxn, long seqTxn) {
@@ -506,8 +526,11 @@ public class WalTxnDetails implements QuietCloseable {
         return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_SYMBOL_DIFF_OFFSET));
     }
 
-    private void loadTransactionDetails(Path tempPath, TransactionLogCursor transactionLogCursor, long loadFromSeqTxn, int rootLen, long maxCommittedTimestamp) {
+    private long loadTransactionDetails(Path tempPath, TransactionLogCursor transactionLogCursor, long loadFromSeqTxn, int rootLen, long maxCommittedTimestamp, int maxLoadTxnCount) {
         transactionLogCursor.setPosition(loadFromSeqTxn - 1);
+        long totalRowsLoaded = 0;
+
+        System.out.println("loadTransactionDetails: loadFromSeqTxn=" + loadFromSeqTxn + ", maxLoadTxnCount=" + maxLoadTxnCount);
 
         try (WalEventReader eventReader = walEventReader) {
 
@@ -516,10 +539,10 @@ public class WalTxnDetails implements QuietCloseable {
             int prevSegmentTxn = Integer.MIN_VALUE;
             WalEventCursor walEventCursor = null;
 
-            txnDetails.clear();
-            txnsToLoad = (int) Math.min(maxLookaheadTxn, transactionLogCursor.getMaxTxn() - loadFromSeqTxn + 1);
+            txnOrder.clear();
+            int txnsToLoad = (int) Math.min(maxLoadTxnCount, transactionLogCursor.getMaxTxn() - loadFromSeqTxn + 1);
             if (txnsToLoad > 0) {
-                txnDetails.setCapacity(txnsToLoad * 4L);
+                txnOrder.setCapacity(txnsToLoad * 4L);
 
                 // Load the map of outstanding WAL transactions to load necessary details from WAL-E files efficiently.
                 long max = 0;
@@ -527,16 +550,16 @@ public class WalTxnDetails implements QuietCloseable {
                     assert transactionLogCursor.hasNext();
                     long long1 = Numbers.encodeLowHighInts(transactionLogCursor.getSegmentId(), transactionLogCursor.getWalId() - MIN_WAL_ID);
                     max |= long1;
-                    txnDetails.add(long1);
-                    txnDetails.add(Numbers.encodeLowHighInts(transactionLogCursor.getSegmentTxn(), i));
+                    txnOrder.add(long1);
+                    txnOrder.add(Numbers.encodeLowHighInts(transactionLogCursor.getSegmentTxn(), i));
                 }
 
                 // We specify min as 0, so we expect the highest bit to be 0
                 assert max >= 0;
                 Vect.radixSortLongIndexAscInPlace(
-                        txnDetails.getAddress(),
+                        txnOrder.getAddress(),
                         txnsToLoad,
-                        txnDetails.getAddress() + txnsToLoad * 2L * Long.BYTES
+                        txnOrder.getAddress() + txnsToLoad * 2L * Long.BYTES
                 );
 
                 int lastWalId = -1;
@@ -545,12 +568,11 @@ public class WalTxnDetails implements QuietCloseable {
 
                 int incrementalLoadStartIndex = transactionMeta.size();
 
-                int txnCount = txnsToLoad;
-                transactionMeta.setPos(incrementalLoadStartIndex + txnCount * TXN_METADATA_LONGS_SIZE);
+                transactionMeta.setPos(incrementalLoadStartIndex + txnsToLoad * TXN_METADATA_LONGS_SIZE);
 
-                for (int i = 0; i < txnCount; i++) {
-                    long long1 = txnDetails.get(2L * i);
-                    long long2 = txnDetails.get(2L * i + 1);
+                for (int i = 0; i < txnsToLoad; i++) {
+                    long long1 = txnOrder.get(2L * i);
+                    long long2 = txnOrder.get(2L * i + 1);
 
                     long seqTxn = Numbers.decodeHighInt(long2) + loadFromSeqTxn;
                     int walId = Numbers.decodeHighInt(long1) + MIN_WAL_ID;
@@ -589,12 +611,13 @@ public class WalTxnDetails implements QuietCloseable {
                             transactionMeta.set(txnMetaOffset + WAL_TXN_MAX_TIMESTAMP_OFFSET, commitInfo.getMaxTimestamp());
                             transactionMeta.set(txnMetaOffset + WAL_TXN_ROW_LO_OFFSET, commitInfo.getStartRowID());
                             transactionMeta.set(txnMetaOffset + WAL_TXN_ROW_HI_OFFSET, commitInfo.getEndRowID());
+                            totalRowsLoaded += commitInfo.getEndRowID() - commitInfo.getStartRowID();
                             int flags = commitInfo.isOutOfOrder() ? FLAG_IS_OOO : 0x0;
                             // The records are sorted by WAL ID, segment ID.
                             // If the next record is not from the same segment it means it's the last txn from the segment.
-                            if (i + 1 < txnCount) {
-                                int nextWalId = Numbers.decodeHighInt(txnDetails.get(2L * (i + 1))) + MIN_WAL_ID;
-                                int nextSegmentId = Numbers.decodeLowInt(txnDetails.get(2L * (i + 1)));
+                            if (i + 1 < txnsToLoad) {
+                                int nextWalId = Numbers.decodeHighInt(txnOrder.get(2L * (i + 1))) + MIN_WAL_ID;
+                                int nextSegmentId = Numbers.decodeLowInt(txnOrder.get(2L * (i + 1)));
                                 if (nextSegmentId != segmentId || nextWalId != walId) {
                                     flags |= FLAG_IS_LAST_SEGMENT_USAGE;
                                 }
@@ -622,7 +645,9 @@ public class WalTxnDetails implements QuietCloseable {
             }
         } finally {
             tempPath.trimTo(rootLen);
+            txnOrder.resetCapacity();
         }
+        return totalRowsLoaded;
     }
 
     private long saveSymbols(SymbolMapDiffCursor commitInfo, long seqTxn) {
@@ -817,47 +842,57 @@ public class WalTxnDetails implements QuietCloseable {
     }
 
     public class WalTxnDetailsSlice {
-        IntList txnsOrder = new IntList();
         private long lo;
         private final IntBinaryOperator comparerByWalSegmentId = this::compareByWalIdSegmentId;
 
         public long getMaxTimestamp(int txn) {
-            return WalTxnDetails.this.getMaxTimestamp(lo + txnsOrder.get(txn));
+            return WalTxnDetails.this.getMaxTimestamp(txnOrder.get(2L * txn + 1));
         }
 
         public long getMinTimestamp(int txn) {
-            return WalTxnDetails.this.getMinTimestamp(lo + txnsOrder.get(txn));
+            return WalTxnDetails.this.getMinTimestamp(txnOrder.get(2L * txn + 1));
         }
 
         public long getRoHi(int txn) {
-            return WalTxnDetails.this.getSegmentRowHi(lo + txnsOrder.get(txn));
+            return WalTxnDetails.this.getSegmentRowHi(txnOrder.get(2L * txn + 1));
         }
 
         public long getRoLo(int txn) {
-            return WalTxnDetails.this.getSegmentRowLo(lo + txnsOrder.get(txn));
+            return WalTxnDetails.this.getSegmentRowLo(txnOrder.get(2L * txn + 1));
         }
 
         public int getSegmentId(int txn) {
-            return WalTxnDetails.this.getSegmentId(lo + txnsOrder.get(txn));
+            return WalTxnDetails.this.getSegmentId(txnOrder.get(2L * txn + 1));
         }
 
         public long getSeqTxn(int txn) {
-            return WalTxnDetails.this.getSegTxn(lo + txnsOrder.get(txn));
+            return WalTxnDetails.this.getSegTxn(txnOrder.get(2L * txn + 1));
         }
 
         public int getWalId(int txn) {
-            return WalTxnDetails.this.getWalId(lo + txnsOrder.get(txn));
+            return WalTxnDetails.this.getWalId(txnOrder.get(2L * txn + 1));
         }
 
         public boolean isLastSegmentUse(int txn) {
-            return WalTxnDetails.this.isLastSegmentUsage(lo + txnsOrder.get(txn));
+            return WalTxnDetails.this.isLastSegmentUsage(txnOrder.get(2L * txn + 1));
         }
 
         public WalTxnDetailsSlice of(long lo, int count) {
             this.lo = lo;
-            txnsOrder.clear();
-            txnsOrder.addRange(0, count);
-            txnsOrder.sort(comparerByWalSegmentId);
+            txnOrder.clear();
+            txnOrder.setCapacity(count * 2L * 2L);
+
+            for (long i = lo, n = lo + count; i < n; i++) {
+                long segWalId = transactionMeta.get((int) ((i - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ID_WAL_SEG_ID_OFFSET));
+                txnOrder.add(segWalId);
+                txnOrder.add(i);
+            }
+
+            Vect.radixSortLongIndexAscInPlace(
+                    txnOrder.getAddress(),
+                    count,
+                    txnOrder.getAddress() + count * 2L * Long.BYTES
+            );
 
             return this;
         }
