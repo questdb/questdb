@@ -372,7 +372,14 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
 
             LOG.info().$("connected [ip=").$ip(nf.getPeerIP(fd)).$(", fd=").$(fd).I$();
             tlConCount = connectionCount.incrementAndGet();
-            addPending(fd, timestamp);
+            try {
+                addPending(fd, timestamp);
+            } catch (Throwable th) {
+                LOG.error().$("could accept connection [fd=").$(fd).$(", e=").$(th).I$();
+                nf.close(fd, LOG);
+                connectionCount.decrementAndGet();
+                continue;
+            }
             connectionCountGauge.inc();
         }
 
