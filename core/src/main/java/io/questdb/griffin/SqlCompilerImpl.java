@@ -3828,8 +3828,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         if (tableToken.isMatView()) {
                             MatViewDefinition matViewDefinition = engine.getMatViewGraph().getMatViewDefinition(tableToken);
                             if (matViewDefinition != null) {
-                                try (MetaFileWriter writer = new MetaFileWriter(ff)) {
-                                    writer.of(path.trimTo(tableRootLen).concat(MAT_VIEW_FILE_NAME).$());
+                                try (MetaFileWriter writer = metaFileWriter) {
+                                    writer.of(auxPath.trimTo(tableRootLen).concat(MAT_VIEW_FILE_NAME).$());
                                     createMatViewDefinition(writer.append(), matViewDefinition);
                                     writer.commit();
                                 }

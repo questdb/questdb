@@ -103,7 +103,6 @@ public final class TableUtils {
     public static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
     public static final String MAT_VIEW_FILE_NAME = "_mv";
-    public static final String MAT_VIEW_QUERY_FILE_NAME = "_mv.q";
     public static final long META_COLUMN_DATA_SIZE = 32;
     public static final String META_FILE_NAME = "_meta";
     public static final short META_FORMAT_MINOR_VERSION_LATEST = 1;
