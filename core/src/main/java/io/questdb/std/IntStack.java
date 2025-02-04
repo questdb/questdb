@@ -44,6 +44,10 @@ public class IntStack implements Mutable {
         allocateElements(initialCapacity);
     }
 
+    public int bottom() {
+        return bottom;
+    }
+
     public void clear() {
         if (head != tail) {
             head = tail = 0;
@@ -57,10 +61,6 @@ public class IntStack implements Mutable {
         while (n-- > 0) {
             there.push(pop());
         }
-    }
-
-    public int getBottom() {
-        return bottom;
     }
 
     public boolean notEmpty() {

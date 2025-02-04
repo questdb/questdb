@@ -196,7 +196,7 @@ public class ExpressionParser {
         // consumed as parameter to a greedy function
         opStack.push(expressionNodePool.next().of(ExpressionNode.CONTROL, "|", Integer.MAX_VALUE, lexer.lastTokenPosition()));
 
-        final int savedParamCountStackBottom = paramCountStack.getBottom();
+        final int savedParamCountStackBottom = paramCountStack.bottom();
         paramCountStack.setBottom(paramCountStack.sizeRaw());
         final int argStackDepthStackSize = copyToBackup(argStackDepthStack, backupArgStackDepthStack);
 
