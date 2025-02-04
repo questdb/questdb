@@ -47,58 +47,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class AlterTableAddColumnTest extends AbstractCairoTest {
 
     @Test
-    public void testAlterTableAddArrayColumnWithInvalidArrayType() throws Exception {
-        assertMemoryLeak(() -> {
-            createX();
-            assertException("alter table x add column arr varchar[];", 29, "VARCHAR array type is not supported");
-        });
-    }
-
-    @Test
-    public void testAlterTableAddArrayColumnWithMismatchedBrackets() throws Exception {
-        assertMemoryLeak(() -> {
-            createX();
-            assertException("alter table x add column arr int[;", 33, "']' expected");
-            assertException("alter table x add column arr int[][;", 35, "']' expected");
-            assertException("alter table x add column arr int];", 29, "arr has an unmatched `]` - were you trying to define an array?");
-            assertException("alter table x add column arr int[]];", 29, "arr has an unmatched `]` - were you trying to define an array?");
-        });
-    }
-
-    @Test
-    public void testAlterTableAddArrayColumn() throws Exception {
-        assertMemoryLeak(() -> {
-            createX();
-
-            execute("alter table x add column arr int[]");
-
-            assertSql("ddl\n" +
-                    "CREATE TABLE 'x' ( \n" +
-                    "\ti INT,\n" +
-                    "\tsym SYMBOL CAPACITY 128 CACHE,\n" +
-                    "\tamt DOUBLE,\n" +
-                    "\ttimestamp TIMESTAMP,\n" +
-                    "\tb BOOLEAN,\n" +
-                    "\tc STRING,\n" +
-                    "\td DOUBLE,\n" +
-                    "\te FLOAT,\n" +
-                    "\tf SHORT,\n" +
-                    "\tg DATE,\n" +
-                    "\tik SYMBOL CAPACITY 128 CACHE,\n" +
-                    "\tj LONG,\n" +
-                    "\tk TIMESTAMP,\n" +
-                    "\tl BYTE,\n" +
-                    "\tm BINARY,\n" +
-                    "\tn STRING,\n" +
-                    "\tarr INT[]\n" + // <-- array should be present
-                    ") timestamp(timestamp) BYPASS WAL\n" +
-                    "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n",
-                    "show create table x;");
-        });
-    }
-
-
-    @Test
     public void testAdd2ColumnsWithoutUsingColumnKeywordAndUsingNotNullKeyword() throws Exception {
         assertMemoryLeak(
                 () -> {
@@ -210,6 +158,24 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     );
                 }
         );
+    }
+
+    @Test
+    public void testAddColumnINotExistsWithMissingNotToken() throws Exception {
+        assertFailure("alter table x add column if exists b int", 28, "'not' expected");
+    }
+
+    @Test
+    public void testAddColumnIfNoExistsUnexpectedToken() throws Exception {
+        assertFailure("alter table x add column if not a int", 32,
+                "unexpected token 'a' for if not exists");
+    }
+
+    @Test
+    public void testAddColumnIfNotExists() throws Exception {
+        createX();
+        execute("alter table x add column if not exists a int");
+        execute("alter table x add column description string");
     }
 
     @Test
@@ -390,28 +356,10 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAddColumnIfNotExists() throws Exception {
-        createX();
-        execute("alter table x add column if not exists a int");
-        execute("alter table x add column description string");
-    }
-
-    @Test
     public void testAddDuplicateColumnIfNotExists() throws Exception {
         createX();
         execute("alter table x add column a int");
         execute("alter table x add column if not exists a int");
-    }
-
-    @Test
-    public void testAddColumnINotExistsWithMissingNotToken() throws Exception {
-        assertFailure("alter table x add column if exists b int", 28, "'not' expected");
-    }
-
-    @Test
-    public void testAddColumnIfNoExistsUnexpectedToken() throws Exception {
-        assertFailure("alter table x add column if not a int", 32,
-                "unexpected token 'a' for if not exists");
     }
 
     @Test
@@ -727,6 +675,57 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     );
                 }
         );
+    }
+
+    @Test
+    public void testAlterTableAddArrayColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+
+            execute("alter table x add column arr int[]");
+
+            assertSql("ddl\n" +
+                            "CREATE TABLE 'x' ( \n" +
+                            "\ti INT,\n" +
+                            "\tsym SYMBOL CAPACITY 128 CACHE,\n" +
+                            "\tamt DOUBLE,\n" +
+                            "\ttimestamp TIMESTAMP,\n" +
+                            "\tb BOOLEAN,\n" +
+                            "\tc STRING,\n" +
+                            "\td DOUBLE,\n" +
+                            "\te FLOAT,\n" +
+                            "\tf SHORT,\n" +
+                            "\tg DATE,\n" +
+                            "\tik SYMBOL CAPACITY 128 CACHE,\n" +
+                            "\tj LONG,\n" +
+                            "\tk TIMESTAMP,\n" +
+                            "\tl BYTE,\n" +
+                            "\tm BINARY,\n" +
+                            "\tn STRING,\n" +
+                            "\tarr INT[]\n" + // <-- array should be present
+                            ") timestamp(timestamp) BYPASS WAL\n" +
+                            "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n",
+                    "show create table x;");
+        });
+    }
+
+    @Test
+    public void testAlterTableAddArrayColumnWithInvalidArrayType() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            assertException("alter table x add column arr varchar[];", 29, "VARCHAR array type is not supported");
+        });
+    }
+
+    @Test
+    public void testAlterTableAddArrayColumnWithMismatchedBrackets() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            assertException("alter table x add column arr int[;", 33, "']' expected");
+            assertException("alter table x add column arr int[][;", 35, "']' expected");
+            assertException("alter table x add column arr int];", 29, "arr has an unmatched `]` - were you trying to define an array?");
+            assertException("alter table x add column arr int[]];", 29, "arr has an unmatched `]` - were you trying to define an array?");
+        });
     }
 
     @Test

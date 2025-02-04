@@ -509,7 +509,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         int dim = SqlUtil.parseArrayDimensions(lexer);
         if (dim > 0) {
-            if (ColumnType.isSupportedArrayType((short)columnType)) {
+            if (ColumnType.isSupportedArrayType((short) columnType)) {
                 columnType = ColumnType.encodeArrayType(columnType, dim); // dim is 0 - based here, but 1-based in ColumnType
             } else {
                 throw SqlException.position(typePosition).put(ColumnType.nameOf(columnType)).put(" array type is not supported");
