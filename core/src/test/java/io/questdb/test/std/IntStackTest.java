@@ -85,6 +85,18 @@ public class IntStackTest {
     }
 
     @Test
+    public void testBottomPopAll() {
+        IntStack s = new IntStack();
+        s.push(1);
+        s.push(2);
+        s.setBottom(1);
+        s.popAll();
+        assertEquals(-1, s.pop());
+        s.setBottom(0);
+        assertEquals(1, s.pop());
+    }
+
+    @Test
     public void testBottomSize() {
         IntStack s = new IntStack();
         s.push(1);

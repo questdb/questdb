@@ -56,13 +56,6 @@ public class IntStack implements Mutable {
         }
     }
 
-    public void copyTo(IntStack there, int count) {
-        int n = Math.min(count, size());
-        while (n-- > 0) {
-            there.push(pop());
-        }
-    }
-
     public boolean notEmpty() {
         return size() > 0;
     }
@@ -102,6 +95,15 @@ public class IntStack implements Mutable {
         elements[h] = NO_ENTRY_VALUE;
         head = (h + 1) & mask;
         return result;
+    }
+
+    public void popAll() {
+        int h = head;
+        while (((tail - h) & mask) > bottom) {
+            elements[h] = NO_ENTRY_VALUE;
+            h = (h + 1) & mask;
+        }
+        head = h;
     }
 
     public void push(int e) {

@@ -71,7 +71,6 @@ public class ExpressionParser {
     private static final IntHashSet nonLiteralBranches = new IntHashSet(); // branches that can't be followed by constants
     private final OperatorRegistry activeRegistry;
     private final IntStack argStackDepthStack = new IntStack();
-    private final IntStack backupArgStackDepthStack = new IntStack();
     private final CharacterStore characterStore;
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final ObjStack<ExpressionNode> opStack = new ObjStack<>();
@@ -137,12 +136,6 @@ public class ExpressionParser {
         return SqlException.$(position, "missing arguments");
     }
 
-    private int copyToBackup(IntStack paramCountStack, IntStack backupParamCountStack) {
-        final int size = paramCountStack.size();
-        paramCountStack.copyTo(backupParamCountStack, size);
-        return size;
-    }
-
     private boolean isCount() {
         return opStack.size() == 2 && Chars.equals(opStack.peek().token, '(') && SqlKeywords.isCountKeyword(opStack.peek(1).token);
     }
@@ -165,9 +158,13 @@ public class ExpressionParser {
         return opStack.size() >= 2 && SqlKeywords.isColonColon(opStack.peek(1).token);
     }
 
-    private int onNode(ExpressionParserListener listener, ExpressionNode node, int argStackDepth, boolean exprStackUnwind) throws SqlException {
+    private int onNode(
+            ExpressionParserListener listener, ExpressionNode node, int argStackDepth, boolean exprStackUnwind
+    ) throws SqlException {
         if (argStackDepth < node.paramCount) {
-            throw SqlException.position(node.position).put("too few arguments for '").put(node.token).put("' [found=").put(argStackDepth).put(",expected=").put(node.paramCount).put(']');
+            throw SqlException.position(node.position).put("too few arguments for '").put(node.token)
+                    .put("' [found=").put(argStackDepth)
+                    .put(",expected=").put(node.paramCount).put(']');
         }
         if (node.type == ExpressionNode.LITERAL) {
             // when stack unwinds, not every keyword is expected to be column or table name and may not
@@ -198,7 +195,8 @@ public class ExpressionParser {
 
         final int savedParamCountStackBottom = paramCountStack.bottom();
         paramCountStack.setBottom(paramCountStack.sizeRaw());
-        final int argStackDepthStackSize = copyToBackup(argStackDepthStack, backupArgStackDepthStack);
+        final int savedArgStackDepthStackBottom = argStackDepthStack.bottom();
+        argStackDepthStack.setBottom(argStackDepthStack.sizeRaw());
 
         int pos = lexer.lastTokenPosition();
         // allow sub-query to parse "select" keyword
@@ -218,7 +216,7 @@ public class ExpressionParser {
         }
 
         paramCountStack.setBottom(savedParamCountStackBottom);
-        backupArgStackDepthStack.copyTo(argStackDepthStack, argStackDepthStackSize);
+        argStackDepthStack.setBottom(savedArgStackDepthStackBottom);
         return argStackDepth;
     }
 
@@ -1459,12 +1457,13 @@ public class ExpressionParser {
         } catch (SqlException e) {
             opStack.clear();
             wrapperStack.clear();
-            backupArgStackDepthStack.clear();
+            argStackDepthStack.clear();
+            paramCountStack.clear();
             throw e;
         } finally {
             wrapperStack.setBottom(savedWrapperStackBottom);
-            argStackDepthStack.clear();
-            paramCountStack.clear();
+            argStackDepthStack.popAll();
+            paramCountStack.popAll();
         }
     }
 
