@@ -27,7 +27,7 @@ package io.questdb.cairo.wal;
 public interface TableWriterPressureControl {
     TableWriterPressureControl EMPTY = new NoPressureControl();
 
-    long getMaxBatchRowCount();
+    long getMaxBlockRowCount();
 
     void updateInflightPartitions(int count);
 
@@ -41,15 +41,15 @@ public interface TableWriterPressureControl {
 
     void onOutOfMemory();
 
-    void setMaxBatchRowCount(int count);
+    void setMaxBlockRowCount(int count);
 
-    void updateInflightBatchRowCount(long count);
+    void updateInflightTxnBlockSize(long txnCount, long rowCount);
 
     void onApplyBlockError();
 
     class NoPressureControl implements TableWriterPressureControl {
         @Override
-        public long getMaxBatchRowCount() {
+        public long getMaxBlockRowCount() {
             return Integer.MAX_VALUE;
         }
 
@@ -78,7 +78,7 @@ public interface TableWriterPressureControl {
         }
 
         @Override
-        public void setMaxBatchRowCount(int count) {
+        public void setMaxBlockRowCount(int count) {
         }
 
         @Override
@@ -86,7 +86,7 @@ public interface TableWriterPressureControl {
         }
 
         @Override
-        public void updateInflightBatchRowCount(long count) {
+        public void updateInflightTxnBlockSize(long txnCount, long rowCount) {
         }
 
         @Override

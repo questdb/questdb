@@ -35,16 +35,17 @@ public class TableWriterPressureControlImpl implements TableWriterPressureContro
     private static final int PARTITION_COUNT_SCALE_UP_FACTOR = 4;
     private static final int TXN_COUNT_SCALE_DOWN_FACTOR = 4;
     private static final int TXN_COUNT_SCALE_UP_FACTOR = 1000;
-    private long inflightBatchRowCount;
+    private long inflightBlockRowCount;
+    private long inflightTxnCount;
     private int maxRecordedInflightPartitions = 1;
-    private long maxBatchRowCount = Integer.MAX_VALUE;
+    private long maxBlockRowCount = Integer.MAX_VALUE;
     // positive int: holds max parallelism
     // negative int: holds backoff counter
     private int memoryPressureRegulationValue = Integer.MAX_VALUE;
     private long walBackoffUntil = -1;
 
-    public long getMaxBatchRowCount() {
-        return Math.max(1, maxBatchRowCount);
+    public long getMaxBlockRowCount() {
+        return Math.max(1, maxBlockRowCount);
     }
 
     public int getMemoryPressureLevel() {
@@ -66,10 +67,16 @@ public class TableWriterPressureControlImpl implements TableWriterPressureContro
     }
 
     @Override
+    public void onApplyBlockError() {
+        inflightBlockRowCount = 1;
+        maxBlockRowCount = inflightBlockRowCount / TXN_COUNT_SCALE_DOWN_FACTOR;
+    }
+
+    @Override
     public boolean onEnoughMemory() {
         maxRecordedInflightPartitions = 1;
         walBackoffUntil = -1;
-        maxBatchRowCount = Math.max(maxBatchRowCount, maxBatchRowCount * TXN_COUNT_SCALE_UP_FACTOR);
+        maxBlockRowCount = Math.max(maxBlockRowCount, maxBlockRowCount * TXN_COUNT_SCALE_UP_FACTOR);
 
         if (memoryPressureRegulationValue == Integer.MAX_VALUE) {
             // already at max parallelism, can't go more optimistic
@@ -98,10 +105,11 @@ public class TableWriterPressureControlImpl implements TableWriterPressureContro
      */
     @Override
     public void onOutOfMemory() {
-        long inflightTxns = inflightBatchRowCount;
-        inflightBatchRowCount = maxBatchRowCount = Math.max(1, inflightTxns / TXN_COUNT_SCALE_DOWN_FACTOR);
-        if (maxRecordedInflightPartitions == 1 && inflightTxns <= 1) {
-            // There was no parallelism
+        long inflightRows = inflightBlockRowCount;
+        inflightBlockRowCount = maxBlockRowCount = Math.max(1, inflightRows / TXN_COUNT_SCALE_DOWN_FACTOR);
+
+        if (maxRecordedInflightPartitions == 1 && inflightTxnCount <= 1) {
+            // There was no parallelism and no multi transaction block
             if (memoryPressureRegulationValue <= -5) {
                 // Maximum backoff already tried => fail
                 walBackoffUntil = -1;
@@ -125,24 +133,19 @@ public class TableWriterPressureControlImpl implements TableWriterPressureContro
     }
 
     @Override
-    public void setMaxBatchRowCount(int count) {
-        maxBatchRowCount = count;
-    }
-
-    @Override
     public void updateInflightPartitions(int count) {
         maxRecordedInflightPartitions = Math.max(maxRecordedInflightPartitions, count);
     }
 
     @Override
-    public void updateInflightBatchRowCount(long count) {
-        inflightBatchRowCount = count;
+    public void setMaxBlockRowCount(int count) {
+        maxBlockRowCount = count;
     }
 
     @Override
-    public void onApplyBlockError() {
-        inflightBatchRowCount = 1;
-        maxBatchRowCount = inflightBatchRowCount / TXN_COUNT_SCALE_DOWN_FACTOR;
+    public void updateInflightTxnBlockSize(long txnCount, long rowCount) {
+        inflightBlockRowCount = rowCount;
+        inflightTxnCount = txnCount;
     }
 
     private static long getTicks() {

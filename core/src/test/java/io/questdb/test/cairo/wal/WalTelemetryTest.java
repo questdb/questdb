@@ -61,7 +61,7 @@ public class WalTelemetryTest extends AbstractCairoTest {
 
                 var tt = engine.verifyTableName(tableName);
                 var control = engine.getTableSequencerAPI().getTxnTracker(tt).getMemPressureControl();
-                control.setMaxBatchRowCount(1);
+                control.setMaxBlockRowCount(1);
 
                 setCurrentMicros(3000);
                 drainWalQueue();

@@ -188,7 +188,7 @@ public class WalTxnDetails implements QuietCloseable {
         int blockSize = 1;
         long lastSeqTxn = getLastSeqTxn();
         long totalRowCount = 0;
-        maxBlockRecordCount = Math.min(maxBlockRecordCount, pressureControl.getMaxBatchRowCount() - 1);
+        maxBlockRecordCount = Math.min(maxBlockRecordCount, pressureControl.getMaxBlockRowCount() - 1);
 
         for (long nextTxn = seqTxn; nextTxn < lastSeqTxn; nextTxn++) {
             long txnRowCount = getSegmentRowHi(nextTxn) - getSegmentRowLo(nextTxn);
@@ -214,7 +214,7 @@ public class WalTxnDetails implements QuietCloseable {
 
         // to force switch to 1 by 1 txn commit, uncomment the following line
         // return 1;
-        pressureControl.updateInflightBatchRowCount(totalRowCount);
+        pressureControl.updateInflightTxnBlockSize(blockSize, totalRowCount);
         return blockSize;
     }
 
@@ -529,8 +529,6 @@ public class WalTxnDetails implements QuietCloseable {
     private long loadTransactionDetails(Path tempPath, TransactionLogCursor transactionLogCursor, long loadFromSeqTxn, int rootLen, long maxCommittedTimestamp, int maxLoadTxnCount) {
         transactionLogCursor.setPosition(loadFromSeqTxn - 1);
         long totalRowsLoaded = 0;
-
-        System.out.println("loadTransactionDetails: loadFromSeqTxn=" + loadFromSeqTxn + ", maxLoadTxnCount=" + maxLoadTxnCount);
 
         try (WalEventReader eventReader = walEventReader) {
 

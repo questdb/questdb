@@ -1852,7 +1852,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
     private void runApplyOnce(TableToken token) {
         var control = engine.getTableSequencerAPI().getTxnTracker(token).getMemPressureControl();
-        control.setMaxBatchRowCount(1);
+        control.setMaxBlockRowCount(1);
 
         try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
             walApplyJob.run(0);

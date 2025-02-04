@@ -1140,7 +1140,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 } catch (CairoException e) {
                     if (e.isApplyBlockError()) {
                         pressureControl.onApplyBlockError();
-                        pressureControl.updateInflightBatchRowCount(
+                        pressureControl.updateInflightTxnBlockSize(
+                                1,
                                 Math.max(1, walTxnDetails.getSegmentRowHi(seqTxn) - walTxnDetails.getSegmentRowLo(seqTxn))
                         );
                         LOG.info().$("failed to apply block, trying to apply 1 by 1 [table=").$(tableToken)
@@ -1575,6 +1576,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final long dstDataFd = columnFdAndDataSize.get(3L * i + 1);
                 ff.close(dstDataFd);
             }
+            columnFdAndDataSize.clear();
             columnFdAndDataSize.resetCapacity();
             parquetDecoder.close();
             ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
@@ -3498,7 +3500,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private int calculateInsertTransactionBlock(long seqTxn, TableWriterPressureControl pressureControl) {
         if (txWriter.getLagRowCount() > 0) {
-            pressureControl.updateInflightBatchRowCount(
+            pressureControl.updateInflightTxnBlockSize(
+                    1,
                     Math.max(1, walTxnDetails.getSegmentRowHi(seqTxn) - walTxnDetails.getSegmentRowLo(seqTxn))
             );
             return 1;
@@ -5180,6 +5183,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             tempDirectMemList = new DirectLongList(capacity, MemoryTag.NATIVE_TABLE_WRITER);
             return tempDirectMemList;
         }
+        tempDirectMemList.clear();
         tempDirectMemList.setCapacity(capacity);
         return tempDirectMemList;
     }
