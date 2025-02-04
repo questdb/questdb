@@ -31,6 +31,11 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 
 
+/**
+ * Interface for reading various types of data from a memory block.
+ * Provides a random access API where the offset is relative to the block start.
+ * The size of the block can be obtained via the {@link #length()} method.
+ */
 public interface ReadableBlock {
     long addressOf(long offset);
 

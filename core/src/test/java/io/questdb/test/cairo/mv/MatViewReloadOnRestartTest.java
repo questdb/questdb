@@ -27,6 +27,7 @@ package io.questdb.test.cairo.mv;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.line.LineSenderException;
@@ -46,7 +47,6 @@ import org.junit.Test;
 import java.util.HashMap;
 import java.util.Map;
 
-import static io.questdb.cairo.TableUtils.MAT_VIEW_FILE_NAME;
 import static io.questdb.test.tools.TestUtils.assertContains;
 
 
@@ -90,7 +90,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
             }
 
             // Delete _mv file.
-            TestFilesFacadeImpl.INSTANCE.remove(dbPath.trimTo(dbPathLen).concat(viewDirName).concat(MAT_VIEW_FILE_NAME).$());
+            TestFilesFacadeImpl.INSTANCE.remove(dbPath.trimTo(dbPathLen).concat(viewDirName).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
 
             // The mat view should be skipped on server start.
             try (final TestServerMain main2 = startWithEnvVariables0(

@@ -30,7 +30,9 @@ import io.questdb.cairo.meta.MetaFileUtils;
 import io.questdb.cairo.meta.MetaFileWriter;
 import io.questdb.cairo.meta.ReadableBlock;
 import io.questdb.cairo.meta.WritableBlock;
+import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
@@ -49,7 +51,6 @@ import org.junit.Test;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static io.questdb.cairo.TableUtils.MAT_VIEW_FILE_NAME;
 import static io.questdb.cairo.vm.Vm.STRING_LENGTH_BYTES;
 
 public class MetaFileTest extends AbstractCairoTest {
@@ -98,7 +99,8 @@ public class MetaFileTest extends AbstractCairoTest {
                 try (MetaFileReader reader = new MetaFileReader(configuration)) {
                     reader.of(path.$());
                 } catch (Exception e) {
-                    Assert.assertTrue(e.getMessage().contains("Expected at least 1 block"));
+                    Assert.assertTrue(e.getMessage().contains("cannot read meta file, expected at least 40 bytes"));
+
                 }
             }
         });
@@ -110,14 +112,17 @@ public class MetaFileTest extends AbstractCairoTest {
             try (Path path = getDefinitionFilePath("test")) {
                 FilesFacade ff = configuration.getFilesFacade();
 
-                try (MetaFileWriter writer = new MetaFileWriter(ff)) {
-                    writer.of(path.$());
+                // size > HEADER_SIZE
+                // version = 0
+                try (MemoryCMARW mem = Vm.getCMARWInstance()) {
+                    mem.of(ff, path.$(), ff.getPageSize(), ff.getPageSize(), 0);
+                    mem.putInt(0, 0);
                 }
 
                 try (MetaFileReader reader = new MetaFileReader(configuration)) {
                     reader.of(path.$());
                 } catch (Exception e) {
-                    Assert.assertTrue(e.getMessage().contains("Expected at least 1 block"));
+                    Assert.assertTrue(e.getMessage().contains("cannot read meta file, expected at least 1 commited data block"));
                 }
             }
         });
@@ -132,7 +137,7 @@ public class MetaFileTest extends AbstractCairoTest {
                     reader.of(path.$());
                     Assert.fail("Expected exception");
                 } catch (Exception e) {
-                    Assert.assertTrue(e.getMessage().contains("Cannot find file"));
+                    Assert.assertTrue(e.getMessage().contains("[2] cannot open meta file"));
                 }
             }
         });
@@ -417,7 +422,7 @@ public class MetaFileTest extends AbstractCairoTest {
         Path path = new Path().of(configuration.getRoot()).concat(tableName).slash();
         FilesFacade ff = configuration.getFilesFacade();
         ff.mkdirs(path, configuration.getMkDirMode());
-        return path.of(configuration.getRoot()).concat(tableName).concat(MAT_VIEW_FILE_NAME);
+        return path.of(configuration.getRoot()).concat(tableName).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME);
     }
 
     private static void readAllBlocks(Path path, int expectedBlocks) {

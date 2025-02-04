@@ -178,7 +178,7 @@ public class MetaFileWriter implements Closeable, Mutable {
     }
 
     // Depends on the state of memory, blockOffset and blockCount from the outer scope
-    class BlockMemoryHandleImpl implements WritableBlock, AppendableBlock {
+    private class BlockMemoryHandleImpl implements WritableBlock, AppendableBlock {
         private boolean isCommitted;
         private long payloadOffset;
 

@@ -30,6 +30,12 @@ import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+/**
+ * Interface for appending various types of data to a memory block.
+ * The block is extendable, meaning it can grow as more data is appended.
+ * <p>
+ * For a pre-allocated block with random access API, see {@link WritableBlock}.
+ */
 public interface AppendableBlock {
     boolean commit(short type, byte version, byte flags);
 

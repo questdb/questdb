@@ -136,7 +136,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
-import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.griffin.SqlKeywords.*;
 
 public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallback {
@@ -3829,9 +3829,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             MatViewDefinition matViewDefinition = engine.getMatViewGraph().getMatViewDefinition(tableToken);
                             if (matViewDefinition != null) {
                                 try (MetaFileWriter writer = metaFileWriter) {
-                                    writer.of(auxPath.trimTo(tableRootLen).concat(MAT_VIEW_FILE_NAME).$());
-                                    createMatViewDefinition(writer.append(), matViewDefinition);
-                                    writer.commit();
+                                    writer.of(auxPath.trimTo(tableRootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
+                                    MatViewDefinition.dumpTo(writer, matViewDefinition);
                                 }
                             } else {
                                 LOG.info().$("materialized view definition for backup not found [view=").$(tableToken).I$();

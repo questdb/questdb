@@ -64,7 +64,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 
-import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
+import static io.questdb.cairo.TableUtils.openSmallFile;
 import static io.questdb.cairo.wal.WalUtils.*;
 
 public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietCloseable {
@@ -275,9 +276,8 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         MatViewDefinition matViewDefinition = engine.getMatViewGraph().getMatViewDefinition(tableToken);
                                         if (matViewDefinition != null) {
                                             try (MetaFileWriter writer = new MetaFileWriter(ff)) {
-                                                writer.of(path.trimTo(rootLen).concat(MAT_VIEW_FILE_NAME).$());
-                                                createMatViewDefinition(writer.append(), matViewDefinition);
-                                                writer.commit();
+                                                writer.of(path.trimTo(rootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
+                                                MatViewDefinition.dumpTo(writer, matViewDefinition);
                                             }
                                         } else {
                                             LOG.info().$("materialized view definition not found [view=").$(tableToken).I$();

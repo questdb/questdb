@@ -95,7 +95,12 @@ public class MetaFileReader implements Closeable, Mutable {
 
             if (clock.getTicks() > deadline) {
                 throw CairoException.critical(0)
-                        .put("Metafile read timeout [timeout=").put(spinLockTimeoutMs).put("ms]");
+                        .put("meta file read timeout [timeout=")
+                        .put(spinLockTimeoutMs)
+                        .put("ms")
+                        .put(", fd=")
+                        .put(file.getFd())
+                        .put(']');
             }
             Os.pause();
         }
@@ -108,10 +113,12 @@ public class MetaFileReader implements Closeable, Mutable {
 
         if (checksum != expectedChecksum) {
             throw CairoException.critical(0)
-                    .put("Checksum mismatch [expected=")
+                    .put("meta file checksum mismatch [expected=")
                     .put(expectedChecksum)
                     .put(", actual=")
                     .put(checksum)
+                    .put(", fd=")
+                    .put(file.getFd())
                     .put(']');
         }
 
@@ -134,11 +141,16 @@ public class MetaFileReader implements Closeable, Mutable {
         final long pageSize = ff.getPageSize();
         if (!ff.exists(path)) {
             throw CairoException.critical(CairoException.ERRNO_FILE_DOES_NOT_EXIST)
-                    .put("Cannot find file: ").put(path);
+                    .put("cannot open meta file [path")
+                    .put(path)
+                    .put(']');
         }
 
         if (ff.length(path) < HEADER_SIZE) {
-            throw CairoException.critical(0).put("Expected at least 1 block");
+            throw CairoException.critical(0)
+                    .put("cannot read meta file, expected at least " + HEADER_SIZE + " bytes [path=")
+                    .put(path)
+                    .put(']');
         }
 
         if (file == null) {
@@ -147,7 +159,10 @@ public class MetaFileReader implements Closeable, Mutable {
         file.of(ff, path, pageSize, ff.length(path), MemoryTag.MMAP_DEFAULT);
         final long version = getVersionVolatile();
         if (version == 0) {
-            throw CairoException.critical(0).put("File is empty");
+            throw CairoException.critical(0)
+                    .put("cannot read meta file, expected at least 1 commited data block [path=")
+                    .put(path)
+                    .put(']');
         }
 
         if (memory == null) {
@@ -188,7 +203,7 @@ public class MetaFileReader implements Closeable, Mutable {
             this.currentBlockOffset = blocksOffset;
         }
 
-        class Block implements ReadableBlock {
+        private class Block implements ReadableBlock {
             private byte flags;
             private int length;
             private long payloadOffset;
@@ -197,7 +212,6 @@ public class MetaFileReader implements Closeable, Mutable {
 
             @Override
             public long addressOf(long offset) {
-                assert offset >= 0 && offset < length;
                 return memory.addressOf(payloadOffset + offset);
             }
 
@@ -208,103 +222,86 @@ public class MetaFileReader implements Closeable, Mutable {
 
             @Override
             public BinarySequence getBin(long offset) {
-                assert offset >= 0 && offset < length;
                 return memory.getBin(payloadOffset + offset);
             }
 
             @Override
             public long getBinLen(long offset) {
-                assert offset >= 0 && offset < length;
                 return memory.getBinLen(payloadOffset + offset);
             }
 
             @Override
             public boolean getBool(long offset) {
-                assert offset >= 0 && offset < length;
                 return memory.getBool(payloadOffset + offset);
             }
 
             @Override
             public byte getByte(long offset) {
-                assert offset >= 0 && offset < length;
                 return memory.getByte(payloadOffset + offset);
             }
 
             @Override
             public char getChar(long offset) {
-                assert offset >= 0 && offset < length;
                 return memory.getChar(payloadOffset + offset);
             }
 
             @Override
             public double getDouble(long offset) {
-                assert offset >= 0 && offset < length;
                 return memory.getDouble(payloadOffset + offset);
             }
 
             @Override
             public float getFloat(long offset) {
-                assert offset >= 0 && offset < length;
                 return memory.getFloat(payloadOffset + offset);
             }
 
             @Override
             public int getIPv4(long offset) {
-                assert offset >= 0 && offset < length;
                 return memory.getIPv4(payloadOffset + offset);
             }
 
             @Override
             public int getInt(long offset) {
-                assert offset >= 0 && offset < length;
                 return memory.getInt(payloadOffset + offset);
             }
 
             @Override
             public long getLong(long offset) {
-                assert offset >= 0 && offset < length;
                 return memory.getLong(payloadOffset + offset);
             }
 
             @Override
             public void getLong256(long offset, CharSink<?> sink) {
-                assert offset >= 0 && offset < length;
                 memory.getLong256(payloadOffset + offset, sink);
             }
 
             @Override
             public void getLong256(long offset, Long256Acceptor sink) {
-                assert offset >= 0 && offset < length;
                 memory.getLong256(payloadOffset + offset, sink);
             }
 
             @Override
             public Long256 getLong256(long offset) {
-                assert offset >= 0 && offset < length;
                 return memory.getLong256A(payloadOffset + offset);
             }
 
             @Override
             public short getShort(long offset) {
-                assert offset >= 0 && offset < length;
                 return memory.getShort(payloadOffset + offset);
             }
 
             @Override
             public CharSequence getStr(long offset) {
-                assert offset >= 0 && offset < length;
                 return memory.getStrA(payloadOffset + offset);
             }
 
             @Override
             public int getStrLen(long offset) {
-                assert offset >= 0 && offset < length;
                 return memory.getStrLen(payloadOffset + offset);
             }
 
             @Override
             public Utf8Sequence getVarchar(long offset) {
-                assert offset >= 0 && offset < length;
                 return VarcharTypeDriver.getPlainValue(memory, payloadOffset + offset, 1);
             }
 

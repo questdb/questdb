@@ -28,6 +28,13 @@ import io.questdb.std.Long256;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
 
+/**
+ * Interface for writing various types of data to a pre-allocated memory block.
+ * The block has a fixed size and provides a random access API.
+ * The offset is relative to the block start.
+ * <p>
+ * For an extendable block with append API, see {@link AppendableBlock}.
+ */
 public interface WritableBlock {
     boolean commit(short type, byte version, byte flags);
 
