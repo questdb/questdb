@@ -32,7 +32,7 @@ import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
-import io.questdb.cairo.arr.ArrayShape;
+import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.sql.BindVariableService;
@@ -997,27 +997,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.stateParse = stateParse;
     }
 
-    private static int arrayToString(ArrayView arrayView, ArrayShape shape, int dim, int currentIndex, PGResponseSink response) {
-        response.putAscii('{');
-        int count = shape.getLength(dim); // Number of elements or subarrays at this dimension.
-        for (int i = 0; i < count; i++) {
-            if (dim == shape.getDimensionCount() - 1) {
-                // If we're at the last dimension, append the flat array element.
-                response.put(arrayView.getDoubleFromRowMajor(currentIndex));
-                currentIndex++; // Move to the next element in the flat array.
-            } else {
-                // Recursively build the array string for the next dimension.
-                currentIndex = arrayToString(arrayView, shape, dim + 1, currentIndex, response);
-            }
-            // Append a comma if this is not the last element in the current dimension.
-            if (i < count - 1) {
-                response.putAscii(',');
-            }
-        }
-        response.putAscii('}');
-        return currentIndex;
-    }
-
     private static void outBindComplete(PGResponseSink utf8Sink) {
         outSimpleMsg(utf8Sink, MESSAGE_TYPE_BIND_COMPLETE);
     }
@@ -1664,11 +1643,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             return;
         }
 
-        ArrayShape shape = arrayView.getShape();
-        int ndims = shape.getDimensionCount();
+        int ndims = arrayView.getDim();
         int totalElements = 1;
         for (int i = 0; i < ndims; i++) {
-            totalElements *= shape.getLength(i);
+            totalElements *= arrayView.getDimLength(i);
         }
 
         int typeTag = ColumnType.decodeArrayElementType(columnType);
@@ -1691,7 +1669,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
         // Write dimension information
         for (int i = 0; i < ndims; i++) {
-            utf8Sink.putNetworkInt(shape.getLength(i)); // length of each dimension
+            utf8Sink.putNetworkInt(arrayView.getDimLength(i)); // length of each dimension
             utf8Sink.putNetworkInt(1); // lower bound, always 1 in PostgreSQL
         }
 
@@ -1871,7 +1849,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         final long a = utf8Sink.skipInt();
         switch (ColumnType.decodeArrayElementType(columnType)) {
             case ColumnType.DOUBLE:
-                arrayToString(arrayView, arrayView.getShape(), 0, 0, utf8Sink);
+                ArrayTypeDriver.doubleArrayToJson(arrayView, 0, 0, utf8Sink, '{', '}');
                 break;
         }
         utf8Sink.putLenEx(a);

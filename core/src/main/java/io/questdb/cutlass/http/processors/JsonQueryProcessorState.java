@@ -882,7 +882,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                         record.getArray(columnIdx, columnType),
                         0,
                         0,
-                        response);
+                        response,
+                        '[',
+                        ']'
+                );
                 break;
         }
     }

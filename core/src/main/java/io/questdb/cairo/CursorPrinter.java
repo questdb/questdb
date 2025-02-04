@@ -174,7 +174,10 @@ public class CursorPrinter {
                         record.getArray(columnIndex, columnType),
                         0,
                         0,
-                        sink
+                        sink,
+                        '[',
+                        ']'
+
                 );
                 break;
             default:
