@@ -173,7 +173,7 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
             if (cursor > -1) {
                 final PageFrameReduceTask task = queue.get(cursor);
                 final PageFrameSequence<?> frameSequence = task.getFrameSequence();
-                SqlExecutionCircuitBreaker ogWrappedCircuitBreaker = null;
+                boolean circuitBreakerRestorePending = false;
                 try {
                     LOG.debug()
                             .$("reducing [shard=").$(frameSequence.getShard())
@@ -192,7 +192,11 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
                         // If this is not work stealing, or the stealing frame sequence is not working on its own task,
                         // we need to initialize the circuit breaker wrapper with the task's circuit breaker.
                         if (workerId != -1 || frameSequence != stealingFrameSequence) {
-                            ogWrappedCircuitBreaker = circuitBreaker.init(frameSequence.getWorkStealCircuitBreaker());
+                            circuitBreaker.backup();
+                            circuitBreaker.init(frameSequence.getWorkStealCircuitBreaker());
+                            circuitBreakerRestorePending = true;
+                        } else { // workerId == -1 here
+                            frameSequence.validateWorkStealingCircuitBreaker();
                         }
                         reduce(workerId, record, circuitBreaker, task, frameSequence, stealingFrameSequence);
                     }
@@ -217,8 +221,8 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
                     // sure that the task is available for consumers.
                     frameSequence.getReduceFinishedCounter().incrementAndGet();
                     // Restore frame sequence's circuit breaker to the original state.
-                    if (ogWrappedCircuitBreaker != null) {
-                        circuitBreaker.init(ogWrappedCircuitBreaker);
+                    if (circuitBreakerRestorePending) {
+                        circuitBreaker.restore();
                     }
                 }
                 return false;
