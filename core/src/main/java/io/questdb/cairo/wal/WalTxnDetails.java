@@ -45,8 +45,6 @@ import io.questdb.std.str.DirectString;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.function.IntBinaryOperator;
-
 import static io.questdb.cairo.wal.WalTxnType.DATA;
 import static io.questdb.cairo.wal.WalTxnType.NONE;
 import static io.questdb.cairo.wal.WalUtils.*;
@@ -275,25 +273,6 @@ public class WalTxnDetails implements QuietCloseable {
 
     public int getWalId(long seqTxn) {
         return Numbers.decodeHighInt(transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ID_WAL_SEG_ID_OFFSET)));
-    }
-
-    @Nullable
-    public SymbolMapDiff getWalSymbolColMap(long seqTxn, int columnIndex) {
-        long offset = transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_SYMBOL_DIFF_OFFSET));
-        if (offset < 0) {
-            return null;
-        }
-
-        symbolMapDiffCursor.of((int) (offset - currentSymbolIndexesStartOffset));
-        SymbolMapDiff symbolMapDiff;
-        while ((symbolMapDiff = symbolMapDiffCursor.nextSymbolMapDiff()) != null) {
-            if (symbolMapDiff.getColumnIndex() == columnIndex) {
-                return symbolMapDiff;
-            }
-        }
-        // Column added to the existing transaction
-        // all values are null
-        return null;
     }
 
     @Nullable
@@ -840,8 +819,6 @@ public class WalTxnDetails implements QuietCloseable {
     }
 
     public class WalTxnDetailsSlice {
-        private long lo;
-        private final IntBinaryOperator comparerByWalSegmentId = this::compareByWalIdSegmentId;
 
         public long getMaxTimestamp(int txn) {
             return WalTxnDetails.this.getMaxTimestamp(txnOrder.get(2L * txn + 1));
@@ -860,15 +837,15 @@ public class WalTxnDetails implements QuietCloseable {
         }
 
         public int getSegmentId(int txn) {
-            return WalTxnDetails.this.getSegmentId(txnOrder.get(2L * txn + 1));
+            return Numbers.decodeLowInt(txnOrder.get(2L * txn));
         }
 
         public long getSeqTxn(int txn) {
-            return WalTxnDetails.this.getSegTxn(txnOrder.get(2L * txn + 1));
+            return txnOrder.get(2L * txn + 1);
         }
 
         public int getWalId(int txn) {
-            return WalTxnDetails.this.getWalId(txnOrder.get(2L * txn + 1));
+            return Numbers.decodeHighInt(txnOrder.get(2L * txn));
         }
 
         public boolean isLastSegmentUse(int txn) {
@@ -876,8 +853,8 @@ public class WalTxnDetails implements QuietCloseable {
         }
 
         public WalTxnDetailsSlice of(long lo, int count) {
-            this.lo = lo;
             txnOrder.clear();
+            // Rserve double capacity to use with radix sort
             txnOrder.setCapacity(count * 2L * 2L);
 
             for (long i = lo, n = lo + count; i < n; i++) {
@@ -893,17 +870,6 @@ public class WalTxnDetails implements QuietCloseable {
             );
 
             return this;
-        }
-
-        private int compareByWalIdSegmentId(int txn1, int txn2) {
-            var segWalId1 = transactionMeta.get((int) ((txn1 + lo - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ID_WAL_SEG_ID_OFFSET));
-            var segWalId2 = transactionMeta.get((int) ((txn2 + lo - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ID_WAL_SEG_ID_OFFSET));
-
-            int diff1 = Long.compare(segWalId1, segWalId2);
-            if (diff1 == 0) {
-                return txn1 - txn2;
-            }
-            return diff1;
         }
     }
 }

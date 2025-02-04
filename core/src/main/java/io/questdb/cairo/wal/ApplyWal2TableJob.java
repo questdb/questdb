@@ -383,7 +383,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 );
                                 assert txnCommitted != 0;
 
-                                if (txnCommitted > -1L) {
+                                if (txnCommitted > 0) {
                                     insertTimespan += microClock.getTicks() - start;
                                     rowsAdded += lastCommittedRows;
                                     iTransaction += txnCommitted;
@@ -698,7 +698,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 } finally {
                     Misc.free(writer);
                 }
-//                !runStatus.isTerminating() &&
                 if (engine.getTableSequencerAPI().updateWriterTxns(tableToken, writerTxn, dirtyWriterTxn)) {
                     engine.notifyWalTxnCommitted(tableToken);
                 }

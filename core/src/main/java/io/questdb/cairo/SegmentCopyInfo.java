@@ -140,10 +140,6 @@ public class SegmentCopyInfo implements QuietCloseable {
         return (int) segments.get(segmentIndex * 4L + 1);
     }
 
-    public long getSeqTxn(long txnIndex) {
-        return startSeqTxn + txns.get(txnIndex * 4L + 1);
-    }
-
     public long getStartTxn() {
         return startSeqTxn;
     }

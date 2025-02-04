@@ -3111,16 +3111,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 || columns.get(getPrimaryColumnIndex(metadata.getTimestampIndex())).getAppendOffset() == (txWriter.getTransientRowCount() + txWriter.getLagRowCount()) * Long.BYTES;
     }
 
-    private boolean assertSymbolValues(long address, long totalRows) {
-        for (long i = 0; i < totalRows; i++) {
-            long symbolKey = Unsafe.getUnsafe().getInt(address + i * 4);
-            if (symbolKey > Integer.MAX_VALUE / 2) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     private boolean assertTsIndex(long timestampAddr, long min, long max, long totalRows) {
         long lastTs = min;
         for (long j = 0; j < totalRows; j++) {
@@ -7138,6 +7128,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 .I$();
 
         long rowCount;
+
         try {
             mmapWalColumns(segmentCopyInfo);
             rowCount = processWalCommitBlockSortWalSegmentTimestamps(walMappedColumns);
@@ -7150,15 +7141,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try {
                 lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
                 processWalCommitFinishApply(walLagCount, o3TimestampMem.getAddress(), 0, rowCount, pressureControl, true, partitionTimestampHi);
-            } catch (Throwable th) {
-                LOG.critical().$("failed to commit WAL block [table=").$(tableToken.getDirName()).$(", ex=").$(th).I$();
-                throw th;
             } finally {
                 finishO3Append(0);
                 o3Columns = o3MemColumns1;
             }
             return blockTransactionCount;
         }
+
         return -1;
     }
 
@@ -7251,7 +7240,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 );
 
                 if (!Vect.isIndexSuccess(indexFormat)) {
-                    LOG.info().$("WAL dedup sorted index failed will switch to 1 commit [table=").$(tableToken.getDirName())
+                    LOG.critical().$("WAL dedup sorted index failed will switch to 1 commit [table=").$(tableToken.getDirName())
                             .$(", totalRows=").$(totalRows)
                             .$(", indexFormat=").$(indexFormat)
                             .I$();
@@ -7501,13 +7490,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 );
 
                 if (rowCount != totalRows) {
-                    LOG.error().$("symbol remap failed [table=").$(tableToken.getDirName())
-                            .$(", column=").$(metadata.getColumnName(columnIndex))
-                            .$(", expected=").$(totalRows)
-                            .$(", actual=").$(rowCount)
-                            .I$();
-
-                    throw CairoException.txnApplyBlockError(tableToken);
+                    throwColumnShuffleFailed(columnIndex, columnType, totalRows, rowCount);
                 }
 
                 // Save the hint that this symbol is already re-mapped and results are in o3MemColumns2
@@ -7566,7 +7549,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     );
 
                     if (rowCount != totalRows) {
-                        throwColumnShuffleFaild(columnIndex, columnType, totalRows, rowCount);
+                        throwColumnShuffleFailed(columnIndex, columnType, totalRows, rowCount);
                     }
                 } else {
                     var destinationColumn = o3MemColumns1.get(getPrimaryColumnIndex(columnIndex));
@@ -7584,7 +7567,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         );
 
                         if (rowCount < totalRows) {
-                            throwColumnShuffleFaild(columnIndex, columnType, totalRows, rowCount);
+                            throwColumnShuffleFailed(columnIndex, columnType, totalRows, rowCount);
                         }
                     } else {
 
@@ -7618,7 +7601,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             );
 
                             if (rowCount != totalRows && (!isDeduplicationEnabled() || rowCount < totalRows)) {
-                                throwColumnShuffleFaild(columnIndex, columnType, totalRows, rowCount);
+                                throwColumnShuffleFailed(columnIndex, columnType, totalRows, rowCount);
                             }
                         } else {
                             // Shuffle as int32, no new symbols to add
@@ -7631,11 +7614,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             );
 
                             if (rowCount != totalRows) {
-                                throwColumnShuffleFaild(columnIndex, columnType, totalRows, rowCount);
+                                throwColumnShuffleFailed(columnIndex, columnType, totalRows, rowCount);
                             }
                         }
-
-                        assert assertSymbolValues(destinationColumn.getAddress(), totalRows);
                     }
                 }
             } else {
@@ -7660,7 +7641,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 );
 
                 if (rowCount != totalRows) {
-                    throwColumnShuffleFaild(columnIndex, columnType, totalRows, rowCount);
+                    throwColumnShuffleFailed(columnIndex, columnType, totalRows, rowCount);
                 }
             }
         } catch (Throwable th) {
@@ -9035,12 +9016,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void throwColumnShuffleFaild(int columnIndex, int columnType, long totalRows, long rowCount) {
-        LOG.error().$("column merge suffle failed [table=").$(tableToken.getDirName())
+    private void throwColumnShuffleFailed(int columnIndex, int columnType, long totalRows, long rowCount) {
+        LOG.error().$("wal block apply failed [table=").$(tableToken.getDirName())
                 .$(", column=").$(metadata.getColumnName(columnIndex))
                 .$(", columnType=").$(ColumnType.nameOf(columnType))
-                .$(", expected=").$(totalRows)
-                .$(", actual=").$(rowCount)
+                .$(", expectedResult=").$(totalRows)
+                .$(", actualResult=").$(rowCount)
                 .I$();
 
         throw CairoException.txnApplyBlockError(tableToken);
