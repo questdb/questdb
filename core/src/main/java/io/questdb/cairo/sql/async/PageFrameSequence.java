@@ -74,7 +74,6 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private final AtomicBoolean valid = new AtomicBoolean(true);
     private final WorkStealingStrategy workStealingStrategy;
     public volatile boolean done;
-    private SqlExecutionCircuitBreakerWrapper circuitBreaker;
     private long circuitBreakerFd;
     private SCSequence collectSubSeq;
     private int collectedFrameIndex = -1;
@@ -91,6 +90,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private SqlExecutionContext sqlExecutionContext;
     private long startTime;
     private boolean uninterruptible;
+    private SqlExecutionCircuitBreakerWrapper workStealCircuitBreaker;
 
     public PageFrameSequence(
             CairoConfiguration configuration,
@@ -109,7 +109,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         this.localTaskFactory = localTaskFactory;
         this.workStealingStrategy = WorkStealingStrategyFactory.getInstance(configuration, sharedWorkerCount);
         this.taskType = taskType;
-        this.circuitBreaker = new SqlExecutionCircuitBreakerWrapper(configuration.getCircuitBreakerConfiguration());
+        this.workStealCircuitBreaker = new SqlExecutionCircuitBreakerWrapper(configuration.getCircuitBreakerConfiguration());
     }
 
     /**
@@ -148,7 +148,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                         reduceQueue,
                         pageFrameReduceSubSeq,
                         localRecord,
-                        circuitBreaker,
+                        workStealCircuitBreaker,
                         this
                 );
             } catch (Throwable th) {
@@ -212,7 +212,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     public void close() {
         clear();
         localRecord = Misc.free(localRecord);
-        circuitBreaker = Misc.free(circuitBreaker);
+        workStealCircuitBreaker = Misc.free(workStealCircuitBreaker);
         localTask = Misc.free(localTask);
         Misc.free(atom);
     }
@@ -236,10 +236,6 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
     public int getCancelReason() {
         return cancelReason.get();
-    }
-
-    public SqlExecutionCircuitBreakerWrapper getCircuitBreaker() {
-        return circuitBreaker;
     }
 
     public long getCircuitBreakerFd() {
@@ -301,6 +297,10 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
     public byte getTaskType() {
         return taskType;
+    }
+
+    public SqlExecutionCircuitBreakerWrapper getWorkStealCircuitBreaker() {
+        return workStealCircuitBreaker;
     }
 
     public WorkStealingStrategy getWorkStealingStrategy() {
@@ -374,7 +374,10 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         circuitBreakerFd = executionContext.getCircuitBreaker().getFd();
         uninterruptible = executionContext.isUninterruptible();
 
-        initRecord(executionContext.getCircuitBreaker());
+        if (localRecord == null) {
+            localRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+        }
+        workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
 
         final Rnd rnd = executionContext.getAsyncRandom();
         try {
@@ -457,6 +460,19 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         }
     }
 
+    /**
+     * Validates that the work stealing circuit breaker's state matches what's
+     * in the SQL execution context, i.e. it's the same as at the start of query execution.
+     */
+    public void validateWorkStealingCircuitBreaker() {
+        final SqlExecutionCircuitBreaker ownDelegate = workStealCircuitBreaker.getDelegate();
+        if (ownDelegate.isThreadSafe()) {
+            assert ownDelegate == sqlExecutionContext.getCircuitBreaker();
+        } else {
+            assert ownDelegate.getFd() == sqlExecutionContext.getCircuitBreaker().getFd();
+        }
+    }
+
     private void buildAddressCache() {
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
@@ -526,7 +542,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                     }
                     // start stealing work to unload the queue
                     idle = false;
-                    if (stealWork(reduceQueue, reduceSubSeq, localRecord, circuitBreaker)) {
+                    if (stealWork(reduceQueue, reduceSubSeq, localRecord, workStealCircuitBreaker)) {
                         if (reduceFinishedCounter.get() > collectedFrameCount) {
                             // We have something to collect, so let's do it!
                             return true;
@@ -553,7 +569,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         // join the gang to consume published tasks
         while (reduceFinishedCounter.get() < dispatchStartFrameIndex) {
             idle = false;
-            if (stealWork(reduceQueue, reduceSubSeq, localRecord, circuitBreaker)) {
+            if (stealWork(reduceQueue, reduceSubSeq, localRecord, workStealCircuitBreaker)) {
                 if (isActive()) {
                     continue;
                 }
@@ -562,17 +578,10 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         }
 
         if (idle) {
-            stealWork(reduceQueue, reduceSubSeq, localRecord, circuitBreaker);
+            stealWork(reduceQueue, reduceSubSeq, localRecord, workStealCircuitBreaker);
         }
 
         return dispatched;
-    }
-
-    private void initRecord(SqlExecutionCircuitBreaker executionContextCircuitBreaker) {
-        if (localRecord == null) {
-            localRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
-        }
-        circuitBreaker.init(executionContextCircuitBreaker);
     }
 
     private boolean stealWork(
@@ -607,7 +616,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                     .$(", active=").$(isActive())
                     .I$();
             if (isActive()) {
-                PageFrameReduceJob.reduce(localRecord, circuitBreaker, localTask, this, this);
+                PageFrameReduceJob.reduce(localRecord, workStealCircuitBreaker, localTask, this, this);
             }
         } catch (Throwable th) {
             LOG.error()
