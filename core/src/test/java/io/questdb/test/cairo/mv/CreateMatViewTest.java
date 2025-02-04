@@ -164,7 +164,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             createTable(TABLE1);
 
             final String query = "select ts, k || '10' as k, max(v) as v_max from " + TABLE1 + " sample by 30s";
-            execute("create materialized view test as (" + query + ") partition by week");
+            execute("CREATE MATERIALIZED VIEW test AS (" + query + ") PARTITION BY WEEK TTL 3 WEEKS;");
             assertMatViewDefinition("test", query, TABLE1, 30, 's');
             assertMatViewMetadata("test", query, TABLE1, 30, 's');
 
@@ -173,6 +173,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 assertTrue(metadata.isDedupKey(0));
                 assertTrue(metadata.isDedupKey(1));
                 assertFalse(metadata.isDedupKey(2));
+                assertEquals(3 * 7 * 24, metadata.getTtlHoursOrMonths());
             }
         });
     }
@@ -192,6 +193,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 assertTrue(metadata.isDedupKey(0));
                 assertTrue(metadata.isDedupKey(1));
                 assertFalse(metadata.isDedupKey(2));
+                assertEquals(0, metadata.getTtlHoursOrMonths());
             }
         });
     }
@@ -227,12 +229,27 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewInvalidTtl() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            try {
+                execute("create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day ttl 12 hours");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "TTL value must be an integer multiple of partition size");
+            }
+            assertNull(getMatViewDefinition("test"));
+        });
+    }
+
+    @Test
     public void testCreateMatViewKeyedSampleBy() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
             final String query = "select ts, k, avg(v), last(v) from " + TABLE1 + " sample by 30s";
-            execute("create materialized view test as (" + query + ") partition by day");
+            execute("create materialized view test as (" + query + ") partition by day ttl 1 week");
 
             assertQuery("ts\tk\tavg\tlast\n", "test", "ts", true, true);
 
@@ -241,6 +258,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 assertTrue(metadata.isDedupKey(1));
                 assertFalse(metadata.isDedupKey(2));
                 assertFalse(metadata.isDedupKey(3));
+                assertEquals(7 * 24, metadata.getTtlHoursOrMonths());
             }
             assertMatViewDefinition("test", query, TABLE1, 30, 's');
             assertMatViewMetadata("test", query, TABLE1, 30, 's');
@@ -253,7 +271,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             createTable(TABLE1);
 
             final String query = "select ts, k, avg(v) from " + TABLE1 + " sample by 30s";
-            final String sql = "create materialized view test as (" + query + "), index (k capacity 1024) partition by day" +
+            final String sql = "create materialized view test as (" + query + "), index (k capacity 1024) partition by day ttl 3 days" +
                     (Os.isWindows() ? "" : " in volume vol1");
 
             sink.clear();
@@ -261,9 +279,12 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 final ExecutionModel model = compiler.testCompileModel(sql, sqlExecutionContext);
                 assertEquals(model.getModelType(), ExecutionModel.CREATE_MAT_VIEW);
                 ((Sinkable) model).toSink(sink);
-                TestUtils.assertEquals("create materialized view test with base table1 as (" + query +
-                        "), index(k capacity 1024) timestamp(ts) partition by DAY" +
-                        (Os.isWindows() ? "" : " in volume 'vol1'"), sink);
+                TestUtils.assertEquals(
+                        "create materialized view test with base table1 as (" + query +
+                                "), index(k capacity 1024) timestamp(ts) partition by DAY TTL 3 DAYS" +
+                                (Os.isWindows() ? "" : " in volume 'vol1'"),
+                        sink
+                );
             }
         });
     }
@@ -280,7 +301,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                         "join " + TABLE2 + " as t2 on v sample by 30s) partition by day");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "More than one table used in query, base table has to be set using 'WITH BASE'");
+                TestUtils.assertContains(e.getFlyweightMessage(), "more than one table used in query, base table has to be set using 'WITH BASE'");
             }
             assertNull(getMatViewDefinition("test"));
 
@@ -289,7 +310,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                         "union select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "More than one table used in query, base table has to be set using 'WITH BASE'");
+                TestUtils.assertContains(e.getFlyweightMessage(), "more than one table used in query, base table has to be set using 'WITH BASE'");
             }
             assertNull(getMatViewDefinition("test"));
 
@@ -298,7 +319,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                         "union select t1.ts, avg(t1.v) from " + TABLE1 + " as t1 join " + TABLE2 + " as t2 on v sample by 30s) partition by day");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "More than one table used in query, base table has to be set using 'WITH BASE'");
+                TestUtils.assertContains(e.getFlyweightMessage(), "more than one table used in query, base table has to be set using 'WITH BASE'");
             }
             assertNull(getMatViewDefinition("test"));
         });
@@ -329,7 +350,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 execute("create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by NONE");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "Materialized view has to be partitioned");
+                TestUtils.assertContains(e.getFlyweightMessage(), "materialized view has to be partitioned");
             }
             assertNull(getMatViewDefinition("test"));
         });
@@ -427,6 +448,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 assertTrue(metadata.isDedupKey(0));
                 assertTrue(metadata.isDedupKey(1));
                 assertFalse(metadata.isDedupKey(2));
+                assertEquals(0, metadata.getTtlHoursOrMonths());
             }
         });
     }
@@ -440,7 +462,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 execute("create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "The base table has to be WAL enabled");
+                TestUtils.assertContains(e.getFlyweightMessage(), "base table has to be WAL enabled");
             }
             assertNull(getMatViewDefinition("test"));
         });
@@ -616,6 +638,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 assertFalse(metadata.isColumnIndexed(0));
                 assertTrue(metadata.isColumnIndexed(1));
                 assertFalse(metadata.isColumnIndexed(2));
+
+                assertEquals(0, metadata.getTtlHoursOrMonths());
             }
         });
     }

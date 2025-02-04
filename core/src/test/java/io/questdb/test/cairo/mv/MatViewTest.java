@@ -213,6 +213,70 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBatchInsert() throws Exception {
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE, "10");
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
+            execute("insert into base_price select concat('sym', x), x, x::timestamp from long_sequence(30);");
+
+            drainWalQueue();
+
+            MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
+            refreshJob.run(0);
+            drainWalQueue();
+
+            assertSql(
+                    "sym\tprice\tts\n" +
+                            "sym1\t1.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "sym10\t10.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "sym11\t11.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "sym12\t12.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "sym13\t13.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "sym14\t14.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "sym15\t15.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "sym16\t16.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "sym17\t17.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "sym18\t18.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "sym19\t19.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "sym2\t2.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "sym20\t20.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "sym21\t21.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "sym22\t22.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "sym23\t23.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "sym24\t24.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "sym25\t25.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "sym26\t26.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "sym27\t27.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "sym28\t28.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "sym29\t29.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "sym3\t3.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "sym30\t30.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "sym4\t4.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "sym5\t5.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "sym6\t6.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "sym7\t7.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "sym8\t8.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "sym9\t9.0\t1970-01-01T00:00:00.000000Z\n",
+                    "price_1h order by ts, sym"
+            );
+
+            // Expect 3 (30 rows / 10 rows per batch) commits.
+            assertSql(
+                    "writerTxn\tsequencerTxn\n" +
+                            "3\t3\n",
+                    "select writerTxn, sequencerTxn from wal_tables() where name = 'price_1h'"
+            );
+        });
+    }
+
+    @Test
     public void testCheckMatViewModification() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base_price (" +
@@ -247,18 +311,20 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testCreateDropCreate() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table base_price (" +
-                    "sym varchar, price double, ts timestamp" +
-                    ") timestamp(ts) partition by DAY WAL"
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
             );
 
             createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
             TableToken matViewToken1 = engine.verifyTableName("price_1h");
 
-            execute("insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
-                    ",('gbpusd', 1.323, '2024-09-10T12:02')" +
-                    ",('jpyusd', 103.21, '2024-09-10T12:02')" +
-                    ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            execute(
+                    "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
             );
 
             drainWalQueue();
@@ -1119,6 +1185,40 @@ public class MatViewTest extends AbstractCairoTest {
                         "price_1h order by ts0, sym0"
                 );
             }
+        });
+    }
+
+    @Test
+    public void testTtl() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            execute("create materialized view price_1h as (select sym, last(price) as price, ts from base_price sample by 1h) partition by DAY ttl 2 days");
+
+            execute(
+                    "insert into base_price values('gbpusd', 1.310, '2024-09-10T12:05')" +
+                            ",('gbpusd', 1.311, '2024-09-11T13:03')" +
+                            ",('gbpusd', 1.312, '2024-09-12T13:03')" +
+                            ",('gbpusd', 1.313, '2024-09-13T13:03')" +
+                            ",('gbpusd', 1.314, '2024-09-14T13:03')"
+            );
+            drainWalQueue();
+
+            MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
+            refreshJob.run(0);
+            drainWalQueue();
+
+            assertSql(
+                    "sym\tprice\tts\n" +
+                            "gbpusd\t1.312\t2024-09-12T13:00:00.000000Z\n" +
+                            "gbpusd\t1.313\t2024-09-13T13:00:00.000000Z\n" +
+                            "gbpusd\t1.314\t2024-09-14T13:00:00.000000Z\n",
+                    "price_1h order by ts, sym"
+            );
         });
     }
 

@@ -444,8 +444,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getMatViewInsertAsSelectBatchSize() {
+        return 100_000;
+    }
+
+    @Override
     public int getMatViewMaxRecompileAttempts() {
-        return 20;
+        return 10;
     }
 
     @Override

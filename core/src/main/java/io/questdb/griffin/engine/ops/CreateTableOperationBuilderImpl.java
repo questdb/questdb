@@ -49,6 +49,8 @@ import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.griffin.engine.table.ShowCreateTableRecordCursorFactory.ttlToSink;
+
 public class CreateTableOperationBuilderImpl implements Mutable, Sinkable, CreateTableOperationBuilder {
     public static final ObjectFactory<CreateTableOperationBuilderImpl> FACTORY = CreateTableOperationBuilderImpl::new;
     private static final IntList castGroups = new IntList();
@@ -207,6 +209,10 @@ public class CreateTableOperationBuilderImpl implements Mutable, Sinkable, Creat
 
     public int getTimestampIndex() {
         return timestampExpr != null ? getColumnIndex(timestampExpr.token) : -1;
+    }
+
+    public int getTtlHoursOrMonths() {
+        return ttlHoursOrMonths;
     }
 
     public CharSequence getVolumeAlias() {
@@ -390,6 +396,7 @@ public class CreateTableOperationBuilderImpl implements Mutable, Sinkable, Creat
                 sink.putAscii(" wal");
             }
         }
+        ttlToSink(ttlHoursOrMonths, sink);
         if (volumeAlias != null) {
             sink.putAscii(" in volume '").put(volumeAlias).putAscii('\'');
         }

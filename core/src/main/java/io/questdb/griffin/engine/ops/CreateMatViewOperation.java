@@ -170,6 +170,11 @@ public class CreateMatViewOperation implements TableStructure, Operation {
         return createTableOperation.getTimestampIndex();
     }
 
+    @Override
+    public int getTtlHoursOrMonths() {
+        return createTableOperation.getTtlHoursOrMonths();
+    }
+
     public CharSequence getVolumeAlias() {
         return createTableOperation.getVolumeAlias();
     }

@@ -252,6 +252,8 @@ public interface CairoConfiguration {
 
     TimeZoneRules getLogTimestampTimezoneRules();
 
+    int getMatViewInsertAsSelectBatchSize();
+
     int getMatViewMaxRecompileAttempts();
 
     int getMaxCrashFiles();

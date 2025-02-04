@@ -279,6 +279,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String logTimestampTimezone;
     private final TimeZoneRules logTimestampTimezoneRules;
     private final boolean matViewEnabled;
+    private final int matViewInsertAsSelectBatchSize;
     private final int matViewMaxRecompileAttempts;
     private final WorkerPoolConfiguration matViewRefreshPoolConfiguration = new PropMatViewRefreshPoolConfiguration();
     private final long matViewRefreshSleepTimeout;
@@ -1259,6 +1260,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             // reuse wal apply defaults for mat view workers
             this.matViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ENABLED, false);
             this.matViewMaxRecompileAttempts = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_SQL_MAX_RECOMPILE_ATTEMPTS, 10);
+            this.matViewInsertAsSelectBatchSize = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE, 100_000);
             this.matViewRefreshWorkerCount = getInt(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_COUNT, cpuWalApplyWorkers);
             this.matViewRefreshWorkerAffinity = getAffinity(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_AFFINITY, matViewRefreshWorkerCount);
             this.matViewRefreshWorkerHaltOnError = getBoolean(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_HALT_ON_ERROR, false);
@@ -2877,6 +2879,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public TimeZoneRules getLogTimestampTimezoneRules() {
             return logTimestampTimezoneRules;
+        }
+
+        @Override
+        public int getMatViewInsertAsSelectBatchSize() {
+            return matViewInsertAsSelectBatchSize;
         }
 
         @Override

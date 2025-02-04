@@ -62,6 +62,7 @@ import org.jetbrains.annotations.TestOnly;
 
 public class MatViewRefreshJob implements Job, QuietCloseable {
     private static final Log LOG = LogFactory.getLog(MatViewRefreshJob.class);
+    private final int batchSize;
     private final ObjList<TableToken> childViewSink = new ObjList<>();
     private final EntityColumnFilter columnFilter = new EntityColumnFilter();
     private final CairoEngine engine;
@@ -79,6 +80,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         this.txnRangeLoader = new WalTxnRangeLoader(engine.getConfiguration().getFilesFacade());
         this.microsecondClock = engine.getConfiguration().getMicrosecondClock();
         this.maxRecompileAttempts = engine.getConfiguration().getMatViewMaxRecompileAttempts();
+        this.batchSize = engine.getConfiguration().getMatViewInsertAsSelectBatchSize();
     }
 
     @TestOnly
@@ -203,7 +205,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
         RecordCursorFactory factory = null;
         RecordToRowCopier copier;
-        long rowCount;
+        long rowCount = 0;
         long refreshTimestamp = microsecondClock.getTicks();
         try {
             factory = state.acquireRecordFactory();
@@ -213,10 +215,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 try {
                     if (factory == null) {
                         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                            LOG.info().$("compiling mat view [view=").$(viewDef.getMatViewToken()).$(", attempt=").$(i).I$();
+                            LOG.info().$("compiling materialized view [view=").$(viewDef.getMatViewToken()).$(", attempt=").$(i).I$();
                             CompiledQuery compiledQuery = compiler.compile(viewDef.getMatViewSql(), mvRefreshExecutionContext);
                             if (compiledQuery.getType() != CompiledQuery.SELECT) {
-                                throw SqlException.$(0, "mat view query must be a SELECT statement");
+                                throw SqlException.$(0, "materialized view query must be a SELECT statement");
                             }
                             factory = compiledQuery.getRecordCursorFactory();
 
@@ -225,7 +227,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             }
                         } catch (SqlException e) {
                             factory = Misc.free(factory);
-                            LOG.error().$("error refreshing mat view, compilation error [view=").$(viewDef.getMatViewToken())
+                            LOG.error().$("error refreshing materialized view, compilation error [view=").$(viewDef.getMatViewToken())
                                     .$(", error=").$(e.getFlyweightMessage())
                                     .I$();
                             state.refreshFail(refreshTimestamp);
@@ -245,17 +247,23 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
                     try (RecordCursor cursor = factory.getCursor(mvRefreshExecutionContext)) {
                         final Record record = cursor.getRecord();
+                        long deadline = batchSize;
+                        rowCount = 0;
                         while (cursor.hasNext()) {
                             TableWriter.Row row = tableWriter.newRow(record.getTimestamp(cursorTimestampIndex));
                             copier.copy(record, row);
                             row.append();
+                            if (++rowCount >= deadline) {
+                                tableWriter.ic();
+                                deadline = rowCount + batchSize;
+                            }
                         }
                     }
                     break;
                 } catch (TableReferenceOutOfDateException e) {
                     factory = Misc.free(factory);
                     if (i == maxRecompileAttempts - 1) {
-                        LOG.error().$("error refreshing mat view, base table is under heavy DDL changes [view=").$(viewDef.getMatViewToken())
+                        LOG.error().$("error refreshing materialized view, base table is under heavy DDL changes [view=").$(viewDef.getMatViewToken())
                                 .$(", recompileAttempts=").$(maxRecompileAttempts)
                                 .I$();
                         state.refreshFail(refreshTimestamp);
@@ -270,11 +278,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 }
             }
 
-            rowCount = tableWriter.getUncommittedRowCount();
             tableWriter.commit();
             state.refreshSuccess(factory, copier, tableWriter.getMetadata().getMetadataVersion(), refreshTimestamp, refreshTriggeredTimestamp, baseTableTxn);
         } catch (Throwable th) {
-            LOG.error().$("error refreshing mat view [view=").$(viewDef.getMatViewToken()).$(", error=").$(th).I$();
+            LOG.error().$("error refreshing materialized view [view=").$(viewDef.getMatViewToken()).$(", error=").$(th).I$();
             Misc.free(factory);
             state.refreshFail(refreshTimestamp);
             // TODO(puzpuzpuz): write error message to telemetry table
@@ -309,7 +316,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         if (!state.tryLock()) {
             // Someone is refreshing the view, so we're going for another attempt.
             // Just mark the view invalid to prevent intermediate incremental refreshes and republish the task.
-            LOG.info().$("delaying mat view rebuild, locked by another refresh run [view=").$(viewToken).I$();
+            LOG.info().$("delaying materialized view rebuild, locked by another refresh run [view=").$(viewToken).I$();
             state.markAsInvalid();
             viewGraph.refresh(viewToken, MatViewRefreshTask.REBUILD);
             return false;
@@ -320,7 +327,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             try {
                 baseTableToken = engine.verifyTableName(state.getViewDefinition().getBaseTableName());
             } catch (CairoException th) {
-                LOG.error().$("error rebuilding mat view, cannot resolve base table [view=").$(viewToken)
+                LOG.error().$("error rebuilding materialized view, cannot resolve base table [view=").$(viewToken)
                         .$(", error=").$(th.getFlyweightMessage())
                         .I$();
                 state.refreshFail(microsecondClock.getTicks());
@@ -337,7 +344,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             final SeqTxnTracker viewSeqTracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
             return rebuildView(state, baseTableToken, viewToken, viewSeqTracker, refreshTriggeredTimestamp);
         } catch (Throwable th) {
-            LOG.error().$("error rebuilding mat view [view=").$(viewToken).$(", error=").$(th).I$();
+            LOG.error().$("error rebuilding materialized view [view=").$(viewToken).$(", error=").$(th).I$();
             state.refreshFail(microsecondClock.getTicks());
             // TODO(puzpuzpuz): write error message to telemetry table
             return false;
@@ -360,7 +367,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         final MatViewDefinition viewDef = state.getViewDefinition();
         if (viewDef == null) {
             // The view must have been deleted.
-            LOG.info().$("not rebuilding mat view, new definition does not exist [view=").$(viewToken)
+            LOG.info().$("not rebuilding materialized view, new definition does not exist [view=").$(viewToken)
                     .$(", base=").$(baseTableToken)
                     .I$();
             return false;
@@ -391,7 +398,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 } catch (CairoException ex) {
                     if (ex.isTableDropped() || ex.tableDoesNotExist()) {
                         // There is an ongoing drop mat view. It will clean up the state.
-                        LOG.info().$("mat view is dropped, it will be removed from the graph [view=").$(viewToken).I$();
+                        LOG.info().$("materialized view is dropped, it will be removed from the graph [view=").$(viewToken).I$();
                     } else {
                         throw ex;
                     }
@@ -400,7 +407,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 engine.attachReader(baseTableReader);
             }
         } catch (SqlException e) {
-            LOG.error().$("error refreshing mat view [view=").$(viewToken)
+            LOG.error().$("error refreshing materialized view [view=").$(viewToken)
                     .$(", error=").$(e.getFlyweightMessage())
                     .I$();
             state.refreshFail(microsecondClock.getTicks());
@@ -411,7 +418,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
     private boolean refreshDependentViews(TableToken baseTableToken, MatViewGraph viewGraph, long refreshTriggeredTimestamp) {
         if (!baseTableToken.isWal()) {
-            LOG.error().$("found mat views dependent on non-WAL table that will not be refreshed [parent=").utf8(baseTableToken.getTableName()).I$();
+            LOG.error().$("found materialized views dependent on non-WAL table that will not be refreshed [parent=").utf8(baseTableToken.getTableName()).I$();
             return false;
         }
 
@@ -431,7 +438,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 final MatViewRefreshState state = viewGraph.getViewRefreshState(viewToken);
                 if (state != null && !state.isInvalid() && !state.isDropped()) {
                     if (!state.tryLock()) {
-                        LOG.debug().$("skipping mat view refresh, locked by another refresh run [view=").$(viewToken).I$();
+                        LOG.debug().$("skipping materialized view refresh, locked by another refresh run [view=").$(viewToken).I$();
                         continue;
                     }
 
@@ -453,7 +460,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         viewGraph.notifyBaseRefreshed(mvRefreshTask, minRefreshToTxn);
 
         if (refreshed) {
-            LOG.info().$("refreshed mat views dependent on [table=").$(baseTableToken).I$();
+            LOG.info().$("refreshed materialized views dependent on [table=").$(baseTableToken).I$();
         }
         return refreshed;
     }
@@ -471,7 +478,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 try {
                     engine.verifyTableToken(baseTableToken);
                 } catch (CairoException ce) {
-                    LOG.info().$("mat view's base table is dropped or renamed [table=").$(baseTableToken)
+                    LOG.info().$("base table is dropped or renamed [table=").$(baseTableToken)
                             .$(", error=").$(ce.getFlyweightMessage())
                             .I$();
                     invalidateDependentViews(baseTableToken, matViewGraph);
@@ -514,7 +521,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
 
         if (!state.tryLock()) {
-            LOG.debug().$("skipping mat view refresh, locked by another refresh run [view=").$(viewToken).I$();
+            LOG.debug().$("skipping materialized view refresh, locked by another refresh run [view=").$(viewToken).I$();
             return false;
         }
 
@@ -523,7 +530,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             try {
                 baseTableToken = engine.verifyTableName(state.getViewDefinition().getBaseTableName());
             } catch (CairoException th) {
-                LOG.error().$("error refreshing mat view, cannot resolve base table [view=").$(viewToken)
+                LOG.error().$("error refreshing materialized view, cannot resolve base table [view=").$(viewToken)
                         .$(", error=").$(th.getFlyweightMessage())
                         .I$();
                 state.refreshFail(microsecondClock.getTicks());
@@ -546,7 +553,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             }
             return false;
         } catch (Throwable th) {
-            LOG.error().$("error refreshing mat view [view=").$(viewToken).$(", error=").$(th).I$();
+            LOG.error().$("error refreshing materialized view [view=").$(viewToken).$(", error=").$(th).I$();
             state.refreshFail(microsecondClock.getTicks());
             // TODO(puzpuzpuz): write error message to telemetry table
             return false;
@@ -571,7 +578,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         final MatViewDefinition viewDef = state.getViewDefinition();
         if (viewDef == null) {
             // The view must have been deleted.
-            LOG.info().$("not refreshing mat view, new definition does not exist [view=").$(viewToken)
+            LOG.info().$("not refreshing materialized view, new definition does not exist [view=").$(viewToken)
                     .$(", base=").$(baseTableToken)
                     .I$();
             return false;
@@ -614,7 +621,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     } catch (CairoException ex) {
                         if (ex.isTableDropped() || ex.tableDoesNotExist()) {
                             // There is an ongoing drop mat view. It will clean up the state.
-                            LOG.info().$("mat view is dropped, it will be removed from the graph [view=").$(viewToken).I$();
+                            LOG.info().$("materialized view is dropped, it will be removed from the graph [view=").$(viewToken).I$();
                         } else {
                             throw ex;
                         }
@@ -624,7 +631,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 engine.attachReader(baseTableReader);
             }
         } catch (SqlException e) {
-            LOG.error().$("error refreshing mat view [view=").$(viewToken)
+            LOG.error().$("error refreshing materialized view [view=").$(viewToken)
                     .$(", error=").$(e.getFlyweightMessage())
                     .I$();
             state.refreshFail(microsecondClock.getTicks());

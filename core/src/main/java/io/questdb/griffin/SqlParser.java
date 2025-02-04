@@ -881,19 +881,27 @@ public class SqlParser {
             tok = optTok(lexer);
         }
 
-        final ExpressionNode partitionBy = parseCreateTablePartition(lexer, tok);
-        if (partitionBy == null) {
+        final ExpressionNode partitionByExpr = parseCreateTablePartition(lexer, tok);
+        if (partitionByExpr == null) {
             throw SqlException.position(lexer.getPosition()).put("'partition by' expected");
         }
-        final int partition = PartitionBy.fromString(partitionBy.token);
-        if (partition == -1) {
-            throw SqlException.$(partitionBy.position, "'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected");
+        final int partitionBy = PartitionBy.fromString(partitionByExpr.token);
+        if (partitionBy == -1) {
+            throw SqlException.$(partitionByExpr.position, "'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected");
         }
-        if (!PartitionBy.isPartitioned(partition)) {
-            throw SqlException.position(0).put("Materialized view has to be partitioned");
+        if (!PartitionBy.isPartitioned(partitionBy)) {
+            throw SqlException.position(0).put("materialized view has to be partitioned");
         }
-        createTableOperationBuilder.setPartitionByExpr(partitionBy);
+        createTableOperationBuilder.setPartitionByExpr(partitionByExpr);
         tok = optTok(lexer);
+
+        if (tok != null && isTtlKeyword(tok)) {
+            int ttlValuePos = lexer.getPosition();
+            int ttlHoursOrMonths = parseTtlHoursOrMonths(lexer);
+            PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, ttlValuePos);
+            createTableOperationBuilder.setTtlHoursOrMonths(ttlHoursOrMonths);
+            tok = optTok(lexer);
+        }
 
         if (tok != null && isInKeyword(tok)) {
             expectTok(lexer, "volume");
@@ -917,10 +925,10 @@ public class SqlParser {
             matViewTables.clear();
             collectTables(queryModel, matViewTables);
             if (matViewTables.size() < 1) {
-                throw SqlException.$(lexer.lastTokenPosition(), "Missing base table, materialized views have to be based on a table");
+                throw SqlException.$(lexer.lastTokenPosition(), "missing base table, materialized views have to be based on a table");
             }
             if (matViewTables.size() > 1) {
-                throw SqlException.$(lexer.lastTokenPosition(), "More than one table used in query, base table has to be set using 'WITH BASE'");
+                throw SqlException.$(lexer.lastTokenPosition(), "more than one table used in query, base table has to be set using 'WITH BASE'");
             }
             baseTableName = matViewTables.get(0);
         }
@@ -929,7 +937,7 @@ public class SqlParser {
             throw SqlException.tableDoesNotExist(lexer.lastTokenPosition(), baseTableName);
         }
         if (!baseTableToken.isWal()) {
-            throw SqlException.$(lexer.lastTokenPosition(), "The base table has to be WAL enabled");
+            throw SqlException.$(lexer.lastTokenPosition(), "base table has to be WAL enabled");
         }
         builder.setBaseTableName(baseTableToken.getTableName());
 

@@ -280,7 +280,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                                 writer.commit();
                                             }
                                         } else {
-                                            LOG.info().$("mat view definition not found [view=").$(tableToken).I$();
+                                            LOG.info().$("materialized view definition not found [view=").$(tableToken).I$();
                                         }
                                     }
 

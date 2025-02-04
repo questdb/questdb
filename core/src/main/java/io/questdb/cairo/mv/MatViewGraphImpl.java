@@ -69,7 +69,7 @@ public class MatViewGraphImpl implements MatViewGraph {
         // WAL table directories are unique, so we don't expect previous value
         if (prevState != null) {
             Misc.free(state);
-            throw CairoException.critical(0).put("mat view state already exists [dir=")
+            throw CairoException.critical(0).put("materialized view state already exists [dir=")
                     .put(matViewToken.getDirName());
         }
 

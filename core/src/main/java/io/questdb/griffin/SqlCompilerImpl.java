@@ -3830,7 +3830,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     writer.commit();
                                 }
                             } else {
-                                LOG.info().$("mat view definition for backup not found [view=").$(tableToken).I$();
+                                LOG.info().$("materialized view definition for backup not found [view=").$(tableToken).I$();
                             }
                         }
                     } finally {
