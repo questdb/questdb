@@ -47,15 +47,15 @@ public interface MatViewGraph extends QuietCloseable, Mutable {
     // adds the view, initiates refresh, logs telemetry event
     void createView(MatViewDefinition viewDefinition);
 
-    void dropViewIfExists(TableToken viewToken);
+    void dropViewIfExists(TableToken matViewToken);
 
-    void getDependentMatViews(TableToken table, ObjList<TableToken> sink);
+    void getDependentMatViews(TableToken baseTableToken, ObjList<TableToken> sink);
 
     @Nullable
     MatViewDefinition getMatViewDefinition(TableToken matViewToken);
 
     @Nullable
-    MatViewRefreshState getViewRefreshState(TableToken tableToken);
+    MatViewRefreshState getViewRefreshState(TableToken matViewToken);
 
     void getViews(ObjList<TableToken> bucket);
 
@@ -63,7 +63,7 @@ public interface MatViewGraph extends QuietCloseable, Mutable {
 
     void notifyTxnApplied(MatViewRefreshTask task, long seqTxn);
 
-    void refresh(TableToken viewTableToken, int operation);
+    void refresh(TableToken matViewToken, int operation);
 
     boolean tryDequeueRefreshTask(MatViewRefreshTask task);
 }

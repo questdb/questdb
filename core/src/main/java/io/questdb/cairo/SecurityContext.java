@@ -80,7 +80,7 @@ public interface SecurityContext extends Mutable {
 
     void authorizeMatViewDrop(TableToken tableToken);
 
-    void authorizeMatViewRefresh();
+    void authorizeMatViewRefresh(TableToken tableToken);
 
     void authorizePGWire();
 

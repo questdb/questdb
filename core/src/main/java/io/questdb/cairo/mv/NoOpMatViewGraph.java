@@ -50,11 +50,11 @@ public class NoOpMatViewGraph implements MatViewGraph {
     }
 
     @Override
-    public void dropViewIfExists(TableToken viewToken) {
+    public void dropViewIfExists(TableToken matViewToken) {
     }
 
     @Override
-    public void getDependentMatViews(TableToken table, ObjList<TableToken> sink) {
+    public void getDependentMatViews(TableToken baseTableToken, ObjList<TableToken> sink) {
     }
 
     @Override
@@ -63,7 +63,7 @@ public class NoOpMatViewGraph implements MatViewGraph {
     }
 
     @Override
-    public MatViewRefreshState getViewRefreshState(TableToken tableToken) {
+    public MatViewRefreshState getViewRefreshState(TableToken matViewToken) {
         return null;
     }
 
@@ -80,7 +80,7 @@ public class NoOpMatViewGraph implements MatViewGraph {
     }
 
     @Override
-    public void refresh(TableToken viewTableToken, int operation) {
+    public void refresh(TableToken matViewToken, int operation) {
     }
 
     @Override

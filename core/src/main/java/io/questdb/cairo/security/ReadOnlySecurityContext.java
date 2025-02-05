@@ -137,7 +137,7 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeMatViewRefresh() {
+    public void authorizeMatViewRefresh(TableToken tableToken) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
 

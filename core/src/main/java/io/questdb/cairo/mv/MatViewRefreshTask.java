@@ -35,13 +35,13 @@ public class MatViewRefreshTask implements ValueHolder<MatViewRefreshTask> {
     public TableToken baseTableToken;
     public int operation = UNSET;
     public long refreshTriggeredTimestamp;
-    public TableToken viewToken;
+    public TableToken matViewToken;
 
     @Override
     public void clear() {
         operation = UNSET;
         baseTableToken = null;
-        viewToken = null;
+        matViewToken = null;
         refreshTriggeredTimestamp = -1L;
     }
 
@@ -49,7 +49,7 @@ public class MatViewRefreshTask implements ValueHolder<MatViewRefreshTask> {
     public void copyTo(MatViewRefreshTask anotherHolder) {
         anotherHolder.operation = operation;
         anotherHolder.baseTableToken = baseTableToken;
-        anotherHolder.viewToken = viewToken;
+        anotherHolder.matViewToken = matViewToken;
         anotherHolder.refreshTriggeredTimestamp = refreshTriggeredTimestamp;
     }
 }

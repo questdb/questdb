@@ -104,8 +104,8 @@ public class MatViewGraphImpl implements MatViewGraph {
     }
 
     @Override
-    public void dropViewIfExists(TableToken viewToken) {
-        final MatViewRefreshState state = refreshStateByTableDirName.remove(viewToken.getDirName());
+    public void dropViewIfExists(TableToken matViewToken) {
+        final MatViewRefreshState state = refreshStateByTableDirName.remove(matViewToken.getDirName());
         if (state != null) {
             state.markAsDropped();
             state.tryCloseIfDropped();
@@ -116,8 +116,8 @@ public class MatViewGraphImpl implements MatViewGraph {
                 final ObjList<TableToken> matViews = dependentViews.lockForWrite();
                 try {
                     for (int i = 0, n = matViews.size(); i < n; i++) {
-                        TableToken view = matViews.get(i);
-                        if (view.equals(viewToken)) {
+                        final TableToken matView = matViews.get(i);
+                        if (matView.equals(matViewToken)) {
                             matViews.remove(i);
                             return;
                         }
@@ -130,8 +130,8 @@ public class MatViewGraphImpl implements MatViewGraph {
     }
 
     @Override
-    public void getDependentMatViews(TableToken table, ObjList<TableToken> sink) {
-        final MatViewRefreshList list = getOrCreateDependentViews(table.getTableName());
+    public void getDependentMatViews(TableToken baseTableToken, ObjList<TableToken> sink) {
+        final MatViewRefreshList list = getOrCreateDependentViews(baseTableToken.getTableName());
         final ObjList<TableToken> matViews = list.lockForRead();
         try {
             sink.addAll(matViews);
@@ -156,8 +156,8 @@ public class MatViewGraphImpl implements MatViewGraph {
     }
 
     @Override
-    public MatViewRefreshState getViewRefreshState(TableToken tableToken) {
-        return refreshStateByTableDirName.get(tableToken.getDirName());
+    public MatViewRefreshState getViewRefreshState(TableToken matViewToken) {
+        return refreshStateByTableDirName.get(matViewToken.getDirName());
     }
 
     @Override
@@ -169,8 +169,7 @@ public class MatViewGraphImpl implements MatViewGraph {
 
     @Override
     public void notifyBaseRefreshed(MatViewRefreshTask task, long seqTxn) {
-        final TableToken tableToken = task.baseTableToken;
-        final MatViewRefreshList list = dependentViewsByTableName.get(tableToken.getTableName());
+        final MatViewRefreshList list = dependentViewsByTableName.get(task.baseTableToken.getTableName());
         if (list != null) {
             if (list.notifyOnBaseTableRefreshedNoLock(seqTxn)) {
                 // While refreshing more txn were committed. Refresh will need to re-run.
@@ -195,10 +194,10 @@ public class MatViewGraphImpl implements MatViewGraph {
     }
 
     @Override
-    public void refresh(TableToken viewToken, int operation) {
-        final MatViewRefreshState state = refreshStateByTableDirName.get(viewToken.getDirName());
+    public void refresh(TableToken matViewToken, int operation) {
+        final MatViewRefreshState state = refreshStateByTableDirName.get(matViewToken.getDirName());
         if (state != null && !state.isDropped()) {
-            enqueueRefreshTask(viewToken, operation);
+            enqueueRefreshTask(matViewToken, operation);
         }
     }
 
@@ -207,18 +206,18 @@ public class MatViewGraphImpl implements MatViewGraph {
         return refreshTaskQueue.tryDequeue(task);
     }
 
-    private void enqueueRefreshTask(TableToken viewToken, int operation) {
+    private void enqueueRefreshTask(TableToken matViewToken, int operation) {
         final MatViewRefreshTask task = taskHolder.get();
         task.baseTableToken = null;
-        task.viewToken = viewToken;
+        task.matViewToken = matViewToken;
         task.operation = operation;
         task.refreshTriggeredTimestamp = microsecondClock.getTicks();
         refreshTaskQueue.enqueue(task);
     }
 
     @NotNull
-    private MatViewRefreshList getOrCreateDependentViews(CharSequence tableName) {
-        return dependentViewsByTableName.computeIfAbsent(tableName, createRefreshList);
+    private MatViewRefreshList getOrCreateDependentViews(CharSequence baseTableName) {
+        return dependentViewsByTableName.computeIfAbsent(baseTableName, createRefreshList);
     }
 
     private void storeMatViewTelemetry(short event, TableToken tableToken, long baseTableTxn, CharSequence errorMessage, long latencyUs) {

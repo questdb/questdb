@@ -118,7 +118,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeMatViewRefresh() {
+    public void authorizeMatViewRefresh(TableToken tableToken) {
     }
 
     @Override

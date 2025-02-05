@@ -474,10 +474,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         while (matViewGraph.tryDequeueRefreshTask(mvRefreshTask)) {
             final int operation = mvRefreshTask.operation;
             final TableToken baseTableToken = mvRefreshTask.baseTableToken;
-            final TableToken viewToken = mvRefreshTask.viewToken;
+            final TableToken matViewToken = mvRefreshTask.matViewToken;
             final long refreshTriggeredTimestamp = mvRefreshTask.refreshTriggeredTimestamp;
 
-            if (viewToken == null) {
+            if (matViewToken == null) {
                 try {
                     engine.verifyTableToken(baseTableToken);
                 } catch (CairoException ce) {
@@ -491,23 +491,23 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
             switch (operation) {
                 case MatViewRefreshTask.INCREMENTAL_REFRESH:
-                    if (viewToken == null) {
+                    if (matViewToken == null) {
                         refreshed |= refreshDependentViews(baseTableToken, matViewGraph, refreshTriggeredTimestamp);
                     } else {
-                        refreshed |= refreshView(viewToken, matViewGraph, refreshTriggeredTimestamp);
+                        refreshed |= refreshView(matViewToken, matViewGraph, refreshTriggeredTimestamp);
                     }
                     break;
                 case MatViewRefreshTask.REBUILD:
-                    assert viewToken != null;
-                    refreshed |= rebuildView(viewToken, matViewGraph, refreshTriggeredTimestamp);
+                    assert matViewToken != null;
+                    refreshed |= rebuildView(matViewToken, matViewGraph, refreshTriggeredTimestamp);
                     break;
                 case MatViewRefreshTask.INVALIDATE:
                     // TODO(puzpuzpuz): include invalidation reason
                     // TODO(puzpuzpuz): persist invalid flag while holding state's mutex
-                    if (viewToken == null) {
+                    if (matViewToken == null) {
                         invalidateDependentViews(baseTableToken, matViewGraph);
                     } else {
-                        invalidateView(viewToken, matViewGraph);
+                        invalidateView(matViewToken, matViewGraph);
                     }
                     break;
                 default:

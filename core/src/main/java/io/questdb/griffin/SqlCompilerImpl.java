@@ -182,6 +182,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final int maxRecompileAttempts;
     private final MemoryMARW mem = Vm.getCMARWInstance();
     private final MessageBus messageBus;
+    private final MetaFileWriter metaFileWriter;
     private final SqlParser parser;
     private final TimestampValueRecord partitionFunctionRec = new TimestampValueRecord();
     private final QueryBuilder queryBuilder;
@@ -193,7 +194,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final ObjList<TableWriterAPI> tableWriters = new ObjList<>();
     private final IntIntHashMap typeCast = new IntIntHashMap();
     private final VacuumColumnVersions vacuumColumnVersions;
-    private final MetaFileWriter metaFileWriter;
     protected CharSequence sqlText;
     private final ExecutableMethod insertAsSelectMethod = this::insertAsSelect;
     private boolean closed = false;
@@ -1968,7 +1968,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void compileRefresh(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
-        executionContext.getSecurityContext().authorizeMatViewRefresh();
         CharSequence tok = expectToken(lexer, "'materialized'");
         if (!isMaterializedKeyword(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "'materialized' expected'");
@@ -2000,6 +1999,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         final MatViewGraph matViewGraph = engine.getMatViewGraph();
+        executionContext.getSecurityContext().authorizeMatViewRefresh(tableToken);
         matViewGraph.refresh(tableToken, MatViewRefreshTask.REBUILD);
         compiledQuery.ofRefreshMatView();
     }
