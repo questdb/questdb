@@ -43,7 +43,7 @@ public class CaseCommonTest extends BaseFunctionFactoryTest {
 
     @Before
     public void setUpParser() {
-        functionParser = new FunctionParser(configuration, new FunctionFactoryCache(configuration, ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())));
+        functionParser = new FunctionParser(configuration, new FunctionFactoryCache(configuration, FunctionFactoryScanner.scan(LOG)));
     }
 
     @Test

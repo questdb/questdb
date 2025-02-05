@@ -22,6 +22,10 @@
 #
 ################################################################################
 
+# Order of the priorities of the functions
+# There is not need to add a function in the list unless it is required to pin the priority
+# across the functions with the same name
+
 io.questdb.griffin.engine.functions.finance.LevelTwoPriceFunctionFactory
 io.questdb.griffin.engine.functions.finance.SpreadFunctionFactory
 io.questdb.griffin.engine.functions.finance.MidPriceFunctionFactory
@@ -416,7 +420,6 @@ io.questdb.griffin.engine.functions.cast.CastLong256ToVarcharFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastLong256ToDateFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastLong256ToTimestampFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastLong256ToSymbolFunctionFactory
-io.questdb.griffin.engine.functions.cast.CastLong256ToLong256FunctionFactory
 io.questdb.griffin.engine.functions.cast.CastLong256ToBooleanFunctionFactory
 
 # cast date to ...

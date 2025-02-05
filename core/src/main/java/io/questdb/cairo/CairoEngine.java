@@ -64,6 +64,7 @@ import io.questdb.cutlass.text.CopyContext;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.griffin.FunctionFactoryScanner;
 import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerFactory;
@@ -102,7 +103,6 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.Map;
-import java.util.ServiceLoader;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -115,6 +115,7 @@ public class CairoEngine implements Closeable, WriterSource {
     public static final String REASON_CHECKPOINT_IN_PROGRESS = "checkpointInProgress";
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
     private static final int MAX_SLEEP_MILLIS = 250;
+    private static Iterable<FunctionFactory> functionFactoryList;
     protected final CairoConfiguration configuration;
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
     private final DatabaseCheckpointAgent checkpointAgent;
@@ -151,7 +152,7 @@ public class CairoEngine implements Closeable, WriterSource {
         try {
             ffCache = new FunctionFactoryCache(
                     configuration,
-                    ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
+                    getFunctionFactoryList()
             );
             this.tableFlagResolver = newTableFlagResolver(configuration);
             this.configuration = configuration;
@@ -193,6 +194,13 @@ public class CairoEngine implements Closeable, WriterSource {
             close();
             throw th;
         }
+    }
+
+    private static Iterable<FunctionFactory> getFunctionFactoryList() {
+        if (functionFactoryList == null) {
+            functionFactoryList = FunctionFactoryScanner.scan(LOG);
+        }
+        return functionFactoryList;
     }
 
     public static void execute(

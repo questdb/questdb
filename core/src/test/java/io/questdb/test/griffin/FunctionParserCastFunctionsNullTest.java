@@ -56,7 +56,6 @@ public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest
             new CastStrToStrFunctionFactory(),
             new CastStrToBooleanFunctionFactory(),
             new CastSymbolToSymbolFunctionFactory(),
-            new CastLong256ToLong256FunctionFactory(),
             new CastStrToGeoHashFunctionFactory(),
             new CastGeoHashToGeoHashFunctionFactory(),
             new CastNullTypeFunctionFactory(),
