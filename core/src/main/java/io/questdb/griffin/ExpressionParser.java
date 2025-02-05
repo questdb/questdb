@@ -366,48 +366,47 @@ public class ExpressionParser {
                         if (isTypeQualifier()) {
                             ExpressionNode en = opStack.peek();
                             ((GenericLexer.FloatingSequence) en.token).setHi(lastPos + 1);
-                        } else {
-                            if (prevBranch == BRANCH_COMMA) {
-                                throw missingArgs(lastPos);
-                            }
-                            if (wrapperStack.peek() != WrapperToken.BRACKET) {
-                                lexer.unparseLast();
-                                break OUT;
-                            }
-                            wrapperStack.pop();
-
-                            thisBranch = BRANCH_RIGHT_BRACKET;
-                            if (prevBranch == BRANCH_LEFT_BRACKET) {
-                                throw SqlException.$(lastPos, "missing array index");
-                            }
-
-                            // Until the token at the top of the stack is a left bracket,
-                            // pop operators off the stack onto the output queue.
-                            // Pop the left bracket from the stack, but don't push it to the output queue.
-                            // If the token at the top of the stack is a literal (indicating array access),
-                            // push it to the output queue.
-                            // If the stack runs out without finding a left bracket, then there are mismatched brackets.
-                            while ((node = opStack.pop()) != null && (node.type != ExpressionNode.CONTROL || node.token.charAt(0) != '[')) {
-                                argStackDepth = onNode(listener, node, argStackDepth, false);
-                            }
-
-                            if (argStackDepthStack.notEmpty()) {
-                                argStackDepth += argStackDepthStack.pop();
-                            }
-                            if (paramCountStack.notEmpty()) {
-                                paramCount = paramCountStack.pop();
-                            }
-
-                            // the bracketed expression is preceded by a literal => it's array access
-                            node = expressionNodePool.next().of(
-                                    ExpressionNode.ARRAY_ACCESS,
-                                    "[]",
-                                    2,
-                                    lastPos
-                            );
-                            node.paramCount = 2;
-                            opStack.push(node);
+                            break;
                         }
+                        if (prevBranch == BRANCH_COMMA) {
+                            throw missingArgs(lastPos);
+                        }
+                        if (wrapperStack.peek() != WrapperToken.BRACKET) {
+                            lexer.unparseLast();
+                            break OUT;
+                        }
+                        wrapperStack.pop();
+
+                        thisBranch = BRANCH_RIGHT_BRACKET;
+                        if (prevBranch == BRANCH_LEFT_BRACKET) {
+                            throw SqlException.$(lastPos, "missing array index");
+                        }
+
+                        // Until the token at the top of the stack is a left bracket,
+                        // pop operators off the stack onto the output queue.
+                        // Pop the left bracket from the stack, but don't push it to the output queue.
+                        // If the token at the top of the stack is a literal (indicating array access),
+                        // push it to the output queue.
+                        // If the stack runs out without finding a left bracket, then there are mismatched brackets.
+                        while ((node = opStack.pop()) != null && (node.type != ExpressionNode.CONTROL || node.token.charAt(0) != '[')) {
+                            argStackDepth = onNode(listener, node, argStackDepth, false);
+                        }
+
+                        if (argStackDepthStack.notEmpty()) {
+                            argStackDepth += argStackDepthStack.pop();
+                        }
+                        if (paramCountStack.notEmpty()) {
+                            paramCount = paramCountStack.pop();
+                        }
+
+                        node = expressionNodePool.next().of(
+                                ExpressionNode.ARRAY_ACCESS,
+                                "[]",
+                                2,
+                                lastPos
+                        );
+                        node.paramCount = 2;
+                        opStack.push(node);
 
                         break;
                     case 'd':
