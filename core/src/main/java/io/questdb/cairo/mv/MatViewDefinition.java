@@ -53,6 +53,7 @@ public class MatViewDefinition {
     private final String timeZone;
     private final String timeZoneOffset;
     private final long toMicros;
+    private final boolean isValid;
     private long fixedOffset;
     private @Nullable TimeZoneRules rules;
     // non persistent fields
@@ -67,7 +68,8 @@ public class MatViewDefinition {
             long fromMicros,
             long toMicros,
             String timeZone,
-            String timeZoneOffset
+            String timeZoneOffset,
+            boolean isValid
     ) {
         this.matViewToken = matViewToken;
         this.matViewSql = matViewSql;
@@ -78,6 +80,7 @@ public class MatViewDefinition {
         this.toMicros = toMicros;
         this.timeZone = timeZone;
         this.timeZoneOffset = timeZoneOffset;
+        this.isValid = isValid;
 
         if (timeZone != null) {
             try {
@@ -145,19 +148,24 @@ public class MatViewDefinition {
         return fixedOffset;
     }
 
-    public @Nullable TimeZoneRules getTzRules() {
-        return rules;
-    }
-
     public static void commitTo(final MetaFileWriter writer, final MatViewDefinition matViewDefinition) {
         final AppendableBlock mem = writer.append();
         writeTo(mem, matViewDefinition);
+        mem.putBool(matViewDefinition.isValid());
         mem.commit(
                 MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE,
                 MAT_VIEW_DEFINITION_FORMAT_MSG_VERSION,
                 MAT_VIEW_DEFINITION_FORMAT_FLAGS
         );
         writer.commit();
+    }
+
+    public @Nullable TimeZoneRules getTzRules() {
+        return rules;
+    }
+
+    public boolean isValid() {
+        return isValid;
     }
 
     public static void writeTo(final AppendableBlock mem, final MatViewDefinition matViewDefinition) {

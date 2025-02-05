@@ -187,7 +187,7 @@ public class CreateMatViewOperation implements TableStructure, Operation {
     public void init(TableToken tableToken) {
         matViewDefinition = new MatViewDefinition(
                 tableToken, viewSql, baseTableName, samplingInterval, samplingIntervalUnit,
-                fromMicros, toMicros, timeZone, timeZoneOffset
+                fromMicros, toMicros, timeZone, timeZoneOffset, true
         );
     }
 

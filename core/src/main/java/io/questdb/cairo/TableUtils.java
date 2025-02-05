@@ -1963,14 +1963,15 @@ public final class TableUtils {
         final String timeZoneOffsetStr = Chars.toString(timeZoneOffset);
 
         final CharSequence matViewSql = mem.getStr(offset);
+        offset += Vm.getStorageLength(timeZoneOffset);
         if (matViewSql == null || matViewSql.length() == 0) {
             throw CairoException.critical(0)
                     .put("materialized view SQL is empty [view=")
                     .put(matViewToken.getTableName())
                     .put(']');
         }
-
         final String matViewSqlStr = Chars.toString(matViewSql);
+        final boolean isValid = mem.getBool(offset);
 
         return new MatViewDefinition(
                 matViewToken,
@@ -1981,7 +1982,8 @@ public final class TableUtils {
                 fromMicros,
                 toMicros,
                 timeZoneStr,
-                timeZoneOffsetStr
+                timeZoneOffsetStr,
+                isValid
         );
     }
 

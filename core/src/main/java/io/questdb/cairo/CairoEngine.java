@@ -1397,8 +1397,15 @@ public class CairoEngine implements Closeable, WriterSource {
                                     .$(", view=").utf8(tableToken.getTableName())
                                     .I$();
                         } else {
-                            matViewGraph.addView(matViewDefinition);
-                            matViewGraph.refresh(tableToken, MatViewRefreshTask.INCREMENTAL_REFRESH);
+                            if (matViewDefinition.isValid()) {
+                                matViewGraph.addView(matViewDefinition);
+                                matViewGraph.refresh(tableToken, MatViewRefreshTask.INCREMENTAL_REFRESH);
+                            } else {
+                                //TODO(eugene): okay, what to do with invalid views?
+                                LOG.error().$("materialized view is in invalid state [view=").utf8(tableToken.getTableName())
+                                        .$(", base=").utf8(matViewDefinition.getBaseTableName())
+                                        .I$();
+                            }
                         }
                     } catch (CairoException e) {
                         LOG.error().$("could not load materialized view definition [view=").utf8(tableToken.getTableName())
