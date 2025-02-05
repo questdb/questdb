@@ -40,6 +40,13 @@ public class FullBwdPartitionFrameCursorFactory extends AbstractPartitionFrameCu
     }
 
     @Override
+    public void close() {
+        super.close();
+        Misc.free(cursor);
+        Misc.free(fwdCursor);
+    }
+
+    @Override
     public PartitionFrameCursor getCursor(SqlExecutionContext executionContext, int order) {
         final TableReader reader = getReader(executionContext);
         try {

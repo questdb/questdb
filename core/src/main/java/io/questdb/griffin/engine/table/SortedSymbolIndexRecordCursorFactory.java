@@ -33,6 +33,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 
 public class SortedSymbolIndexRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
@@ -83,6 +84,12 @@ public class SortedSymbolIndexRecordCursorFactory extends AbstractPageFrameRecor
     @Override
     public boolean usesIndex() {
         return true;
+    }
+
+    @Override
+    protected void _close() {
+        super._close();
+        Misc.free(cursor);
     }
 
     @Override

@@ -927,23 +927,25 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     boolean of(
             RecordCursorFactory factory,
+            RecordCursor cursor,
             SqlExecutionContextImpl sqlExecutionContext
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
-        return of(factory, true, sqlExecutionContext);
+        return of(factory, cursor, true, sqlExecutionContext);
     }
 
     boolean of(
             RecordCursorFactory factory,
+            RecordCursor cursor,
             boolean queryCacheable,
             SqlExecutionContextImpl sqlExecutionContext
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         this.recordCursorFactory = factory;
+        this.cursor = cursor;
         this.queryCacheable = queryCacheable;
         this.queryJitCompiled = factory.usesCompiledFilter();
         // Enable column pre-touch in REST API only when LIMIT K,N is not specified since when limit is defined
         // we do a no-op loop over the cursor to calculate the total row count and pre-touch only slows things down.
         sqlExecutionContext.setColumnPreTouchEnabled(stop == Long.MAX_VALUE);
-        this.cursor = factory.getCursor(sqlExecutionContext);
         this.circuitBreaker = sqlExecutionContext.getCircuitBreaker();
         final RecordMetadata metadata = factory.getMetadata();
         this.queryTimestampIndex = metadata.getTimestampIndex();
