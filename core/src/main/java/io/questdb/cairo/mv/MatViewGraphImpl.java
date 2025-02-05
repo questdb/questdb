@@ -62,9 +62,9 @@ public class MatViewGraphImpl implements MatViewGraph {
     }
 
     @Override
-    public MatViewRefreshState addView(MatViewDefinition viewDefinition) {
+    public MatViewRefreshState addView(MatViewDefinition viewDefinition, boolean isInvalid) {
         final TableToken matViewToken = viewDefinition.getMatViewToken();
-        final MatViewRefreshState state = new MatViewRefreshState(viewDefinition, matViewTelemetryFacade);
+        final MatViewRefreshState state = new MatViewRefreshState(viewDefinition, isInvalid, matViewTelemetryFacade);
         final MatViewRefreshState prevState = refreshStateByTableDirName.putIfAbsent(matViewToken.getDirName(), state);
         // WAL table directories are unique, so we don't expect previous value
         if (prevState != null) {

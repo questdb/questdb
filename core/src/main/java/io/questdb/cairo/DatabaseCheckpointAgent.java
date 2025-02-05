@@ -26,6 +26,8 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.meta.MetaFileWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
+import io.questdb.cairo.mv.MatViewGraph;
+import io.questdb.cairo.mv.MatViewRefreshState;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
@@ -273,14 +275,19 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                     }
 
                                     if (tableToken.isMatView()) {
-                                        MatViewDefinition matViewDefinition = engine.getMatViewGraph().getMatViewDefinition(tableToken);
-                                        if (matViewDefinition != null) {
-                                            try (MetaFileWriter writer = new MetaFileWriter(ff)) {
+                                        try (MetaFileWriter writer = new MetaFileWriter(ff)) {
+                                            MatViewGraph graph = engine.getMatViewGraph();
+                                            MatViewRefreshState state = graph.getViewRefreshState(tableToken);
+                                            writer.of(path.trimTo(rootLen).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
+                                            MatViewRefreshState.commitTo(writer, state);
+                                            MatViewDefinition matViewDefinition = (state != null) ?
+                                                    state.getViewDefinition() : graph.getMatViewDefinition(tableToken);
+                                            if (matViewDefinition != null) {
                                                 writer.of(path.trimTo(rootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
                                                 MatViewDefinition.commitTo(writer, matViewDefinition);
+                                            } else {
+                                                LOG.info().$("materialized view definition not found [view=").$(tableToken).I$();
                                             }
-                                        } else {
-                                            LOG.info().$("materialized view definition not found [view=").$(tableToken).I$();
                                         }
                                     }
 

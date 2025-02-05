@@ -346,6 +346,93 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
         });
     }
 
+    @Test
+    public void testMatViewsReloadOnServerStartInvalidState() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain main1 = startWithEnvVariables0(
+                    PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
+                    PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
+            )) {
+                execute(main1, "create table base_price (" +
+                        "sym varchar, price double, ts timestamp" +
+                        ") timestamp(ts) partition by DAY WAL"
+                );
+
+                createMatView(main1, "price_1h", "select sym, last(price) as price, ts from base_price sample by 1h");
+
+                execute(main1, "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                        ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                        ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                        ",('gbpusd', 1.321, '2024-09-10T13:02')"
+                );
+                drainWalQueue(main1.getEngine());
+
+                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main1.getEngine())) {
+                    refreshJob.run(0);
+                    drainWalQueue(main1.getEngine());
+
+                    assertSql(main1,
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
+                            "price_1h order by ts, sym"
+                    );
+
+                    execute(main1, "insert into base_price values('gbpusd', 1.319, '2024-09-10T12:05')" +
+                            ",('gbpusd', 1.325, '2024-09-10T13:03')"
+                    );
+                    drainWalQueue(main1.getEngine());
+
+                    refreshJob.run(0);
+                    drainWalQueue(main1.getEngine());
+
+                    String expected = "sym\tprice\tts\n" +
+                            "gbpusd\t1.319\t2024-09-10T12:00:00.000000Z\n" +
+                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                            "gbpusd\t1.325\t2024-09-10T13:00:00.000000Z\n";
+
+                    assertSql(main1, expected, "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
+                    assertSql(main1, expected, "price_1h order by ts, sym");
+
+                    execute(main1, "truncate table base_price");
+                    drainWalQueue(main1.getEngine());
+                    refreshJob.run(0);
+                    assertSql(main1, "name\tinvalid\tlast_error\n" +
+                            "price_1h\ttrue\tTODO: invalidation reason\n", "select name, invalid, last_error from views()");
+                }
+            }
+
+            try (final TestServerMain main2 = startWithEnvVariables0(
+                    PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
+                    PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
+            )) {
+                assertSql(main2, "name\tinvalid\tlast_error\n" +
+                        "price_1h\ttrue\tTODO: invalidation reason\n", "select name, invalid, last_error from views()");
+
+                execute(main2, "refresh materialized view price_1h");
+                drainWalQueue(main2.getEngine());
+                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main2.getEngine())) {
+                    refreshJob.run(0);
+                    drainWalQueue(main2.getEngine());
+                }
+
+                assertSql(main2, "name\tinvalid\tlast_error\n" +
+                                "price_1h\tfalse\t\n",
+                        "select name, invalid, last_error from views()");
+            }
+
+            try (final TestServerMain main3 = startWithEnvVariables0(
+                    PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
+                    PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
+            )) {
+                assertSql(main3, "name\tinvalid\tlast_error\n" +
+                                "price_1h\tfalse\t\n",
+                        "select name, invalid, last_error from views()");
+            }
+        });
+    }
+
     private static void assertSql(TestServerMain serverMain, final String expected, final String sql) {
         serverMain.assertSql(sql, expected);
     }

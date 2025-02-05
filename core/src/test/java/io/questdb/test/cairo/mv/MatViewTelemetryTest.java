@@ -29,6 +29,7 @@ import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.NumericException;
+import io.questdb.std.Zip;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
@@ -46,6 +47,7 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
         // needed for static engine instance
         setProperty(CAIRO_MAT_VIEW_ENABLED, "true");
         AbstractCairoTest.setUpStatic();
+        Zip.init();
     }
 
     @Before
@@ -126,7 +128,7 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                         "created\tevent\tviewTableId\tbaseTableTxn\terrorMessage\tlatency\n" +
                                 "2024-10-24T17:00:15.000000Z\t200\t6\t-1\t\t0.0000\n" +
                                 "2024-10-24T17:00:25.000000Z\t204\t6\t1\t\t10000.0000\n" +
-                                "2024-10-24T17:00:41.000000Z\t202\t6\t-1\t\t0.0000\n",
+                                "2024-10-24T17:00:41.000000Z\t202\t6\t-1\tTODO: invalidation reason\t0.0000\n",
                         "sys.telemetry_mat_view"
                 );
             }
@@ -167,7 +169,7 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                         "created\tevent\tviewTableId\tbaseTableTxn\terrorMessage\tlatency\n" +
                                 "2024-10-24T17:00:15.000000Z\t200\t6\t-1\t\t0.0000\n" +
                                 "2024-10-24T17:00:25.000000Z\t204\t6\t1\t\t10000.0000\n" +
-                                "2024-10-24T17:00:33.000000Z\t202\t6\t-1\t\t0.0000\n" +
+                                "2024-10-24T17:00:33.000000Z\t202\t6\t-1\ttable does not exist [table=base_price]\t0.0000\n" +
                                 "2024-10-24T17:00:33.000000Z\t203\t6\t-1\ttable does not exist [table=base_price]\t0.0000\n",
                         "sys.telemetry_mat_view"
                 );

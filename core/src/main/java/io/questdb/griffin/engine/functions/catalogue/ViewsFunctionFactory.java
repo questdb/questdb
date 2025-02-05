@@ -136,7 +136,7 @@ public class ViewsFunctionFactory implements FunctionFactory {
                         record.of(
                                 viewState.getViewDefinition(),
                                 viewState.getLastRefreshTimestamp(),
-                                null,
+                                viewState.getErrorMessage(),
                                 0,
                                 viewState.isInvalid()
                         );

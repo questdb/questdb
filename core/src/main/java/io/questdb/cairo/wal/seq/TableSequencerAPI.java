@@ -443,7 +443,6 @@ public class TableSequencerAPI implements QuietCloseable {
         try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             try {
                 sequencer.setLastRefreshBaseTxn(baseTxn);
-                getSeqTxnTracker(tableToken).setLastRefreshBaseTxn(baseTxn);
             } finally {
                 sequencer.unlockWrite();
             }

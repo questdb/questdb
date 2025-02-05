@@ -35,6 +35,7 @@ import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
 import io.questdb.cairo.mv.MatViewGraphImpl;
+import io.questdb.cairo.mv.MatViewRefreshState;
 import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.mv.NoOpMatViewGraph;
 import io.questdb.cairo.pool.AbstractMultiTenantPool;
@@ -1383,7 +1384,7 @@ public class CairoEngine implements Closeable, WriterSource {
         try (MetaFileReader reader = new MetaFileReader(configuration)) {
             for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
                 final TableToken tableToken = tableTokenBucket.get(i);
-                if (tableToken.isMatView() && TableUtils.matViewFileExists(configuration, path, tableToken.getDirName())) {
+                if (tableToken.isMatView() && TableUtils.matViewFilesExist(configuration, path, tableToken.getDirName())) {
                     try {
                         final MatViewDefinition matViewDefinition = TableUtils.loadMatViewDefinition(
                                 reader,
@@ -1397,14 +1398,13 @@ public class CairoEngine implements Closeable, WriterSource {
                                     .$(", view=").utf8(tableToken.getTableName())
                                     .I$();
                         } else {
-                            if (matViewDefinition.isValid()) {
-                                matViewGraph.addView(matViewDefinition);
+                            path.trimTo(pathLen).concat(tableToken.getDirName()).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
+                            reader.of(path.$());
+                            MatViewRefreshState state = matViewGraph.addView(matViewDefinition);
+                            MatViewRefreshState.readFrom(reader, state);
+
+                            if (!state.isInvalid()) {
                                 matViewGraph.refresh(tableToken, MatViewRefreshTask.INCREMENTAL_REFRESH);
-                            } else {
-                                //TODO(eugene): okay, what to do with invalid views?
-                                LOG.error().$("materialized view is in invalid state [view=").utf8(tableToken.getTableName())
-                                        .$(", base=").utf8(matViewDefinition.getBaseTableName())
-                                        .I$();
                             }
                         }
                     } catch (CairoException e) {

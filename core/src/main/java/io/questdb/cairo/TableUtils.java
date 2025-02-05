@@ -32,6 +32,7 @@ import io.questdb.cairo.meta.MetaFileReader;
 import io.questdb.cairo.meta.MetaFileWriter;
 import io.questdb.cairo.meta.ReadableBlock;
 import io.questdb.cairo.mv.MatViewDefinition;
+import io.questdb.cairo.mv.MatViewRefreshState;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -563,6 +564,8 @@ public final class TableUtils {
                 try (MetaFileWriter writer = metaFileWriter) {
                     writer.of(path.trimTo(rootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
                     MatViewDefinition.commitTo(writer, structure.getMatViewDefinition());
+                    writer.of(path.trimTo(rootLen).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
+                    MatViewRefreshState.commitTo(writer, null);
                 }
             }
 
@@ -1223,10 +1226,13 @@ public final class TableUtils {
         }
     }
 
-    public static boolean matViewFileExists(CairoConfiguration configuration, Path path, CharSequence dirName) {
+    public static boolean matViewFilesExist(CairoConfiguration configuration, Path path, CharSequence dirName) {
         FilesFacade ff = configuration.getFilesFacade();
         path.of(configuration.getRoot()).concat(dirName).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME);
-        return ff.exists(path.$());
+        boolean defExists = ff.exists(path.$());
+        path.of(configuration.getRoot()).concat(dirName).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
+        boolean stateExists = ff.exists(path.$());
+        return defExists && stateExists;
     }
 
     public static long mremap(
@@ -1963,7 +1969,6 @@ public final class TableUtils {
         final String timeZoneOffsetStr = Chars.toString(timeZoneOffset);
 
         final CharSequence matViewSql = mem.getStr(offset);
-        offset += Vm.getStorageLength(timeZoneOffset);
         if (matViewSql == null || matViewSql.length() == 0) {
             throw CairoException.critical(0)
                     .put("materialized view SQL is empty [view=")
@@ -1971,7 +1976,6 @@ public final class TableUtils {
                     .put(']');
         }
         final String matViewSqlStr = Chars.toString(matViewSql);
-        final boolean isValid = mem.getBool(offset);
 
         return new MatViewDefinition(
                 matViewToken,
@@ -1982,8 +1986,7 @@ public final class TableUtils {
                 fromMicros,
                 toMicros,
                 timeZoneStr,
-                timeZoneOffsetStr,
-                isValid
+                timeZoneOffsetStr
         );
     }
 

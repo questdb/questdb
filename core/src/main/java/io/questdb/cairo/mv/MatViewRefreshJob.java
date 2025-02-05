@@ -464,7 +464,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return refreshed;
     }
 
-    private void refreshFailState(MatViewRefreshState state, long refreshTimestamp, CharSequence errorMessage) {
+    private void refreshFailState(final MatViewRefreshState state, long refreshTimestamp, final CharSequence errorMessage) {
         state.refreshFail(metaFileWriter, dbRoot.trimTo(dbRootLen), refreshTimestamp, errorMessage);
     }
 
@@ -644,6 +644,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     private void setInvalidState(MatViewRefreshState state) {
-        state.markAsInvalid(metaFileWriter, dbRoot.trimTo(dbRootLen));
+        state.markAsInvalid(metaFileWriter, dbRoot.trimTo(dbRootLen), "TODO: invalidation reason");
     }
 }
