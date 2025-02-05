@@ -167,7 +167,8 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                         "created\tevent\tviewTableId\tbaseTableTxn\terrorMessage\tlatency\n" +
                                 "2024-10-24T17:00:15.000000Z\t200\t6\t-1\t\t0.0000\n" +
                                 "2024-10-24T17:00:25.000000Z\t204\t6\t1\t\t10000.0000\n" +
-                                "2024-10-24T17:00:33.000000Z\t203\t6\t-1\t\t0.0000\n",
+                                "2024-10-24T17:00:33.000000Z\t202\t6\t-1\t\t0.0000\n" +
+                                "2024-10-24T17:00:33.000000Z\t203\t6\t-1\ttable does not exist [table=base_price]\t0.0000\n",
                         "sys.telemetry_mat_view"
                 );
             }

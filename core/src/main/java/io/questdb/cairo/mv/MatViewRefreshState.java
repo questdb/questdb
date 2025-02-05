@@ -82,7 +82,7 @@ public class MatViewRefreshState implements QuietCloseable {
     }
 
     public void init() {
-        telemetryFacade.store(MAT_VIEW_CREATE, viewDefinition.getMatViewToken(), -1L, 0L);
+        telemetryFacade.store(MAT_VIEW_CREATE, viewDefinition.getMatViewToken(), -1L, null, 0L);
     }
 
     public boolean isDropped() {
@@ -99,7 +99,7 @@ public class MatViewRefreshState implements QuietCloseable {
 
     public void markAsDropped() {
         dropped = true;
-        telemetryFacade.store(MAT_VIEW_DROP, viewDefinition.getMatViewToken(), -1L, 0L);
+        telemetryFacade.store(MAT_VIEW_DROP, viewDefinition.getMatViewToken(), -1L, null, 0L);
     }
 
     public void markAsInvalid(final MetaFileWriter metaFileWriter, final Path dbRoot) {
@@ -112,7 +112,7 @@ public class MatViewRefreshState implements QuietCloseable {
             //TODO(eugene): update invalid field, should it be part of the MatViewDefinition?
         }
         invalid = true;
-        telemetryFacade.store(MAT_VIEW_INVALIDATE, viewDefinition.getMatViewToken(), -1L, 0L);
+        telemetryFacade.store(MAT_VIEW_INVALIDATE, viewDefinition.getMatViewToken(), -1L, null, 0L);
     }
 
     public void markAsValid(final MetaFileWriter metaFileWriter, final Path dbRoot) {
@@ -122,11 +122,11 @@ public class MatViewRefreshState implements QuietCloseable {
         invalid = false;
     }
 
-    public void refreshFail(final MetaFileWriter metaFileWriter, final Path dbRoot, long refreshTimestamp) {
+    public void refreshFail(final MetaFileWriter metaFileWriter, final Path dbRoot, long refreshTimestamp, CharSequence errorMessage) {
         assert latch.get();
         markAsInvalid(metaFileWriter, dbRoot);
         lastRefreshTimestamp = refreshTimestamp;
-        telemetryFacade.store(MAT_VIEW_REFRESH_FAIL, viewDefinition.getMatViewToken(), -1L, 0L);
+        telemetryFacade.store(MAT_VIEW_REFRESH_FAIL, viewDefinition.getMatViewToken(), -1L, errorMessage, 0L);
     }
 
     public void refreshSuccess(
@@ -142,7 +142,7 @@ public class MatViewRefreshState implements QuietCloseable {
         this.recordToRowCopier = copier;
         this.recordRowCopierMetadataVersion = recordRowCopierMetadataVersion;
         this.lastRefreshTimestamp = refreshTimestamp;
-        telemetryFacade.store(MAT_VIEW_REFRESH_SUCCESS, viewDefinition.getMatViewToken(), baseTableTxn, refreshTimestamp - refreshTriggeredTimestamp);
+        telemetryFacade.store(MAT_VIEW_REFRESH_SUCCESS, viewDefinition.getMatViewToken(), baseTableTxn, null, refreshTimestamp - refreshTriggeredTimestamp);
     }
 
     public void tryCloseIfDropped() {

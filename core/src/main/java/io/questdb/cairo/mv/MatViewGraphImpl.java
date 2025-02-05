@@ -221,10 +221,10 @@ public class MatViewGraphImpl implements MatViewGraph {
         return dependentViewsByTableName.computeIfAbsent(tableName, createRefreshList);
     }
 
-    private void storeMatViewTelemetry(short event, TableToken tableToken, long baseTableTxn, long latencyUs) {
-        TelemetryMatViewTask.store(matViewTelemetry, event, tableToken.getTableId(), baseTableTxn, latencyUs);
+    private void storeMatViewTelemetry(short event, TableToken tableToken, long baseTableTxn, CharSequence errorMessage, long latencyUs) {
+        TelemetryMatViewTask.store(matViewTelemetry, event, tableToken.getTableId(), baseTableTxn, errorMessage, latencyUs);
     }
 
-    private void storeMatViewTelemetryNoop(short event, TableToken tableToken, long baseTableTxn, long latencyUs) {
+    private void storeMatViewTelemetryNoop(short event, TableToken tableToken, long baseTableTxn, CharSequence errorMessage, long latencyUs) {
     }
 }

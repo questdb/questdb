@@ -31,7 +31,7 @@ import io.questdb.griffin.QueryBuilder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ObjectFactory;
-import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.NotNull;
 
 public class TelemetryMatViewTask implements AbstractTelemetryTask {
@@ -72,6 +72,7 @@ public class TelemetryMatViewTask implements AbstractTelemetryTask {
         };
     };
     private static final Log LOG = LogFactory.getLog(TelemetryMatViewTask.class);
+    private final Utf8StringSink errorMessage = new Utf8StringSink();
     private long baseTableTxn;
     private short event;
     private float latency; // millis
@@ -81,12 +82,14 @@ public class TelemetryMatViewTask implements AbstractTelemetryTask {
     private TelemetryMatViewTask() {
     }
 
-    public static void store(@NotNull Telemetry<TelemetryMatViewTask> telemetry, short event, int viewTableId, long baseTableTxn, long latencyUs) {
+    public static void store(@NotNull Telemetry<TelemetryMatViewTask> telemetry, short event, int viewTableId, long baseTableTxn, CharSequence errorMessage, long latencyUs) {
         final TelemetryMatViewTask task = telemetry.nextTask();
         if (task != null) {
             task.event = event;
             task.viewTableId = viewTableId;
             task.baseTableTxn = baseTableTxn;
+            task.errorMessage.clear();
+            task.errorMessage.put(errorMessage);
             task.latency = latencyUs / 1000.0f; // millis
             telemetry.store(task);
         }
@@ -108,8 +111,7 @@ public class TelemetryMatViewTask implements AbstractTelemetryTask {
             row.putShort(1, event);
             row.putInt(2, viewTableId);
             row.putLong(3, baseTableTxn);
-            // TODO(glasstiger): pass error message here for failed refresh/view invalidate
-            row.putVarchar(4, new Utf8String(""));
+            row.putVarchar(4, errorMessage);
             row.putFloat(5, latency);
             row.append();
         } catch (CairoException e) {

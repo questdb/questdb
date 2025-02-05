@@ -4,5 +4,5 @@ import io.questdb.cairo.TableToken;
 
 @FunctionalInterface
 public interface MatViewTelemetryFacade {
-    void store(short event, TableToken tableToken, long baseTableTxn, long latencyUs);
+    void store(short event, TableToken tableToken, long baseTableTxn, CharSequence errorMessage, long latencyUs);
 }
