@@ -275,11 +275,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
                         break;
                     case ARRAY:
                         Array array = rs.getArray(i);
-                        if (array == null) {
-                            sink.put("null");
-                        } else {
-                            writeArray(sink, array);
-                        }
+                        writeArrayContent(sink, array.getArray());
                         break;
                     default:
                         assert false;
@@ -333,54 +329,37 @@ public abstract class BasePGTest extends AbstractCairoTest {
         }
     }
 
-    private static void writeArray(StringSink sink, Array array) throws SQLException {
-        Object arrayData = array.getArray();
-        if (arrayData == null) {
+    private static void writeArrayContent(StringSink sink, Object array) {
+        if (array == null) {
             sink.put("null");
             return;
         }
-
-        writeArrayContent(sink, arrayData);
-    }
-
-    private static void writeArrayContent(StringSink sink, Object arrayData) throws SQLException {
-        if (!arrayData.getClass().isArray()) {
-            // Base case: not an array, write the value
-            writeValue(sink, arrayData);
+        if (!array.getClass().isArray()) {
+            if (array instanceof Number) {
+                if (array instanceof Double || array instanceof Float) {
+                    sink.put(((Number) array).doubleValue());
+                } else {
+                    sink.put(((Number) array).longValue());
+                }
+            } else if (array instanceof Boolean) {
+                sink.put((Boolean) array);
+            } else {
+                sink.put(array.toString());
+            }
             return;
         }
 
         sink.put('{');
-        int length = java.lang.reflect.Array.getLength(arrayData);
+        int length = java.lang.reflect.Array.getLength(array);
         for (int i = 0; i < length; i++) {
-            Object element = java.lang.reflect.Array.get(arrayData, i);
-            if (element == null) {
-                sink.put("null");
-            } else {
-                writeArrayContent(sink, element);
-            }
+            Object element = java.lang.reflect.Array.get(array, i);
+            writeArrayContent(sink, element);
 
             if (i < length - 1) {
                 sink.put(',');
             }
         }
         sink.put('}');
-    }
-
-    private static void writeValue(StringSink sink, Object value) {
-        if (value == null) {
-            sink.put("null");
-        } else if (value instanceof Number) {
-            if (value instanceof Double || value instanceof Float) {
-                sink.put(((Number) value).doubleValue());
-            } else {
-                sink.put(((Number) value).longValue());
-            }
-        } else if (value instanceof Boolean) {
-            sink.put((Boolean) value);
-        } else {
-            sink.put(value.toString());
-        }
     }
 
     protected static void assertResultSet(CharSequence expected, StringSink sink, ResultSet rs, @Nullable IntIntHashMap map) throws SQLException, IOException {
