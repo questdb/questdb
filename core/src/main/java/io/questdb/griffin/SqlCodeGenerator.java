@@ -274,7 +274,6 @@ import io.questdb.std.BitSet;
 import io.questdb.std.BufferWindowCharSequence;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.CharSequenceHashSet;
-import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntIntHashMap;
@@ -3238,6 +3237,184 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    private RecordCursorFactory generatePivot(RecordCursorFactory base, QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+
+        if (model.getPivotColumns() == null || model.getPivotColumns().size() == 0 || model.getPivotFor() == null || model.getPivotFor().size() == 0) {
+            return base;
+        }
+
+        IntIntHashMap passthroughIndicesMap = new IntIntHashMap();
+
+        ObjList<ExpressionNode> pivotFor = model.getPivotFor();
+        ObjList<QueryColumn> pivotColumns = model.getPivotColumns();
+
+        CharSequenceHashSet pivotColumnAgg
+
+        int pivotForSize = pivotFor.size();
+        int pivotColumnsSize = pivotColumns.size();
+
+        IntList forMaxes = new IntList(pivotForSize);
+        IntList forDepths = new IntList(pivotForSize);
+        int expectedPivotColumnsPerAggregateFunction = 0;
+        for (int i = 0; i < pivotForSize; i++) {
+            // initialise depth to 0
+            forDepths.add(0);
+            // find max value
+            ExpressionNode for_ = pivotFor.get(i);
+            int numInArgs = for_.paramCount - 1; // skip the LHS of the IN expr
+            int maxIndex = numInArgs - 1; // index is 1 less than list length
+            forMaxes.add(maxIndex);
+            expectedPivotColumnsPerAggregateFunction = expectedPivotColumnsPerAggregateFunction == 0 ? numInArgs : expectedPivotColumnsPerAggregateFunction * numInArgs;
+        }
+        StringSink nameSink = new StringSink();
+        nameSink.clear();
+        boolean duplicateAggregateFunctions = false;
+        ObjList<CharSequence> aggregateFunctionNames = new ObjList<>();
+
+        // todo: improve lazy n^2 algorithm
+        for (int i = 0, n = pivotColumns.size(); i < n; i++) {
+            aggregateFunctionNames.add(pivotColumns.get(i).getAst().token);
+            for (int j = 0, m = aggregateFunctionNames.size() - 1; j < m; j++) {
+                if (Chars.equalsIgnoreCase(aggregateFunctionNames.get(i), aggregateFunctionNames.get(j))) {
+                    duplicateAggregateFunctions = true;
+                }
+            }
+        }
+
+
+        // for each pivot column in output
+        for (int i = 0; i < expectedPivotColumnsPerAggregateFunction; i++) {
+
+            // for each aggregate pivot column in input
+            for (int j = 0; j < pivotColumnsSize; j++) {
+                QueryColumn pivotColumn = pivotColumns.get(i);
+                TableColumnMetadata pivotColumnMetadata = new TableColumnMetadata();
+            }
+
+
+        }
+        /// /
+        /// /            // for each output pivot column
+        /// /            for (int i = 0; i < expectedPivotColumnsPerAggregateFunction; i++) {
+        /// /
+        /// /                // for each aggregate we want to generate
+        /// /                for (int j = 0, n = nested.getPivotColumns().size(); j < n; j++) {
+        /// /                    QueryColumn pivotColumn = nested.getPivotColumns().get(j);
+        /// /                    CharSequence pivotColumnName = pivotColumn.getAst().token;
+        /// /                    CharSequence pivotColumnParamToken = pivotColumn.getAst().rhs.token;
+        /// /                    ExpressionNode pivotColumnParam = pivotColumn.getAst().rhs;
+        /// /                    CharSequence pivotColumnAlias = pivotColumn.getAlias();
+        /// /                    CharSequence pivotDefaultValue = "null";
+        /// /
+        /// /                    ExpressionNode caseValue = null;
+        /// /                    ExpressionNode inValue = null;
+        /// /                    ExpressionNode forInExpr = null;
+        /// /
+        /// /                    // for each forValue combination
+        /// /                    for (int k = 0; k < pivotForSize; k++) {
+        /// /                        // build name
+        /// /                        forInExpr = nested.getPivotFor().getQuick(k);
+        /// /
+        /// /                        // select with the args in the IN list is relevant
+        /// /                        inValue = rewritePivotGetAppropriateArgFromInExpr(forInExpr, forMaxes.get(k) - forDepths.get(k));
+        /// /
+        /// /                        assert inValue != null;
+        /// /
+        /// /                        // start building the name
+        /// /                        nameSink.put(GenericLexer.unquote(inValue.token)).put('_');
+        /// /
+        /// /                        // build AND expr
+        /// /                        ExpressionNode caseClause = rewritePivotMakeBinaryExpression(rewritePivotGetAppropriateNameFromInExpr(forInExpr), inValue, "=", opEq);
+        /// /
+        /// /                        if (caseValue == null) {
+        /// /                            caseValue = caseClause;
+        /// /                        } else {
+        /// /                            // need to combine with and
+        /// /                            caseValue = rewritePivotMakeBinaryExpression(caseValue, caseClause, "and", opAnd);
+        /// /                        }
+        /// /                    }
+        /// /
+        /// /                    // if an alias has been for the aggregate column, we should apply it
+        /// /                    if (pivotColumnAlias != null) {
+        /// /                        // add the alias
+        /// /                        nameSink.put(pivotColumnAlias);
+        /// /                    } else if (nested.getPivotColumns().size() > 1) {
+        /// /                        if (duplicateAggregateFunctions) {
+        /// /                            // if there are duplicates, we need to distinguish them with the name of the column being aggregated over
+        /// /                            nameSink.put(pivotColumnParamToken).put('_'); // to handle duplicate aggregate i.e sum twice
+        /// /                        }
+        /// /                        // then add the pivot column
+        /// /                        nameSink.put(pivotColumnName); // todo: handle duplicate aggregates
+        /// /                    } else {
+        /// /                        // remove the '_', since we have finished our name
+        /// /                        nameSink.clear(nameSink.length() - 1);
+        /// /                    }
+        /// /
+        /// /                    // SUM(_)
+        /// /                    ExpressionNode aggExpr = expressionNodePool.next().of(FUNCTION, pivotColumnName, Integer.MIN_VALUE, 0);
+        /// /                    aggExpr.paramCount = 1;
+        /// /
+        /// /                    // CASE(_)
+        /// /                    ExpressionNode caseExpr;
+        /// /                    if (pivotForSize == 1) {
+        /// /                        caseExpr = expressionNodePool.next().of(FUNCTION, "switch", Integer.MIN_VALUE, 0);
+        /// /                        caseExpr.paramCount = 4;
+        /// /                    } else {
+        /// /                        caseExpr = expressionNodePool.next().of(FUNCTION, "case", Integer.MIN_VALUE, 0);
+        /// /                        caseExpr.paramCount = 3;
+        /// /                    }
+        /// /
+        /// /                    // 0
+        /// /                    ExpressionNode defaultValueExpr = expressionNodePool.next().of(CONSTANT, pivotDefaultValue, Integer.MIN_VALUE, 0);
+        /// /                    caseExpr.args.add(defaultValueExpr);
+        /// /
+        /// /                    // population
+        /// /                    caseExpr.args.add(pivotColumnParam);
+        /// /
+        /// /                    // case
+        /// /                    if (pivotForSize == 1) {
+        /// /                        caseExpr.args.add(inValue);
+        /// /                        caseExpr.args.add(forInExpr.args.getLast());
+        /// /                    } else {
+        /// /                        // A == B AND C == D etc.
+        /// /                        caseExpr.args.add(caseValue);
+        /// /                    }
+        /// /
+        /// /                    // add to sum
+        /// /                    aggExpr.rhs = caseExpr;
+        /// /
+        /// /                    model.addBottomUpColumn(queryColumnPool.next().of(
+        /// /                            nameSink.toString(),
+        /// /                            aggExpr
+        /// /                    ));
+        /// /
+        /// /                    nameSink.clear();
+        /// /                }
+        /// /
+        /// /                for (int z = forDepths.size() - 1; z >= 0; z--) {
+        /// /                    int depth = forDepths.getQuick(z);
+        /// /                    int max = forMaxes.getQuick(z);
+        /// /
+        /// /                    if (depth < max) {
+        /// /                        forDepths.increment(z);
+        /// /                        break;
+        /// /                    }
+        /// /
+        /// /                    if (depth == max) {
+        /// /                        forDepths.setQuick(z, 0);
+        /// /                    }
+        /// /                }
+        /// /            }
+        /// /
+        /// /            model.getNestedModel().clearPivot();
+        /// /
+        /// /        } else {
+        /// /            model.setNestedModel(rewritePivot(model.getNestedModel()));
+        /// /        }
+
+        return base;
+    }
+
     private RecordCursorFactory generateQuery(QueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
         RecordCursorFactory factory = generateQuery0(model, executionContext, processJoins);
         if (model.getUnionModel() != null) {
@@ -3247,7 +3424,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateQuery0(QueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
-        RecordCursorFactory factory = generateSelect(model, executionContext, processJoins);
+        RecordCursorFactory factory;
+        factory = generateSelect(model, executionContext, processJoins);
+        factory = generatePivot(factory, model, executionContext);
         factory = generateFilter(factory, model, executionContext);
         factory = generateLatestBy(factory, model);
         factory = generateOrderBy(factory, model, executionContext);
@@ -3872,80 +4051,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         return new SelectedRecordCursorFactory(selectMetadata, columnCrossIndex, factory);
-    }
-
-    private RecordCursorFactory generateUnpivot(RecordCursorFactory base, QueryModel model, SqlExecutionContext executionContext) throws SqlException
-    {
-        if (model.getUnpivotFor() != null && model.getUnpivotFor().size() == 1)   {
-            assert model.getUnpivotColumns() != null;
-            assert model.getUnpivotColumns().size() == 1; // only support one for now
-
-            GenericRecordMetadata unpivotMetadata = new GenericRecordMetadata();
-            ExpressionNode forExpr = model.getUnpivotFor().getQuick(0);
-
-            boolean addToMetadata = true;
-            int valueColumnType = -1;
-
-            IntIntHashMap passthroughIndicesMap = new IntIntHashMap(); // map from unpivot metadata to base metadata
-            IntList unpivotForIndices = new IntList(); // list of base metadata for column positions
-            ObjList<CharSequence> unpivotForNames = new ObjList<>(); // list of base metadata for column names
-            CharSequenceHashSet forNamesSet = new CharSequenceHashSet();
-
-            // build a set of the for expr names
-            for (int i = 0, n = forExpr.paramCount - 1; i < n; i++) {
-                forNamesSet.add(forExpr.args.getQuick(i).token.toString().toLowerCase());
-            }
-
-            // for every column in base metadata, check what we need to pull up
-            for (int i = 0, n = base.getMetadata().getColumnCount(); i < n; i++) {
-                TableColumnMetadata columnMetadata = base.getMetadata().getColumnMetadata(i);
-                String columnNameLc = columnMetadata.getColumnName().toLowerCase();
-
-                // if it is in the name set, add it to our 'for' lists
-                if (forNamesSet.contains(columnNameLc)) {
-                    addToMetadata = false;
-                    unpivotForIndices.add(i);
-                    unpivotForNames.add(columnMetadata.getColumnName());
-
-                    if (valueColumnType == -1) {
-                        valueColumnType = columnMetadata.getColumnType();
-                    } else {
-                        if (valueColumnType != columnMetadata.getColumnType()) {
-                            throw SqlException.$(forExpr.position,
-                                            "unpivot column type mismatch in `FOR` [expected=")
-                                    .put(ColumnType.nameOf(valueColumnType))
-                                    .put(", actual=")
-                                    .put(ColumnType.nameOf(columnMetadata.getColumnType()));
-                        }
-                    }
-                }
-
-                // else we can add the passthrough column
-                if (addToMetadata) {
-                    unpivotMetadata.add(columnMetadata);
-                    passthroughIndicesMap.put(unpivotMetadata.getColumnCount() - 1, i);
-                } else {
-                    addToMetadata = true;
-                }
-            }
-
-            // add the 'in' column i.e the column that will contain the column names
-            ExpressionNode inExpr = forExpr.args.getLast();
-            TableColumnMetadata inColumnMetadata = new TableColumnMetadata(inExpr.token.toString(), ColumnType.SYMBOL, false, -1, false, null);
-            unpivotMetadata.add(inColumnMetadata);
-
-            int inColumnIndex = unpivotMetadata.getColumnCount() - 1;
-
-            // add the value column which will contain the unpivoted values
-            assert model.getUnpivotColumns() != null;
-            QueryColumn valueColumn = model.getUnpivotColumns().getQuick(0);
-            unpivotMetadata.add(new TableColumnMetadata(valueColumn.getName().toString(), valueColumnType));
-
-            int valueColumnIndex = unpivotMetadata.getColumnCount() - 1;
-
-            return new UnpivotRecordCursorFactory(base, unpivotMetadata, inColumnIndex, valueColumnIndex, unpivotForIndices, unpivotForNames, passthroughIndicesMap);
-        }
-        return base;
     }
 
     private RecordCursorFactory generateSelectCursor(
@@ -5947,6 +6052,82 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return generateSetFactory(model.getUnionModel(), unionFactory, executionContext);
         }
         return unionFactory;
+    }
+
+    private RecordCursorFactory generateUnpivot(RecordCursorFactory base, QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        if (model.getUnpivotFor() != null && model.getUnpivotFor().size() == 1) {
+            assert model.getUnpivotColumns() != null;
+            assert model.getUnpivotColumns().size() == 1; // only support one for now
+
+            GenericRecordMetadata unpivotMetadata = new GenericRecordMetadata();
+            ExpressionNode forExpr = model.getUnpivotFor().getQuick(0);
+
+            boolean addToMetadata = true;
+            int valueColumnType = -1;
+
+            IntIntHashMap passthroughIndicesMap = new IntIntHashMap();
+            int pivotedColumnsStartIndex = -1;
+
+            // map from unpivot metadata to base metadata
+            IntList unpivotForIndices = new IntList(); // list of base metadata for column positions
+            ObjList<CharSequence> unpivotForNames = new ObjList<>(); // list of base metadata for column names
+            CharSequenceHashSet forNamesSet = new CharSequenceHashSet();
+
+            // build a set of the for expr names
+            for (int i = 0, n = forExpr.paramCount - 1; i < n; i++) {
+                forNamesSet.add(forExpr.args.getQuick(i).token.toString().toLowerCase());
+            }
+
+            // for every column in base metadata, check what we need to pull up
+            for (int i = 0, n = base.getMetadata().getColumnCount(); i < n; i++) {
+                TableColumnMetadata columnMetadata = base.getMetadata().getColumnMetadata(i);
+                String columnNameLc = columnMetadata.getColumnName().toLowerCase();
+
+                // if it is in the name set, add it to our 'for' lists
+                if (forNamesSet.contains(columnNameLc)) {
+                    addToMetadata = false;
+                    unpivotForIndices.add(i);
+                    unpivotForNames.add(columnMetadata.getColumnName());
+
+                    if (valueColumnType == -1) {
+                        valueColumnType = columnMetadata.getColumnType();
+                    } else {
+                        if (valueColumnType != columnMetadata.getColumnType()) {
+                            throw SqlException.$(forExpr.position,
+                                            "unpivot column type mismatch in `FOR` [expected=")
+                                    .put(ColumnType.nameOf(valueColumnType))
+                                    .put(", actual=")
+                                    .put(ColumnType.nameOf(columnMetadata.getColumnType()));
+                        }
+                    }
+                }
+
+                // else we can add the passthrough column
+                if (addToMetadata) {
+                    unpivotMetadata.add(columnMetadata);
+                    passthroughIndicesMap.put(unpivotMetadata.getColumnCount() - 1, i);
+                } else {
+                    addToMetadata = true;
+                }
+            }
+
+            // add the 'in' column i.e the column that will contain the column names
+            ExpressionNode inExpr = forExpr.args.getLast();
+            TableColumnMetadata inColumnMetadata = new TableColumnMetadata(inExpr.token.toString(), ColumnType.SYMBOL, false, -1, false, null);
+            unpivotMetadata.add(inColumnMetadata);
+
+            int inColumnIndex = unpivotMetadata.getColumnCount() - 1;
+
+            // add the value column which will contain the unpivoted values
+            assert model.getUnpivotColumns() != null;
+            QueryColumn valueColumn = model.getUnpivotColumns().getQuick(0);
+            unpivotMetadata.add(new TableColumnMetadata(valueColumn.getName().toString(), valueColumnType));
+
+            int valueColumnIndex = unpivotMetadata.getColumnCount() - 1;
+
+            return new UnpivotRecordCursorFactory(base, unpivotMetadata, inColumnIndex, valueColumnIndex, unpivotForIndices, unpivotForNames, passthroughIndicesMap);
+        }
+        return base;
     }
 
     @Nullable

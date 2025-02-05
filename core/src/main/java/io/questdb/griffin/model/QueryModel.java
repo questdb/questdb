@@ -63,50 +63,50 @@ import static io.questdb.griffin.SqlParser.ZERO_OFFSET;
  */
 public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sinkable {
     public static final QueryModelFactory FACTORY = new QueryModelFactory();
-    public static final int JOIN_ASOF = 4;
-    public static final int JOIN_CROSS = 3;
-    public static final int JOIN_CROSS_LEFT = 8;
-    public static final int JOIN_INNER = 1;
-    public static final int JOIN_LT = 6;
-    public static final int JOIN_MAX = JOIN_CROSS_LEFT;
-    public static final int JOIN_ONE = 7;
-    public static final int JOIN_OUTER = 2;
-    public static final int JOIN_SPLICE = 5;
-    public static final int LATEST_BY_DEPRECATED = 1;
-    public static final int LATEST_BY_NEW = 2;
-    public static final int LATEST_BY_NONE = 0;
+    public static final int JOIN_INNER = 1;                 // 1
+    public static final int JOIN_OUTER = JOIN_INNER + 1;    // 2
+    public static final int JOIN_CROSS = JOIN_OUTER + 1;    // 3
+    public static final int JOIN_ASOF = JOIN_CROSS + 1;     // 4
+    public static final int JOIN_SPLICE = JOIN_ASOF + 1;    // 5
+    public static final int JOIN_LT = JOIN_SPLICE + 1;      // 6
+    public static final int JOIN_ONE = JOIN_LT + 1;         // 7
+    public static final int JOIN_CROSS_LEFT = JOIN_ONE + 1; // 8
+    public static final int JOIN_MAX = JOIN_CROSS_LEFT;     // 8
+    public static final int LATEST_BY_NONE = 0;                        // 0
+    public static final int LATEST_BY_DEPRECATED = LATEST_BY_NONE + 1; // 1
+    public static final int LATEST_BY_NEW = LATEST_BY_DEPRECATED + 1;  // 2
     public static final String NO_ROWID_MARKER = "*!*";
     public static final int ORDER_DIRECTION_ASCENDING = 0;
     public static final int ORDER_DIRECTION_DESCENDING = 1;
-    public static final int SELECT_MODEL_CHOOSE = 1;
-    public static final int SELECT_MODEL_CURSOR = 6;
-    public static final int SELECT_MODEL_DISTINCT = 5;
-    public static final int SELECT_MODEL_GROUP_BY = 4;
-    public static final int SELECT_MODEL_NONE = 0;
-    public static final int SELECT_MODEL_SHOW = 7;
-    public static final int SELECT_MODEL_VIRTUAL = 2;
-    public static final int SELECT_MODEL_WINDOW = 3;
-    public static final int SET_OPERATION_EXCEPT = 2;
-    public static final int SET_OPERATION_EXCEPT_ALL = 3;
-    public static final int SET_OPERATION_INTERSECT = 4;
-    public static final int SET_OPERATION_INTERSECT_ALL = 5;
-    public static final int SET_OPERATION_UNION = 1;
+    public static final int SELECT_MODEL_NONE = 0;                             // 0
+    public static final int SELECT_MODEL_CHOOSE = SELECT_MODEL_NONE + 1;       // 1
+    public static final int SELECT_MODEL_VIRTUAL = SELECT_MODEL_CHOOSE + 1;    // 2
+    public static final int SELECT_MODEL_WINDOW = SELECT_MODEL_VIRTUAL + 1;    // 3
+    public static final int SELECT_MODEL_GROUP_BY = SELECT_MODEL_WINDOW + 1;   // 4
+    public static final int SELECT_MODEL_DISTINCT = SELECT_MODEL_GROUP_BY + 1; // 5
+    public static final int SELECT_MODEL_CURSOR = SELECT_MODEL_DISTINCT + 1;   // 6
+    public static final int SELECT_MODEL_SHOW = SELECT_MODEL_CURSOR + 1;       // 7
     // types of set operations between this and union model
-    public static final int SET_OPERATION_UNION_ALL = 0;
-    public static final int SHOW_COLUMNS = 2;
-    public static final int SHOW_CREATE_TABLE = 14;
-    public static final int SHOW_DATE_STYLE = 9;
-    public static final int SHOW_MAX_IDENTIFIER_LENGTH = 6;
-    public static final int SHOW_PARAMETERS = 11;
-    public static final int SHOW_PARTITIONS = 3;
-    public static final int SHOW_SEARCH_PATH = 8;
-    public static final int SHOW_SERVER_VERSION = 12;
-    public static final int SHOW_SERVER_VERSION_NUM = 13;
-    public static final int SHOW_STANDARD_CONFORMING_STRINGS = 7;
-    public static final int SHOW_TABLES = 1;
-    public static final int SHOW_TIME_ZONE = 10;
-    public static final int SHOW_TRANSACTION = 4;
-    public static final int SHOW_TRANSACTION_ISOLATION_LEVEL = 5;
+    public static final int SET_OPERATION_UNION_ALL = 0; // 0
+    public static final int SET_OPERATION_UNION = SET_OPERATION_UNION_ALL + 1;         // 1
+    public static final int SET_OPERATION_EXCEPT = SET_OPERATION_UNION + 1;            // 2
+    public static final int SET_OPERATION_EXCEPT_ALL = SET_OPERATION_EXCEPT + 1;       // 3
+    public static final int SET_OPERATION_INTERSECT = SET_OPERATION_EXCEPT_ALL + 1;    // 4
+    public static final int SET_OPERATION_INTERSECT_ALL = SET_OPERATION_INTERSECT + 1; // 5
+    public static final int SHOW_TABLES = 1;                                                   // 1
+    public static final int SHOW_COLUMNS = SHOW_TABLES + 1;                                    // 2
+    public static final int SHOW_PARTITIONS = SHOW_COLUMNS + 1;                                // 3
+    public static final int SHOW_TRANSACTION = SHOW_PARTITIONS + 1;                            // 4
+    public static final int SHOW_TRANSACTION_ISOLATION_LEVEL = SHOW_TRANSACTION + 1;           // 5
+    public static final int SHOW_MAX_IDENTIFIER_LENGTH = SHOW_TRANSACTION_ISOLATION_LEVEL + 1; // 6
+    public static final int SHOW_STANDARD_CONFORMING_STRINGS = SHOW_MAX_IDENTIFIER_LENGTH + 1; // 7
+    public static final int SHOW_SEARCH_PATH = SHOW_STANDARD_CONFORMING_STRINGS + 1;           // 8
+    public static final int SHOW_DATE_STYLE = SHOW_SEARCH_PATH + 1;                            // 9
+    public static final int SHOW_TIME_ZONE = SHOW_DATE_STYLE + 1;                              // 10
+    public static final int SHOW_PARAMETERS = SHOW_TIME_ZONE + 1;                              // 11
+    public static final int SHOW_SERVER_VERSION = SHOW_PARAMETERS + 1;                         // 12
+    public static final int SHOW_SERVER_VERSION_NUM = SHOW_SERVER_VERSION + 1;                 // 13
+    public static final int SHOW_CREATE_TABLE = SHOW_SERVER_VERSION_NUM + 1;                   // 14
     public static final String SUB_QUERY_ALIAS_PREFIX = "_xQdbA";
     private static final ObjList<String> modelTypeName = new ObjList<>();
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap = new LowerCaseCharSequenceObjHashMap<>();
@@ -195,9 +195,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private ExpressionNode outerJoinExpressionClause;
     private @Nullable ObjList<QueryColumn> pivotColumns = null;
     private @Nullable ObjList<ExpressionNode> pivotFor = null;
-    private @Nullable ObjList<QueryColumn> unpivotColumns = null;
-    private @Nullable ObjList<ExpressionNode> unpivotFor = null;
-
     private ExpressionNode postJoinWhereClause;
     private ExpressionNode sampleBy;
     private ExpressionNode sampleByFrom;
@@ -214,6 +211,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private RecordCursorFactory tableNameFunction;
     private ExpressionNode timestamp;
     private QueryModel unionModel;
+    private @Nullable ObjList<QueryColumn> unpivotColumns = null;
+    private @Nullable ObjList<ExpressionNode> unpivotFor = null;
     private QueryModel updateTableModel;
     private TableToken updateTableToken;
     private ExpressionNode whereClause;
@@ -353,6 +352,20 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         parsedWhere.add(node);
     }
 
+    public void addPivotColumn(QueryColumn column) {
+        if (pivotColumns == null) {
+            pivotColumns = new ObjList<>();
+        }
+        pivotColumns.add(column);
+    }
+
+    public void addPivotFor(ExpressionNode _for) {
+        if (pivotFor == null) {
+            pivotFor = new ObjList<>();
+        }
+        pivotFor.add(_for);
+    }
+
     public void addSampleByFill(ExpressionNode sampleByFill) {
         this.sampleByFill.add(sampleByFill);
     }
@@ -361,6 +374,20 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         if (topDownNameSet.add(alias)) {
             topDownColumns.add(column);
         }
+    }
+
+    public void addUnpivotColumn(QueryColumn column) {
+        if (unpivotColumns == null) {
+            unpivotColumns = new ObjList<>();
+        }
+        unpivotColumns.add(column);
+    }
+
+    public void addUnpivotFor(ExpressionNode _for) {
+        if (unpivotFor == null) {
+            unpivotFor = new ObjList<>();
+        }
+        unpivotFor.add(_for);
     }
 
     public void addUpdateTableColumnMetadata(int columnType, String columnName) {
@@ -493,6 +520,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public void clearOrderBy() {
         orderBy.clear();
         orderByDirection.clear();
+    }
+
+    public void clearPivot() {
+        pivotFor = null;
+        pivotColumns = null;
     }
 
     public void clearSampleBy() {
@@ -723,19 +755,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return allowPropagationOfOrderByAdvice;
     }
 
-    public boolean windowStopPropagate() {
-        if (selectModelType != SELECT_MODEL_WINDOW) {
-            return false;
-        }
-        for (int i = 0, size = getColumns().size(); i < size; i++) {
-            QueryColumn column = getColumns().getQuick(i);
-            if (column.isWindowColumn() && ((WindowColumn) column).stopOrderByPropagate(getOrderBy(), getOrderByDirection())) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     public ObjList<CharSequence> getBottomUpColumnAliases() {
         return bottomUpColumnAliases;
     }
@@ -933,44 +952,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return pivotColumns;
     }
 
-    public @Nullable ObjList<QueryColumn> getUnpivotColumns() {
-        return unpivotColumns;
-    }
-
-    public void addPivotColumn(QueryColumn column) {
-        if (pivotColumns == null) {
-            pivotColumns = new ObjList<>();
-        }
-        pivotColumns.add(column);
-    }
-
-    public void addUnpivotColumn(QueryColumn column) {
-        if (unpivotColumns == null) {
-            unpivotColumns = new ObjList<>();
-        }
-        unpivotColumns.add(column);
-    }
-
     public @Nullable ObjList<ExpressionNode> getPivotFor() {
         return pivotFor;
-    }
-
-    public @Nullable ObjList<ExpressionNode> getUnpivotFor() {
-        return unpivotFor;
-    }
-
-    public void addPivotFor(ExpressionNode _for) {
-        if (pivotFor == null) {
-            pivotFor = new ObjList<>();
-        }
-        pivotFor.add(_for);
-    }
-
-    public void addUnpivotFor(ExpressionNode _for) {
-        if (unpivotFor == null) {
-            unpivotFor = new ObjList<>();
-        }
-        unpivotFor.add(_for);
     }
 
     public ExpressionNode getPostJoinWhereClause() {
@@ -1049,6 +1032,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public QueryModel getUnionModel() {
         return unionModel;
+    }
+
+    public @Nullable ObjList<QueryColumn> getUnpivotColumns() {
+        return unpivotColumns;
+    }
+
+    public @Nullable ObjList<ExpressionNode> getUnpivotFor() {
+        return unpivotFor;
     }
 
     public ObjList<ExpressionNode> getUpdateExpressions() {
@@ -1247,6 +1238,23 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.limitLo = baseModel.getLimitLo();
         this.limitHi = baseModel.getLimitHi();
         baseModel.setLimit(null, null);
+    }
+
+    public void movePivotFrom(QueryModel model) {
+        assert model.getPivotColumns() != null && model.getPivotColumns().size() > 0;
+        assert model.getPivotFor() != null && model.getPivotFor().size() > 0;
+
+        if (pivotColumns == null) {
+            pivotColumns = new ObjList<>(model.getPivotColumns().size());
+        }
+        pivotColumns.addAll(model.getPivotColumns());
+
+        if (pivotFor == null) {
+            pivotFor = new ObjList<>(model.getPivotFor().size());
+        }
+        pivotFor.addAll(model.getPivotFor());
+
+        model.clearPivot();
     }
 
     public void moveSampleByFrom(QueryModel model) {
@@ -1552,6 +1560,19 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
             columnAliasIndexes.put(bottomUpColumnAliases.getQuick(i), i);
         }
+    }
+
+    public boolean windowStopPropagate() {
+        if (selectModelType != SELECT_MODEL_WINDOW) {
+            return false;
+        }
+        for (int i = 0, size = getColumns().size(); i < size; i++) {
+            QueryColumn column = getColumns().getQuick(i);
+            if (column.isWindowColumn() && ((WindowColumn) column).stopOrderByPropagate(getOrderBy(), getOrderByDirection())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void aliasToSink(CharSequence alias, CharSink<?> sink) {
@@ -2080,11 +2101,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         public QueryModel newInstance() {
             return new QueryModel();
         }
-    }
-
-    public void clearPivot() {
-        pivotFor = null;
-        pivotColumns = null;
     }
 
     static {
