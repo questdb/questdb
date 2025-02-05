@@ -10623,6 +10623,23 @@ create table tab as (
         });
     }
 
+    @Test
+    public void testTableReferenceOutOfDate() throws Exception {
+        Assume.assumeFalse(walEnabled);
+        Assume.assumeFalse(legacyMode);
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            final String query = "select * from test_table_reference_out_of_date();";
+            try (
+                    PreparedStatement stmt = connection.prepareStatement(query);
+                    ResultSet ignore = stmt.executeQuery()
+            ) {
+                Assert.fail();
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "cached query plan cannot be used because table schema has changed");
+            }
+        });
+    }
+
     // TODO(puzpuzpuz): fix schema changes handling in PGWire for extended protocol
     //                  https://github.com/questdb/questdb/issues/4971
     @Ignore
