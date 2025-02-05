@@ -172,8 +172,6 @@ public class CursorPrinter {
             case ColumnType.ARRAY:
                 ArrayTypeDriver.doubleArrayToJson(
                         record.getArray(columnIndex, columnType),
-                        0,
-                        0,
                         sink,
                         '[',
                         ']'

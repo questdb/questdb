@@ -880,8 +880,14 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             case ColumnType.DOUBLE:
                 ArrayTypeDriver.doubleArrayToJson(
                         record.getArray(columnIdx, columnType),
-                        0,
-                        0,
+                        response,
+                        '[',
+                        ']'
+                );
+                break;
+            case ColumnType.LONG:
+                ArrayTypeDriver.longArrayToJson(
+                        record.getArray(columnIdx, columnType),
                         response,
                         '[',
                         ']'

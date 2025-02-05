@@ -120,6 +120,11 @@ public class ArrayViewImpl implements ArrayView {
         return values.getLong(flatIndex(coordinates));
     }
 
+    @Override
+    public long getLongFromRowMajor(int flatIndex) {
+        return values.getLong(flatIndex);
+    }
+
     public short getShort(DirectIntSlice coordinates) {
         return values.getShort(flatIndex(coordinates));
     }

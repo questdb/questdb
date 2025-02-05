@@ -1673,13 +1673,25 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             utf8Sink.putNetworkInt(1); // lower bound, always 1 in PostgreSQL
         }
 
-        if (ColumnType.decodeArrayElementType(columnType) == ColumnType.DOUBLE) {
-            // Write array elements in row-major order, which is native to both
-            // PostgreSQL wire protocol and our ArrayView
-            for (int i = 0; i < totalElements; i++) {
-                utf8Sink.putNetworkInt(8);
-                utf8Sink.putNetworkDouble(arrayView.getDoubleFromRowMajor(i));
-            }
+        switch (ColumnType.decodeArrayElementType(columnType)) {
+            // we duplicate the loop to avoid the overhead of a switch statement inside the loop
+            // todo: check if JIT can hoist the switch out of the loop so we could avoid loop duplication
+            case ColumnType.DOUBLE:
+                // Write array elements in row-major order, which is native to both
+                // PostgreSQL wire protocol and our ArrayView
+                for (int i = 0; i < totalElements; i++) {
+                    utf8Sink.putNetworkInt(8);
+                    utf8Sink.putNetworkDouble(arrayView.getDoubleFromRowMajor(i));
+                }
+                break;
+            case ColumnType.LONG:
+                for (int i = 0; i < totalElements; i++) {
+                    utf8Sink.putNetworkInt(8);
+                    utf8Sink.putNetworkLong(arrayView.getLongFromRowMajor(i));
+                }
+                break;
+            default:
+                assert false;
         }
     }
 
@@ -1849,7 +1861,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         final long a = utf8Sink.skipInt();
         switch (ColumnType.decodeArrayElementType(columnType)) {
             case ColumnType.DOUBLE:
-                ArrayTypeDriver.doubleArrayToJson(arrayView, 0, 0, utf8Sink, '{', '}');
+                ArrayTypeDriver.doubleArrayToJson(arrayView, utf8Sink, '{', '}');
+                break;
+            case ColumnType.LONG:
+                ArrayTypeDriver.longArrayToJson(arrayView, utf8Sink, '{', '}');
                 break;
         }
         utf8Sink.putLenEx(a);

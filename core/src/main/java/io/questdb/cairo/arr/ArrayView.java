@@ -28,6 +28,12 @@ import io.questdb.cairo.vm.api.MemoryA;
 
 public interface ArrayView {
 
+    void appendRowMajor(MemoryA mem);
+
+    int getDim();
+
+    int getDimLength(int dim);
+
     default double getDouble1D(int x) {
         return getDoubleFromRowMajor(getValuesOffset() + x);
     }
@@ -48,9 +54,15 @@ public interface ArrayView {
      */
     double getDoubleFromRowMajor(int flatIndex);
 
-    int getDim();
+    /**
+     * Raw access into flat array with row major layout.
+     *
+     * @param flatIndex flat index into the flat array
+     * @return long value from the array
+     */
+    long getLongFromRowMajor(int flatIndex);
 
-    int getDimLength(int dim);
+    int getSize();
 
     int getStride(int dimension);
 
@@ -69,8 +81,4 @@ public interface ArrayView {
     default boolean isVanilla() {
         return true;
     }
-
-    void appendRowMajor(MemoryA mem);
-
-    int getSize();
 }

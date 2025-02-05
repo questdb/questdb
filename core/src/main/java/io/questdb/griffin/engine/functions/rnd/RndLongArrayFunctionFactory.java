@@ -41,10 +41,10 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
-public class RndDoubleArrayFunctionFactory implements FunctionFactory {
+public class RndLongArrayFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "rnd_double_array(i)";
+        return "rnd_long_array(i)";
     }
 
     @Override
@@ -59,7 +59,7 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
         if (dimensionCount <= 0) {
             return NullConstant.NULL;
         }
-        return new RndDoubleArrayFunction(dimensionCount);
+        return new RndLongArrayFunction(dimensionCount);
     }
 
     public static class ArrayArrayView implements ArrayView {
@@ -71,7 +71,7 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
         private final int type;
         private Rnd rnd;
         private int size;
-        private double[] values;
+        private long[] values;
 
         public ArrayArrayView(int dimensionCount, int type) {
             this.dimensionCount = dimensionCount;
@@ -83,7 +83,7 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
         @Override
         public void appendRowMajor(MemoryA mem) {
             for (int i = 0; i < size; i++) {
-                mem.putDouble(values[i]);
+                mem.putLong(values[i]);
             }
         }
 
@@ -99,12 +99,12 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDoubleFromRowMajor(int flatIndex) {
-            return values[flatIndex];
+            throw new UnsupportedOperationException();
         }
 
         @Override
         public long getLongFromRowMajor(int flatIndex) {
-            throw new UnsupportedOperationException();
+            return values[flatIndex];
         }
 
         @Override
@@ -140,22 +140,22 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
             }
 
             if (values == null || values.length < size) {
-                values = new double[size];
+                values = new long[size];
             }
 
             for (int i = 0; i < size; i++) {
-                values[i] = rnd.nextDouble();
+                values[i] = rnd.nextLong();
             }
             return this;
         }
     }
 
-    public static class RndDoubleArrayFunction extends ArrayFunction {
+    public static class RndLongArrayFunction extends ArrayFunction {
         private final ArrayArrayView arrayView;
         private final int type;
 
-        public RndDoubleArrayFunction(int dimensionCount) {
-            this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, dimensionCount);
+        public RndLongArrayFunction(int dimensionCount) {
+            this.type = ColumnType.encodeArrayType(ColumnType.LONG, dimensionCount);
             this.arrayView = new ArrayArrayView(dimensionCount, this.type);
         }
 
@@ -177,7 +177,8 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("rnd_double_array").val('(').val(arrayView.dimensionCount).val(')');
+            sink.val("rnd_long_array").val('(').val(arrayView.dimensionCount).val(')');
         }
     }
 }
+
