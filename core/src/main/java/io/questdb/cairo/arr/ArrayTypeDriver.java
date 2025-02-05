@@ -34,9 +34,9 @@ import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryOM;
 import io.questdb.cairo.vm.api.MemoryR;
-import io.questdb.cutlass.pgwire.PGResponseSink;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
@@ -121,8 +121,22 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     public static final int CRC16_SHIFT = 48;
     public static final ArrayTypeDriver INSTANCE = new ArrayTypeDriver();
     public static final long OFFSET_MAX = (1L << 48) - 1L;
-    private static final ValueAppender DOUBLE_APPENDER = (ArrayView view, CharSink<?> sink, int index) -> sink.put(view.getDoubleFromRowMajor(index));
-    private static final ValueAppender LONG_APPENDER = (ArrayView view, CharSink<?> sink, int index) -> sink.put(view.getLongFromRowMajor(index));
+    private static final ValueAppender DOUBLE_APPENDER = (ArrayView view, CharSink<?> sink, int index) -> {
+        double d = view.getDoubleFromRowMajor(index);
+        if (!Numbers.isNull(d)) {
+            sink.put(d);
+        } else {
+            sink.putAscii("NULL");
+        }
+    };
+    private static final ValueAppender LONG_APPENDER = (ArrayView view, CharSink<?> sink, int index) -> {
+        long l = view.getLongFromRowMajor(index);
+        if (l != Numbers.LONG_NULL) {
+            sink.put(l);
+        } else {
+            sink.putAscii("NULL");
+        }
+    };
     private static final int ND_ARRAY_AUX_WIDTH_BYTES = 3 * Integer.BYTES;
     private static final long U32_MASK = 0xFFFFFFFFL;
 

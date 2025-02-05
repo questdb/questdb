@@ -1636,7 +1636,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outColBinArray(PGResponseSink utf8Sink, Record record, int columnIndex, int columnType) {
+    private void outColBinArr(PGResponseSink utf8Sink, Record record, int columnIndex, int columnType) {
         ArrayView arrayView = record.getArray(columnIndex, columnType);
         if (arrayView == null) {
             utf8Sink.setNullValue();
@@ -1651,20 +1651,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
         int typeTag = ColumnType.decodeArrayElementType(columnType);
         int componentTypeOid = getTypeOid(typeTag);
-        short pgElementSize = PG_TYPE_TO_SIZE_MAP.get(componentTypeOid);
-
-        int elementSize = Integer.BYTES // size of each element
-                + pgElementSize; // array elements
-        int totalSize = Integer.BYTES // total size
-                + Integer.BYTES  // ndims
-                + Integer.BYTES  // has_nulls
-                + (ndims * (Integer.BYTES + Integer.BYTES))  // dimension information: length and lower bound
-                + (elementSize * totalElements); // array elements
 
         // array header
-        utf8Sink.putNetworkInt(totalSize);
+        long sizePtr = utf8Sink.skipInt();
         utf8Sink.putNetworkInt(ndims);
-        utf8Sink.putNetworkInt(0); // has_nulls = 0
+        long hasNullPtr = utf8Sink.skipInt();
         utf8Sink.putNetworkInt(componentTypeOid);
 
         // Write dimension information
@@ -1673,6 +1664,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             utf8Sink.putNetworkInt(1); // lower bound, always 1 in PostgreSQL
         }
 
+        boolean hasNulls = false;
         switch (ColumnType.decodeArrayElementType(columnType)) {
             // we duplicate the loop to avoid the overhead of a switch statement inside the loop
             // todo: check if JIT can hoist the switch out of the loop so we could avoid loop duplication
@@ -1680,19 +1672,33 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 // Write array elements in row-major order, which is native to both
                 // PostgreSQL wire protocol and our ArrayView
                 for (int i = 0; i < totalElements; i++) {
-                    utf8Sink.putNetworkInt(8);
-                    utf8Sink.putNetworkDouble(arrayView.getDoubleFromRowMajor(i));
+                    double d = arrayView.getDoubleFromRowMajor(i);
+                    if (Numbers.isNull(d)) {
+                        hasNulls = true;
+                        utf8Sink.setNullValue();
+                    } else {
+                        utf8Sink.putNetworkInt(8);
+                        utf8Sink.putNetworkDouble(d);
+                    }
                 }
                 break;
             case ColumnType.LONG:
                 for (int i = 0; i < totalElements; i++) {
-                    utf8Sink.putNetworkInt(8);
-                    utf8Sink.putNetworkLong(arrayView.getLongFromRowMajor(i));
+                    long l = arrayView.getLongFromRowMajor(i);
+                    if (l == Numbers.LONG_NULL) {
+                        hasNulls = true;
+                        utf8Sink.setNullValue();
+                    } else {
+                        utf8Sink.putNetworkInt(8);
+                        utf8Sink.putNetworkLong(l);
+                    }
                 }
                 break;
             default:
                 assert false;
         }
+        Unsafe.getUnsafe().putInt(hasNullPtr, Numbers.bswap(hasNulls ? 1 : 0));
+        utf8Sink.putLenEx(sizePtr);
     }
 
     private void outColBinBool(PGResponseSink utf8Sink, Record record, int columnIndex) {
@@ -2322,7 +2328,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         outColTxtArr(utf8Sink, record, i, type);
                         break;
                     case BINARY_TYPE_ARRAY:
-                        outColBinArray(utf8Sink, record, i, type);
+                        outColBinArr(utf8Sink, record, i, type);
                         break;
 
                     default:

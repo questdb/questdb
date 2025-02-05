@@ -44,7 +44,7 @@ import io.questdb.std.Rnd;
 public class RndDoubleArrayFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "rnd_double_array(i)";
+        return "rnd_double_array(ii)";
     }
 
     @Override
@@ -59,13 +59,18 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
         if (dimensionCount <= 0) {
             return NullConstant.NULL;
         }
-        return new RndDoubleArrayFunction(dimensionCount);
+        int nanRate = args.getQuick(1).getInt(null);
+        if (nanRate < 0) {
+            throw SqlException.$(argPositions.getQuick(0), "invalid NaN rate [nanRate=").put(nanRate).put(']');
+        }
+        return new RndDoubleArrayFunction(dimensionCount, nanRate);
     }
 
     public static class ArrayArrayView implements ArrayView {
 
         private static final int MAX_LEN = 16;
         private final int dimensionCount;
+        private final int nanRate;
         private final int[] shape;
         private final int[] strides;
         private final int type;
@@ -73,11 +78,12 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
         private int size;
         private double[] values;
 
-        public ArrayArrayView(int dimensionCount, int type) {
+        public ArrayArrayView(int dimensionCount, int nanRate, int type) {
             this.dimensionCount = dimensionCount;
             this.shape = new int[dimensionCount];
             this.strides = new int[dimensionCount];
             this.type = type;
+            this.nanRate = nanRate;
         }
 
         @Override
@@ -144,7 +150,13 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
             }
 
             for (int i = 0; i < size; i++) {
-                values[i] = rnd.nextDouble();
+                double val;
+                if ((rnd.nextInt() % nanRate) == 1) {
+                    val = Double.NaN;
+                } else {
+                    val = rnd.nextDouble();
+                }
+                values[i] = val;
             }
             return this;
         }
@@ -154,9 +166,9 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
         private final ArrayArrayView arrayView;
         private final int type;
 
-        public RndDoubleArrayFunction(int dimensionCount) {
+        public RndDoubleArrayFunction(int dimensionCount, int nanRate) {
             this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, dimensionCount);
-            this.arrayView = new ArrayArrayView(dimensionCount, this.type);
+            this.arrayView = new ArrayArrayView(dimensionCount, nanRate + 1, this.type);
         }
 
         @Override
@@ -177,6 +189,7 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
+            // todo: include nanRate in plan
             sink.val("rnd_double_array").val('(').val(arrayView.dimensionCount).val(')');
         }
     }
