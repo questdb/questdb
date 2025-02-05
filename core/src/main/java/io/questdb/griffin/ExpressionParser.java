@@ -302,24 +302,22 @@ public class ExpressionParser {
                         }
                         break;
                     case ',':
-                        if (prevBranch == BRANCH_COMMA || prevBranch == BRANCH_LEFT_PARENTHESIS) {
+                        if (prevBranch == BRANCH_COMMA || prevBranch == BRANCH_LEFT_PARENTHESIS || prevBranch == BRANCH_LEFT_BRACKET) {
                             throw missingArgs(lastPos);
                         }
                         thisBranch = BRANCH_COMMA;
 
-                        if (wrapperStack.peek() != WrapperToken.PAREN) {
-                            // comma outside of parens
+                        if (wrapperStack.peek() != WrapperToken.PAREN && wrapperStack.peek() != WrapperToken.BRACKET) {
+                            // comma outside of parens/brackets
                             lexer.unparseLast();
                             break OUT;
                         }
 
-                        if (wrapperStack.size() >= 2 && (
-                                wrapperStack.peek(1) == WrapperToken.CAST || wrapperStack.peek(1) == WrapperToken.CAST_AS
-                        )) {
+                        if (wrapperStack.peek(1) == WrapperToken.CAST || wrapperStack.peek(1) == WrapperToken.CAST_AS) {
                             throw SqlException.$(lastPos, "',' is not expected here");
                         }
 
-                        // If the token is a function argument separator (i.e., a comma):
+                        // The comma is a function argument separator:
                         // Until the token at the top of the stack is a left parenthesis,
                         // pop operators off the stack onto the output queue. If no left
                         // parentheses are encountered, either the separator was misplaced or
@@ -342,18 +340,18 @@ public class ExpressionParser {
                         } else {
                             thisBranch = BRANCH_LEFT_BRACKET;
 
-                            // If the token is a left parenthesis, then push it onto the stack.
+                            // entering bracketed context, push stuff onto the stacks
                             paramCountStack.push(paramCount);
                             paramCount = 0;
-
                             argStackDepthStack.push(argStackDepth);
                             argStackDepth = 0;
+                            wrapperStack.push(WrapperToken.BRACKET);
 
                             // pop left literal or . expression, e.g. "a.b[i]"
                             // the precedence of [ is fixed to 2
                             ExpressionNode other;
                             while ((other = opStack.peek()) != null) {
-                                if ((2 > other.precedence)) {
+                                if ((other.precedence < 2)) {
                                     argStackDepth = onNode(listener, other, argStackDepth, false);
                                     opStack.pop();
                                 } else {
@@ -364,7 +362,6 @@ public class ExpressionParser {
                             // precedence must be max value to make sure control node isn't
                             // consumed as parameter to a greedy function
                             opStack.push(expressionNodePool.next().of(ExpressionNode.CONTROL, "[", Integer.MAX_VALUE, lastPos));
-                            wrapperStack.push(WrapperToken.BRACKET);
                         }
 
                         break;
@@ -374,6 +371,9 @@ public class ExpressionParser {
                             ExpressionNode en = opStack.peek();
                             ((GenericLexer.FloatingSequence) en.token).setHi(lastPos + 1);
                         } else {
+                            if (prevBranch == BRANCH_COMMA) {
+                                throw missingArgs(lastPos);
+                            }
                             if (wrapperStack.peek() != WrapperToken.BRACKET) {
                                 lexer.unparseLast();
                                 break OUT;
@@ -384,17 +384,17 @@ public class ExpressionParser {
                                 throw SqlException.$(lastPos, "missing array index");
                             }
 
-                            wrapperStack.pop();
-
                             // pop the array index from the stack, it could be an operator
                             while ((node = opStack.pop()) != null && (node.type != ExpressionNode.CONTROL || node.token.charAt(0) != '[')) {
                                 argStackDepth = onNode(listener, node, argStackDepth, false);
                             }
 
+                            // exiting bracketed context, pop stuff off the stacks
+                            final WrapperToken wrapper = wrapperStack.pop();
+                            assert wrapper == WrapperToken.BRACKET : "Should have popped BRACKET, but got " + wrapper;
                             if (argStackDepthStack.notEmpty()) {
                                 argStackDepth += argStackDepthStack.pop();
                             }
-
                             if (paramCountStack.notEmpty()) {
                                 paramCount = paramCountStack.pop();
                             }
@@ -548,26 +548,25 @@ public class ExpressionParser {
                     case '(':
                         // check that we are handling a declare variable, and we have finished parsing it
                         if (parsedDeclaration && prevBranch != BRANCH_LEFT_PARENTHESIS && prevBranch != BRANCH_LITERAL
-                                && !(prevBranch == BRANCH_OPERATOR && Chars.equals(opStack.peek().token, ":="))) {
+                                && !(prevBranch == BRANCH_OPERATOR && Chars.equals(opStack.peek().token, ":="))
+                        ) {
                             lexer.unparseLast();
                             break OUT;
                         }
 
                         if (prevBranch == BRANCH_RIGHT_PARENTHESIS) {
-                            throw SqlException.$(lastPos, "not a method call");
+                            throw SqlException.$(lastPos, "not a function call");
                         }
                         if (prevBranch == BRANCH_CONSTANT) {
                             throw SqlException.$(lastPos, "dangling expression");
                         }
 
                         thisBranch = BRANCH_LEFT_PARENTHESIS;
-                        // If the token is a left parenthesis, then push it onto the stack.
+                        // entering parenthesised context, push stuff onto the stacks
                         paramCountStack.push(paramCount);
                         paramCount = 0;
-
                         argStackDepthStack.push(argStackDepth);
                         argStackDepth = 0;
-
                         wrapperStack.push(WrapperToken.PAREN);
 
                         // precedence must be max value to make sure control node isn't
@@ -600,69 +599,71 @@ public class ExpressionParser {
                             thisWasCast = false;
                         }
 
-                        // If the token is a right parenthesis:
-                        // Until the token at the top of the stack is a left parenthesis, pop operators off the stack onto the output queue.
-                        // Pop the left parenthesis from the stack, but not onto the output queue.
-                        //        If the token at the top of the stack is a function token, pop it onto the output queue.
-                        //        If the stack runs out without finding a left parenthesis, then there are mismatched parentheses.
+                        // Until the token at the top of the stack is a left paren, pop operators off the stack onto the output queue.
+                        // Pop the left paren from the stack, but don't push onto the output queue.
+                        // If the token at the top of the stack is a function token, push it onto the output queue.
+                        // If the stack runs out without finding a left paren, then there are mismatched parens.
                         while ((node = opStack.pop()) != null && (node.token.length() == 0 || node.token.charAt(0) != '(')) {
                             // special case - (*) expression
                             if (Chars.equals(node.token, '*') && argStackDepth == 0 && isCount()) {
                                 argStackDepth = onNode(listener, node, 2, false);
-                            } else {
-                                if (thisWasCast) {
-                                    if (prevBranch != BRANCH_GEOHASH) {
-                                        // validate type
-                                        final short columnTypeTag = ColumnType.tagOf(node.token);
-                                        if (((columnTypeTag < ColumnType.BOOLEAN || (columnTypeTag > ColumnType.LONG256 && columnTypeTag != ColumnType.UUID && columnTypeTag != ColumnType.IPv4 && columnTypeTag != ColumnType.VARCHAR)) && !asPoppedNull)
-                                                || (columnTypeTag == ColumnType.GEOHASH && node.type == ExpressionNode.LITERAL)) {
-                                            throw SqlException.$(node.position, "unsupported cast");
-                                        }
-                                        node.type = ExpressionNode.CONSTANT;
-                                    }
-                                }
-                                argStackDepth = onNode(listener, node, argStackDepth, false);
+                                continue;
                             }
+                            if (thisWasCast && prevBranch != BRANCH_GEOHASH) {
+                                // validate type
+                                final short columnTypeTag = ColumnType.tagOf(node.token);
+                                if (((columnTypeTag < ColumnType.BOOLEAN ||
+                                        (columnTypeTag > ColumnType.LONG256 && columnTypeTag != ColumnType.UUID &&
+                                                columnTypeTag != ColumnType.IPv4 && columnTypeTag != ColumnType.VARCHAR))
+                                        && !asPoppedNull) ||
+                                        (columnTypeTag == ColumnType.GEOHASH && node.type == ExpressionNode.LITERAL)
+                                ) {
+                                    throw SqlException.$(node.position, "unsupported cast");
+                                }
+                                node.type = ExpressionNode.CONSTANT;
+                            }
+                            argStackDepth = onNode(listener, node, argStackDepth, false);
                         }
 
+                        // exiting parenthesised context, pop stuff off the stacks
                         if (argStackDepthStack.notEmpty()) {
                             argStackDepth += argStackDepthStack.pop();
                         }
-
-                        // enable operation or literal absorb parameters
-                        if ((node = opStack.peek()) != null) {
-                            if (localParamCount > 1 && node.token.charAt(0) == '(') {
-                                // sensible error for count(distinct(col1, col...)) case
-                                // this is supported by postgresql -> we want to give a clear error message QuestDB does not support it
-                                if (opStack.size() > 1) {
-                                    ExpressionNode en = opStack.peek();
-                                    if (en.type == ExpressionNode.CONTROL && Chars.equals(en.token, '(')) {
-                                        en = opStack.peek(1);
-                                        if (en.type == ExpressionNode.LITERAL && Chars.equals(en.token, "count_distinct")) {
-                                            throw SqlException.$(lastPos, "count distinct aggregation supports a single column only");
-                                        }
-                                    }
-                                }
-                                throw SqlException.$(lastPos, "no function or operator?");
-
-                            } else if (node.type == ExpressionNode.LITERAL) {
-                                node.paramCount = localParamCount + Math.max(0, node.paramCount - 1);
-                                node.type = ExpressionNode.FUNCTION;
-                                argStackDepth = onNode(listener, node, argStackDepth, false);
-                                opStack.pop();
-                            } else if (node.type == ExpressionNode.SET_OPERATION && !SqlKeywords.isBetweenKeyword(node.token)) {
-                                node.paramCount = localParamCount + Math.max(0, node.paramCount - 1);
-                                if (node.paramCount < 2) {
-                                    throw SqlException.position(node.position).put("too few arguments for '").put(node.token).put('\'');
-                                }
-                                node.type = ExpressionNode.FUNCTION;
-                                argStackDepth = onNode(listener, node, argStackDepth, false);
-                                opStack.pop();
-                            }
-                        }
-
                         if (paramCountStack.notEmpty()) {
                             paramCount = paramCountStack.pop();
+                        }
+
+                        node = opStack.peek();
+                        if (node == null) {
+                            break;
+                        }
+                        if (localParamCount > 1 && node.token.charAt(0) == '(') {
+                            // sensible error for count(distinct(col1, col...)) case
+                            // this is supported by postgresql -> we want to give a clear error message QuestDB does not support it
+                            if (opStack.size() > 1) {
+                                ExpressionNode en = opStack.peek();
+                                if (en.type == ExpressionNode.CONTROL && Chars.equals(en.token, '(')) {
+                                    en = opStack.peek(1);
+                                    if (en.type == ExpressionNode.LITERAL && Chars.equals(en.token, "count_distinct")) {
+                                        throw SqlException.$(lastPos, "count distinct aggregation supports a single column only");
+                                    }
+                                }
+                            }
+                            throw SqlException.$(lastPos, "no function or operator?");
+                        }
+                        if (node.type == ExpressionNode.LITERAL) {
+                            node.paramCount = localParamCount + Math.max(0, node.paramCount - 1);
+                            node.type = ExpressionNode.FUNCTION;
+                            argStackDepth = onNode(listener, node, argStackDepth, false);
+                            opStack.pop();
+                        } else if (node.type == ExpressionNode.SET_OPERATION && !SqlKeywords.isBetweenKeyword(node.token)) {
+                            node.paramCount = localParamCount + Math.max(0, node.paramCount - 1);
+                            if (node.paramCount < 2) {
+                                throw SqlException.position(node.position).put("too few arguments for '").put(node.token).put('\'');
+                            }
+                            node.type = ExpressionNode.FUNCTION;
+                            argStackDepth = onNode(listener, node, argStackDepth, false);
+                            opStack.pop();
                         }
 
                         break;
@@ -694,7 +695,7 @@ public class ExpressionParser {
                     case 'a':
                     case 'A':
                         if (SqlKeywords.isAsKeyword(tok)) {
-                            if (wrapperStack.size() >= 2 && wrapperStack.peek(1) == WrapperToken.CAST) {
+                            if (wrapperStack.peek(1) == WrapperToken.CAST) {
 
                                 thisBranch = BRANCH_CAST_AS;
 
@@ -1149,12 +1150,14 @@ public class ExpressionParser {
                         if (Chars.toLowerCaseAscii(thisChar) == 'c' && SqlKeywords.isCaseKeyword(tok)) {
                             if (prevBranch != BRANCH_DOT_DEREFERENCE) {
                                 caseCount++;
+
+                                // entering CASE context, push stuff onto the stacks
                                 paramCountStack.push(paramCount);
                                 paramCount = 0;
-
-                                wrapperStack.push(WrapperToken.CASE);
                                 argStackDepthStack.push(argStackDepth);
                                 argStackDepth = 0;
+                                wrapperStack.push(WrapperToken.CASE);
+
                                 opStack.push(expressionNodePool.next().of(ExpressionNode.FUNCTION, "case", Integer.MAX_VALUE, lastPos));
                                 thisBranch = BRANCH_CASE_START;
                                 continue;
@@ -1172,11 +1175,9 @@ public class ExpressionParser {
                                         if (prevBranch == BRANCH_CASE_CONTROL) {
                                             throw missingArgs(lastPos);
                                         }
-
                                         if (paramCount == 0) {
                                             throw SqlException.$(lastPos, "'when' expected");
                                         }
-
                                         if (paramCount <= 2) {
                                             throw SqlException.$(lastPos, "'then' expected");
                                         }
@@ -1197,14 +1198,12 @@ public class ExpressionParser {
                                             argStackDepth += argStackDepthStack.pop();
                                         }
 
+                                        // exiting CASE context, pop stuff off the stacks
                                         WrapperToken wrapper = wrapperStack.pop();
-                                        assert wrapper == WrapperToken.CASE : "Should have popped CASE, but was " + wrapper;
-
+                                        assert wrapper == WrapperToken.CASE : "Should have popped CASE, but got " + wrapper;
                                         node.paramCount = paramCount;
-                                        // we also add number of 'case' arguments to original stack depth
+                                        // add the number of 'case' arguments to the original stack depth
                                         argStackDepth = onNode(listener, node, argStackDepth + paramCount, false);
-
-                                        // make sure we restore paramCount
                                         if (paramCountStack.notEmpty()) {
                                             paramCount = paramCountStack.pop();
                                         }
@@ -1316,7 +1315,7 @@ public class ExpressionParser {
                                 throw SqlException.$(lastPos, "Unnecessary `from`. Typo?");
                             }
 
-                            // If the token is a function token, then push it onto the stack.
+                            // the token is a function token, push it onto the stack
                             opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, GenericLexer.immutableOf(tok), Integer.MIN_VALUE, lastPos));
                         }
                     } else {

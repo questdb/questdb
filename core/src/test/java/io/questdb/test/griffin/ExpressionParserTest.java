@@ -62,6 +62,14 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testArrayConstruct() throws SqlException {
+        x("x 1 []", "x[1]");
+        x("1 x", "x(1)");
+        x("1 2 3 x", "x(1,2,3)");
+//        x("1 2 []", "[1, 2]");
+    }
+
+    @Test
     public void testArrayDereferenceExpr() throws SqlException {
         x("a i 10 + []", "a[i+10]");
     }
@@ -97,8 +105,8 @@ public class ExpressionParserTest extends AbstractCairoTest {
     public void testArrayDereferenceNotClosedFunctionArg() {
         assertFail(
                 "f(b,a[,c)",
-                5,
-                "unbalanced ]"
+                6,
+                "missing arguments"
         );
     }
 
@@ -732,7 +740,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
         assertFail(
                 "a(i)(o)",
                 4,
-                "not a method call"
+                "not a function call"
         );
     }
 
