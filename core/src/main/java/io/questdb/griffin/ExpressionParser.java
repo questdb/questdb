@@ -384,7 +384,12 @@ public class ExpressionParser {
                                 throw SqlException.$(lastPos, "missing array index");
                             }
 
-                            // pop the array index from the stack, it could be an operator
+                            // Until the token at the top of the stack is a left bracket,
+                            // pop operators off the stack onto the output queue.
+                            // Pop the left bracket from the stack, but don't push it to the output queue.
+                            // If the token at the top of the stack is a literal (indicating array access),
+                            // push it to the output queue.
+                            // If the stack runs out without finding a left bracket, then there are mismatched brackets.
                             while ((node = opStack.pop()) != null && (node.type != ExpressionNode.CONTROL || node.token.charAt(0) != '[')) {
                                 argStackDepth = onNode(listener, node, argStackDepth, false);
                             }
@@ -399,6 +404,7 @@ public class ExpressionParser {
                                 paramCount = paramCountStack.pop();
                             }
 
+                            // the bracketed expression is preceded by a literal => it's array access
                             node = expressionNodePool.next().of(
                                     ExpressionNode.ARRAY_ACCESS,
                                     "[]",
@@ -599,9 +605,11 @@ public class ExpressionParser {
                             thisWasCast = false;
                         }
 
-                        // Until the token at the top of the stack is a left paren, pop operators off the stack onto the output queue.
-                        // Pop the left paren from the stack, but don't push onto the output queue.
-                        // If the token at the top of the stack is a function token, push it onto the output queue.
+                        // Until the token at the top of the stack is a left paren,
+                        // pop operators off the stack onto the output queue.
+                        // Pop the left paren from the stack, but don't push it to the output queue.
+                        // If the token at the top of the stack is a literal (indicating function call),
+                        // push it to the output queue.
                         // If the stack runs out without finding a left paren, then there are mismatched parens.
                         while ((node = opStack.pop()) != null && (node.token.length() == 0 || node.token.charAt(0) != '(')) {
                             // special case - (*) expression
@@ -625,7 +633,6 @@ public class ExpressionParser {
                             argStackDepth = onNode(listener, node, argStackDepth, false);
                         }
 
-                        // exiting parenthesised context, pop stuff off the stacks
                         if (argStackDepthStack.notEmpty()) {
                             argStackDepth += argStackDepthStack.pop();
                         }
@@ -652,6 +659,7 @@ public class ExpressionParser {
                             throw SqlException.$(lastPos, "no function or operator?");
                         }
                         if (node.type == ExpressionNode.LITERAL) {
+                            // the parenthesised expression is preceded by a literal => it's a function call
                             node.paramCount = localParamCount + Math.max(0, node.paramCount - 1);
                             node.type = ExpressionNode.FUNCTION;
                             argStackDepth = onNode(listener, node, argStackDepth, false);
