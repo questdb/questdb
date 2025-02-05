@@ -562,7 +562,7 @@ public final class TableUtils {
                 assert metaFileWriter != null;
                 try (MetaFileWriter writer = metaFileWriter) {
                     writer.of(path.trimTo(rootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
-                    MatViewDefinition.dumpTo(writer, structure.getMatViewDefinition());
+                    MatViewDefinition.commitTo(writer, structure.getMatViewDefinition());
                 }
             }
 

@@ -3830,7 +3830,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             if (matViewDefinition != null) {
                                 try (MetaFileWriter writer = metaFileWriter) {
                                     writer.of(auxPath.trimTo(tableRootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
-                                    MatViewDefinition.dumpTo(writer, matViewDefinition);
+                                    MatViewDefinition.commitTo(writer, matViewDefinition);
                                 }
                             } else {
                                 LOG.info().$("materialized view definition for backup not found [view=").$(tableToken).I$();

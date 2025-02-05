@@ -149,8 +149,18 @@ public class MatViewDefinition {
         return rules;
     }
 
-    public static void dumpTo(MetaFileWriter writer, MatViewDefinition matViewDefinition) {
+    public static void commitTo(final MetaFileWriter writer, final MatViewDefinition matViewDefinition) {
         final AppendableBlock mem = writer.append();
+        writeTo(mem, matViewDefinition);
+        mem.commit(
+                MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE,
+                MAT_VIEW_DEFINITION_FORMAT_MSG_VERSION,
+                MAT_VIEW_DEFINITION_FORMAT_FLAGS
+        );
+        writer.commit();
+    }
+
+    public static void writeTo(final AppendableBlock mem, final MatViewDefinition matViewDefinition) {
         mem.putStr(matViewDefinition.getBaseTableName());
         mem.putLong(matViewDefinition.getFromMicros());
         mem.putLong(matViewDefinition.getToMicros());
@@ -159,11 +169,5 @@ public class MatViewDefinition {
         mem.putStr(matViewDefinition.getTimeZone());
         mem.putStr(matViewDefinition.getTimeZoneOffset());
         mem.putStr(matViewDefinition.getMatViewSql());
-        mem.commit(
-                MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE,
-                MAT_VIEW_DEFINITION_FORMAT_MSG_VERSION,
-                MAT_VIEW_DEFINITION_FORMAT_FLAGS
-        );
-        writer.commit();
     }
 }

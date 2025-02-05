@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.mv;
 
+import io.questdb.cairo.meta.AppendableBlock;
 import io.questdb.cairo.meta.MetaFileWriter;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.RecordToRowCopier;
@@ -104,12 +105,7 @@ public class MatViewRefreshState implements QuietCloseable {
 
     public void markAsInvalid(final MetaFileWriter metaFileWriter, final Path dbRoot) {
         if (!invalid) {
-            dbRoot
-                    .concat(getViewDefinition().getMatViewToken())
-                    .concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME);
-            metaFileWriter.of(dbRoot.$());
-            MatViewDefinition.dumpTo(metaFileWriter, getViewDefinition());
-            //TODO(eugene): update invalid field, should it be part of the MatViewDefinition?
+            updateInvalidationStatus(metaFileWriter, dbRoot, true);
         }
         invalid = true;
         telemetryFacade.store(MAT_VIEW_INVALIDATE, viewDefinition.getMatViewToken(), -1L, null, 0L);
@@ -117,9 +113,28 @@ public class MatViewRefreshState implements QuietCloseable {
 
     public void markAsValid(final MetaFileWriter metaFileWriter, final Path dbRoot) {
         if (invalid) {
-            //TODO: update file
+            updateInvalidationStatus(metaFileWriter, dbRoot, false);
         }
         invalid = false;
+    }
+
+    private void updateInvalidationStatus(final MetaFileWriter metaFileWriter, final Path dbRoot, boolean invalid) {
+        if (this.invalid != invalid) {
+            dbRoot
+                    .concat(getViewDefinition().getMatViewToken())
+                    .concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME);
+            metaFileWriter.of(dbRoot.$());
+            AppendableBlock mem = metaFileWriter.append();
+            MatViewDefinition.writeTo(mem, getViewDefinition());
+            mem.putBool(invalid);
+            mem.commit(
+                    MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE,
+                    MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_MSG_VERSION,
+                    MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_FLAGS
+            );
+            metaFileWriter.commit();
+        }
+        this.invalid = invalid;
     }
 
     public void refreshFail(final MetaFileWriter metaFileWriter, final Path dbRoot, long refreshTimestamp, CharSequence errorMessage) {

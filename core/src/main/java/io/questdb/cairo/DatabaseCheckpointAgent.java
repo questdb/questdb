@@ -277,7 +277,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         if (matViewDefinition != null) {
                                             try (MetaFileWriter writer = new MetaFileWriter(ff)) {
                                                 writer.of(path.trimTo(rootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
-                                                MatViewDefinition.dumpTo(writer, matViewDefinition);
+                                                MatViewDefinition.commitTo(writer, matViewDefinition);
                                             }
                                         } else {
                                             LOG.info().$("materialized view definition not found [view=").$(tableToken).I$();
