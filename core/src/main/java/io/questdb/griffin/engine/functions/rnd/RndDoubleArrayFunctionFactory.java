@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
@@ -167,6 +168,11 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
             arrayView.setRnd(executionContext.getRandom());
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("rnd_double_array").val('(').val(arrayView.dimensionCount).val(')');
         }
     }
 }
