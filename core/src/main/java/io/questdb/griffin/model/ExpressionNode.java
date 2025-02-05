@@ -273,6 +273,11 @@ public class ExpressionNode implements Mutable, Sinkable {
         }
     }
 
+    @Override
+    public String toString() {
+        return Objects.toString(token);
+    }
+
     private static boolean compareArgs(
             ExpressionNode groupByExpr,
             ExpressionNode columnExpr,
