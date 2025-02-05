@@ -28,6 +28,8 @@ import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cutlass.pgwire.ArrayValueDoubleAppender;
+import io.questdb.cutlass.pgwire.ArrayValueLongAppender;
 import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
 import io.questdb.std.BinarySequence;
@@ -170,13 +172,25 @@ public class CursorPrinter {
                 }
                 break;
             case ColumnType.ARRAY:
-                ArrayTypeDriver.doubleArrayToJson(
-                        record.getArray(columnIndex, columnType),
-                        sink,
-                        '[',
-                        ']'
-
-                );
+                switch (ColumnType.decodeArrayElementType(columnType)) {
+                    case ColumnType.DOUBLE:
+                        ArrayTypeDriver.arrayToJson(
+                                ArrayValueDoubleAppender.INSTANCE,
+                                record.getArray(columnIndex, columnType),
+                                sink
+                        );
+                        break;
+                    case ColumnType.LONG:
+                        ArrayTypeDriver.arrayToJson(
+                                ArrayValueLongAppender.INSTANCE,
+                                record.getArray(columnIndex, columnType),
+                                sink
+                        );
+                        break;
+                    default:
+                        assert false;
+                        break;
+                }
                 break;
             default:
                 break;
