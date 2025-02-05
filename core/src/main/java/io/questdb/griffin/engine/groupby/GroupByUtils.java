@@ -176,7 +176,6 @@ public class GroupByUtils {
                         outKeyFunctionNodes.add(node);
                     }
                 } else {
-
                     // function is unknown at this iteration, because we cannot create function not knowing
                     // the slot in the map it will occupy.
                     outRecordFunctions.add(null);
