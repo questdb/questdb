@@ -33,6 +33,7 @@ import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
+import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilderImpl;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilderImpl;
 import io.questdb.griffin.model.CopyModel;
@@ -87,7 +88,7 @@ public class SqlParser {
     private final CharSequence column;
     private final CairoConfiguration configuration;
     private final ObjectPool<CopyModel> copyModelPool;
-    private final CreateMatViewOperationBuilder createMatViewOperationBuilder = new CreateMatViewOperationBuilder();
+    private final CreateMatViewOperationBuilderImpl createMatViewOperationBuilder = new CreateMatViewOperationBuilderImpl();
     private final ObjectPool<CreateTableColumnModel> createTableColumnModelPool;
     private final CreateTableOperationBuilderImpl createTableOperationBuilder = createMatViewOperationBuilder.getCreateTableOperationBuilder();
     private final ObjectPool<ExplainModel> explainModelPool;
@@ -187,11 +188,15 @@ public class SqlParser {
                 try {
                     Numbers.parseLong(tok, 0, tokLength - 1);
                 } catch (NumericException e) {
-                    throw SqlException.$(valuePos,
-                            "invalid argument, should be TTL <number> <unit> or <number_with_unit>");
+                    throw SqlException.$(
+                            valuePos,
+                            "invalid argument, should be TTL <number> <unit> or <number_with_unit>"
+                    );
                 }
-                throw SqlException.$(valuePos + tokLength - 1,
-                        "invalid time unit, expecting 'H', 'D', 'W', 'M' or 'Y', but was '").put(unitChar).put('\'');
+                throw SqlException.$(
+                        valuePos + tokLength - 1,
+                        "invalid time unit, expecting 'H', 'D', 'W', 'M' or 'Y', but was '"
+                ).put(unitChar).put('\'');
             }
         }
         // at this point, unit == -1 means the syntax wasn't of the "1H" form, it can still be of the "1 HOUR" form
@@ -204,21 +209,27 @@ public class SqlParser {
             }
             ttlValue = (int) ttlLong;
         } catch (NumericException e) {
-            throw SqlException.$(valuePos,
-                    "invalid syntax, should be TTL <number> <unit> but was TTL ").put(tok);
+            throw SqlException.$(
+                    valuePos,
+                    "invalid syntax, should be TTL <number> <unit> but was TTL "
+            ).put(tok);
         }
         if (unit == -1) {
             unitPos = lexer.getPosition();
             tok = SqlUtil.fetchNext(lexer);
             if (tok == null) {
-                throw SqlException.$(unitPos,
-                        "missing unit, 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)' expected");
+                throw SqlException.$(
+                        unitPos,
+                        "missing unit, 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)' expected"
+                );
             }
             unit = PartitionBy.ttlUnitFromString(tok, 0, tok.length());
         }
         if (unit == -1) {
-            throw SqlException.$(unitPos,
-                            "invalid unit, expected 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)', but was '")
+            throw SqlException.$(
+                            unitPos,
+                            "invalid unit, expected 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)', but was '"
+                    )
                     .put(tok).put('\'');
         }
         return Timestamps.toHoursOrMonths(ttlValue, unit, valuePos);
@@ -311,6 +322,17 @@ public class SqlParser {
             default:
                 return false;
         }
+    }
+
+    private static CreateMatViewOperationBuilder parseCreateMatViewExt(
+            GenericLexer lexer,
+            SqlExecutionContext executionContext,
+            SqlParserCallback sqlParserCallback,
+            CharSequence tok,
+            CreateMatViewOperationBuilder builder
+    ) throws SqlException {
+        CharSequence nextToken = (tok == null || Chars.equals(tok, ';')) ? null : tok;
+        return sqlParserCallback.parseCreateMatViewExt(lexer, executionContext.getSecurityContext(), builder, nextToken);
     }
 
     private static CreateTableOperationBuilder parseCreateTableExt(
@@ -748,7 +770,7 @@ public class SqlParser {
             SqlExecutionContext executionContext,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        final CreateMatViewOperationBuilder builder = createMatViewOperationBuilder;
+        final CreateMatViewOperationBuilderImpl builder = createMatViewOperationBuilder;
         builder.clear();
         builder.getCreateTableOperationBuilder().setDefaultSymbolCapacity(configuration.getDefaultSymbolCapacity());
 
@@ -913,10 +935,6 @@ public class SqlParser {
             tok = optTok(lexer);
         }
 
-        if (tok != null && !Chars.equals(tok, ';')) {
-            throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
-        }
-
         // mat view is always WAL enabled
         createTableOperationBuilder.setWalEnabled(true);
 
@@ -994,7 +1012,7 @@ public class SqlParser {
                 model.setIsDedupKey();
             }
         }
-        return builder;
+        return parseCreateMatViewExt(lexer, executionContext, sqlParserCallback, tok, builder);
     }
 
     private ExecutionModel parseCreateTable(

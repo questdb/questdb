@@ -404,14 +404,9 @@ public class CairoEngine implements Closeable, WriterSource {
             boolean keepLock,
             boolean inVolume
     ) {
-        // todo(glasstiger): add securityContext.authorizeMatViewCreate();
-        securityContext.authorizeTableCreate();
-
-        final TableToken tableToken = createTableOrMatViewUnsecure(mem, metaFileWriter, path, ifNotExists, struct, keepLock, inVolume);
-
-        // todo(glasstiger): add getDdlListener(tableToken).onMatViewCreated(securityContext, tableToken);
-        getDdlListener(tableToken).onTableCreated(securityContext, tableToken);
-
+        securityContext.authorizeMatViewCreate();
+        final TableToken matViewToken = createTableOrMatViewUnsecure(mem, metaFileWriter, path, ifNotExists, struct, keepLock, inVolume);
+        getDdlListener(matViewToken).onTableOrMatViewCreated(securityContext, matViewToken);
         return struct.getMatViewDefinition();
     }
 
@@ -437,7 +432,7 @@ public class CairoEngine implements Closeable, WriterSource {
     ) {
         securityContext.authorizeTableCreate();
         final TableToken tableToken = createTableOrMatViewUnsecure(mem, null, path, ifNotExists, struct, keepLock, inVolume);
-        getDdlListener(tableToken).onTableCreated(securityContext, tableToken);
+        getDdlListener(tableToken).onTableOrMatViewCreated(securityContext, tableToken);
         return tableToken;
     }
 

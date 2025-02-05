@@ -44,6 +44,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
+import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.engine.ops.DropTableOperationBuilder;
 import io.questdb.griffin.model.ExpressionNode;
@@ -106,6 +107,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Before
     public void setUp() {
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAX_RECURSION, 512);
+        node1.setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, true);
         super.setUp();
     }
 
@@ -5926,7 +5928,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     }
                 } catch (Exception e) {
                     ddlError.set(true);
-                    e.printStackTrace();
+                    e.printStackTrace(System.out);
                 } finally {
                     Path.clearThreadLocals();
                     TestUtils.await(barrier);
@@ -6508,6 +6510,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 } catch (Exception e) {
                     Assert.assertTrue(compiler.createTableSuffixCalled);
                 }
+
+                try {
+                    execute(compiler, "create table base_price (sym varchar, price double, ts timestamp) timestamp(ts) partition by DAY WAL", sqlExecutionContext);
+                    execute(compiler, "create materialized view price_1h as (select sym, last(price) as price, ts from base_price sample by 1h) partition by DAY foobar", sqlExecutionContext);
+                    Assert.fail();
+                } catch (Exception e) {
+                    Assert.assertTrue(compiler.createMatViewSuffixCalled);
+                }
             }
         });
     }
@@ -6845,6 +6855,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         boolean addColumnSuffixCalled;
         boolean compileDropOtherCalled;
         boolean compileDropTableExtCalled;
+        boolean createMatViewSuffixCalled;
         boolean createTableSuffixCalled;
         boolean dropTableCalled;
         boolean parseShowSqlCalled;
@@ -6853,6 +6864,17 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
         SqlCompilerWrapper(CairoEngine engine) {
             super(engine);
+        }
+
+        @Override
+        public CreateMatViewOperationBuilder parseCreateMatViewExt(
+                GenericLexer lexer,
+                SecurityContext securityContext,
+                CreateMatViewOperationBuilder builder,
+                CharSequence tok
+        ) throws SqlException {
+            createMatViewSuffixCalled = true;
+            return super.parseCreateMatViewExt(lexer, securityContext, builder, tok);
         }
 
         @Override

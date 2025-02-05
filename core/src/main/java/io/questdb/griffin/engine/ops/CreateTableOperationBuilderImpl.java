@@ -51,7 +51,7 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.engine.table.ShowCreateTableRecordCursorFactory.ttlToSink;
 
-public class CreateTableOperationBuilderImpl implements Mutable, Sinkable, CreateTableOperationBuilder {
+public class CreateTableOperationBuilderImpl implements CreateTableOperationBuilder, Mutable, Sinkable {
     public static final ObjectFactory<CreateTableOperationBuilderImpl> FACTORY = CreateTableOperationBuilderImpl::new;
     private static final IntList castGroups = new IntList();
     private final LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> columnModels = new LowerCaseCharSequenceObjHashMap<>();
