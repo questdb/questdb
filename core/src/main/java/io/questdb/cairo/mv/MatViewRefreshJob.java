@@ -78,16 +78,22 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private final int workerId;
 
     public MatViewRefreshJob(int workerId, CairoEngine engine, int workerCount, int sharedWorkerCount) {
-        this.workerId = workerId;
-        this.engine = engine;
-        this.mvRefreshExecutionContext = new MatViewRefreshExecutionContext(engine, workerCount, sharedWorkerCount);
-        this.txnRangeLoader = new WalTxnRangeLoader(engine.getConfiguration().getFilesFacade());
-        this.microsecondClock = engine.getConfiguration().getMicrosecondClock();
-        this.maxRecompileAttempts = engine.getConfiguration().getMatViewMaxRecompileAttempts();
-        this.batchSize = engine.getConfiguration().getMatViewInsertAsSelectBatchSize();
-        this.metaFileWriter = new MetaFileWriter(engine.getConfiguration().getFilesFacade());
-        this.dbRoot = new Path().of(engine.getConfiguration().getRoot());
-        this.dbRootLen = dbRoot.size();
+        try {
+            this.workerId = workerId;
+            this.engine = engine;
+            this.mvRefreshExecutionContext = new MatViewRefreshExecutionContext(engine, workerCount, sharedWorkerCount);
+            this.txnRangeLoader = new WalTxnRangeLoader(engine.getConfiguration().getFilesFacade());
+            this.microsecondClock = engine.getConfiguration().getMicrosecondClock();
+            this.maxRecompileAttempts = engine.getConfiguration().getMatViewMaxRecompileAttempts();
+            this.batchSize = engine.getConfiguration().getMatViewInsertAsSelectBatchSize();
+            this.metaFileWriter = new MetaFileWriter(engine.getConfiguration().getFilesFacade());
+            this.dbRoot = new Path();
+            dbRoot.of(engine.getConfiguration().getRoot());
+            this.dbRootLen = dbRoot.size();
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @TestOnly

@@ -353,10 +353,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         this.engine = cairoEngine;
         this.lastWalCommitTimestampMicros = configuration.getMicrosecondClock().getTicks();
         try {
-            this.path = new Path().of(root);
+            this.path = new Path();
+            path.of(root);
             this.pathRootSize = path.size();
             path.concat(tableToken);
-            this.other = new Path().of(root).concat(tableToken);
+            this.other = new Path();
+            other.of(root).concat(tableToken);
             this.pathSize = path.size();
             if (lock) {
                 lock();

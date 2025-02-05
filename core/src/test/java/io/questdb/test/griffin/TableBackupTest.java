@@ -629,8 +629,9 @@ public class TableBackupTest {
         );
 
         drainWalQueue();
-        MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, mainEngine);
-        refreshJob.run(0);
+        try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, mainEngine)) {
+            refreshJob.run(0);
+        }
 
         TableToken tableToken = mainEngine.verifyTableName(matViewName);
         Assert.assertNotNull(tableToken);
