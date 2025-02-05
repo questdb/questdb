@@ -337,32 +337,28 @@ public class ExpressionParser {
                         if (isTypeQualifier()) {
                             ExpressionNode en = opStack.peek();
                             ((GenericLexer.FloatingSequence) en.token).setHi(lastPos + 1);
-                        } else {
-                            thisBranch = BRANCH_LEFT_BRACKET;
-
-                            // entering bracketed context, push stuff onto the stacks
-                            paramCountStack.push(paramCount);
-                            paramCount = 0;
-                            argStackDepthStack.push(argStackDepth);
-                            argStackDepth = 0;
-                            wrapperStack.push(WrapperToken.BRACKET);
-
-                            // pop left literal or . expression, e.g. "a.b[i]"
-                            // the precedence of [ is fixed to 2
-                            ExpressionNode other;
-                            while ((other = opStack.peek()) != null) {
-                                if ((other.precedence < 2)) {
-                                    argStackDepth = onNode(listener, other, argStackDepth, false);
-                                    opStack.pop();
-                                } else {
-                                    break;
-                                }
-                            }
-
-                            // precedence must be max value to make sure control node isn't
-                            // consumed as parameter to a greedy function
-                            opStack.push(expressionNodePool.next().of(ExpressionNode.CONTROL, "[", Integer.MAX_VALUE, lastPos));
+                            break;
                         }
+                        thisBranch = BRANCH_LEFT_BRACKET;
+
+                        // entering bracketed context, push stuff onto the stacks
+                        paramCountStack.push(paramCount);
+                        paramCount = 0;
+                        argStackDepthStack.push(argStackDepth);
+                        argStackDepth = 0;
+                        wrapperStack.push(WrapperToken.BRACKET);
+
+                        // pop left literal or . expression, e.g. "a.b[i]"
+                        // the precedence of [ is fixed to 2
+                        ExpressionNode other;
+                        while ((other = opStack.peek()) != null && other.precedence < 2) {
+                            argStackDepth = onNode(listener, other, argStackDepth, false);
+                            opStack.pop();
+                        }
+
+                        // precedence must be max value to make sure control node isn't
+                        // consumed as parameter to a greedy function
+                        opStack.push(expressionNodePool.next().of(ExpressionNode.CONTROL, "[", Integer.MAX_VALUE, lastPos));
 
                         break;
 
@@ -378,6 +374,7 @@ public class ExpressionParser {
                                 lexer.unparseLast();
                                 break OUT;
                             }
+                            wrapperStack.pop();
 
                             thisBranch = BRANCH_RIGHT_BRACKET;
                             if (prevBranch == BRANCH_LEFT_BRACKET) {
@@ -394,9 +391,6 @@ public class ExpressionParser {
                                 argStackDepth = onNode(listener, node, argStackDepth, false);
                             }
 
-                            // exiting bracketed context, pop stuff off the stacks
-                            final WrapperToken wrapper = wrapperStack.pop();
-                            assert wrapper == WrapperToken.BRACKET : "Should have popped BRACKET, but got " + wrapper;
                             if (argStackDepthStack.notEmpty()) {
                                 argStackDepth += argStackDepthStack.pop();
                             }
@@ -611,7 +605,7 @@ public class ExpressionParser {
                         // If the token at the top of the stack is a literal (indicating function call),
                         // push it to the output queue.
                         // If the stack runs out without finding a left paren, then there are mismatched parens.
-                        while ((node = opStack.pop()) != null && (node.token.length() == 0 || node.token.charAt(0) != '(')) {
+                        while ((node = opStack.pop()) != null && (node.type != ExpressionNode.CONTROL || node.token.charAt(0) != '(')) {
                             // special case - (*) expression
                             if (Chars.equals(node.token, '*') && argStackDepth == 0 && isCount()) {
                                 argStackDepth = onNode(listener, node, 2, false);
@@ -1156,22 +1150,21 @@ public class ExpressionParser {
                         // here we handle literals, in case of "case" statement some of these literals
                         // are going to flush operation stack
                         if (Chars.toLowerCaseAscii(thisChar) == 'c' && SqlKeywords.isCaseKeyword(tok)) {
-                            if (prevBranch != BRANCH_DOT_DEREFERENCE) {
-                                caseCount++;
-
-                                // entering CASE context, push stuff onto the stacks
-                                paramCountStack.push(paramCount);
-                                paramCount = 0;
-                                argStackDepthStack.push(argStackDepth);
-                                argStackDepth = 0;
-                                wrapperStack.push(WrapperToken.CASE);
-
-                                opStack.push(expressionNodePool.next().of(ExpressionNode.FUNCTION, "case", Integer.MAX_VALUE, lastPos));
-                                thisBranch = BRANCH_CASE_START;
-                                continue;
-                            } else {
+                            if (prevBranch == BRANCH_DOT_DEREFERENCE) {
                                 throw SqlException.$(lastPos, "'case' is not allowed here");
                             }
+                            caseCount++;
+
+                            // entering CASE context, push stuff onto the stacks
+                            paramCountStack.push(paramCount);
+                            paramCount = 0;
+                            argStackDepthStack.push(argStackDepth);
+                            argStackDepth = 0;
+                            wrapperStack.push(WrapperToken.CASE);
+
+                            opStack.push(expressionNodePool.next().of(ExpressionNode.FUNCTION, "case", Integer.MAX_VALUE, lastPos));
+                            thisBranch = BRANCH_CASE_START;
+                            continue;
                         }
 
                         thisBranch = BRANCH_LITERAL;
@@ -1323,8 +1316,9 @@ public class ExpressionParser {
                                 throw SqlException.$(lastPos, "Unnecessary `from`. Typo?");
                             }
 
-                            // the token is a function token, push it onto the stack
-                            opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, GenericLexer.immutableOf(tok), Integer.MIN_VALUE, lastPos));
+                            // this is a function or array name, push it onto the stack
+                            opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL,
+                                    GenericLexer.immutableOf(tok), Integer.MIN_VALUE, lastPos));
                         }
                     } else {
                         ExpressionNode last = this.opStack.peek();
