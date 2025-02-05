@@ -64,7 +64,6 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     private final boolean walEnabled;
 
     public PreparedStatementInvalidationTest(WalMode walMode) {
-        super(LegacyMode.MODERN);
         this.walEnabled = (walMode == WalMode.WITH_WAL);
     }
 

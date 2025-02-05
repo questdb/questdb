@@ -24,12 +24,9 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.cutlass.pgwire.modern.PGPipelineEntry;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -73,33 +70,13 @@ public class BadProtocolException extends Exception {
         return this;
     }
 
-    public BadProtocolException put(double value) {
-        message.put(value);
-        return this;
-    }
-
     public BadProtocolException put(@Nullable CharSequence cs) {
         message.put(cs);
         return this;
     }
 
-    public BadProtocolException put(@Nullable Utf8Sequence us) {
-        message.put(us);
-        return this;
-    }
-
-    public BadProtocolException put(Sinkable sinkable) {
-        sinkable.toSink(message);
-        return this;
-    }
-
     public BadProtocolException put(char c) {
         message.put(c);
-        return this;
-    }
-
-    public BadProtocolException put(boolean value) {
-        message.put(value);
         return this;
     }
 }

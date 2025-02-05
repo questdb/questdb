@@ -27,27 +27,14 @@ package io.questdb.test.cutlass.pgwire;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
 import java.sql.CallableStatement;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.util.Collection;
 
 import static io.questdb.cairo.sql.SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
 
-@RunWith(Parameterized.class)
 public class PGFunctionsTest extends BasePGTest {
-
-    public PGFunctionsTest(LegacyMode legacyMode) {
-        super(legacyMode);
-    }
-
-    @Parameterized.Parameters(name = "{0}")
-    public static Collection<Object[]> testParams() {
-        return legacyModeParams();
-    }
 
     @Test
     public void testListTablesDoesntLeakMetaFds() throws Exception {

@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire.modern;
+package io.questdb.cutlass.pgwire;
 
 import io.questdb.BuildInformation;
 import io.questdb.cairo.CairoException;
@@ -31,11 +31,6 @@ import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.auth.AuthenticatorException;
 import io.questdb.cutlass.auth.SocketAuthenticator;
 import io.questdb.cutlass.auth.UsernamePasswordMatcher;
-import io.questdb.cutlass.pgwire.BadProtocolException;
-import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
-import io.questdb.cutlass.pgwire.OptionsListener;
-import io.questdb.cutlass.pgwire.PGKeywords;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.log.Log;
@@ -54,7 +49,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.SecurityContext.AUTH_TYPE_NONE;
-import static io.questdb.cutlass.pgwire.modern.PGConnectionContextModern.dumpBuffer;
+import static io.questdb.cutlass.pgwire.PGConnectionContextModern.dumpBuffer;
 
 public class CleartextPasswordPgWireAuthenticatorModern implements SocketAuthenticator {
     public static final char STATUS_IDLE = 'I';

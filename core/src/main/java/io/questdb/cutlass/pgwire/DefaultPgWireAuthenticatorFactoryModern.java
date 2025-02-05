@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire.modern;
+package io.questdb.cutlass.pgwire;
 
 import io.questdb.BuildInformation;
 import io.questdb.BuildInformationHolder;
@@ -31,11 +31,6 @@ import io.questdb.ServerConfiguration;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.auth.SocketAuthenticator;
 import io.questdb.cutlass.auth.UsernamePasswordMatcher;
-import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
-import io.questdb.cutlass.pgwire.HexTestsCircuitBreakRegistry;
-import io.questdb.cutlass.pgwire.OptionsListener;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.cutlass.pgwire.PgWireAuthenticatorFactory;
 import org.jetbrains.annotations.Nullable;
 
 public final class DefaultPgWireAuthenticatorFactoryModern implements PgWireAuthenticatorFactory {

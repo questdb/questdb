@@ -30,13 +30,10 @@ import io.questdb.test.cutlass.suspend.TestCases;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
 import java.sql.CallableStatement;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.util.Collection;
 
 
 /**
@@ -46,21 +43,11 @@ import java.util.Collection;
  * hasn't been suspended.
  */
 @SuppressWarnings("SqlNoDataSourceInspection")
-@RunWith(Parameterized.class)
 public class PGQuerySuspendTest extends BasePGTest {
 
     private static final StringSink countSink = new StringSink();
     private static final StringSink sinkB = new StringSink();
     private final static TestCases testCases = new TestCases();
-
-    public PGQuerySuspendTest(LegacyMode legacyMode) {
-        super(legacyMode);
-    }
-
-    @Parameterized.Parameters(name = "{0}")
-    public static Collection<Object[]> testParams() {
-        return legacyModeParams();
-    }
 
     @Test
     public void testAllCases() throws Exception {

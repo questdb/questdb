@@ -30,7 +30,6 @@ import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.std.ConcurrentCacheConfiguration;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.DateLocale;
 
 public interface PGWireConfiguration extends IODispatcherConfiguration, WorkerPoolConfiguration {
 
@@ -45,8 +44,6 @@ public interface PGWireConfiguration extends IODispatcherConfiguration, WorkerPo
     ConcurrentCacheConfiguration getConcurrentCacheConfiguration();
 
     int getConnectionPoolInitialCapacity();
-
-    DateLocale getDefaultDateLocale();
 
     String getDefaultPassword();
 
@@ -72,8 +69,6 @@ public interface PGWireConfiguration extends IODispatcherConfiguration, WorkerPo
 
     int getNamedStatementLimit();
 
-    int getNamesStatementPoolCapacity();
-
     int getPendingWritersCacheSize();
 
     // this is used in tests to fix pseudo-random generator
@@ -92,8 +87,6 @@ public interface PGWireConfiguration extends IODispatcherConfiguration, WorkerPo
     int getUpdateCacheRowCount();
 
     boolean isInsertCacheEnabled();
-
-    boolean isLegacyModeEnabled();
 
     boolean isReadOnlyUserEnabled();
 

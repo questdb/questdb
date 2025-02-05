@@ -31,8 +31,6 @@ import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.std.ConcurrentCacheConfiguration;
 import io.questdb.std.DefaultConcurrentCacheConfiguration;
-import io.questdb.std.datetime.DateLocale;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
 
 public class DefaultPGWireConfiguration extends DefaultIODispatcherConfiguration implements PGWireConfiguration {
     private final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration();
@@ -70,11 +68,6 @@ public class DefaultPGWireConfiguration extends DefaultIODispatcherConfiguration
     @Override
     public int getConnectionPoolInitialCapacity() {
         return 4;
-    }
-
-    @Override
-    public DateLocale getDefaultDateLocale() {
-        return DateFormatUtils.EN_LOCALE;
     }
 
     @Override
@@ -134,11 +127,6 @@ public class DefaultPGWireConfiguration extends DefaultIODispatcherConfiguration
     }
 
     @Override
-    public int getNamesStatementPoolCapacity() {
-        return 32;
-    }
-
-    @Override
     public int getPendingWritersCacheSize() {
         return 16;
     }
@@ -191,11 +179,6 @@ public class DefaultPGWireConfiguration extends DefaultIODispatcherConfiguration
     @Override
     public boolean isInsertCacheEnabled() {
         return true;
-    }
-
-    @Override
-    public boolean isLegacyModeEnabled() {
-        return false;
     }
 
     @Override

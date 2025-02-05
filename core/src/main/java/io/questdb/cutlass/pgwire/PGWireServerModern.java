@@ -54,17 +54,17 @@ import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.network.IODispatcher.*;
 
-public class PGWireServer implements IPGWireServer {
-    private static final Log LOG = LogFactory.getLog(PGWireServer.class);
-    private static final NoOpAssociativeCache<TypesAndSelect> NO_OP_CACHE = new NoOpAssociativeCache<>();
+public class PGWireServerModern implements IPGWireServer {
+    private static final Log LOG = LogFactory.getLog(PGWireServerModern.class);
+    private static final NoOpAssociativeCache<TypesAndSelectModern> NO_OP_CACHE = new NoOpAssociativeCache<>();
     private final PGConnectionContextFactory contextFactory;
-    private final IODispatcher<PGConnectionContext> dispatcher;
+    private final IODispatcher<PGConnectionContextModern> dispatcher;
     private final Metrics metrics;
     private final CircuitBreakerRegistry registry;
+    private final AssociativeCache<TypesAndSelectModern> typesAndSelectCache;
     private final WorkerPool workerPool;
-    private AssociativeCache<TypesAndSelect> typesAndSelectCache;
 
-    public PGWireServer(
+    public PGWireServerModern(
             PGWireConfiguration configuration,
             CairoEngine engine,
             WorkerPool workerPool,
@@ -92,7 +92,7 @@ public class PGWireServer implements IPGWireServer {
 
         for (int i = 0, n = workerPool.getWorkerCount(); i < n; i++) {
             workerPool.assign(i, new Job() {
-                private final IORequestProcessor<PGConnectionContext> processor = (operation, context, dispatcher) -> {
+                private final IORequestProcessor<PGConnectionContextModern> processor = (operation, context, dispatcher) -> {
                     try {
                         if (operation == IOOperation.HEARTBEAT) {
                             dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
@@ -148,7 +148,7 @@ public class PGWireServer implements IPGWireServer {
         Misc.free(dispatcher);
         Misc.free(registry);
         Misc.free(contextFactory);
-        typesAndSelectCache = Misc.free(typesAndSelectCache);
+        Misc.free(typesAndSelectCache);
     }
 
     @Override
@@ -169,14 +169,14 @@ public class PGWireServer implements IPGWireServer {
         }
     }
 
-    private static class PGConnectionContextFactory extends IOContextFactoryImpl<PGConnectionContext> {
+    private static class PGConnectionContextFactory extends IOContextFactoryImpl<PGConnectionContextModern> {
 
         public PGConnectionContextFactory(
                 CairoEngine engine,
                 PGWireConfiguration configuration,
                 CircuitBreakerRegistry registry,
                 ObjectFactory<SqlExecutionContextImpl> executionContextObjectFactory,
-                AssociativeCache<TypesAndSelect> typesAndSelectCache
+                AssociativeCache<TypesAndSelectModern> typesAndSelectCache
         ) {
             super(
                     () -> {
@@ -184,7 +184,7 @@ public class PGWireServer implements IPGWireServer {
                                 configuration.getCircuitBreakerConfiguration(),
                                 MemoryTag.NATIVE_CB5
                         );
-                        PGConnectionContext pgConnectionContext = new PGConnectionContext(
+                        PGConnectionContextModern pgConnectionContext = new PGConnectionContextModern(
                                 engine,
                                 configuration,
                                 executionContextObjectFactory.newInstance(),

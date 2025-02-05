@@ -119,7 +119,6 @@ open module io.questdb {
     exports io.questdb.griffin.engine.functions.json;
     exports io.questdb.std.filewatch;
     exports io.questdb.griffin.engine.table.parquet;
-    exports io.questdb.cutlass.pgwire.modern;
 
     provides io.questdb.griffin.FunctionFactory with
 

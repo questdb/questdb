@@ -566,18 +566,15 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int pgCharacterStorePoolCapacity;
     private int pgConnectionPoolInitialCapacity;
     private boolean pgDaemonPool;
-    private DateLocale pgDefaultLocale;
     private int pgForceRecvFragmentationChunkSize;
     private int pgForceSendFragmentationChunkSize;
     private boolean pgHaltOnError;
     private int pgInsertCacheBlockCount;
     private boolean pgInsertCacheEnabled;
     private int pgInsertCacheRowCount;
-    private boolean pgLegacyModeEnabled;
     private int pgMaxBlobSizeOnQuery;
     private int pgNamedStatementCacheCapacity;
     private int pgNamedStatementLimit;
-    private int pgNamesStatementPoolCapacity;
     private int pgNetBindIPv4Address;
     private int pgNetBindPort;
     private boolean pgNetConnectionHint;
@@ -1212,11 +1209,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgNetConnectionSndBuf = getIntSize(properties, env, PropertyKey.PG_NET_CONNECTION_SNDBUF, pgNetConnectionSndBuf);
                 this.pgSendBufferSize = getIntSize(properties, env, PropertyKey.PG_SEND_BUFFER_SIZE, Numbers.SIZE_1MB);
 
-                final String dateLocale = getString(properties, env, PropertyKey.PG_DATE_LOCALE, "en");
-                this.pgDefaultLocale = DateLocaleFactory.INSTANCE.getLocale(dateLocale);
-                if (this.pgDefaultLocale == null) {
-                    throw ServerConfigurationException.forInvalidKey(PropertyKey.PG_DATE_LOCALE.getPropertyPath(), dateLocale);
-                }
                 this.pgWorkerCount = getInt(properties, env, PropertyKey.PG_WORKER_COUNT, 0);
                 cpuUsed += this.pgWorkerCount;
                 this.pgWorkerAffinity = getAffinity(properties, env, PropertyKey.PG_WORKER_AFFINITY, pgWorkerCount);
@@ -1228,12 +1220,10 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgInsertCacheEnabled = getBoolean(properties, env, PropertyKey.PG_INSERT_CACHE_ENABLED, true);
                 this.pgInsertCacheBlockCount = getInt(properties, env, PropertyKey.PG_INSERT_CACHE_BLOCK_COUNT, 4);
                 this.pgInsertCacheRowCount = getInt(properties, env, PropertyKey.PG_INSERT_CACHE_ROW_COUNT, 4);
-                this.pgLegacyModeEnabled = getBoolean(properties, env, PropertyKey.PG_LEGACY_MODE_ENABLED, false);
                 this.pgUpdateCacheEnabled = getBoolean(properties, env, PropertyKey.PG_UPDATE_CACHE_ENABLED, true);
                 this.pgUpdateCacheBlockCount = getInt(properties, env, PropertyKey.PG_UPDATE_CACHE_BLOCK_COUNT, 4);
                 this.pgUpdateCacheRowCount = getInt(properties, env, PropertyKey.PG_UPDATE_CACHE_ROW_COUNT, 4);
                 this.pgNamedStatementCacheCapacity = getInt(properties, env, PropertyKey.PG_NAMED_STATEMENT_CACHE_CAPACITY, 32);
-                this.pgNamesStatementPoolCapacity = getInt(properties, env, PropertyKey.PG_NAMED_STATEMENT_POOL_CAPACITY, 32);
                 this.pgPendingWritersCacheCapacity = getInt(properties, env, PropertyKey.PG_PENDING_WRITERS_CACHE_CAPACITY, 16);
                 this.pgNamedStatementLimit = getInt(properties, env, PropertyKey.PG_NAMED_STATEMENT_LIMIT, 10_000);
             }
@@ -4812,11 +4802,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public DateLocale getDefaultDateLocale() {
-            return pgDefaultLocale;
-        }
-
-        @Override
         public String getDefaultPassword() {
             return pgPassword;
         }
@@ -4899,11 +4884,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getNamedStatementLimit() {
             return pgNamedStatementLimit;
-        }
-
-        @Override
-        public int getNamesStatementPoolCapacity() {
-            return pgNamesStatementPoolCapacity;
         }
 
         @Override
@@ -5029,11 +5009,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isInsertCacheEnabled() {
             return pgInsertCacheEnabled;
-        }
-
-        @Override
-        public boolean isLegacyModeEnabled() {
-            return pgLegacyModeEnabled;
         }
 
         @Override

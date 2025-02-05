@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire.modern;
+package io.questdb.cutlass.pgwire;
 
 import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.CairoEngine;
@@ -43,9 +43,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
-import io.questdb.cutlass.pgwire.BadProtocolException;
-import io.questdb.cutlass.pgwire.PGOids;
-import io.questdb.cutlass.pgwire.PGResponseSink;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.griffin.CompiledQuery;
@@ -95,10 +92,10 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.function.Consumer;
 
+import static io.questdb.cutlass.pgwire.PGConnectionContextModern.*;
 import static io.questdb.cutlass.pgwire.PGOids.*;
-import static io.questdb.cutlass.pgwire.modern.PGConnectionContextModern.*;
-import static io.questdb.cutlass.pgwire.modern.PGUtils.calculateColumnBinSize;
-import static io.questdb.cutlass.pgwire.modern.PGUtils.estimateColumnTxtSize;
+import static io.questdb.cutlass.pgwire.PGUtils.calculateColumnBinSize;
+import static io.questdb.cutlass.pgwire.PGUtils.estimateColumnTxtSize;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_PRINT_FORMAT;
 
 public class PGPipelineEntry implements QuietCloseable, Mutable {
@@ -431,10 +428,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     public boolean isError() {
         return error;
-    }
-
-    public boolean isFactory() {
-        return factory != null;
     }
 
     public boolean isPortal() {
