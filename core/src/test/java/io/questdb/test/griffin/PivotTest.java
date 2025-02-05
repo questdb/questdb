@@ -445,7 +445,8 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testPivotWithTradesDataAndOrderByPositional() throws Exception {
+    public void
+    testPivotWithTradesDataAndOrderByPositional() throws Exception {
         assertMemoryLeak(() -> {
             execute(ddlTrades);
             execute(dmlTrades);
@@ -554,7 +555,7 @@ public class PivotTest extends AbstractSqlParserTest {
                     "WITH t AS\n" +
                             "        (\n" +
                             "\n" +
-                            "                SELECT timestamp, symbol,  side, AVG(price) price, AVG(amount) amount FROM btc_trades WHERE symbol IN 'BTC-USD'\n" +
+                            "                SELECT timestamp, symbol,  side, AVG(price) price, AVG(amount) amount FROM trades WHERE symbol IN 'BTC-USD'\n" +
                             "SAMPLE BY 1m\n" +
                             "), P AS (\n" +
                             "        SELECT * FROM t\n" +

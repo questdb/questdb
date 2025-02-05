@@ -1724,7 +1724,7 @@ public class SqlParser {
             tok = parsePivot(lexer, model, sqlParserCallback);
         }
 
-        if (tok != null && isUnpivotKeyword(tok))  {
+        if (tok != null && isUnpivotKeyword(tok)) {
             lexer.unparseLast();
             tok = parseUnpivot(lexer, model, sqlParserCallback);
         }
@@ -2281,64 +2281,6 @@ public class SqlParser {
         return tok;
     }
 
-    private CharSequence parseUnpivot(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
-        // FROM monthly_sales UNPIVOT (
-        //      sales
-        //      FOR month IN (jan, feb, mar, apr, may, jun)
-        lexer.unparseLast();
-
-        CharSequence tok = null;
-        expectTok(lexer, "unpivot");
-
-        tok = optTok(lexer);
-
-        // this corrects some issue where UNPIVOT is returned twice by the lexer
-        if (tok != null && isUnpivotKeyword(tok)) {
-            tok = optTok(lexer);
-        }
-
-        if (tok == null || !Chars.equals(tok, "(")) {
-            throw SqlException.$(lexer.lastTokenPosition(), "expected `(`");
-        }
-
-        ExpressionNode expr = expr(lexer, model, sqlParserCallback);
-
-        if (expr == null) {
-            throw SqlException.$(lexer.lastTokenPosition(), "missing column expression");
-        }
-
-        QueryColumn col = queryColumnPool.next().of(expr.token, expr);
-        model.addUnpivotColumn(col);
-        lexer.unparseLast();
-
-        tok = optTok(lexer);
-
-        if (tok != null && !isForKeyword(tok)) {
-            throw SqlException.$(lexer.lastTokenPosition(), "expected `FOR`");
-        }
-
-        while (true) {
-            expr = expr(lexer, model, sqlParserCallback);
-
-            if (expr == null|| Chars.equals(expr.token, ";")) {
-                break;
-            }
-
-            if (expr.type != ExpressionNode.FUNCTION || !Chars.equals(expr.token, "in")) {
-                throw SqlException.$(expr.position, "expected `IN` clause");
-            }
-
-            model.addUnpivotFor(expr);
-
-            tok = optTok(lexer);
-
-            if (tok != ")") {
-                throw SqlException.$(lexer.lastTokenPosition(), "expected `)`");
-            }
-        }
-        return tok;
-    }
-
     private CharSequence parsePivot(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
         lexer.unparseLast();
 
@@ -2426,7 +2368,7 @@ public class SqlParser {
             if (isForKeyword(tok)) {
                 break;
             } else if (Chars.equals(tok, ",")) {
-               optTok(lexer);
+                optTok(lexer);
             } else {
                 lexer.unparseLast();
             }
@@ -3090,6 +3032,64 @@ public class SqlParser {
         return null;
     }
 
+    private CharSequence parseUnpivot(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
+        // FROM monthly_sales UNPIVOT (
+        //      sales
+        //      FOR month IN (jan, feb, mar, apr, may, jun)
+        lexer.unparseLast();
+
+        CharSequence tok = null;
+        expectTok(lexer, "unpivot");
+
+        tok = optTok(lexer);
+
+        // this corrects some issue where UNPIVOT is returned twice by the lexer
+        if (tok != null && isUnpivotKeyword(tok)) {
+            tok = optTok(lexer);
+        }
+
+        if (tok == null || !Chars.equals(tok, "(")) {
+            throw SqlException.$(lexer.lastTokenPosition(), "expected `(`");
+        }
+
+        ExpressionNode expr = expr(lexer, model, sqlParserCallback);
+
+        if (expr == null) {
+            throw SqlException.$(lexer.lastTokenPosition(), "missing column expression");
+        }
+
+        QueryColumn col = queryColumnPool.next().of(expr.token, expr);
+        model.addUnpivotColumn(col);
+        lexer.unparseLast();
+
+        tok = optTok(lexer);
+
+        if (tok != null && !isForKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "expected `FOR`");
+        }
+
+        while (true) {
+            expr = expr(lexer, model, sqlParserCallback);
+
+            if (expr == null || Chars.equals(expr.token, ";")) {
+                break;
+            }
+
+            if (expr.type != ExpressionNode.FUNCTION || !Chars.equals(expr.token, "in")) {
+                throw SqlException.$(expr.position, "expected `IN` clause");
+            }
+
+            model.addUnpivotFor(expr);
+
+            tok = optTok(lexer);
+
+            if (tok != ")") {
+                throw SqlException.$(lexer.lastTokenPosition(), "expected `)`");
+            }
+        }
+        return tok;
+    }
+
     private ExecutionModel parseUpdate(
             GenericLexer lexer,
             SqlParserCallback sqlParserCallback,
@@ -3224,10 +3224,15 @@ public class SqlParser {
             model.put(name.token, wcm);
 
             CharSequence tok = optTok(lexer);
-            if (tok == null || !Chars.equals(tok, ',')) {
+            if (tok == null || Chars.equals(tok, ')')) {
+                break;
+            }
+
+            if (!Chars.equals(tok, ',')) {
                 lexer.unparseLast();
                 break;
             }
+
         } while (true);
     }
 
