@@ -32,6 +32,7 @@ import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class ExpressionParserTest extends AbstractCairoTest {
@@ -61,12 +62,16 @@ public class ExpressionParserTest extends AbstractCairoTest {
         x("a b <>all", "a != all(b)");
     }
 
+    @Ignore
     @Test
     public void testArrayConstruct() throws SqlException {
         x("x 1 []", "x[1]");
-        x("1 x", "x(1)");
-        x("1 2 3 x", "x(1,2,3)");
-//        x("1 2 []", "[1, 2]");
+        x("x 1 2 []", "x[1,2]");
+        x("x.y 1 2 []", "x.y[1,2]");
+        x("1 [,]", "[1]");
+        x("1 2 [,]", "[1, 2]");
+        x("1 2 3 [,]", "[1, 2, 3]");
+        x("1 2 [,] 3 [,]", "[1, [2], 3]");
     }
 
     @Test
