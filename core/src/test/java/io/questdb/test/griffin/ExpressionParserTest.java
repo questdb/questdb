@@ -63,18 +63,25 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testArrayConstruct() throws SqlException {
-        x("1 2 + 3 a", "a(1 + 2, 3)");
-        x("x 1 []", "x[1]");
-        x("x 1 2 []", "x[1,2]");
-        x("x.y 1 2 []", "x.y[1,2]");
-        x("1 [,]", "ARRAY[1]");
-        x("1 2 [,]", "ARRAY[1, 2]");
         x("1 2 3 [,]", "ARRAY[1, 2, 3]");
-        x("a b []", "a()[b]");
-        x("b i [] c i [] func", "func(b[i],c[i])");
         x("1 2 [,] 3 [,]", "ARRAY[1, [2], 3]");
-        x("1 2 3 [,] 4 [,]", "ARRAY[1, [2, 3], 4]");
         x("1 2 3 4 [,] [,] 5 [,]", "ARRAY[1, [2, [3, 4]], 5]");
+        x("x 1 []", "x[1]");
+        x("x 1 2 []", "x[1, 2]");
+        x("x.y 1 2 []", "x.y[1, 2]");
+        x("a b []", "a()[b]");
+        x("b i [] c i [] func", "func(b[i], c[i])");
+        x("1 2 + 3 func", "func(1 + 2, 3)");
+        x("1 2 func 3 [,]", "ARRAY[1, func(2), 3]");
+        x("1 2 func 3 [] 4 [,]", "ARRAY[1, func(2)[3], 4]");
+    }
+
+    @Test
+    public void testArrayConstructInvalid() {
+        assertFail("ARRAY[]", 6, "empty brackets");
+        assertFail("ARRAY[1", 5, "unbalanced [");
+        assertFail("ARRAY[1, [1]", 5, "unbalanced [");
+        assertFail("ARRAY[1 2]", 8, "dangling expression");
     }
 
     @Test
@@ -87,7 +94,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
         assertFail(
                 "a[]",
                 2,
-                "missing array index"
+                "empty brackets"
         );
     }
 
@@ -96,7 +103,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
         assertFail(
                 "a[",
                 1,
-                "unbalanced ]"
+                "unbalanced ["
         );
     }
 
@@ -105,7 +112,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
         assertFail(
                 "f(a[)",
                 3,
-                "unbalanced ]"
+                "unbalanced ["
         );
     }
 
@@ -1174,7 +1181,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
         assertFail(
                 "a([i)]",
                 2,
-                "unbalanced ]"
+                "unbalanced ["
         );
     }
 

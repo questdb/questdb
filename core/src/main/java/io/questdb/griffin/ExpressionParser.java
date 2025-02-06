@@ -391,7 +391,7 @@ public class ExpressionParser {
 
                         thisBranch = BRANCH_RIGHT_BRACKET;
                         if (prevBranch == BRANCH_LEFT_BRACKET) {
-                            throw SqlException.$(lastPos, "missing array index");
+                            throw SqlException.$(lastPos, "empty brackets");
                         }
 
                         // Until the token at the top of the stack is a left bracket,
@@ -782,7 +782,7 @@ public class ExpressionParser {
                             argStackDepth = 0;
                             scopeStack.push(Scope.ARRAY);
                             opStack.push(expressionNodePool.next().of(ExpressionNode.CONTROL,
-                                    "[[", Integer.MAX_VALUE, lastPos));
+                                    "[[", Integer.MAX_VALUE, lexer.lastTokenPosition()));
                         } else if ((prevBranch == BRANCH_LITERAL || prevBranch == BRANCH_CONSTANT || prevBranch == BRANCH_RIGHT_PARENTHESIS) && SqlKeywords.isAtKeyword(tok)) {
                             int pos = lexer.getPosition();
                             // '.' processing expects floating char sequence
@@ -1465,7 +1465,7 @@ public class ExpressionParser {
 
                 // our array dereference is dangling
                 if (node.type == ExpressionNode.CONTROL && node.token.charAt(0) == '[') {
-                    throw SqlException.$(node.position, "unbalanced ]");
+                    throw SqlException.$(node.position, "unbalanced [");
                 }
 
                 if (SqlKeywords.isCaseKeyword(node.token)) {
