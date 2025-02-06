@@ -71,6 +71,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -6871,7 +6872,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 GenericLexer lexer,
                 SecurityContext securityContext,
                 CreateMatViewOperationBuilder builder,
-                CharSequence tok
+                @Nullable CharSequence tok
         ) throws SqlException {
             createMatViewSuffixCalled = true;
             return super.parseCreateMatViewExt(lexer, securityContext, builder, tok);
@@ -6882,7 +6883,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 GenericLexer lexer,
                 SecurityContext securityContext,
                 CreateTableOperationBuilder builder,
-                CharSequence tok
+                @Nullable CharSequence tok
         ) throws SqlException {
             createTableSuffixCalled = true;
             return super.parseCreateTableExt(lexer, securityContext, builder, tok);

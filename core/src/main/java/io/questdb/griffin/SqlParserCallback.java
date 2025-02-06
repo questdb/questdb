@@ -85,5 +85,4 @@ public interface SqlParserCallback {
     ) throws SqlException {
         return -1;
     }
-
 }
