@@ -254,16 +254,15 @@ public class ExpressionParser {
                 switch (thisChar) {
                     case '-':
                     case '+':
-                        // floating-point literals in scientific notation (e.g. 1e-10, 1e+10) separated in several tokens by lexer ('1e', '-', '10') - so we need to glue them together
+                        // floating-point literals in scientific notation (e.g. 1e-10, 1e+10) separated in several
+                        // tokens by lexer ('1e', '-', '10') - so we need to glue them together
                         processDefaultBranch = true;
-                        if (prevBranch == BRANCH_CONSTANT) {
-                            if (lastPos > 0) {
-                                char c = lexer.getContent().charAt(lastPos - 1);
-                                if (c == 'e' || c == 'E') { // Incomplete scientific floating-point literal
-                                    ExpressionNode en = opStack.peek();
-                                    ((GenericLexer.FloatingSequence) en.token).setHi(lastPos + 1);
-                                    processDefaultBranch = false;
-                                }
+                        if (prevBranch == BRANCH_CONSTANT && lastPos > 0) {
+                            char c = lexer.getContent().charAt(lastPos - 1);
+                            if (c == 'e' || c == 'E') { // Incomplete scientific floating-point literal
+                                ExpressionNode en = opStack.peek();
+                                ((GenericLexer.FloatingSequence) en.token).setHi(lastPos + 1);
+                                processDefaultBranch = false;
                             }
                         }
                         break;
@@ -301,7 +300,7 @@ public class ExpressionParser {
                             thisBranch = BRANCH_DOT;
                         }
                         break;
-                    case ',':
+                    case ',': {
                         if (prevBranch == BRANCH_COMMA || prevBranch == BRANCH_LEFT_PARENTHESIS || prevBranch == BRANCH_LEFT_BRACKET) {
                             throw missingArgs(lastPos);
                         }
@@ -320,19 +319,16 @@ public class ExpressionParser {
                         // The comma is a function argument separator:
                         // Until the token at the top of the stack is a left paren/bracket,
                         // pop operators off the stack onto the output queue. If no left
-                        while ((node = opStack.pop()) != null && node.token.length() > 0 && node.token.charAt(0) != '(') {
                         // parens/brackets are encountered, either the separator was misplaced or
                         // paren/bracket was mismatched.
+                        while ((node = opStack.pop()) != null && node.type != ExpressionNode.CONTROL && node.token.charAt(0) != '(') {
                             argStackDepth = onNode(listener, node, argStackDepth, false);
                         }
-
-                        if (node != null) {
-                            opStack.push(node);
-                        }
-
+                        assert node != null : "opStack is empty";
+                        opStack.push(node);
                         paramCount++;
                         break;
-
+                    }
                     case '[': {
                         if (isTypeQualifier()) {
                             ExpressionNode en = opStack.peek();
