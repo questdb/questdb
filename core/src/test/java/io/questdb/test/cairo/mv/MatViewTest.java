@@ -35,7 +35,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
 import io.questdb.std.Rnd;
-import io.questdb.std.Zip;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -778,17 +777,13 @@ public class MatViewTest extends AbstractCairoTest {
                     ",('gbpusd', 1.328, '2024-10-28T01:00')"
             );
             drainWalQueue();
-            String exp2 = "sym\tfirst\tlast\tts\tberlin\n" +
+            String exp = "sym\tfirst\tlast\tts\tberlin\n" +
                     "gbpusd\t1.32\t1.321\t2024-10-25T22:00:00.000000Z\t2024-10-26T00:00:00.000000Z\n" +
                     "gbpusd\t1.325\t1.326\t2024-10-27T00:00:00.000000Z\t2024-10-27T02:00:00.000000Z\n" +
                     "gbpusd\t1.327\t1.328\t2024-10-27T23:00:00.000000Z\t2024-10-28T00:00:00.000000Z\n";
 
-            String exp = "sym\tfirst\tlast\tts\tberlin\n" +
-                    "gbpusd\t1.32\t1.321\t2024-10-25T22:00:00.000000Z\t2024-10-26T00:00:00.000000Z\n" +
-                    "gbpusd\t1.324\t1.326\t2024-10-26T22:00:00.000000Z\t2024-10-27T00:00:00.000000Z\n" +
-                    "gbpusd\t1.327\t1.328\t2024-10-27T23:00:00.000000Z\t2024-10-28T00:00:00.000000Z\n";
-
-            assertSql(exp2,
+            assertSql(
+                    exp,
                     "select sym, first(price) as first, last(price) as last, count() count, ts from base_price" +
                             " sample by 1d ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' order by ts, sym"
             );
@@ -877,6 +872,11 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByNoFillNotKeyedAlignToCalendarTimezoneFixedFormat() throws Exception {
+        assertMemoryLeak(() -> testAlignToCalendarTimezoneOffset("GMT+01:00"));
+    }
+
+    @Test
     @Ignore
     public void testSampleByNoFillNotKeyedAlignToCalendarTimezoneOct() throws Exception {
         // We are going over spring time change. Because time is "expanding" we don't have
@@ -952,24 +952,7 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByNoFillNotKeyedAlignToCalendarTimezoneOffset() throws Exception {
-        assertMemoryLeak(() -> {
-            String viewName = "x_view";
-            String viewQuery = "select k, count() c from x sample by 90m align to calendar time zone 'PST' with offset '00:42'";
-            long startTs = 172800000000L;
-            long step = 300000000;
-            final int N = 100;
-            final int K = 5;
-            updateViewIncrementally(viewName, viewQuery, startTs, step, N, K);
-            String expected = "k\tc\n" +
-                    "1970-01-02T23:42:00.000000Z\t15\n" +
-                    "1970-01-03T01:12:00.000000Z\t18\n" +
-                    "1970-01-03T02:42:00.000000Z\t18\n" +
-                    "1970-01-03T04:12:00.000000Z\t18\n" +
-                    "1970-01-03T05:42:00.000000Z\t18\n" +
-                    "1970-01-03T07:12:00.000000Z\t13\n";
-            assertSql(expected, viewQuery);
-            assertSql(expected, viewName);
-        });
+        assertMemoryLeak(() -> testAlignToCalendarTimezoneOffset("PST"));
     }
 
     @Test
@@ -1263,6 +1246,25 @@ public class MatViewTest extends AbstractCairoTest {
         }
     }
 
+    private void testAlignToCalendarTimezoneOffset(final String timezone) throws SqlException {
+        String viewName = "x_view";
+        String viewQuery = "select k, count() c from x sample by 90m align to calendar time zone '" + timezone + "' with offset '00:42'";
+        long startTs = 172800000000L;
+        long step = 300000000;
+        final int N = 100;
+        final int K = 5;
+        updateViewIncrementally(viewName, viewQuery, startTs, step, N, K);
+        String expected = "k\tc\n" +
+                "1970-01-02T23:42:00.000000Z\t15\n" +
+                "1970-01-03T01:12:00.000000Z\t18\n" +
+                "1970-01-03T02:42:00.000000Z\t18\n" +
+                "1970-01-03T04:12:00.000000Z\t18\n" +
+                "1970-01-03T05:42:00.000000Z\t18\n" +
+                "1970-01-03T07:12:00.000000Z\t13\n";
+        assertSql(expected, viewQuery);
+        assertSql(expected, viewName);
+    }
+
     private void testBaseTableInvalidateOnOperation(String operationSql) throws Exception {
         testBaseTableInvalidateOnOperation(null, operationSql);
     }
@@ -1392,9 +1394,5 @@ public class MatViewTest extends AbstractCairoTest {
         }
 
         Assert.assertEquals(0, remainingSize);
-    }
-
-    static {
-        Zip.init();
     }
 }

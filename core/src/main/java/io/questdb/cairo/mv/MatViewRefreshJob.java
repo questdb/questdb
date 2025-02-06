@@ -129,7 +129,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             long minTs = txnRangeLoader.getMinTimestamp();
             long maxTs = txnRangeLoader.getMaxTimestamp();
 
-            if (minTs <= maxTs && minTs >= viewDefinition.getFromMicros()) {
+            if (minTs <= maxTs) {
                 // TODO(glasstiger): reuse the sampler instance
 
                 final TimestampSampler sampler = TimestampSamplerFactory.getInstance(
@@ -313,7 +313,17 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private void invalidateView(TableToken viewToken, MatViewGraph viewGraph) {
         final MatViewRefreshState state = viewGraph.getViewRefreshState(viewToken);
         if (state != null && !state.isDropped()) {
-            setInvalidState(state);
+            if (!state.tryLock()) {
+                LOG.debug().$("skipping materialized view invalidation, locked by another refresh run [view=").$(viewToken).I$();
+                state.setPendingInvalidation();
+                viewGraph.refresh(viewToken, MatViewRefreshTask.INVALIDATE);
+                return;
+            }
+            try {
+                setInvalidState(state);
+            } finally {
+                state.unlock();
+            }
         }
     }
 
@@ -327,7 +337,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // Someone is refreshing the view, so we're going for another attempt.
             // Just mark the view invalid to prevent intermediate incremental refreshes and republish the task.
             LOG.info().$("delaying materialized view rebuild, locked by another refresh run [view=").$(viewToken).I$();
-            setInvalidState(state);
+            state.setPendingInvalidation();
             viewGraph.refresh(viewToken, MatViewRefreshTask.REBUILD);
             return false;
         }

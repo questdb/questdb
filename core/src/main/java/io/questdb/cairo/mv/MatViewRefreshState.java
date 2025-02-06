@@ -226,4 +226,8 @@ public class MatViewRefreshState implements QuietCloseable {
         metaFileWriter.of(dbRoot.$());
         MatViewRefreshState.commitTo(metaFileWriter, this);
     }
+
+    public void setPendingInvalidation() {
+        invalid = true;
+    }
 }

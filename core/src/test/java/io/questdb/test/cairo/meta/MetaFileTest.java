@@ -38,14 +38,12 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
-import io.questdb.std.Zip;
 import io.questdb.std.str.GcUtf8String;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.concurrent.CyclicBarrier;
@@ -62,11 +60,6 @@ public class MetaFileTest extends AbstractCairoTest {
     private static final byte MSG_TYPE_B_VERSION_1 = 1;
     private static final short MSG_TYPE_C = 3;
     private static final byte MSG_TYPE_C_VERSION_1 = 1;
-
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        AbstractCairoTest.setUpStatic();
-    }
 
     @Test
     public void testCreateEmptyDefinitionFile() throws Exception {
@@ -131,7 +124,6 @@ public class MetaFileTest extends AbstractCairoTest {
     public void testReadNonExistingDefinitionFile() throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = getDefinitionFilePath("test")) {
-                FilesFacade ff = configuration.getFilesFacade();
                 try (MetaFileReader reader = new MetaFileReader(configuration)) {
                     reader.of(path.$());
                     Assert.fail("Expected exception");
@@ -531,9 +523,5 @@ public class MetaFileTest extends AbstractCairoTest {
             Assert.assertEquals("World", str.toString());
             offset += Vm.getStorageLength(str);
         }
-    }
-
-    static {
-        Zip.init();
     }
 }

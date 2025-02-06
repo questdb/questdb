@@ -69,7 +69,6 @@ import static io.questdb.cairo.SqlWalMode.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.std.GenericLexer.assertNoDotsAndSlashes;
 import static io.questdb.std.GenericLexer.unquote;
-import static io.questdb.std.datetime.microtime.TimestampFormatUtils.DAY_FORMAT;
 
 public class SqlParser {
     public static final int MAX_ORDER_BY_COLUMNS = 1560;
@@ -886,23 +885,16 @@ public class SqlParser {
             final QueryModel qm = parseDml(lexer, null, lexer.getPosition(), true, sqlParserCallback, null);
             final QueryModel nestedModel = qm.getNestedModel();
             if (nestedModel.getSampleByFrom() != null) {
-                try {
-                    builder.setFromMicros(DAY_FORMAT.parse(
-                            unquote(nestedModel.getSampleByFrom().token), configuration.getDefaultDateLocale()
-                    ));
-                } catch (NumericException e) {
-                    throw SqlException.position(lexer.getPosition()).put("cannot parse sample by FROM date");
-                }
+                throw SqlException.position(lexer.getPosition()).put("FROM is not supported for materialized views");
             }
             if (nestedModel.getSampleByTo() != null) {
-                try {
-                    builder.setToMicros(DAY_FORMAT.parse(
-                            unquote(nestedModel.getSampleByTo().token), configuration.getDefaultDateLocale()
-                    ));
-                } catch (NumericException e) {
-                    throw SqlException.position(lexer.getPosition()).put("cannot parse sample by TO date");
-                }
+                throw SqlException.position(lexer.getPosition()).put("TO is not supported for materialized views");
             }
+
+            if (nestedModel.getSampleByFill() != null && nestedModel.getSampleByFill().size() > 0) {
+                throw SqlException.position(lexer.getPosition()).put("FILL is not supported for materialized views");
+            }
+
             if (nestedModel.getSampleByTimezoneName() != null) {
                 builder.setTimeZone(unquote(nestedModel.getSampleByTimezoneName().token).toString());
             }

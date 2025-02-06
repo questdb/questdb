@@ -35,7 +35,6 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 import static io.questdb.std.datetime.microtime.Timestamps.MINUTE_MICROS;
 
 public class MatViewDefinition {
@@ -45,18 +44,17 @@ public class MatViewDefinition {
     public static final byte MAT_VIEW_DEFINITION_FORMAT_MSG_VERSION = 0;
 
     private final String baseTableName;
-    private final long fromMicros;
     private final String matViewSql;
     private final TableToken matViewToken;
     private final long samplingInterval;
     private final char samplingIntervalUnit;
     private final String timeZone;
     private final String timeZoneOffset;
-    private final long toMicros;
+
+    // is not persisted, parsed from timeZoneOffset
     private long fixedOffset;
+    // is not persisted, parsed from timeZone
     private @Nullable TimeZoneRules rules;
-    // non persistent fields
-    private long tzOffset;
 
     public MatViewDefinition(
             TableToken matViewToken,
@@ -64,8 +62,6 @@ public class MatViewDefinition {
             String baseTableName,
             long samplingInterval,
             char samplingIntervalUnit,
-            long fromMicros,
-            long toMicros,
             String timeZone,
             String timeZoneOffset
     ) {
@@ -74,23 +70,12 @@ public class MatViewDefinition {
         this.baseTableName = baseTableName;
         this.samplingInterval = samplingInterval;
         this.samplingIntervalUnit = samplingIntervalUnit;
-        this.fromMicros = fromMicros;
-        this.toMicros = toMicros;
         this.timeZone = timeZone;
         this.timeZoneOffset = timeZoneOffset;
 
         if (timeZone != null) {
             try {
-                long opt = Timestamps.parseOffset(timeZone);
-                if (opt == Long.MIN_VALUE) {
-                    this.rules = TimestampFormatUtils.EN_LOCALE.getZoneRules(
-                            Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(timeZone, 0, timeZone.length())),
-                            RESOLUTION_MICROS
-                    );
-                } else {
-                    // here timezone is in numeric offset format
-                    this.tzOffset = Numbers.decodeLowInt(opt) * MINUTE_MICROS;
-                }
+                this.rules = Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, timeZone);
             } catch (NumericException e) {
                 throw CairoException.critical(0).put("invalid timezone: ").put(timeZone);
             }
@@ -107,10 +92,6 @@ public class MatViewDefinition {
 
     public String getBaseTableName() {
         return baseTableName;
-    }
-
-    public long getFromMicros() {
-        return fromMicros;
     }
 
     public String getMatViewSql() {
@@ -137,10 +118,6 @@ public class MatViewDefinition {
         return timeZoneOffset;
     }
 
-    public long getToMicros() {
-        return toMicros;
-    }
-
     public long getFixedOffset() {
         return fixedOffset;
     }
@@ -162,8 +139,6 @@ public class MatViewDefinition {
 
     public static void writeTo(final AppendableBlock mem, final MatViewDefinition matViewDefinition) {
         mem.putStr(matViewDefinition.getBaseTableName());
-        mem.putLong(matViewDefinition.getFromMicros());
-        mem.putLong(matViewDefinition.getToMicros());
         mem.putLong(matViewDefinition.getSamplingInterval());
         mem.putChar(matViewDefinition.getSamplingIntervalUnit());
         mem.putStr(matViewDefinition.getTimeZone());

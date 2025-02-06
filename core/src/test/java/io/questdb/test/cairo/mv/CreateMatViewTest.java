@@ -39,9 +39,7 @@ import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.Numbers;
 import io.questdb.std.Os;
-import io.questdb.std.Zip;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
@@ -52,9 +50,6 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-import java.text.ParseException;
-import java.text.SimpleDateFormat;
-import java.util.TimeZone;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -498,18 +493,37 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewSampleByFill() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE2);
+            final String fill = "select ts, avg(v) from " + TABLE2 + " where ts in '2024' sample by 1d fill(null)";
+            try {
+                execute("create materialized view test as (" + fill + ") partition by day");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "FILL is not supported for materialized view");
+            }
+        });
+    }
+
+    @Test
     public void testCreateMatViewSampleByFromTo() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE2);
-
-            final String from = "2024-03-01";
-            final String to = "2024-06-30";
-            final String query = "select ts, avg(v) from " + TABLE2 + " where ts in '2024' sample by 1d from '" + from + "' to '" + to + "'";
-            execute("create materialized view test as (" + query + ") partition by day");
-
-            assertQuery("ts\tavg\n", "test", "ts", true, true);
-            assertMatViewDefinition("test", query, TABLE2, 1, 'd', parseAsMicros(from), parseAsMicros(to), null, null);
-            assertMatViewMetadata("test", query, TABLE2, 1, 'd', parseAsMicros(from), parseAsMicros(to), null, null);
+            final String from = "select ts, avg(v) from " + TABLE2 + " where ts in '2024' sample by 1d from '2024-03-01'";
+            final String to = "select ts, avg(v) from " + TABLE2 + " where ts in '2024' sample by 1d to '2024-06-30'";
+            try {
+                execute("create materialized view test as (" + from + ") partition by day");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "FROM is not supported for materialized view");
+            }
+            try {
+                execute("create materialized view test as (" + to + ") partition by day");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "TO is not supported for materialized view");
+            }
         });
     }
 
@@ -523,8 +537,23 @@ public class CreateMatViewTest extends AbstractCairoTest {
             execute("create materialized view test as (" + query + ") partition by day");
 
             assertQuery("ts\tavg\n", "test", "ts", true, true);
-            assertMatViewDefinition("test", query, TABLE1, 1, 'd', Numbers.LONG_NULL, Numbers.LONG_NULL, tz, null);
-            assertMatViewMetadata("test", query, TABLE1, 1, 'd', Numbers.LONG_NULL, Numbers.LONG_NULL, tz, null);
+            assertMatViewDefinition("test", query, TABLE1, 1, 'd', tz, null);
+            assertMatViewMetadata("test", query, TABLE1, 1, 'd', tz, null);
+        });
+    }
+
+    @Test
+    public void testCreateMatViewSampleByTimeZoneFixedFormat() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final String tz = "GMT+02:00";
+            final String query = "select ts, avg(v) from " + TABLE1 + " where ts in '2024' sample by 1d align to calendar time zone '" + tz + "'";
+            execute("create materialized view test as (" + query + ") partition by day");
+
+            assertQuery("ts\tavg\n", "test", "ts", true, true);
+            assertMatViewDefinition("test", query, TABLE1, 1, 'd', tz, null);
+            assertMatViewMetadata("test", query, TABLE1, 1, 'd', tz, null);
         });
     }
 
@@ -539,8 +568,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
             execute("create materialized view test as (" + query + ") partition by day");
 
             assertQuery("ts\tavg\n", "test", "ts", true, true);
-            assertMatViewDefinition("test", query, TABLE1, 1, 'd', Numbers.LONG_NULL, Numbers.LONG_NULL, tz, offset);
-            assertMatViewMetadata("test", query, TABLE1, 1, 'd', Numbers.LONG_NULL, Numbers.LONG_NULL, tz, offset);
+            assertMatViewDefinition("test", query, TABLE1, 1, 'd', tz, offset);
+            assertMatViewMetadata("test", query, TABLE1, 1, 'd', tz, offset);
         });
     }
 
@@ -554,8 +583,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
             execute("create materialized view test as (" + query + ") partition by day");
 
             assertQuery("ts\tavg\n", "test", "ts", true, true);
-            assertMatViewDefinition("test", query, TABLE1, 1, 'd', Numbers.LONG_NULL, Numbers.LONG_NULL, null, offset);
-            assertMatViewMetadata("test", query, TABLE1, 1, 'd', Numbers.LONG_NULL, Numbers.LONG_NULL, null, offset);
+            assertMatViewDefinition("test", query, TABLE1, 1, 'd', null, offset);
+            assertMatViewMetadata("test", query, TABLE1, 1, 'd', null, offset);
         });
     }
 
@@ -769,8 +798,6 @@ public class CreateMatViewTest extends AbstractCairoTest {
             String baseTableName,
             long samplingInterval,
             char samplingIntervalUnit,
-            long fromMicros,
-            long toMicros,
             String timeZone,
             String timeZoneOffset
     ) {
@@ -782,18 +809,16 @@ public class CreateMatViewTest extends AbstractCairoTest {
         assertEquals(baseTableName, matViewDefinition.getBaseTableName());
         assertEquals(samplingInterval, matViewDefinition.getSamplingInterval());
         assertEquals(samplingIntervalUnit, matViewDefinition.getSamplingIntervalUnit());
-        assertEquals(fromMicros, matViewDefinition.getFromMicros());
-        assertEquals(toMicros, matViewDefinition.getToMicros());
         assertEquals(timeZone, timeZone != null ? matViewDefinition.getTimeZone() : null);
         assertEquals(timeZoneOffset != null ? timeZoneOffset : "00:00", matViewDefinition.getTimeZoneOffset());
     }
 
     private static void assertMatViewDefinition(String name, String query, String baseTableName, int samplingInterval, char samplingIntervalUnit) {
-        assertMatViewDefinition(name, query, baseTableName, samplingInterval, samplingIntervalUnit, Numbers.LONG_NULL, Numbers.LONG_NULL, null, null);
+        assertMatViewDefinition(name, query, baseTableName, samplingInterval, samplingIntervalUnit, null, null);
     }
 
     private static void assertMatViewMetadata(String name, String query, String baseTableName, int samplingInterval, char samplingIntervalUnit) {
-        assertMatViewMetadata(name, query, baseTableName, samplingInterval, samplingIntervalUnit, Numbers.LONG_NULL, Numbers.LONG_NULL, null, null);
+        assertMatViewMetadata(name, query, baseTableName, samplingInterval, samplingIntervalUnit, null, null);
     }
 
     private static void assertMatViewMetadata(
@@ -802,8 +827,6 @@ public class CreateMatViewTest extends AbstractCairoTest {
             String baseTableName,
             long samplingInterval,
             char samplingIntervalUnit,
-            long fromMicros,
-            long toMicros,
             String timeZone,
             String timeZoneOffset
     ) {
@@ -823,8 +846,6 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertEquals(mvd.getBaseTableName(), baseTableName);
             assertEquals(mvd.getSamplingInterval(), samplingInterval);
             assertEquals(mvd.getSamplingIntervalUnit(), samplingIntervalUnit);
-            assertEquals(mvd.getFromMicros(), fromMicros);
-            assertEquals(mvd.getToMicros(), toMicros);
             assertEquals(Chars.toString(mvd.getTimeZone()), timeZone);
             assertEquals(mvd.getTimeZoneOffset(), timeZoneOffset != null ? timeZoneOffset : "00:00");
         }
@@ -866,12 +887,6 @@ public class CreateMatViewTest extends AbstractCairoTest {
         }
     }
 
-    private long parseAsMicros(String date) throws ParseException {
-        final SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
-        sdf.setTimeZone(TimeZone.getTimeZone("UTC"));
-        return sdf.parse(date).getTime() * 1000;
-    }
-
     private void testCreateMatViewNonDeterministicFunction(String func, String columnName) throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -888,9 +903,5 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
     protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
         assertQueryFullFatNoLeakCheck(expected, query, expectedTimestamp, supportsRandomAccess, expectSize, false);
-    }
-
-    static {
-        Zip.init();
     }
 }

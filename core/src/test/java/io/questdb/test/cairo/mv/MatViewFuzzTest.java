@@ -33,7 +33,6 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
-import io.questdb.std.Zip;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.fuzz.AbstractFuzzTest;
@@ -187,11 +186,9 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         );
     }
 
-    private ObjList<FuzzTransaction> createTransactionsAndMv(Rnd rnd, String tableNameBase, String viewSql) throws SqlException, NumericException {
-        String tableNameMv = tableNameBase + "_mv";
-
+    private ObjList<FuzzTransaction> createTransactionsAndMv(Rnd rnd, String tableNameBase, String matViewName, String viewSql) throws SqlException, NumericException {
         fuzzer.createInitialTable(tableNameBase, true);
-        createMatView(viewSql, tableNameMv);
+        createMatView(viewSql, matViewName);
 
         ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameBase, rnd);
 
@@ -203,6 +200,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     private void runMvFuzz(Rnd rnd, String testTableName, int tableCount) throws Exception {
         AtomicBoolean stop = new AtomicBoolean();
         ObjList<Thread> refreshJobs = new ObjList<>();
+        ObjList<Thread> rebuildThreads = new ObjList<>();
         int refreshJobCount = 1 + rnd.nextInt(4);
 
         for (int i = 0; i < refreshJobCount; i++) {
@@ -214,10 +212,12 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
 
         for (int i = 0; i < tableCount; i++) {
             String tableNameBase = testTableName + "_" + i;
+            String tableNameMv = tableNameBase + "_mv";
             String viewSql = "select min(c3), max(c3), ts from  " + tableNameBase + " sample by 1h";
-            ObjList<FuzzTransaction> transactions = createTransactionsAndMv(rnd, tableNameBase, viewSql);
+            ObjList<FuzzTransaction> transactions = createTransactionsAndMv(rnd, tableNameBase, tableNameMv, viewSql);
             fuzzTransactions.add(transactions);
             viewSqls.add(viewSql);
+            rebuildThreads.add(startRebuildThread(1000 * i, tableNameMv, stop, rnd));
         }
 
         // Can help to reduce memory consumption.
@@ -227,6 +227,10 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         stop.set(true);
         for (int i = 0; i < refreshJobCount; i++) {
             refreshJobs.getQuick(i).join();
+        }
+
+        for (int i = 0; i < tableCount; i++) {
+            rebuildThreads.getQuick(i).join();
         }
 
         drainWalQueue();
@@ -291,6 +295,25 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         );
     }
 
+    private Thread startRebuildThread(int workerId, final String matView, AtomicBoolean stop, Rnd outsideRnd) {
+        Rnd rnd = new Rnd(outsideRnd.nextLong(), outsideRnd.nextLong());
+        Thread th = new Thread(() -> {
+            try {
+                while (!stop.get()) {
+                    execute("refresh materialized view '" + matView + "';");
+                    Os.sleep(rnd.nextInt(1000));
+                }
+            } catch (Throwable throwable) {
+                LOG.error().$("Rebuild thread failed: ").$(throwable).$();
+            } finally {
+                Path.clearThreadLocals();
+                LOG.info().$("Rebuild thread stopped").$();
+            }
+        }, "rebuild-thread" + workerId);
+        th.start();
+        return th;
+    }
+
     private Thread startRefreshJob(int workerId, AtomicBoolean stop, Rnd outsideRnd) {
         Rnd rnd = new Rnd(outsideRnd.nextLong(), outsideRnd.nextLong());
         Thread th = new Thread(() -> {
@@ -317,9 +340,5 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         }, "refresh-job" + workerId);
         th.start();
         return th;
-    }
-
-    static {
-        Zip.init();
     }
 }

@@ -41,7 +41,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
-import io.questdb.std.Zip;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.str.LPSZ;
@@ -692,9 +691,5 @@ public class TableBackupTest {
         finalBackupPath.slash$();
         finalBackupPathLen = finalBackupPath.size();
         finalBackupPath.trimTo(finalBackupPathLen).concat(PropServerConfiguration.DB_DIRECTORY).slash$();
-    }
-
-    static {
-        Zip.init();
     }
 }

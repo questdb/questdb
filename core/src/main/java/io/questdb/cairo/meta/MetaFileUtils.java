@@ -93,8 +93,4 @@ public class MetaFileUtils {
     public static boolean isRegionA(final long version) {
         return (version & 1) != 0; // 0 - empty file, 1 - region A, 2 - region B, ...
     }
-
-    static {
-        Zip.init();
-    }
 }

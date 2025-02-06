@@ -56,7 +56,6 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
-import io.questdb.std.Zip;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -1651,9 +1650,5 @@ public class CheckpointTest extends AbstractCairoTest {
             errorOnRegistryFileRemoval = false;
             errorOnRegistryFileCopy = false;
         }
-    }
-
-    static {
-        Zip.init();
     }
 }

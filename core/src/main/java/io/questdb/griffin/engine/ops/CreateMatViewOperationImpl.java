@@ -44,12 +44,10 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final ObjList<String> baseKeyColumnNames = new ObjList<>();
     private final String baseTableName;
     private final CreateTableOperation createTableOperation;
-    private final long fromMicros;
     private final long samplingInterval;
     private final char samplingIntervalUnit;
     private final String timeZone;
     private final String timeZoneOffset;
-    private final long toMicros;
     private final String viewSql;
     private MatViewDefinition matViewDefinition;
 
@@ -57,12 +55,10 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             CreateTableOperation createTableOperation,
             String baseTableName,
             @Transient CharSequenceHashSet baseKeyColumnNames,
-            long fromMicros,
             long samplingInterval,
             char samplingIntervalUnit,
             String timeZone,
             String timeZoneOffset,
-            long toMicros,
             String viewSql
     ) {
         this.createTableOperation = createTableOperation;
@@ -71,12 +67,10 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             CharSequence colName = baseKeyColumnNames.getList().get(i);
             this.baseKeyColumnNames.add(Chars.toString(colName));
         }
-        this.fromMicros = fromMicros;
         this.samplingInterval = samplingInterval;
         this.samplingIntervalUnit = samplingIntervalUnit;
         this.timeZone = timeZone;
         this.timeZoneOffset = timeZoneOffset;
-        this.toMicros = toMicros;
         this.viewSql = viewSql;
     }
 
@@ -205,7 +199,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     public void init(TableToken tableToken) {
         matViewDefinition = new MatViewDefinition(
                 tableToken, viewSql, baseTableName, samplingInterval, samplingIntervalUnit,
-                fromMicros, toMicros, timeZone, timeZoneOffset
+                timeZone, timeZoneOffset
         );
     }
 
