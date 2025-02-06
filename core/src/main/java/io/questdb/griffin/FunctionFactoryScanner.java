@@ -179,8 +179,10 @@ public class FunctionFactoryScanner {
         if (index < 0) {
             return orderMap.valueAt(index);
         }
-        // Unknown functions at the end
-        return orderMap.size() + 1;
+        // Unknown functions at the end, longest signature first
+        // If name of the signatures match then the functions with fewer arguments come last
+        // so that VARLARG functions are always last
+        return orderMap.size() + Math.abs(10000 - f1.getSignature().length());
     }
 
     private static CharSequenceIntHashMap loadFunctionOrderMap() {

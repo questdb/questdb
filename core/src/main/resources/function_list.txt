@@ -26,26 +26,6 @@
 # There is not need to add a function in the list unless it is required to pin the priority
 # across the functions with the same name
 
-io.questdb.griffin.engine.functions.finance.LevelTwoPriceFunctionFactory
-io.questdb.griffin.engine.functions.finance.SpreadFunctionFactory
-io.questdb.griffin.engine.functions.finance.MidPriceFunctionFactory
-io.questdb.griffin.engine.functions.finance.WeightedMidPriceFunctionFactory
-io.questdb.griffin.engine.functions.finance.SpreadBpsFunctionFactory
-
-io.questdb.griffin.engine.functions.activity.CancelQueryFunctionFactory
-io.questdb.griffin.engine.functions.activity.QueryActivityFunctionFactory
-
-io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory
-io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory
-io.questdb.griffin.engine.functions.test.TestOwnerCountingFunctionFactory
-io.questdb.griffin.engine.functions.test.TestTableReferenceOutOfDateFunctionFactory
-io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory
-io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory
-io.questdb.griffin.engine.functions.test.TestSumTDoubleGroupByFunctionFactory
-io.questdb.griffin.engine.functions.test.TestSumStringGroupByFunctionFactory
-io.questdb.griffin.engine.functions.test.TestNPEFactory
-io.questdb.griffin.engine.functions.test.TestSleepFunctionFactory
-io.questdb.griffin.engine.functions.test.TestLargeErrorMsgFunctionFactory
 
 # logical operations
 io.questdb.griffin.engine.functions.bool.OrFunctionFactory
@@ -180,16 +160,8 @@ io.questdb.griffin.engine.functions.math.AsinDoubleFunctionFactory
 io.questdb.griffin.engine.functions.math.AcosDoubleFunctionFactory
 io.questdb.griffin.engine.functions.math.AtanDoubleFunctionFactory
 io.questdb.griffin.engine.functions.math.Atan2DoubleFunctionFactory
-io.questdb.griffin.engine.functions.math.PIDoubleFunctionFactory
 io.questdb.griffin.engine.functions.math.RadiansDoubleFunctionFactory
 io.questdb.griffin.engine.functions.math.DegreesDoubleFunctionFactory
-
-# 'log'
-io.questdb.griffin.engine.functions.math.LnDoubleFunctionFactory
-io.questdb.griffin.engine.functions.math.LogDoubleFunctionFactory
-
-# 'sqrt'
-io.questdb.griffin.engine.functions.math.SqrtDoubleFunctionFactory
 
 # '~='
 io.questdb.griffin.engine.functions.regex.MatchStrFunctionFactory
@@ -228,7 +200,6 @@ io.questdb.griffin.engine.functions.math.LeastNumericFunctionFactory
 # random generator functions
 
 io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory
-io.questdb.griffin.engine.functions.rnd.RndBooleanFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndIntFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndIPv4FunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndIPv4CCFunctionFactory
@@ -272,7 +243,6 @@ io.questdb.griffin.engine.functions.rnd.RndLogFunctionFactory
 
 # date conversion functions
 
-io.questdb.griffin.engine.functions.date.SysdateFunctionFactory
 io.questdb.griffin.engine.functions.date.ToTimestampVCFunctionFactory
 io.questdb.griffin.engine.functions.date.VarcharToTimestampVCFunctionFactory
 io.questdb.griffin.engine.functions.date.ToTimestampFunctionFactory
@@ -725,8 +695,6 @@ io.questdb.griffin.engine.functions.groupby.ApproxCountDistinctLongGroupByFuncti
 io.questdb.griffin.engine.functions.groupby.ApproxCountDistinctIPv4GroupByDefaultFunctionFactory
 io.questdb.griffin.engine.functions.groupby.ApproxCountDistinctIPv4GroupByFunctionFactory
 
-io.questdb.griffin.engine.functions.groupby.RegressionSlopeFunctionFactory
-
 # 'isOrdered'
 io.questdb.griffin.engine.functions.groupby.IsIPv4OrderedGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.IsLongOrderedGroupByFunctionFactory
@@ -754,9 +722,6 @@ io.questdb.griffin.engine.functions.math.CeilFloatFunctionFactory
 io.questdb.griffin.engine.functions.math.CeilingDoubleFunctionFactory
 io.questdb.griffin.engine.functions.math.CeilingFloatFunctionFactory
 
-# ExpFunctionFactory
-io.questdb.griffin.engine.functions.math.ExpDoubleFunctionFactory
-
 # FloorFunctionFactory
 io.questdb.griffin.engine.functions.math.FloorDoubleFunctionFactory
 io.questdb.griffin.engine.functions.math.FloorFloatFunctionFactory
@@ -765,91 +730,6 @@ io.questdb.griffin.engine.functions.math.FloorFloatFunctionFactory
 io.questdb.griffin.engine.functions.conditional.CaseFunctionFactory
 io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory
 io.questdb.griffin.engine.functions.conditional.CoalesceFunctionFactory
-
-# PostgreSQL catalogue functions
-io.questdb.griffin.engine.functions.catalogue.PgAttrDefFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PrefixedPgAttrDefFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PgAttributeFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PrefixedPgAttributeFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PgClassFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PrefixedPgClassFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PgIndexFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PrefixedPgIndexFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PgRolesFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PrefixedPgRolesFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.InformationSchemaFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.InformationSchemaColumnsFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.InformationSchemaQuestDBColumnsFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.InformationSchemaTablesFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PrefixedPgTypeFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PrefixedPgDescriptionFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PrefixedPgNamespaceFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.IsTableVisibleCatalogueFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.UserByIdCatalogueFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PgTypeFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.VersionFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PgNamespaceFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PgLocksFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PrefixedPgLocksFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.CurrentSchemasFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PrefixedCurrentSchemasFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.CurrentSettingFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.CursorDereferenceFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PgDescriptionFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PgExtensionFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PrefixedPgExtensionFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PgInheritsFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PrefixedPgInheritsFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.SessionUserFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.CurrentSchemaFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PrefixedCurrentSchemaFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.CurrentUserFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PgGetPartKeyDefFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetPartKeyDefFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetSIExprFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PgGetSIExprFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PgGetSITExprFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetSITExprFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.FormatTypeFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PgProcFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PgEnumFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.ReferentialConstraintsFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.TableConstraintsFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.KeyColumnUsageFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.InformationSchemaCharacterSetsFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PgRangeFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PgGetKeywordsFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.FunctionListFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetKeywordsFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.TablesFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.KeywordsFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.WalTableListFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.WalTransactionsFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.DumpMemoryUsageFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.FlushQueryCacheFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PrefixedAgeFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PgIsInRecoveryFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PrefixedPgIsInRecoveryFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.TxIDCurrentFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PrefixedTxIDCurrentFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PgDatabaseFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PrefixedPgDatabaseFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PgShDescriptionFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.CurrentDatabaseFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.SimulateCrashFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.SimulateWarningsFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PrefixedCurrentDatabaseFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PrefixedVersionFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.TypeOfFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.CheckpointStatusFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.ReloadConfigFunctionFactory
-
-# PostgreSQL advisory locks functions
-io.questdb.griffin.engine.functions.lock.AdvisoryUnlockAll
-
-# concat()
-io.questdb.griffin.engine.functions.str.ConcatFunctionFactory
 
 # replace()
 io.questdb.griffin.engine.functions.str.ReplaceStrFunctionFactory
@@ -869,9 +749,6 @@ io.questdb.griffin.engine.functions.str.LeftVarcharFunctionFactory
 io.questdb.griffin.engine.functions.str.RightStrFunctionFactory
 io.questdb.griffin.engine.functions.str.RightVarcharFunctionFactory
 
-# size_pretty()
-io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory
-
 # substring()
 io.questdb.griffin.engine.functions.str.SubStringFunctionFactory
 io.questdb.griffin.engine.functions.str.SubStringVarcharFunctionFactory
@@ -890,36 +767,6 @@ io.questdb.griffin.engine.functions.str.SplitPartVarcharFunctionFactory
 # avg()
 io.questdb.griffin.engine.functions.groupby.AvgDoubleGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.AvgBooleanGroupByFunctionFactory
-
-# vwap()
-io.questdb.griffin.engine.functions.groupby.VwapDoubleGroupByFunctionFactory
-
-# stddev()
-io.questdb.griffin.engine.functions.groupby.StdDevGroupByFunctionFactory
-
-# stddev_samp()
-io.questdb.griffin.engine.functions.groupby.StdDevSampleGroupByFunctionFactory
-
-# stddev_pop()
-io.questdb.griffin.engine.functions.groupby.StdDevPopGroupByFunctionFactory
-
-# variance()
-io.questdb.griffin.engine.functions.groupby.VarGroupByFunctionFactory
-
-# var_samp()
-io.questdb.griffin.engine.functions.groupby.VarSampleGroupByFunctionFactory
-
-# var_pop()
-io.questdb.griffin.engine.functions.groupby.VarPopGroupByFunctionFactory
-
-# covar_samp()
-io.questdb.griffin.engine.functions.groupby.CovarSampleGroupByFunctionFactory
-
-# covar_pop()
-io.questdb.griffin.engine.functions.groupby.CovarPopGroupByFunctionFactory
-
-# corr()
-io.questdb.griffin.engine.functions.groupby.CorrGroupByFunctionFactory
 
 # strpos()
 io.questdb.griffin.engine.functions.str.StrPosFunctionFactory
@@ -949,8 +796,6 @@ io.questdb.griffin.engine.functions.table.WaitWalTableFunctionFactory
 io.questdb.griffin.engine.functions.groupby.FirstSymbolGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.FirstStrGroupByFunctionFactory
 
-# 'haversine_dist_degree'
-io.questdb.griffin.engine.functions.groupby.HaversineDistDegreeGroupByFunctionFactory
 
 # 'approx_percentile'
 io.questdb.griffin.engine.functions.groupby.ApproxPercentileDoubleGroupByFunctionFactory
@@ -1012,11 +857,6 @@ io.questdb.griffin.engine.functions.window.LastValueDoubleWindowFunctionFactory
 io.questdb.griffin.engine.functions.window.LagDoubleFunctionFactory
 io.questdb.griffin.engine.functions.window.LeadDoubleFunctionFactory
 
-# metadata functions
-io.questdb.griffin.engine.functions.metadata.BuildFunctionFactory
-io.questdb.griffin.engine.functions.metadata.InstanceNameFunctionFactory
-io.questdb.griffin.engine.functions.metadata.InstanceRGBFunctionFactory
-
 # Bitwise operators
 io.questdb.griffin.engine.functions.math.BitwiseAndLongFunctionFactory
 io.questdb.griffin.engine.functions.math.BitwiseOrLongFunctionFactory
@@ -1051,13 +891,3 @@ io.questdb.griffin.engine.functions.math.IPv4MinusIPv4StrFunctionFactory
 io.questdb.griffin.engine.functions.math.IPv4StrNetmaskFunctionFactory
 io.questdb.griffin.engine.functions.math.IPv4VarcharNetmaskFunctionFactory
 
-# timezone conversion
-io.questdb.griffin.engine.functions.date.ToTimezoneTimestampFunctionFactory
-io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory
-
-# geohash functions
-io.questdb.griffin.engine.functions.geohash.GeoHashFromCoordinatesFunctionFactory
-
-# bin functions
-io.questdb.griffin.engine.functions.bin.Base64FunctionFactory
-io.questdb.griffin.engine.functions.bin.Base64DecodeFunctionFactory
