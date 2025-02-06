@@ -29,6 +29,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 
@@ -143,6 +144,11 @@ class SelectedRecord implements Record {
     @Override
     public Long256 getLong256B(int col) {
         return base.getLong256B(getColumnIndex(col));
+    }
+
+    @Override
+    public long getLongIPv4(int col) {
+        return Numbers.ipv4ToLong(getIPv4(col));
     }
 
     @Override
