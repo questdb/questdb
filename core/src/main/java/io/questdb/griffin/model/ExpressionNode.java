@@ -41,8 +41,8 @@ import java.util.Objects;
 public class ExpressionNode implements Mutable, Sinkable {
 
     public static final int ARRAY_ACCESS = 1;
-    public static final int ARRAY_LITERAL = ARRAY_ACCESS + 1;
-    public static final int BIND_VARIABLE = ARRAY_LITERAL + 1;
+    public static final int ARRAY_CONSTRUCTOR = ARRAY_ACCESS + 1;
+    public static final int BIND_VARIABLE = ARRAY_CONSTRUCTOR + 1;
     public static final int CONSTANT = BIND_VARIABLE + 1;
     public static final int CONTROL = CONSTANT + 1;
     public static final int FUNCTION = CONTROL + 1;
