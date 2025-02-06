@@ -2287,15 +2287,11 @@ public class SqlParser {
         CharSequence tok = null;
         expectTok(lexer, "pivot");
 
-        tok = optTok(lexer);
+        tok = tok(lexer, "'('");
 
         // this corrects some issue where PIVOT is returned twice by the lexer
-        if (tok != null && isPivotKeyword(tok)) {
+        if (isPivotKeyword(tok)) {
             tok = optTok(lexer);
-        }
-
-        if (tok == null || !Chars.equals(tok, "(")) {
-            throw SqlException.$(lexer.lastTokenPosition(), "expected `(`");
         }
 
         ExpressionNode expr;
@@ -3223,8 +3219,8 @@ public class SqlParser {
             wcm.of(lo + 1, model, parseAsSubQueryAndExpectClosingBrace(lexer, model, true, sqlParserCallback, decls)); // todo: review passing non-null here
             model.put(name.token, wcm);
 
-            CharSequence tok = optTok(lexer);
-            if (tok == null || Chars.equals(tok, ')')) {
+            CharSequence tok = tok(lexer, "')' or ','");
+            if (Chars.equals(tok, ')')) {
                 break;
             }
 
