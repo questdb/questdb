@@ -318,11 +318,11 @@ public class ExpressionParser {
                         }
 
                         // The comma is a function argument separator:
-                        // Until the token at the top of the stack is a left parenthesis,
+                        // Until the token at the top of the stack is a left paren/bracket,
                         // pop operators off the stack onto the output queue. If no left
-                        // parentheses are encountered, either the separator was misplaced or
-                        // parentheses were mismatched.
                         while ((node = opStack.pop()) != null && node.token.length() > 0 && node.token.charAt(0) != '(') {
+                        // parens/brackets are encountered, either the separator was misplaced or
+                        // paren/bracket was mismatched.
                             argStackDepth = onNode(listener, node, argStackDepth, false);
                         }
 
@@ -333,7 +333,7 @@ public class ExpressionParser {
                         paramCount++;
                         break;
 
-                    case '[':
+                    case '[': {
                         if (isTypeQualifier()) {
                             ExpressionNode en = opStack.peek();
                             ((GenericLexer.FloatingSequence) en.token).setHi(lastPos + 1);
@@ -348,8 +348,8 @@ public class ExpressionParser {
                         argStackDepth = 0;
                         wrapperStack.push(WrapperToken.BRACKET);
 
-                        // pop left literal or . expression, e.g. "a.b[i]"
-                        // the precedence of [ is fixed to 2
+                        // pop left literal or . expression, e.g. "a.b[i]" and push to the output queue.
+                        // the precedence of '[' is fixed to 2
                         ExpressionNode other;
                         while ((other = opStack.peek()) != null && other.precedence < 2) {
                             argStackDepth = onNode(listener, other, argStackDepth, false);
@@ -361,8 +361,8 @@ public class ExpressionParser {
                         opStack.push(expressionNodePool.next().of(ExpressionNode.CONTROL, "[", Integer.MAX_VALUE, lastPos));
 
                         break;
-
-                    case ']':
+                    }
+                    case ']': {
                         if (isTypeQualifier()) {
                             ExpressionNode en = opStack.peek();
                             ((GenericLexer.FloatingSequence) en.token).setHi(lastPos + 1);
@@ -407,8 +407,8 @@ public class ExpressionParser {
                         );
                         node.paramCount = 2;
                         opStack.push(node);
-
                         break;
+                    }
                     case 'd':
                     case 'D':
                         if (parsedDeclaration && prevBranch != BRANCH_LEFT_PARENTHESIS && SqlKeywords.isDeclareKeyword(tok)) {
