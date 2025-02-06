@@ -28,6 +28,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.MutableUtf16Sink;
 import io.questdb.std.str.Utf16Sink;
@@ -272,7 +273,7 @@ public interface Record {
      */
     @SuppressWarnings("unused")
     default long getLongIPv4(int col) {
-        throw new UnsupportedOperationException();
+        return Numbers.ipv4ToLong(getIPv4(col));
     }
 
     /**
