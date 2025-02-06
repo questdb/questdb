@@ -22,9 +22,16 @@
 #
 ################################################################################
 
-# Order of the priorities of the functions
-# There is not need to add a function in the list unless it is required to pin the priority
-# across the functions with the same name
+#        db    888888888888  888888888888  88888888888  888b      88  888888888888  88    ,ad8888ba,    888b      88
+#       d88b        88            88       88           8888b     88       88       88   d8"'    `"8b   8888b     88
+#      d8'`8b       88            88       88           88 `8b    88       88       88  d8'        `8b  88 `8b    88
+#     d8'  `8b      88            88       88aaaaa      88  `8b   88       88       88  88          88  88  `8b   88
+#    d8YaaaaY8b     88            88       88"""""      88   `8b  88       88       88  88          88  88   `8b  88
+#   d8""""""""8b    88            88       88           88    `8b 88       88       88  Y8,        ,8P  88    `8b 88
+#  d8'        `8b   88            88       88           88     `8888       88       88   Y8a.    .a8P   88     `8888
+# d8'          `8b  88            88       88888888888  88      `888       88       88    `"Y8888Y"'    88      `888
+
+# THERE IS NOT NEED TO ADD ALL FUNCTIONS in the list unless it is required to pin the overload priority
 
 
 # logical operations
@@ -890,4 +897,15 @@ io.questdb.griffin.engine.functions.math.IPv4MinusIPv4StrFunctionFactory
 # IPv4 functions
 io.questdb.griffin.engine.functions.math.IPv4StrNetmaskFunctionFactory
 io.questdb.griffin.engine.functions.math.IPv4VarcharNetmaskFunctionFactory
+
+#        db    888888888888  888888888888  88888888888  888b      88  888888888888  88    ,ad8888ba,    888b      88
+#       d88b        88            88       88           8888b     88       88       88   d8"'    `"8b   8888b     88
+#      d8'`8b       88            88       88           88 `8b    88       88       88  d8'        `8b  88 `8b    88
+#     d8'  `8b      88            88       88aaaaa      88  `8b   88       88       88  88          88  88  `8b   88
+#    d8YaaaaY8b     88            88       88"""""      88   `8b  88       88       88  88          88  88   `8b  88
+#   d8""""""""8b    88            88       88           88    `8b 88       88       88  Y8,        ,8P  88    `8b 88
+#  d8'        `8b   88            88       88           88     `8888       88       88   Y8a.    .a8P   88     `8888
+# d8'          `8b  88            88       88888888888  88      `888       88       88    `"Y8888Y"'    88      `888
+
+# THERE IS NOT NEED TO ADD ALL FUNCTIONS in the list unless it is required to pin the overload priority
 
