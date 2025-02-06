@@ -62,7 +62,6 @@ import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cutlass.text.CopyContext;
 import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionFactoryScanner;
 import io.questdb.griffin.QueryRegistry;
@@ -115,7 +114,6 @@ public class CairoEngine implements Closeable, WriterSource {
     public static final String REASON_CHECKPOINT_IN_PROGRESS = "checkpointInProgress";
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
     private static final int MAX_SLEEP_MILLIS = 250;
-    private static Iterable<FunctionFactory> functionFactoryList;
     protected final CairoConfiguration configuration;
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
     private final DatabaseCheckpointAgent checkpointAgent;
@@ -152,7 +150,7 @@ public class CairoEngine implements Closeable, WriterSource {
         try {
             ffCache = new FunctionFactoryCache(
                     configuration,
-                    getFunctionFactoryList()
+                    FunctionFactoryScanner.scan(LOG)
             );
             this.tableFlagResolver = newTableFlagResolver(configuration);
             this.configuration = configuration;
@@ -194,13 +192,6 @@ public class CairoEngine implements Closeable, WriterSource {
             close();
             throw th;
         }
-    }
-
-    private static Iterable<FunctionFactory> getFunctionFactoryList() {
-        if (functionFactoryList == null) {
-            functionFactoryList = FunctionFactoryScanner.scan(LOG);
-        }
-        return functionFactoryList;
     }
 
     public static void execute(
