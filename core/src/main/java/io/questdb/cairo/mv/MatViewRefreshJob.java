@@ -332,6 +332,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
 
+        final boolean rebuilt;
         try {
             final TableToken baseTableToken;
             try {
@@ -350,7 +351,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             }
 
             final SeqTxnTracker viewSeqTracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
-            return rebuildView(state, baseTableToken, viewToken, viewSeqTracker, refreshTriggeredTimestamp);
+            rebuilt = rebuildView(state, baseTableToken, viewToken, viewSeqTracker, refreshTriggeredTimestamp);
         } catch (Throwable th) {
             LOG.error().$("error rebuilding materialized view [view=").$(viewToken).$(", error=").$(th).I$();
             refreshFailState(state, microsecondClock.getTicks(), th.getMessage());
@@ -360,6 +361,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // Try closing the factory if there was a concurrent drop mat view.
             state.tryCloseIfDropped();
         }
+
+        // Kickstart incremental refresh.
+        if (rebuilt) {
+            viewGraph.refresh(viewToken, MatViewRefreshTask.INCREMENTAL_REFRESH);
+        }
+        return rebuilt;
     }
 
     private boolean rebuildView(
