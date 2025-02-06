@@ -28,6 +28,9 @@ import io.questdb.cairo.wal.TableWriterPressureControl;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 
+// Implements TableWriterPressureControl interface and regulates number of transactions and partitions
+// TableWriter uses when applying wal transactions.
+// See TableWriterPressureControl interface for more information.
 public class TableWriterPressureControlImpl implements TableWriterPressureControl {
     // To be used in multiple threads, safe and values will still be random
     private static final Rnd MEM_PRESSURE_RND = new Rnd();
@@ -68,8 +71,8 @@ public class TableWriterPressureControlImpl implements TableWriterPressureContro
 
     @Override
     public void onApplyBlockError() {
-        inflightBlockRowCount = 1;
         maxBlockRowCount = inflightBlockRowCount / TXN_COUNT_SCALE_DOWN_FACTOR;
+        inflightBlockRowCount = 1;
     }
 
     @Override

@@ -29,7 +29,6 @@ import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -65,7 +64,7 @@ public class SeqTxnTrackerTest {
                         }
                         doneLatch.countDown();
                     } catch (Throwable th) {
-                        th.printStackTrace();
+                        th.printStackTrace(System.out);
                         errors.incrementAndGet();
                     }
                 }).start();
@@ -107,7 +106,7 @@ public class SeqTxnTrackerTest {
                         }
                         doneLatch.countDown();
                     } catch (Throwable th) {
-                        th.printStackTrace();
+                        th.printStackTrace(System.out);
                         errors.incrementAndGet();
                     }
                 }).start();
@@ -149,7 +148,7 @@ public class SeqTxnTrackerTest {
                         }
                         doneLatch.countDown();
                     } catch (Throwable th) {
-                        th.printStackTrace();
+                        th.printStackTrace(System.out);
                         errors.incrementAndGet();
                     }
                 }).start();
@@ -168,8 +167,6 @@ public class SeqTxnTrackerTest {
 
     @Test
     public void testMemoryPressureLevels() {
-        final Rnd rnd = TestUtils.generateRandom(LOG);
-        final String tableName = "table1";
         final var pressureControl = new TableWriterPressureControlImpl();
         assertEquals("initial memory pressure level", 0, pressureControl.getMemoryPressureLevel());
         pressureControl.updateInflightPartitions(2);
@@ -181,8 +178,6 @@ public class SeqTxnTrackerTest {
 
     @Test
     public void testMemoryPressureRegulationEasesOffOnSuccess() {
-        final Rnd rnd = TestUtils.generateRandom(LOG);
-        final String tableName = "table1";
         final var pressureControl = new TableWriterPressureControlImpl();
         int expectedParallelism = 16;
         pressureControl.updateInflightPartitions(expectedParallelism);
@@ -205,8 +200,6 @@ public class SeqTxnTrackerTest {
 
     @Test
     public void testMemoryPressureRegulationGivesUpEventually() {
-        final Rnd rnd = TestUtils.generateRandom(LOG);
-        final String tableName = "table1";
         final var pressureControl = new TableWriterPressureControlImpl();
         int maxFailuresToGiveUp = 10;
 
@@ -221,8 +214,6 @@ public class SeqTxnTrackerTest {
 
     @Test
     public void testMemoryPressureRegulationIntroducesBackoff() {
-        final Rnd rnd = TestUtils.generateRandom(LOG);
-        final String tableName = "table1";
         final var pressureControl = new TableWriterPressureControlImpl();
 
         pressureControl.onOutOfMemory();
@@ -231,8 +222,6 @@ public class SeqTxnTrackerTest {
 
     @Test
     public void testMemoryPressureRegulationReducesParallelism() {
-        final Rnd rnd = TestUtils.generateRandom(LOG);
-        final String tableName = "table1";
         final var tracker = new TableWriterPressureControlImpl();
         int expectedParallelism = 16;
         tracker.updateInflightPartitions(expectedParallelism);

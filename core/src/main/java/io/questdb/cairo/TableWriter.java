@@ -1131,7 +1131,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } else {
                 try {
                     int blockSize = processWalCommitBlock(
-                            walPath,
                             seqTxn,
                             transactionBlock,
                             pressureControl
@@ -2469,7 +2468,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             mmapWalColumns(walPath, walIdSegmentId, timestampIndex, rowLo, rowHi);
             final long newMinLagTimestamp = Math.min(o3TimestampMin, txWriter.getLagMinTimestamp());
             long initialPartitionTimestampHi = partitionTimestampHi;
-            long commitMaxTimestamp, commitMinTimestamp;
 
             long walLagRowCount = txWriter.getLagRowCount();
             long o3Hi = rowHi;
@@ -7086,7 +7084,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private int processWalCommitBlock(
-            @Transient Path walPath,
             long startSeqTxn,
             int blockTransactionCount,
             TableWriterPressureControl pressureControl
@@ -7212,7 +7209,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 indexFormat = processWalCommitBlock_sortWalSegmentTimestamps_deduplicateSortedIndexFromManyAddresses(
                         indexFormat,
-                        totalRows,
                         timestampAddr,
                         o3TimestampMemCpy.addressOf(0),
                         tsAddresses.getAddress()
@@ -7279,7 +7275,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private long processWalCommitBlock_sortWalSegmentTimestamps_deduplicateSortedIndexFromManyAddresses(
             long indexFormat,
-            long rowCount,
             long srcIndexSrcAddr,
             long outIndexAddr,
             long columnAddressBufferPrimary
@@ -7318,7 +7313,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             );
 
                             if (!ColumnType.isVarSize(columnType)) {
-                                int shl = ColumnType.pow2SizeOf(columnType);
                                 DedupColumnCommitAddresses.setColAddressValues(addr, dataAddresses);
                             } else {
                                 long columnAddressBufferSecondary = columnAddressBufferPrimary + bytesPerColumn;
@@ -7549,7 +7543,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                         // Symbols need remapping. Create mapping from transaction symbol keys to column symbol keys
                         var mapWriter = symbolMapWriters.get(columnIndex);
-                        int denseSymbolCount = denseSymbolMapWriters.size();
                         long txnCount = this.segmentCopyInfo.getTxnCount();
 
                         var symbolMapMem = o3MemColumns2.get(getPrimaryColumnIndex(columnIndex));
@@ -7592,7 +7585,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
             } else {
-                long mappedAddrBuffSecondary = varSize ? mappedAddrBuffPrimary + totalSegmentAddressesBytes : 0;
+                long mappedAddrBuffSecondary = mappedAddrBuffPrimary + totalSegmentAddressesBytes;
                 var destinationColumnSecondary = o3MemColumns1.get(getSecondaryColumnIndex(columnIndex));
                 ColumnTypeDriver driver = ColumnType.getDriver(columnType);
                 long totalVarSize = segmentCopyInfo.createAddressBuffersSecondary(columnIndex, metadata.getColumnCount(), walMappedColumns, mappedAddrBuffSecondary, driver);

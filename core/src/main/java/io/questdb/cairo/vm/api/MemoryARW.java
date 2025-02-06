@@ -24,13 +24,7 @@
 
 package io.questdb.cairo.vm.api;
 
-import io.questdb.std.Vect;
-
 // appendable readable writable
 public interface MemoryARW extends MemoryA, MemoryR, MemoryW, MemoryAR {
     long appendAddressFor(long bytes);
-
-    default void put(long addressPtr, long length) {
-        Vect.memmove(appendAddressFor(length), addressPtr, length);
-    }
 }

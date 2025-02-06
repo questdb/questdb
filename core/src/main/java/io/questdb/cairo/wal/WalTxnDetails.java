@@ -65,7 +65,8 @@ public class WalTxnDetails implements QuietCloseable {
     private static final int WAL_TXN_ROW_IN_ORDER_DATA_TYPE = WAL_TXN_ROW_HI_OFFSET + 1;
     private static final int WAL_TXN_SYMBOL_DIFF_OFFSET = WAL_TXN_ROW_IN_ORDER_DATA_TYPE + 1;
     public static final int TXN_METADATA_LONGS_SIZE = WAL_TXN_SYMBOL_DIFF_OFFSET + 1;
-    private static final int TXN_DETAIL_RECORD_SIZE = 3;
+    private static final int SYMBOL_MAP_COLUMN_RECORD_HEADER_INTS = 6;
+    private static final int SYMBOL_MAP_RECORD_HEADER_INTS = 4;
     private final long maxLookaheadRows;
     private final int maxLookaheadTxn;
     private final SymbolMapDiffCursorImpl symbolMapDiffCursor = new SymbolMapDiffCursorImpl();
@@ -76,12 +77,12 @@ public class WalTxnDetails implements QuietCloseable {
     private long currentSymbolStringMemStartOffset = 0;
     private long startSeqTxn = 0;
     // Stores all symbol metadata for the stored transactions.
-    // The format is 4 int header
+    // The format is 4 int header / SYMBOL_MAP_RECORD_HEADER_INTS
     // 4 bytes - record length
     // 4 bytes - symbol map count
     // 4 byte - low 32bits of seqTxn
     // 4 byte - high 32bits of seqTxn
-    // Then for every symbol column 6 int record
+    // Then for every symbol column 6 int record / SYMBOL_MAP_COLUMN_RECORD_HEADER_INTS
     // 4 bytes - map records count
     // 4 bytes - symbol column index
     // 4 bytes - null flag
@@ -119,7 +120,6 @@ public class WalTxnDetails implements QuietCloseable {
             int cleanSymbolCount = 0;
 
             if (txnSymbolOffset > -1) {
-                long txnSymbolOffsetHi = txnSymbolOffset + symbolIndexes.get(txnSymbolOffset);
                 int mapCount = symbolIndexes.get(txnSymbolOffset + 1);
                 txnSymbolOffset += 4;
 
@@ -250,10 +250,6 @@ public class WalTxnDetails implements QuietCloseable {
         return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE) + WAL_TXN_MIN_TIMESTAMP_OFFSET);
     }
 
-    public long getSegTxn(long seqTxn) {
-        return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + SEQ_TXN_OFFSET));
-    }
-
     public int getSegmentId(long seqTxn) {
         return Numbers.decodeLowInt(transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ID_WAL_SEG_ID_OFFSET)));
     }
@@ -306,7 +302,6 @@ public class WalTxnDetails implements QuietCloseable {
         long segmentLo = -1;
 
         int copyTaskCount = 0;
-        long totalRowsToCopy = 0;
         boolean isLastSegmentUse = false;
         long roHi = 0;
 
@@ -365,9 +360,7 @@ public class WalTxnDetails implements QuietCloseable {
             if (newSymbolsOffset > currentSymbolIndexesStartOffset) {
 
                 if (symbolStringsMem != null && symbolStringsMem.getAppendOffset() > 0) {
-                    long symbolMapStartOffset = symbolIndexes.get(newSymbolsOffset - currentSymbolIndexesStartOffset);
                     long newSymbolStringMemStartOffset = findFirstSymbolStringMemOffset(newSymbolsOffset);
-
                     shiftSymbolStringsDataLeft(newSymbolStringMemStartOffset - currentSymbolStringMemStartOffset);
                     currentSymbolStringMemStartOffset = newSymbolStringMemStartOffset;
                 }
@@ -395,7 +388,7 @@ public class WalTxnDetails implements QuietCloseable {
         long rowsToLoad;
 
         do {
-            long rowsLoaded = loadTransactionDetails(tempPath, transactionLogCursor, loadFromSeqTxn, rootLen, maxCommittedTimestamp, txnLoadCount);
+            long rowsLoaded = loadTransactionDetails(tempPath, transactionLogCursor, loadFromSeqTxn, rootLen, txnLoadCount);
             totalRowsLoadedToApply += rowsLoaded;
             loadFromSeqTxn = getLastSeqTxn() + 1;
 
@@ -507,15 +500,12 @@ public class WalTxnDetails implements QuietCloseable {
         return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_SYMBOL_DIFF_OFFSET));
     }
 
-    private long loadTransactionDetails(Path tempPath, TransactionLogCursor transactionLogCursor, long loadFromSeqTxn, int rootLen, long maxCommittedTimestamp, int maxLoadTxnCount) {
+    private long loadTransactionDetails(Path tempPath, TransactionLogCursor transactionLogCursor, long loadFromSeqTxn, int rootLen, int maxLoadTxnCount) {
         transactionLogCursor.setPosition(loadFromSeqTxn - 1);
         long totalRowsLoaded = 0;
 
         try (WalEventReader eventReader = walEventReader) {
 
-            int prevWalId = Integer.MIN_VALUE;
-            int prevSegmentId = Integer.MIN_VALUE;
-            int prevSegmentTxn = Integer.MIN_VALUE;
             WalEventCursor walEventCursor = null;
 
             txnOrder.clear();
@@ -525,13 +515,14 @@ public class WalTxnDetails implements QuietCloseable {
 
                 // Load the map of outstanding WAL transactions to load necessary details from WAL-E files efficiently.
                 long max = 0;
-                for (int i = 0; i < txnsToLoad; i++) {
-                    assert transactionLogCursor.hasNext();
+                int txn;
+                for (txn = 0; txn < txnsToLoad && transactionLogCursor.hasNext(); txn++) {
                     long long1 = Numbers.encodeLowHighInts(transactionLogCursor.getSegmentId(), transactionLogCursor.getWalId() - MIN_WAL_ID);
                     max |= long1;
                     txnOrder.add(long1);
-                    txnOrder.add(Numbers.encodeLowHighInts(transactionLogCursor.getSegmentTxn(), i));
+                    txnOrder.add(Numbers.encodeLowHighInts(transactionLogCursor.getSegmentTxn(), txn));
                 }
+                txnsToLoad = txn;
 
                 // We specify min as 0, so we expect the highest bit to be 0
                 assert max >= 0;
@@ -710,18 +701,17 @@ public class WalTxnDetails implements QuietCloseable {
 
     private class SymbolMapDiffCursorImpl implements SymbolMapDiffCursor {
         private final SymbolMapDiffColumnRecord symbolMapDiff = new SymbolMapDiffColumnRecord();
-        int nextRecordLen;
-        private long hi;
-        private int lo;
+        private int offsetIndex;
+        private long recordIndexHi;
         private int symbolIndex;
         private int symbolsCount;
 
         @Override
         public SymbolMapDiff nextSymbolMapDiff() {
             if (symbolIndex++ < symbolsCount) {
-                assert lo <= hi;
-                symbolMapDiff.switchToColumnRecord(lo);
-                lo += 6;
+                assert offsetIndex <= recordIndexHi;
+                symbolMapDiff.switchToColumnRecord(offsetIndex);
+                offsetIndex += SYMBOL_MAP_COLUMN_RECORD_HEADER_INTS;
                 return symbolMapDiff;
             }
             return null;
@@ -729,16 +719,16 @@ public class WalTxnDetails implements QuietCloseable {
 
         public void of(int startOffset) {
             if (startOffset > -1) {
-                this.lo = startOffset;
-                int recordSize = WalTxnDetails.this.symbolIndexes.get(startOffset);
-                assert recordSize >= 4;
-                this.hi = this.lo + recordSize;
-                this.symbolsCount = symbolIndexes.get(startOffset + 1);
+                offsetIndex = startOffset;
+                int recordLength = WalTxnDetails.this.symbolIndexes.get(startOffset);
+                assert recordLength >= SYMBOL_MAP_RECORD_HEADER_INTS;
+                recordIndexHi = this.offsetIndex + recordLength;
+                symbolsCount = symbolIndexes.get(startOffset + 1);
                 assert this.symbolsCount > -1;
-                this.lo += 4;
+                offsetIndex += SYMBOL_MAP_RECORD_HEADER_INTS;
                 symbolIndex = 0;
             } else {
-                this.symbolsCount = 0;
+                symbolsCount = 0;
             }
         }
 
@@ -747,10 +737,8 @@ public class WalTxnDetails implements QuietCloseable {
             private int columnIndex;
             private boolean containsNull;
             private long currentSymbolMemOffset;
-            private int index = 0;
-            private long nextSymbolMemOffset;
-            private int offsetHi;
             private int savedSymbolRecordCount;
+            private int symbolIndex = 0;
 
             @Override
             public void appendSymbolTo(MemoryARW symbolMem) {
@@ -773,7 +761,7 @@ public class WalTxnDetails implements QuietCloseable {
 
             @Override
             public int getKey() {
-                return index + cleanSymbolCount - 1;
+                return symbolIndex + cleanSymbolCount - 1;
             }
 
             @Override
@@ -793,11 +781,11 @@ public class WalTxnDetails implements QuietCloseable {
 
             @Override
             public SymbolMapDiffEntry nextEntry() {
-                if (index < savedSymbolRecordCount) {
-                    if (index > 0) {
+                if (symbolIndex < savedSymbolRecordCount) {
+                    if (symbolIndex > 0) {
                         currentSymbolMemOffset += Vm.getStorageLength(symbolStringsMem.getInt(currentSymbolMemOffset));
                     }
-                    index++;
+                    symbolIndex++;
                     return this;
                 } else {
                     return null;
@@ -805,17 +793,17 @@ public class WalTxnDetails implements QuietCloseable {
             }
 
             public void switchToColumnRecord(int lo) {
-                this.savedSymbolRecordCount = symbolIndexes.get(lo++);
-                this.columnIndex = symbolIndexes.get(lo++);
-                this.containsNull = symbolIndexes.get(lo++) > 0;
-                this.cleanSymbolCount = symbolIndexes.get(lo++);
-                int nextSymbolMemOffsetLo = symbolIndexes.get(lo++);
-                int nextSymbolMemOffsetHi = symbolIndexes.get(lo);
+                savedSymbolRecordCount = symbolIndexes.get(lo++);
+                columnIndex = symbolIndexes.get(lo++);
+                containsNull = symbolIndexes.get(lo++) > 0;
+                cleanSymbolCount = symbolIndexes.get(lo++);
+                int nextSymbolMemOffsetIndexLo = symbolIndexes.get(lo++);
+                int nextSymbolMemOffsetIndexHi = symbolIndexes.get(lo);
 
-                this.currentSymbolMemOffset =
-                        Numbers.encodeLowHighInts(nextSymbolMemOffsetLo, nextSymbolMemOffsetHi)
+                currentSymbolMemOffset =
+                        Numbers.encodeLowHighInts(nextSymbolMemOffsetIndexLo, nextSymbolMemOffsetIndexHi)
                                 - WalTxnDetails.this.currentSymbolStringMemStartOffset;
-                this.index = 0;
+                symbolIndex = 0;
             }
         }
     }

@@ -169,6 +169,11 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
                 .put(", tableName=").put(tableToken.getTableName()).put(']');
     }
 
+    public static CairoException txnApplyBlockError(CharSequence errorDetails) {
+        return critical(APPLY_TXN_BLOCK_FAILED)
+                .put("sorting transaction block failed, need to be re-run in 1 by 1 apply mode. ").put(errorDetails);
+    }
+
     public boolean errnoReadPathDoesNotExist() {
         return errnoReadPathDoesNotExist(errno);
     }

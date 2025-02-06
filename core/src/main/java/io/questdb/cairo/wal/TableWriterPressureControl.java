@@ -24,6 +24,17 @@
 
 package io.questdb.cairo.wal;
 
+// This regulates how much memory TableWriter uses when applying wal transactions.
+// There are 2 ways to limit the memory usage:
+// 1. Limit the number of transactions it can apply in a single transaction block.
+// 2. Limit the number of parallel partitions it can apply the transactions to.
+//
+// On Out Of Memory error, onOutOfMemory method is called and it checks how much transactions/partitions are inflight
+// and reduces it for the next run. If the values are already reduced to minimum (value of 1), then it is
+// paused for a random time before next wal application runs.
+//
+// If the Out Of Memory error is followed by successful wal application, then `onEnoughMemory` method is called
+// and it increases the inflight transactions/partitions for the next run.
 public interface TableWriterPressureControl {
     TableWriterPressureControl EMPTY = new NoPressureControl();
 

@@ -32,7 +32,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
-public class NullMemory implements MemoryMAR, MemoryCARW, MemoryCR {
+public class NullMemory implements MemoryMAR, MemoryCARW {
 
     public static final NullMemory INSTANCE = new NullMemory();
 
