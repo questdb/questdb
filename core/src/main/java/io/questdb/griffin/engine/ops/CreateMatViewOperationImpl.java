@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.OperationCodes;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.OperationFuture;
@@ -33,9 +34,14 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SCSequence;
+import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.Chars;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
 public class CreateMatViewOperationImpl implements CreateMatViewOperation {
+    private final ObjList<String> baseKeyColumnNames = new ObjList<>();
     private final String baseTableName;
     private final CreateTableOperation createTableOperation;
     private final long fromMicros;
@@ -50,6 +56,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     public CreateMatViewOperationImpl(
             CreateTableOperation createTableOperation,
             String baseTableName,
+            @Transient CharSequenceHashSet baseKeyColumnNames,
             long fromMicros,
             long samplingInterval,
             char samplingIntervalUnit,
@@ -60,6 +67,10 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     ) {
         this.createTableOperation = createTableOperation;
         this.baseTableName = baseTableName;
+        for (int i = 0, n = baseKeyColumnNames.getList().size(); i < n; i++) {
+            CharSequence colName = baseKeyColumnNames.getList().get(i);
+            this.baseKeyColumnNames.add(Chars.toString(colName));
+        }
         this.fromMicros = fromMicros;
         this.samplingInterval = samplingInterval;
         this.samplingIntervalUnit = samplingIntervalUnit;
@@ -80,6 +91,11 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             compiler.execute(this, sqlExecutionContext);
         }
         return createTableOperation.getOperationFuture();
+    }
+
+    @Override
+    public CharSequence getBaseTableName() {
+        return baseTableName;
     }
 
     @Override
@@ -225,7 +241,32 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     @Override
-    public void validateAndUpdateMetadataFromSelect(RecordMetadata metadata) throws SqlException {
-        createTableOperation.validateAndUpdateMetadataFromSelect(metadata);
+    public void validateAndUpdateMetadataFromSelect(RecordMetadata selectMetadata, TableReaderMetadata baseTableMetadata) throws SqlException {
+        // SELECT validation
+        createTableOperation.validateAndUpdateMetadataFromSelect(selectMetadata);
+        // Key column validation (best effort):
+        // Option 1. Base table has no dedup.
+        //           Any key columns are fine in this case.
+        // Option 2. Base table has dedup columns.
+        //           Key columns in mat view query must be a subset of the base table's dedup columns.
+        //           That's to avoid situation when dedup upsert rewrites key column values leading to
+        //           inconsistent mat view data.
+        boolean baseDedupEnabled = false;
+        for (int i = 0, n = baseTableMetadata.getColumnCount(); i < n; i++) {
+            if (baseTableMetadata.isDedupKey(i)) {
+                baseDedupEnabled = true;
+                break;
+            }
+        }
+        if (baseDedupEnabled) {
+            for (int i = 0, n = baseKeyColumnNames.size(); i < n; i++) {
+                final String baseKeyColumnName = baseKeyColumnNames.getQuick(i);
+                final int baseKeyColumnIndex = baseTableMetadata.getColumnIndexQuiet(baseKeyColumnName);
+                if (baseKeyColumnIndex > -1 && !baseTableMetadata.isDedupKey(baseKeyColumnIndex)) {
+                    throw SqlException.position(0)
+                            .put("key column must be one of base table's dedup keys [name=").put(baseKeyColumnName).put(']');
+                }
+            }
+        }
     }
 }

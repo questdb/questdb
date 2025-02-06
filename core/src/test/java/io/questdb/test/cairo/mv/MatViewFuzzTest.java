@@ -51,7 +51,6 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     public static void setUpStatic() throws Exception {
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
         AbstractCairoTest.setUpStatic();
-        Zip.init();
     }
 
     @Before
@@ -318,5 +317,9 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         }, "refresh-job" + workerId);
         th.start();
         return th;
+    }
+
+    static {
+        Zip.init();
     }
 }

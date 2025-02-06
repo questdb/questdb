@@ -542,7 +542,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                         qc.isIncludeIntoWildcard()
                 );
             }
-            this.aliasToColumnMap.put(alias, qc);
+            aliasToColumnMap.put(alias, qc);
         }
         ObjList<CharSequence> columnNames = other.bottomUpColumnAliases;
         this.bottomUpColumnAliases.addAll(columnNames);
@@ -712,19 +712,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public boolean getAllowPropagationOfOrderByAdvice() {
         return allowPropagationOfOrderByAdvice;
-    }
-
-    public boolean windowStopPropagate() {
-        if (selectModelType != SELECT_MODEL_WINDOW) {
-            return false;
-        }
-        for (int i = 0, size = getColumns().size(); i < size; i++) {
-            QueryColumn column = getColumns().getQuick(i);
-            if (column.isWindowColumn() && ((WindowColumn) column).stopOrderByPropagate(getOrderBy(), getOrderByDirection())) {
-                return true;
-            }
-        }
-        return false;
     }
 
     public ObjList<CharSequence> getBottomUpColumnAliases() {
@@ -1506,6 +1493,19 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
             columnAliasIndexes.put(bottomUpColumnAliases.getQuick(i), i);
         }
+    }
+
+    public boolean windowStopPropagate() {
+        if (selectModelType != SELECT_MODEL_WINDOW) {
+            return false;
+        }
+        for (int i = 0, size = getColumns().size(); i < size; i++) {
+            QueryColumn column = getColumns().getQuick(i);
+            if (column.isWindowColumn() && ((WindowColumn) column).stopOrderByPropagate(getOrderBy(), getOrderByDirection())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void aliasToSink(CharSequence alias, CharSink<?> sink) {

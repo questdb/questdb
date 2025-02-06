@@ -3830,7 +3830,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (!timestampSet && executionContext.isTimestampRequired()) {
             TableColumnMetadata colMetadata = metadata.getColumnMetadata(timestampIndex);
             int dot = Chars.indexOf(colMetadata.getColumnName(), '.');
-            if (dot > -1) {//remove inner table alias
+            if (dot > -1) { // remove inner table alias
                 selectMetadata.add(
                         new TableColumnMetadata(
                                 Chars.toString(colMetadata.getColumnName(), dot + 1, colMetadata.getColumnName().length()),

@@ -257,12 +257,15 @@ public class SqlOptimiser implements Mutable {
                     case LITERAL:
                         node = null;
                         continue;
-                    case ExpressionNode.FUNCTION:
+                    case FUNCTION:
                         if (functionParser.getFunctionFactoryCache().isGroupBy(node.token)) {
                             return true;
                         }
                         break;
                     default:
+                        for (int i = 0, n = node.args.size(); i < n; i++) {
+                            sqlNodeStack.add(node.args.getQuick(i));
+                        }
                         if (node.rhs != null) {
                             sqlNodeStack.push(node.rhs);
                         }
@@ -406,7 +409,6 @@ public class SqlOptimiser implements Mutable {
     ) throws SqlException {
         QueryColumn qc = cursorModel.findBottomUpColumnByAst(node);
         if (qc == null) {
-
             // we are about to add new column as a join model to the base model
             // the name of this column must not clash with any name of the base mode
             CharSequence baseAlias;
@@ -464,7 +466,7 @@ public class SqlOptimiser implements Mutable {
                     return qc;
                 }
 
-                if (ExpressionNode.compareNodesExact(node, existing.getAst())) {
+                if (compareNodesExact(node, existing.getAst())) {
                     return existing;
                 }
 
@@ -1060,8 +1062,8 @@ public class SqlOptimiser implements Mutable {
         return model;
     }
 
-    //pushing predicates to sample by model is only allowed for sample by fill none align to calendar and expressions on non-timestamp columns
-    //pushing for other fill options or sample by first observation could alter result
+    // pushing predicates to sample by model is only allowed for sample by fill none align to calendar and expressions on non-timestamp columns
+    // pushing for other fill options or sample by first observation could alter result
     private boolean canPushToSampleBy(final QueryModel model, ObjList<CharSequence> expressionColumns) {
         ObjList<ExpressionNode> fill = model.getSampleByFill();
         int fillCount = fill.size();
@@ -2108,7 +2110,7 @@ public class SqlOptimiser implements Mutable {
         // deal with _this_ model first, it will always be the first element in join model list
         final ExpressionNode tableNameExpr = model.getTableNameExpr();
         if (tableNameExpr != null || model.getSelectModelType() == QueryModel.SELECT_MODEL_SHOW) {
-            if (model.getSelectModelType() == QueryModel.SELECT_MODEL_SHOW || (tableNameExpr != null && tableNameExpr.type == ExpressionNode.FUNCTION)) {
+            if (model.getSelectModelType() == QueryModel.SELECT_MODEL_SHOW || (tableNameExpr != null && tableNameExpr.type == FUNCTION)) {
                 parseFunctionAndEnumerateColumns(model, executionContext, sqlParserCallback);
             } else {
                 openReaderAndEnumerateColumns(executionContext, model, sqlParserCallback);
@@ -2196,7 +2198,7 @@ public class SqlOptimiser implements Mutable {
     private CharSequence findColumnByAst(ObjList<ExpressionNode> groupByNodes, ObjList<CharSequence> groupByAliases, ExpressionNode node) {
         for (int i = 0, max = groupByNodes.size(); i < max; i++) {
             ExpressionNode n = groupByNodes.getQuick(i);
-            if (ExpressionNode.compareNodesExact(node, n)) {
+            if (compareNodesExact(node, n)) {
                 return groupByAliases.getQuick(i);
             }
         }
@@ -2206,7 +2208,7 @@ public class SqlOptimiser implements Mutable {
     private int findColumnIdxByAst(ObjList<ExpressionNode> groupByNodes, ExpressionNode node) {
         for (int i = 0, max = groupByNodes.size(); i < max; i++) {
             ExpressionNode n = groupByNodes.getQuick(i);
-            if (ExpressionNode.compareNodesExact(node, n)) {
+            if (compareNodesExact(node, n)) {
                 return i;
             }
         }
@@ -2216,12 +2218,11 @@ public class SqlOptimiser implements Mutable {
     private CharSequence findQueryColumnByAst(ObjList<QueryColumn> bottomUpColumns, ExpressionNode node) {
         for (int i = 0, max = bottomUpColumns.size(); i < max; i++) {
             QueryColumn qc = bottomUpColumns.getQuick(i);
-            if (ExpressionNode.compareNodesExact(qc.getAst(), node)) {
+            if (compareNodesExact(qc.getAst(), node)) {
                 return qc.getAlias();
             }
         }
         return null;
-
     }
 
     private CharSequence findTimestamp(QueryModel model) {
@@ -2376,7 +2377,7 @@ public class SqlOptimiser implements Mutable {
         for (int i = 0, k = columns.size(); i < k; i++) {
             QueryColumn qc = columns.getQuick(i);
             if (qc.getAst().type != LITERAL) {
-                if (qc.getAst().type == ExpressionNode.FUNCTION) {
+                if (qc.getAst().type == FUNCTION) {
                     if (functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
                         return false;
                     } else if (functionParser.getFunctionFactoryCache().isCursor(qc.getAst().token)) {
@@ -2425,9 +2426,9 @@ public class SqlOptimiser implements Mutable {
     private boolean isEffectivelyConstantExpression(ExpressionNode node) {
         sqlNodeStack.clear();
         while (node != null) {
-            if (node.type != ExpressionNode.OPERATION
-                    && node.type != ExpressionNode.CONSTANT
-                    && !(node.type == ExpressionNode.FUNCTION && functionParser.getFunctionFactoryCache().isRuntimeConstant(node.token))) {
+            if (node.type != OPERATION
+                    && node.type != CONSTANT
+                    && !(node.type == FUNCTION && functionParser.getFunctionFactoryCache().isRuntimeConstant(node.token))) {
                 return false;
             }
 
@@ -2928,7 +2929,7 @@ public class SqlOptimiser implements Mutable {
 
         if (status == TableUtils.TABLE_DOES_NOT_EXIST) {
             try {
-                model.getTableNameExpr().type = ExpressionNode.FUNCTION;
+                model.getTableNameExpr().type = FUNCTION;
                 parseFunctionAndEnumerateColumns(model, executionContext, sqlParserCallback);
                 return;
             } catch (SqlException e) {
@@ -2973,7 +2974,7 @@ public class SqlOptimiser implements Mutable {
                     } else {
                         switch (node.rhs.type) {
                             case LITERAL:
-                            case ExpressionNode.CONSTANT:
+                            case CONSTANT:
                                 break;
                             default:
                                 return optimiseBooleanNot(node.rhs, true);
@@ -3032,7 +3033,7 @@ public class SqlOptimiser implements Mutable {
                         n.token = "not";
                         n.paramCount = 1;
                         n.rhs = node;
-                        n.type = ExpressionNode.OPERATION;
+                        n.type = OPERATION;
                         return n;
                     }
                     break;
@@ -4056,7 +4057,7 @@ public class SqlOptimiser implements Mutable {
                         && nested.getNestedModel() == null
                         && nested.getTableName() != null
                         && model.getColumns().size() == 1
-                        && (countDistinctExpr = model.getColumns().getQuick(0).getAst()).type == ExpressionNode.FUNCTION
+                        && (countDistinctExpr = model.getColumns().getQuick(0).getAst()).type == FUNCTION
                         && Chars.equalsIgnoreCase("count_distinct", countDistinctExpr.token)
                         && countDistinctExpr.paramCount == 1
                         && countDistinctExpr.rhs != null
@@ -4542,7 +4543,7 @@ public class SqlOptimiser implements Mutable {
                                     synthetic.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
                                     for (int j = 0, z = baseParent.getBottomUpColumns().size(); j < z; j++) {
                                         QueryColumn qc = baseParent.getBottomUpColumns().getQuick(j);
-                                        if (qc.getAst().type == ExpressionNode.FUNCTION || qc.getAst().type == ExpressionNode.OPERATION) {
+                                        if (qc.getAst().type == FUNCTION || qc.getAst().type == OPERATION) {
                                             emitLiterals(qc.getAst(), synthetic, null, baseParent.getNestedModel(), false);
                                         } else {
                                             synthetic.addBottomUpColumnIfNotExists(qc);
@@ -4757,7 +4758,6 @@ public class SqlOptimiser implements Mutable {
      * model into a sub-query, to select all the intended columns but the artificial timestamp.
      */
     private QueryModel rewriteSampleBy(@Nullable QueryModel model) throws SqlException {
-
         if (model == null) {
             return null;
         }
@@ -4926,7 +4926,7 @@ public class SqlOptimiser implements Mutable {
                             isAFunctionUsingTimestampColumn ||
                                     // check all literals that refer timestamp column, except the one
                                     // with our chosen timestamp alias.
-                                    timestampAlias != null && qc.getAst().type == ExpressionNode.LITERAL
+                                    timestampAlias != null && qc.getAst().type == LITERAL
                                             && Chars.equalsIgnoreCase(qc.getAst().token, timestampColumn)
                                             && !Chars.equalsIgnoreCase(qc.getAlias(), timestampAlias)
                     ) {
@@ -5316,14 +5316,14 @@ public class SqlOptimiser implements Mutable {
             final boolean window = qc.isWindowColumn();
 
             // fail-fast if this is an arithmetic expression where we expect window function
-            if (window && qc.getAst().type != ExpressionNode.FUNCTION) {
+            if (window && qc.getAst().type != FUNCTION) {
                 throw SqlException.$(qc.getAst().position, "Window function expected");
             }
 
-            if (qc.getAst().type == ExpressionNode.BIND_VARIABLE) {
+            if (qc.getAst().type == BIND_VARIABLE) {
                 useInnerModel = true;
             } else if (qc.getAst().type != LITERAL) {
-                if (qc.getAst().type == ExpressionNode.FUNCTION) {
+                if (qc.getAst().type == FUNCTION) {
                     if (window) {
                         useWindowModel = true;
                         continue;
@@ -5338,7 +5338,7 @@ public class SqlOptimiser implements Mutable {
                         if (repl == qc.getAst()) { // no rewrite
                             if (!useOuterModel) { // so try to push duplicate aggregates to nested model
                                 for (int j = i + 1; j < k; j++) {
-                                    if (ExpressionNode.compareNodesExact(qc.getAst(), columns.get(j).getAst())) {
+                                    if (compareNodesExact(qc.getAst(), columns.get(j).getAst())) {
                                         useOuterModel = true;
                                         break;
                                     }
@@ -5532,7 +5532,7 @@ public class SqlOptimiser implements Mutable {
                         );
                     }
                 }
-            } else if (qc.getAst().type == ExpressionNode.BIND_VARIABLE) {
+            } else if (qc.getAst().type == BIND_VARIABLE) {
                 if (explicitGroupBy) {
                     useOuterModel = true;
                     outerVirtualIsSelectChoose = false;
@@ -5554,7 +5554,7 @@ public class SqlOptimiser implements Mutable {
                 // when column is direct call to aggregation function, such as
                 // select sum(x) ...
                 // we can add it to group-by model right away
-                if (qc.getAst().type == ExpressionNode.FUNCTION) {
+                if (qc.getAst().type == FUNCTION) {
                     if (window) {
                         windowModel.addBottomUpColumn(qc);
 
@@ -5731,7 +5731,7 @@ public class SqlOptimiser implements Mutable {
                 QueryColumn qc = columns.getQuick(i);
                 final boolean window = qc.isWindowColumn();
 
-                if (window & qc.getAst().type == ExpressionNode.FUNCTION) {
+                if (window & qc.getAst().type == FUNCTION) {
                     // Window model can be after either translation model directly
                     // or after inner virtual model, which can be sandwiched between
                     // translation model and window model.
@@ -6531,9 +6531,9 @@ public class SqlOptimiser implements Mutable {
         @Override
         public void visit(ExpressionNode node) {
             switch (node.type) {
-                case ExpressionNode.FUNCTION:
-                case ExpressionNode.OPERATION:
-                case ExpressionNode.SET_OPERATION:
+                case FUNCTION:
+                case OPERATION:
+                case SET_OPERATION:
                     if (node.paramCount < 3) {
                         node.lhs = rewrite(node.lhs);
                         node.rhs = rewrite(node.rhs);
@@ -6577,7 +6577,7 @@ public class SqlOptimiser implements Mutable {
                         names.add(name);
                     }
                     break;
-                case ExpressionNode.CONSTANT:
+                case CONSTANT:
                     if (nullConstants.contains(node.token)) {
                         nullCount++;
                     }

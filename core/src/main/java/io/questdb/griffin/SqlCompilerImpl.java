@@ -2646,7 +2646,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     try (RecordCursor cursor = newCursor) {
                         typeCast.clear();
                         final RecordMetadata metadata = factory.getMetadata();
-                        createMatViewOp.validateAndUpdateMetadataFromSelect(metadata);
+                        try (TableReader baseReader = engine.getReader(createMatViewOp.getBaseTableName())) {
+                            createMatViewOp.validateAndUpdateMetadataFromSelect(metadata, baseReader.getMetadata());
+                        }
 
                         matViewDefinition = engine.createMatView(
                                 executionContext.getSecurityContext(),

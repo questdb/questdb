@@ -89,7 +89,6 @@ public class CheckpointTest extends AbstractCairoTest {
         ff = testFilesFacade;
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
         AbstractCairoTest.setUpStatic();
-        Zip.init();
     }
 
     @AfterClass
@@ -1652,5 +1651,9 @@ public class CheckpointTest extends AbstractCairoTest {
             errorOnRegistryFileRemoval = false;
             errorOnRegistryFileCopy = false;
         }
+    }
+
+    static {
+        Zip.init();
     }
 }

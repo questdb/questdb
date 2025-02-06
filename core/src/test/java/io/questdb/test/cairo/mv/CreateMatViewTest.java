@@ -41,6 +41,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.Os;
+import io.questdb.std.Zip;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
@@ -645,6 +646,46 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewWithNonDedupBaseKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table x " +
+                            " (ts timestamp, k1 symbol, k2 symbol, v long)" +
+                            " timestamp(ts) partition by day wal dedup upsert keys(ts, k1);"
+            );
+            execute(
+                    "create table y " +
+                            " (ts timestamp, k1 symbol, k2 symbol, v long)" +
+                            " timestamp(ts) partition by day wal;"
+            );
+
+            final String[] queries = new String[]{
+                    "create materialized view x_hourly as (select ts, k2, avg(v) from x sample by 1h) partition by day;",
+                    "create materialized view x_hourly as (select xx.ts, xx.k2, avg(xx.v) from x as xx sample by 1h) partition by day;",
+                    "create materialized view x_hourly as (select ts, k1, k2, avg(v) from x sample by 1h) partition by day;",
+                    "create materialized view x_hourly as (select ts, concat(k1, k2) k, avg(v) from x sample by 1h) partition by day;",
+                    "create materialized view x_hourly as (select ts, k, avg(v) from (select concat(k1, k2) k, v, ts from x) sample by 1h) partition by day;",
+                    "create materialized view x_hourly as (select ts, k, avg(v) from (select concat(k2, 'foobar') k, v, ts from x) sample by 1h) partition by day;",
+                    "create materialized view x_hourly as (select ts, k, avg(v) from (select concat('foobar', k2) k, v, ts from x) sample by 1h) partition by day;",
+                    "create materialized view x_hourly as (select ts, k, avg(v) from (select ts, k2 as k, v from x) sample by 1h) partition by day;",
+                    "create materialized view test with base x as (select t1.ts, t1.k2, avg(t1.v) from x as t1 join y as t2 on v sample by 1m) partition by day",
+                    "create materialized view test with base x as (select t1.ts, t2.k1, avg(t1.v) from x as t1 join y as t2 on v sample by 1m) partition by day",
+                    "create materialized view test with base x as (select \"t1\".\"ts\", \"t2\".\"k1\", avg(\"t1\".\"v\") from \"x\" as \"t1\" join \"y\" as \"t2\" on \"v\" sample by 1m) partition by day",
+                    "create materialized view test with base x as (select t1.ts, t2.k1, avg(t1.v) from x as t1 join y as t2 on v sample by 1m) partition by day",
+            };
+
+            for (String query : queries) {
+                try {
+                    execute(query);
+                    fail("Expected SqlException missing for " + query);
+                } catch (SqlException e) {
+                    TestUtils.assertContains(query, e.getFlyweightMessage(), "base table");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCreateMatViewWithOperator() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -847,5 +888,9 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
     protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
         assertQueryFullFatNoLeakCheck(expected, query, expectedTimestamp, supportsRandomAccess, expectSize, false);
+    }
+
+    static {
+        Zip.init();
     }
 }

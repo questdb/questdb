@@ -30,6 +30,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.str.CharSink;
@@ -40,6 +41,7 @@ import static io.questdb.griffin.engine.table.ShowCreateTableRecordCursorFactory
 
 public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperationBuilder, Mutable, Sinkable {
     public static final ObjectFactory<CreateMatViewOperationBuilderImpl> FACTORY = CreateMatViewOperationBuilderImpl::new;
+    private final CharSequenceHashSet baseKeyColumnNames = new CharSequenceHashSet();
     private final CreateTableOperationBuilderImpl createTableOperationBuilder = new CreateTableOperationBuilderImpl();
     private String baseTableName;
     private long fromMicros;
@@ -56,6 +58,7 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
         return new CreateMatViewOperationImpl(
                 createTableOperation,
                 baseTableName,
+                baseKeyColumnNames,
                 fromMicros,
                 samplingInterval,
                 samplingIntervalUnit,
@@ -69,6 +72,7 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
     @Override
     public void clear() {
         createTableOperationBuilder.clear();
+        baseKeyColumnNames.clear();
         baseTableName = null;
         samplingInterval = -1;
         samplingIntervalUnit = '\0';
@@ -77,6 +81,14 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
         timeZone = null;
         timeZoneOffset = null;
         viewSql = null;
+    }
+
+    public CharSequenceHashSet getBaseKeyColumnNames() {
+        return baseKeyColumnNames;
+    }
+
+    public String getBaseTableName() {
+        return baseTableName;
     }
 
     public CreateTableOperationBuilderImpl getCreateTableOperationBuilder() {

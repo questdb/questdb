@@ -287,6 +287,64 @@ public class SqlParser {
         } while (m != null);
     }
 
+    /**
+     * Copies base table column names present in the given node into the target set.
+     * The node may contain multiple columns/aliases, e.g. `concat(sym1, sym2)`, which are searched
+     * down to their names in the base table.
+     * <p>
+     * Used to find the list of base table columns used in mat view query keys (best effort validation).
+     */
+    private static void copyBaseTableColumnNames(
+            ExpressionNode node,
+            QueryModel model,
+            CharSequence baseTableName,
+            CharSequenceHashSet target
+    ) throws SqlException {
+        if (node != null && model != null) {
+            if (node.type == ExpressionNode.LITERAL) {
+                if (model.getTableName() != null) {
+                    // We've found a lowest-level model. Let's check if the column belongs to it.
+                    final int dotIndex = Chars.indexOf(node.token, '.');
+                    if (dotIndex > -1) {
+                        if (Chars.equals(model.getName(), node.token, 0, dotIndex)) {
+                            if (!Chars.equals(model.getTableName(), baseTableName)) {
+                                throw SqlException.$(node.position, "only base table columns can be used as keys").put(node.token);
+                            }
+                            target.add(Chars.toString(node.token, dotIndex + 1, node.token.length()));
+                            return;
+                        }
+                    } else {
+                        if (!Chars.equals(model.getTableName(), baseTableName)) {
+                            throw SqlException.$(node.position, "only base table columns can be used as keys").put(node.token);
+                        }
+                        target.add(node.token);
+                        return;
+                    }
+                } else {
+                    // Check nested model.
+                    final QueryColumn column = model.getAliasToColumnMap().get(node.token);
+                    copyBaseTableColumnNames(column != null ? column.getAst() : node, model.getNestedModel(), baseTableName, target);
+                }
+            }
+
+            // Check node children for functions/operators.
+            for (int i = 0, n = node.args.size(); i < n; i++) {
+                copyBaseTableColumnNames(node.args.getQuick(i), model, baseTableName, target);
+            }
+            if (node.lhs != null) {
+                copyBaseTableColumnNames(node.lhs, model, baseTableName, target);
+            }
+            if (node.rhs != null) {
+                copyBaseTableColumnNames(node.rhs, model, baseTableName, target);
+            }
+
+            // Check join models.
+            for (int i = 1, n = model.getJoinModels().size(); i < n; i++) {
+                copyBaseTableColumnNames(node, model.getJoinModels().getQuick(i), baseTableName, target);
+            }
+        }
+    }
+
     private static SqlException err(GenericLexer lexer, @Nullable CharSequence tok, @NotNull String msg) {
         return SqlException.parserErr(lexer.lastTokenPosition(), tok, msg);
     }
@@ -298,7 +356,6 @@ public class SqlParser {
     private static SqlException errUnexpected(GenericLexer lexer, CharSequence token, @NotNull CharSequence extraMessage) {
         return SqlException.unexpectedToken(lexer.lastTokenPosition(), token, extraMessage);
     }
-
 
     private static boolean isValidSampleByPeriodLetter(CharSequence token) {
         if (token.length() != 1) return false;
@@ -650,8 +707,7 @@ public class SqlParser {
             boolean useTopLevelWithClauses,
             SqlParserCallback sqlParserCallback,
             LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
-    )
-            throws SqlException {
+    ) throws SqlException {
         final QueryModel model = parseAsSubQuery(lexer, withClauses, useTopLevelWithClauses, sqlParserCallback, decls);
         expectTok(lexer, ')');
         return model;
@@ -866,8 +922,8 @@ public class SqlParser {
             final ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
             assert columns.size() > 0;
 
-            // we do not know types of columns at this stage
-            // compiler must put table together using query metadata.
+            // we do not know types of columns at this stage,
+            // compiler must put table together using query metadata
             for (int i = 0, n = columns.size(); i < n; i++) {
                 CreateTableColumnModel model = newCreateTableColumnModel(columns.getQuick(i).getName(), i);
                 model.setColumnType(ColumnType.UNDEFINED);
@@ -1004,12 +1060,14 @@ public class SqlParser {
         for (int i = 0, n = columns.size(); i < n; i++) {
             final QueryColumn column = columns.getQuick(i);
             if (!optimiser.hasAggregates(column.getAst())) {
-                // aggregation key, add as dedup key
+                // sample by/group by key, add as dedup key
                 final CreateTableColumnModel model = createTableOperationBuilder.getColumnModel(column.getName());
                 if (model == null) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "Missing column [name=" + column.getName() + "]");
+                    throw SqlException.$(lexer.lastTokenPosition(), "missing column [name=" + column.getName() + "]");
                 }
                 model.setIsDedupKey();
+                // copy column names into builder to be validated later
+                copyBaseTableColumnNames(column.getAst(), queryModel, builder.getBaseTableName(), builder.getBaseKeyColumnNames());
             }
         }
         return parseCreateMatViewExt(lexer, executionContext, sqlParserCallback, tok, builder);
@@ -1970,7 +2028,6 @@ public class SqlParser {
 
         // expect "(" in case of sub-query
         if (Chars.equals(tok, '(') || proposedNested != null) {
-
             if (proposedNested == null) {
                 proposedNested = parseAsSubQueryAndExpectClosingBrace(lexer, masterModel.getWithClauses(), true, sqlParserCallback, model.getDecls());
             }
@@ -2189,20 +2246,17 @@ public class SqlParser {
                     throw SqlException.$(lexer.lastTokenPosition(), "literal or expression expected");
                 }
 
-                if ((n.type == ExpressionNode.CONSTANT && Chars.equals("''", n.token)) ||
-                        (n.type == ExpressionNode.LITERAL && n.token.length() == 0)) {
+                if ((n.type == ExpressionNode.CONSTANT && Chars.equals("''", n.token))
+                        || (n.type == ExpressionNode.LITERAL && n.token.length() == 0)) {
                     throw SqlException.$(lexer.lastTokenPosition(), "non-empty literal or expression expected");
                 }
 
                 tok = optTok(lexer);
 
                 if (tok != null && isDescKeyword(tok)) {
-
                     model.addOrderBy(n, QueryModel.ORDER_DIRECTION_DESCENDING);
                     tok = optTok(lexer);
-
                 } else {
-
                     model.addOrderBy(n, QueryModel.ORDER_DIRECTION_ASCENDING);
 
                     if (tok != null && isAscKeyword(tok)) {
@@ -2213,7 +2267,6 @@ public class SqlParser {
                 if (model.getOrderBy().size() >= MAX_ORDER_BY_COLUMNS) {
                     throw err(lexer, tok, "Too many columns");
                 }
-
             } while (tok != null && Chars.equals(tok, ','));
         }
 
@@ -2295,7 +2348,6 @@ public class SqlParser {
 
                 assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
                 model.addColumn(unquote(tok), lexer.lastTokenPosition());
-
             } while (Chars.equals((tok = tok(lexer, "','")), ','));
 
             expectTok(tok, lexer.lastTokenPosition(), ')');

@@ -54,10 +54,6 @@ import static io.questdb.griffin.model.IntervalUtils.parseFloorPartialTimestamp;
 
 
 public class MatViewTest extends AbstractCairoTest {
-    static {
-        // crc memory leak
-        Zip.init();
-    }
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -108,7 +104,7 @@ public class MatViewTest extends AbstractCairoTest {
     public void testBaseTableInvalidateOnDedupDisable() throws Exception {
         testBaseTableInvalidateOnOperation(
                 () -> {
-                    execute("alter table base_price dedup enable upsert keys(ts);");
+                    execute("alter table base_price dedup enable upsert keys(ts, sym);");
                     drainWalQueue();
                 },
                 "alter table base_price dedup disable;"
@@ -1259,16 +1255,16 @@ public class MatViewTest extends AbstractCairoTest {
         return out + " from (" + in + ")";
     }
 
-    private void testBaseTableInvalidateOnOperation(String operationSql) throws Exception {
-        testBaseTableInvalidateOnOperation(null, operationSql);
-    }
-
     private void refreshMatView() {
         drainWalQueue();
         try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
             refreshJob.run(0);
             drainWalQueue();
         }
+    }
+
+    private void testBaseTableInvalidateOnOperation(String operationSql) throws Exception {
+        testBaseTableInvalidateOnOperation(null, operationSql);
     }
 
     private void testBaseTableInvalidateOnOperation(
@@ -1316,14 +1312,6 @@ public class MatViewTest extends AbstractCairoTest {
         });
     }
 
-    private void updateViewIncrementally(String viewName, String viewQuery, long startTs, long step, int N, int K) throws SqlException {
-        updateViewIncrementally(viewName, viewQuery, " rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b,", startTs, step, N, K);
-    }
-
-    private void updateViewIncrementally(String viewName, String viewQuery, String columns, long startTs, long step, int N, int K) throws SqlException {
-        updateViewIncrementally(viewName, viewQuery, columns, null, startTs, step, N, K);
-    }
-
     private void testIncrementalRefresh0(String viewSql) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
         assertMemoryLeak(() -> {
@@ -1364,6 +1352,14 @@ public class MatViewTest extends AbstractCairoTest {
         });
     }
 
+    private void updateViewIncrementally(String viewName, String viewQuery, long startTs, long step, int N, int K) throws SqlException {
+        updateViewIncrementally(viewName, viewQuery, " rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b,", startTs, step, N, K);
+    }
+
+    private void updateViewIncrementally(String viewName, String viewQuery, String columns, long startTs, long step, int N, int K) throws SqlException {
+        updateViewIncrementally(viewName, viewQuery, columns, null, startTs, step, N, K);
+    }
+
     private void updateViewIncrementally(String viewName, String viewQuery, String columns, @Nullable String index, long startTs, long step, int N, int K) throws SqlException {
         Rnd rnd = new Rnd();
         int initSize = rnd.nextInt(N / K) + 1;
@@ -1398,4 +1394,7 @@ public class MatViewTest extends AbstractCairoTest {
         Assert.assertEquals(0, remainingSize);
     }
 
+    static {
+        Zip.init();
+    }
 }

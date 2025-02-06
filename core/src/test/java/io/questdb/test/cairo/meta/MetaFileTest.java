@@ -66,7 +66,6 @@ public class MetaFileTest extends AbstractCairoTest {
     @BeforeClass
     public static void setUpStatic() throws Exception {
         AbstractCairoTest.setUpStatic();
-        Zip.init();
     }
 
     @Test
@@ -532,5 +531,9 @@ public class MetaFileTest extends AbstractCairoTest {
             Assert.assertEquals("World", str.toString());
             offset += Vm.getStorageLength(str);
         }
+    }
+
+    static {
+        Zip.init();
     }
 }
