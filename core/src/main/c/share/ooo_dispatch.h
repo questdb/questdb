@@ -81,13 +81,17 @@ DECLARE_DISPATCHER_TYPE(shift_copy, int64_t shift, const int64_t *src, int64_t s
 
 DECLARE_DISPATCHER_TYPE(shift_copy_varchar_aux, int64_t shift, const int64_t *src, int64_t src_lo, int64_t src_hi, int64_t *dest);
 
+DECLARE_DISPATCHER_TYPE(shift_copy_array_aux, int64_t shift, const int64_t *src, int64_t src_lo, int64_t src_hi, int64_t *dest);
+
 DECLARE_DISPATCHER_TYPE(copy_index, const index_t *index, const int64_t count, int64_t *dest);
 
-DECLARE_DISPATCHER_TYPE(set_var_refs_64_bit, int64_t *data, int64_t offset, int64_t count);
+DECLARE_DISPATCHER_TYPE(set_binary_column_null_refs, int64_t *data, int64_t offset, int64_t count);
 
-DECLARE_DISPATCHER_TYPE(set_var_refs_32_bit, int64_t *data, int64_t offset, int64_t count);
+DECLARE_DISPATCHER_TYPE(set_string_column_null_refs, int64_t *data, int64_t offset, int64_t count);
 
 DECLARE_DISPATCHER_TYPE(set_varchar_null_refs, int64_t *aux, int64_t offset, int64_t count);
+
+DECLARE_DISPATCHER_TYPE(set_array_null_refs, int64_t *aux, int64_t offset, int64_t count);
 
 DECLARE_DISPATCHER_TYPE(set_memory_vanilla_int64, int64_t *data, const int64_t value, const int64_t count);
 
@@ -125,6 +129,10 @@ DECLARE_DISPATCHER_TYPE (merge_copy_varchar_column, index_t *merge_index, int64_
                          int64_t *dst_fix, char *dst_var, int64_t dst_var_offset);
 
 DECLARE_DISPATCHER_TYPE (merge_copy_var_column_int64, index_t *merge_index, int64_t merge_index_size,
+                         int64_t *src_data_fix, char *src_data_var, int64_t *src_ooo_fix, char *src_ooo_var,
+                         int64_t *dst_fix, char *dst_var, int64_t dst_var_offset);
+
+DECLARE_DISPATCHER_TYPE (merge_copy_array_column, index_t *merge_index, int64_t merge_index_size,
                          int64_t *src_data_fix, char *src_data_var, int64_t *src_ooo_fix, char *src_ooo_var,
                          int64_t *dst_fix, char *dst_var, int64_t dst_var_offset);
 

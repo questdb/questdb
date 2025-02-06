@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.arr;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.O3Utils;
@@ -36,7 +37,9 @@ import io.questdb.cairo.vm.api.MemoryOM;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import org.jetbrains.annotations.NotNull;
@@ -53,27 +56,20 @@ import org.jetbrains.annotations.Nullable;
  *
  * <h2>AUX entry format</h2>
  *
- * <strong>IMPORTANT!</strong>: Since we store 96 bit entries, every other entry
- * is unaligned for reading via <code>Unsafe.getLong()</code>, as such if you find
- * any <code>{MemoryR,Unsafe}.{get,set}Long</code> calls operating on the aux data in
- * this code, it's probably a bug! See
- * <a href="https://medium.com/@jkstoyanov/aligned-and-unaligned-memory-access-9b5843b7f4ac">blog post</a>.
- *
  * <pre>
- * 96-bit entries
+ * 128-bit entries
  *     * offset_and_hash: 64 bits
  *         * bits 0 to =47: offset, a 48-bit unsigned integer
  *             * byte-level offset into the data vector
- *         * bits 48 to =64: hash, 16-bit
- *             * CRC-16/XMODEM hash used to speed up equality comparisons
+ *         * bits 48 to =64: reserved
  *     * data_size: 32 bits
  *         * number of bytes used to the store the array (along with any additional metadata) in the data vector.
+ *     * reserved: 32 bits
  * </pre>
  *
  * <h2>Encoding NULLs</h2>
  * <ul>
  *     <li>A null value has zero size.</li>
- *     <li>The CRC of a null array is 0, so <code>auxLo &gt;&gt; CRC16_SHIFT == 0</code></li>
  *     <li>We however <em>do</em> populate the <code>offset</code> field with
  *     the end of the previous non-null value.</li>
  *     <li>This allows mapping the data vector for a specific range of values.</li>
@@ -322,8 +318,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
 
     @Override
     public long dedupMergeVarColumnSize(long mergeIndexAddr, long mergeIndexCount, long srcDataFixAddr, long srcOooFixAddr) {
-        // todo: impl
-        throw new UnsupportedOperationException("nyi");
+        return Vect.dedupMergeArrayColumnSize(mergeIndexAddr, mergeIndexCount, srcDataFixAddr, srcOooFixAddr);
     }
 
     @Override
@@ -368,7 +363,17 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
 
     @Override
     public long getDataVectorSizeAtFromFd(FilesFacade ff, long auxFd, long row) {
-        throw new UnsupportedOperationException("nyi");
+        if (row < 0) {
+            return 0;
+        }
+        final long auxFileOffset = ARRAY_AUX_WIDTH_BYTES * row;
+        final long offset = readLong(ff, auxFd, auxFileOffset) & OFFSET_MAX;
+        final int size = readInt(ff, auxFd, auxFileOffset + Long.BYTES);
+        if (size == 0) {
+            // value at row is NULL
+            return offset;
+        }
+        return offset + size;
     }
 
     @Override
@@ -388,8 +393,17 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             long dstDataAddr,
             long dstDataOffset
     ) {
-        // todo: impl
-        throw new UnsupportedOperationException("nyi");
+        Vect.oooMergeCopyArrayColumn(
+                timestampMergeIndexAddr,
+                timestampMergeIndexCount,
+                srcAuxAddr1,
+                srcDataAddr1,
+                srcAuxAddr2,
+                srcDataAddr2,
+                dstAuxAddr,
+                dstDataAddr,
+                dstDataOffset
+        );
     }
 
     @Override
@@ -423,8 +437,27 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             MemoryCARW dstDataMem,
             MemoryCARW dstAuxMem
     ) {
-        // todo: impl
-        throw new UnsupportedOperationException("nyi");
+        // ensure we have enough memory allocated
+        final long srcDataAddr = srcDataMem.addressOf(0);
+        final long srcAuxAddr = srcAuxMem.addressOf(0);
+        // exclude the trailing offset from shuffling
+        final long tgtAuxAddr = dstAuxMem.resize(getAuxVectorSize(sortedTimestampsRowCount));
+        final long tgtDataAddr = dstDataMem.resize(getDataVectorSizeAt(srcAuxAddr, sortedTimestampsRowCount - 1));
+
+        assert srcAuxAddr != 0;
+        assert tgtAuxAddr != 0;
+
+        // add max offset so that we do not have conditionals inside loop
+        final long offset = Vect.sortArrayColumn(
+                sortedTimestampsAddr,
+                sortedTimestampsRowCount,
+                srcDataAddr,
+                srcAuxAddr,
+                tgtDataAddr,
+                tgtAuxAddr
+        );
+        dstDataMem.jumpTo(offset);
+        dstAuxMem.jumpTo(ARRAY_AUX_WIDTH_BYTES * sortedTimestampsRowCount);
     }
 
     @Override
@@ -474,27 +507,19 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
 
     @Override
     public void setFullAuxVectorNull(long auxMemAddr, long rowCount) {
-        // todo: impl
-        throw new UnsupportedOperationException("nyi");
+        Vect.setArrayColumnNullRefs(auxMemAddr, 0, rowCount);
     }
 
     @Override
     public void setPartAuxVectorNull(long auxMemAddr, long initialOffset, long columnTop) {
-        // todo: impl
-        throw new UnsupportedOperationException("nyi");
+        Vect.setArrayColumnNullRefs(auxMemAddr, initialOffset, columnTop);
     }
 
     @Override
     public void shiftCopyAuxVector(long shift, long srcAddr, long srcLo, long srcHi, long dstAddr, long dstAddrSize) {
         // +1 since srcHi is inclusive
         assert (srcHi - srcLo + 1) * ARRAY_AUX_WIDTH_BYTES <= dstAddrSize;
-        O3Utils.shiftCopyVarcharColumnAux(
-                shift,
-                srcAddr,
-                srcLo,
-                srcHi,
-                dstAddr
-        );
+        Vect.shiftCopyArrayColumnAux(shift, srcAddr, srcLo, srcHi, dstAddr);
     }
 
     private static void appendNullImpl(MemoryA auxMem, long offset) {
@@ -526,14 +551,38 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         return getIntAlignedLong(address) & OFFSET_MAX;
     }
 
+    private static int readInt(FilesFacade ff, long fd, long offset) {
+        long res = ff.readIntAsUnsignedLong(fd, offset);
+        if (res < 0) {
+            throw CairoException.critical(ff.errno())
+                    .put("Invalid data read from array aux file [fd=").put(fd)
+                    .put(", offset=").put(offset)
+                    .put(", fileSize=").put(ff.length(fd))
+                    .put(", result=").put(res)
+                    .put(']');
+        }
+        return Numbers.decodeLowInt(res);
+    }
+
+    private static long readLong(FilesFacade ff, long fd, long offset) {
+        long res = ff.readNonNegativeLong(fd, offset);
+        if (res < 0) {
+            throw CairoException.critical(ff.errno())
+                    .put("Invalid data read from array aux file [fd=").put(fd)
+                    .put(", offset=").put(offset)
+                    .put(", fileSize=").put(ff.length(fd))
+                    .put(", result=").put(res)
+                    .put(']');
+        }
+        return res;
+    }
+
     private static void writeAuxEntry(MemoryA auxMem, long offset, int size) {
         assert offset >= 0;
         assert offset <= OFFSET_MAX;
         assert size >= 0;
-        final long crcAndOffset = ((long) (short) 0 << CRC16_SHIFT) | offset;
-        auxMem.putLong(crcAndOffset);
-        auxMem.putInt(size);
-        auxMem.putInt(0);
+        auxMem.putLong(offset);
+        auxMem.putLong(size);
     }
 
     /**

@@ -78,6 +78,8 @@ public final class Vect {
 
     public static native long dedupMergeVarcharColumnSize(long mergeIndexAddr, long mergeIndexCount, long srcDataFixAddr, long srcOooFixAddr);
 
+    public static native long dedupMergeArrayColumnSize(long mergeIndexAddr, long mergeIndexCount, long srcDataFixAddr, long srcOooFixAddr);
+
     public static native long dedupSortedTimestampIndex(
             long inIndexAddr,
             long count,
@@ -267,6 +269,18 @@ public final class Vect {
             long dstVarOffset
     );
 
+    public static native void oooMergeCopyArrayColumn(
+            long mergeIndexAddr,
+            long mergeIndexSize,
+            long srcDataFixAddr,
+            long srcDataVarAddr,
+            long srcOooFixAddr,
+            long srcOooVarAddr,
+            long dstFixAddr,
+            long dstVarAddr,
+            long dstVarOffset
+    );
+
     public static native void quickSortLongIndexAscInPlace(long pLongData, long count);
 
     public static native void radixSortABLongIndexAsc(long pDataA, long countA, long pDataB, long countB, long pDataDest, long pDataCpy);
@@ -286,15 +300,19 @@ public final class Vect {
 
     public static native void setMemoryShort(long pData, short value, long count);
 
-    public static native void setVarColumnRefs32Bit(long address, long initialOffset, long count);
+    public static native void setStringColumnNullRefs(long address, long initialOffset, long count);
 
-    public static native void setVarColumnRefs64Bit(long address, long initialOffset, long count);
+    public static native void setBinaryColumnNullRefs(long address, long initialOffset, long count);
 
     public static native void setVarcharColumnNullRefs(long address, long initialOffset, long count);
+
+    public static native void setArrayColumnNullRefs(long address, long initialOffset, long count);
 
     public static native void shiftCopyFixedSizeColumnData(long shift, long srcAddr, long srcLo, long srcHi, long dstAddr);
 
     public static native void shiftCopyVarcharColumnAux(long shift, long srcAddr, long srcLo, long srcHi, long dstAddr);
+
+    public static native void shiftCopyArrayColumnAux(long shift, long srcAddr, long srcLo, long srcHi, long dstAddr);
 
     public static native long shiftTimestampIndex(long pSrc, long count, long pDest);
 
@@ -313,7 +331,7 @@ public final class Vect {
 
     public static native void sortULongAscInPlace(long pLongData, long count);
 
-    public static native long sortVarColumn(
+    public static native long sortStringColumn(
             long mergedTimestampsAddr,
             long valueCount,
             long srcDataAddr,
@@ -323,6 +341,15 @@ public final class Vect {
     );
 
     public static native long sortVarcharColumn(
+            long mergedTimestampsAddr,
+            long valueCount,
+            long srcDataAddr,
+            long srcAuxAddr,
+            long tgtDataAddr,
+            long tgtAuxAdd
+    );
+
+    public static native long sortArrayColumn(
             long mergedTimestampsAddr,
             long valueCount,
             long srcDataAddr,

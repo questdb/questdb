@@ -68,16 +68,6 @@ public class O3Utils {
         }
     }
 
-    public static void shiftCopyVarcharColumnAux(
-            long shift,
-            long srcAddr,
-            long srcLo,
-            long srcHi,
-            long dstAddr
-    ) {
-        Vect.shiftCopyVarcharColumnAux(shift, srcAddr, srcLo, srcHi, dstAddr);
-    }
-
     static void close(FilesFacade ff, long fd) {
         if (fd > 0) {
             LOG.debug().$("closed [fd=").$(fd).$(']').$();

@@ -71,11 +71,11 @@ public class BinaryTypeDriver extends StringTypeDriver {
 
     @Override
     public void setFullAuxVectorNull(long auxMemAddr, long rowCount) {
-        Vect.setVarColumnRefs64Bit(auxMemAddr, 0, rowCount + 1);
+        Vect.setBinaryColumnNullRefs(auxMemAddr, 0, rowCount + 1);
     }
 
     @Override
     public void setPartAuxVectorNull(long auxMemAddr, long initialOffset, long columnTop) {
-        Vect.setVarColumnRefs64Bit(auxMemAddr, initialOffset, columnTop);
+        Vect.setBinaryColumnNullRefs(auxMemAddr, initialOffset, columnTop);
     }
 }

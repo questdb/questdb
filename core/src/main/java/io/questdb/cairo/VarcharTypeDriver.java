@@ -609,13 +609,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     public void shiftCopyAuxVector(long shift, long srcAddr, long srcLo, long srcHi, long dstAddr, long dstAddrSize) {
         // +1 since srcHi is inclusive
         assert (srcHi - srcLo + 1) * VARCHAR_AUX_WIDTH_BYTES <= dstAddrSize;
-        O3Utils.shiftCopyVarcharColumnAux(
-                shift,
-                srcAddr,
-                srcLo,
-                srcHi,
-                dstAddr
-        );
+        Vect.shiftCopyVarcharColumnAux(shift, srcAddr, srcLo, srcHi, dstAddr);
     }
 
     private static long getDataOffset(long auxEntry) {
