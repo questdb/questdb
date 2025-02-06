@@ -32,6 +32,7 @@ import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class ExpressionParserTest extends AbstractCairoTest {
@@ -59,6 +60,18 @@ public class ExpressionParserTest extends AbstractCairoTest {
     public void testAllNotEqual() throws SqlException {
         x("a b <>all", "a <> all(b)");
         x("a b <>all", "a != all(b)");
+    }
+
+    @Ignore
+    @Test
+    public void testArrayConstruct() throws SqlException {
+        x("x 1 []", "x[1]");
+        x("x 1 2 []", "x[1,2]");
+        x("x.y 1 2 []", "x.y[1,2]");
+        x("1 [,]", "[1]");
+        x("1 2 [,]", "[1, 2]");
+        x("1 2 3 [,]", "[1, 2, 3]");
+        x("1 2 [,] 3 [,]", "[1, [2], 3]");
     }
 
     @Test
@@ -97,8 +110,8 @@ public class ExpressionParserTest extends AbstractCairoTest {
     public void testArrayDereferenceNotClosedFunctionArg() {
         assertFail(
                 "f(b,a[,c)",
-                5,
-                "unbalanced ]"
+                6,
+                "missing arguments"
         );
     }
 
@@ -732,7 +745,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
         assertFail(
                 "a(i)(o)",
                 4,
-                "not a method call"
+                "not a function call"
         );
     }
 

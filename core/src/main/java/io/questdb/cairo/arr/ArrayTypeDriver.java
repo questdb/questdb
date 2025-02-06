@@ -36,7 +36,6 @@ import io.questdb.cairo.vm.api.MemoryOM;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
@@ -121,22 +120,6 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     public static final int CRC16_SHIFT = 48;
     public static final ArrayTypeDriver INSTANCE = new ArrayTypeDriver();
     public static final long OFFSET_MAX = (1L << 48) - 1L;
-    private static final ValueAppender DOUBLE_APPENDER = (ArrayView view, CharSink<?> sink, int index) -> {
-        double d = view.getDoubleFromRowMajor(index);
-        if (!Numbers.isNull(d)) {
-            sink.put(d);
-        } else {
-            sink.putAscii("NULL");
-        }
-    };
-    private static final ValueAppender LONG_APPENDER = (ArrayView view, CharSink<?> sink, int index) -> {
-        long l = view.getLongFromRowMajor(index);
-        if (l != Numbers.LONG_NULL) {
-            sink.put(l);
-        } else {
-            sink.putAscii("NULL");
-        }
-    };
     private static final int ND_ARRAY_AUX_WIDTH_BYTES = 3 * Integer.BYTES;
     private static final long U32_MASK = 0xFFFFFFFFL;
 
@@ -160,21 +143,60 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     /**
      * Recursively builds a JSON string representation of a multi-dimensional array stored in row‑major order.
      *
-     * @param arrayView the flat array containing all the elements
-     * @param sink      the StringBuilder used to accumulate the JSON string
+     * @param valueAppender the function used to append the JSON representation of a single element
+     * @param arrayView     the flat array containing all the elements
+     * @param sink          the StringBuilder used to accumulate the JSON string
      */
-    public static void doubleArrayToJson(ArrayView arrayView, CharSink<?> sink, char bracketLo, char bracketHi) {
-        arrayToJson(DOUBLE_APPENDER, arrayView, 0, 0, sink, bracketLo, bracketHi);
+    public static void arrayToJson(
+            JsonValueAppender valueAppender,
+            ArrayView arrayView,
+            CharSink<?> sink
+    ) {
+        arrayToJson(valueAppender, arrayView, 0, 0, sink, '[', ']');
+    }
+
+    /**
+     * Recursively builds a JSON string representation of a multi-dimensional array stored in row‑major order.
+     *
+     * @param valueAppender the function used to append the JSON representation of a single element
+     * @param arrayView     the flat array containing all the elements
+     * @param dim           the current dimension being processed, starting at 0
+     * @param currentIndex  the index of the current element in the flat array, starting at 0
+     * @param sink          the StringBuilder used to accumulate the JSON string
+     * @param bracketLo     the opening bracket for the current dimension, e.g. '[' for each dimension
+     * @param bracketHi     the closing bracket for the current dimension, e.g. ']' for each dimension
+     */
+    public static int arrayToJson(
+            JsonValueAppender valueAppender,
+            ArrayView arrayView,
+            int dim,
+            int currentIndex,
+            CharSink<?> sink,
+            char bracketLo,
+            char bracketHi
+    ) {
+        sink.putAscii(bracketLo);
+        int count = arrayView.getDimLength(dim); // Number of elements or subarrays at this dimension.
+        for (int i = 0; i < count; i++) {
+            if (dim == arrayView.getDim() - 1) {
+                // If we're at the last dimension, append the flat array element.
+                valueAppender.appendFromIndex(arrayView, sink, currentIndex);
+                currentIndex++; // Move to the next element in the flat array.
+            } else {
+                // Recursively build the JSON for the next dimension.
+                currentIndex = arrayToJson(valueAppender, arrayView, dim + 1, currentIndex, sink, bracketLo, bracketHi);
+            }
+            // Append a comma if this is not the last element in the current dimension.
+            if (i < count - 1) {
+                sink.putAscii(',');
+            }
+        }
+        sink.putAscii(bracketHi);
+        return currentIndex;
     }
 
     public static long getAuxVectorOffsetStatic(long row) {
         return ND_ARRAY_AUX_WIDTH_BYTES * row;
-    }
-
-    public static long getIntAlignedLong(long address) {
-        final int lower = Unsafe.getUnsafe().getInt(address);
-        final int upper = Unsafe.getUnsafe().getInt(address + Integer.BYTES);
-        return ((long) upper << 32) | (lower & U32_MASK);
     }
 
     public static long getIntAlignedLong(@NotNull MemoryR mem, long offset) {
@@ -183,8 +205,10 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         return ((long) upper << 32) | (lower & U32_MASK);
     }
 
-    public static void longArrayToJson(ArrayView arrayView, CharSink<?> sink, char bracketLo, char bracketHi) {
-        arrayToJson(LONG_APPENDER, arrayView, 0, 0, sink, bracketLo, bracketHi);
+    public static long getIntAlignedLong(long address) {
+        final int lower = Unsafe.getUnsafe().getInt(address);
+        final int upper = Unsafe.getUnsafe().getInt(address + Integer.BYTES);
+        return ((long) upper << 32) | (lower & U32_MASK);
     }
 
     /**
@@ -457,27 +481,6 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         appendNullImpl(auxMem, offset);
     }
 
-    private static int arrayToJson(ValueAppender valueAppender, ArrayView arrayView, int dim, int currentIndex, CharSink<?> sink, char bracketLo, char bracketHi) {
-        sink.putAscii(bracketLo);
-        int count = arrayView.getDimLength(dim); // Number of elements or subarrays at this dimension.
-        for (int i = 0; i < count; i++) {
-            if (dim == arrayView.getDim() - 1) {
-                // If we're at the last dimension, append the flat array element.
-                valueAppender.appendFromIndex(arrayView, sink, currentIndex);
-                currentIndex++; // Move to the next element in the flat array.
-            } else {
-                // Recursively build the JSON for the next dimension.
-                currentIndex = arrayToJson(valueAppender, arrayView, dim + 1, currentIndex, sink, bracketLo, bracketHi);
-            }
-            // Append a comma if this is not the last element in the current dimension.
-            if (i < count - 1) {
-                sink.putAscii(',');
-            }
-        }
-        sink.putAscii(bracketHi);
-        return currentIndex;
-    }
-
     private static void padTo(@NotNull MemoryA dataMem, int byteAlignment) {
         dataMem.zeroMem(skipsToAlign(dataMem.getAppendOffset(), byteAlignment));
     }
@@ -553,9 +556,5 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         final long offset = getIntAlignedLong(mem, auxOffset) & OFFSET_MAX;
         final int size = mem.getInt(auxOffset + Long.BYTES);
         return offset + size;
-    }
-
-    private interface ValueAppender {
-        void appendFromIndex(ArrayView view, CharSink<?> sink, int index);
     }
 }

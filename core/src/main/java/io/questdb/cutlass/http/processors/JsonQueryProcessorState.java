@@ -878,20 +878,21 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private void putArrayValue(int columnType, HttpChunkedResponse response, Record record, int columnIdx) {
         switch (ColumnType.decodeArrayElementType(columnType)) {
             case ColumnType.DOUBLE:
-                ArrayTypeDriver.doubleArrayToJson(
+                ArrayTypeDriver.arrayToJson(
+                        ArrayValueDoubleAppender.INSTANCE,
                         record.getArray(columnIdx, columnType),
-                        response,
-                        '[',
-                        ']'
+                        response
                 );
                 break;
             case ColumnType.LONG:
-                ArrayTypeDriver.longArrayToJson(
+                ArrayTypeDriver.arrayToJson(
+                        ArrayValueLongAppender.INSTANCE,
                         record.getArray(columnIdx, columnType),
-                        response,
-                        '[',
-                        ']'
+                        response
                 );
+                break;
+            default:
+                assert false;
                 break;
         }
     }
