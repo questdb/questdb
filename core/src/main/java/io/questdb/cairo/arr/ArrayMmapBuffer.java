@@ -55,7 +55,7 @@ public class ArrayMmapBuffer implements QuietCloseable {
             long row
     ) {
         final long rowOffset = ArrayTypeDriver.getAuxVectorOffsetStatic(row);
-        assert auxAddr + (3 * Integer.BYTES) <= auxLim;
+        assert auxAddr + ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES <= auxLim;
         final long crcAndOffset = ArrayTypeDriver.getIntAlignedLong(auxAddr + rowOffset);
         final long size = Unsafe.getUnsafe().getInt(auxAddr + rowOffset + Long.BYTES);
         if (size == 0) {
@@ -72,24 +72,23 @@ public class ArrayMmapBuffer implements QuietCloseable {
         // Decode the shape and set the default strides.
         final long dataEntryPtr = dataAddr + offset;
         assert (dataEntryPtr + Byte.BYTES) <= dataLim;
-        final int shapeLength = Unsafe.getUnsafe().getInt(dataEntryPtr);  // i.e., the number of dimensions.
-        final long shapePtr = dataEntryPtr + Integer.BYTES;
-        assert (dataEntryPtr + ((1 + shapeLength) * Byte.BYTES)) <= dataLim;
-        ArrayMeta.setDefaultStrides(shapePtr, shapeLength, strides);
+        final int shapeLength = ColumnType.decodeArrayDimensionality(columnType);
+        assert (dataEntryPtr + shapeLength * Byte.BYTES) <= dataLim;
+        ArrayMeta.setDefaultStrides(dataEntryPtr, shapeLength, strides);
 
         // Obtain the values ptr / len from the data.
         final int bitWidth = 1 << ColumnType.decodeArrayElementTypePrecision(columnType);
         final int requiredByteAlignment = Math.max(1, bitWidth / 8);
-        final long unalignedValuesOffset = offset + ((long) (1 + shapeLength) * Integer.BYTES);
+        final long unalignedValuesOffset = offset + ((long) (shapeLength) * Integer.BYTES);
         final long toSkip = ArrayTypeDriver.skipsToAlign(unalignedValuesOffset, requiredByteAlignment);
         final long valuesPtr = dataAddr + unalignedValuesOffset + toSkip;
-        final int flatLength = ArrayMeta.flatLength(shapePtr, shapeLength);
+        final int flatLength = ArrayMeta.flatLength(dataEntryPtr, shapeLength);
         final int valuesSize = ArrayMeta.calcRequiredValuesByteSize(columnType, flatLength);
         assert valuesPtr + valuesSize <= dataLim;
 
         view.of(
                 columnType,
-                shapePtr,
+                dataEntryPtr,
                 shapeLength,
                 strides.getAddress(),
                 (int) strides.size(),

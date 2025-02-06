@@ -46,8 +46,20 @@ public class O3Utils {
             int shl
     ) {
         final long fromAddress = srcAddr + (srcLo << shl);
+        o3Copy(ff, dstAddr, dstFixFileOffset, dstFd, fromAddress, len, mixedIOFlag);
+    }
+
+    public static void o3Copy(
+            FilesFacade ff,
+            long dstAddr,
+            long dstFileOffset,
+            long dstFd,
+            long fromAddress,
+            long len,
+            boolean mixedIOFlag
+    ) {
         if (mixedIOFlag) {
-            if (ff.write(Math.abs(dstFd), fromAddress, len, dstFixFileOffset) != len) {
+            if (ff.write(Math.abs(dstFd), fromAddress, len, dstFileOffset) != len) {
                 throw CairoException.critical(ff.errno()).put("cannot copy fixed column prefix [fd=")
                         .put(dstFd).put(", len=").put(len).put(", offset=").put(fromAddress).put(']');
             }

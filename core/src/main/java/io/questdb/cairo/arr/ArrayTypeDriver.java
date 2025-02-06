@@ -117,10 +117,11 @@ import org.jetbrains.annotations.Nullable;
  * </pre>
  */
 public class ArrayTypeDriver implements ColumnTypeDriver {
+    // ensure that writeArrayEntry appends correct amount of bytes, for the width
+    public static final int ARRAY_AUX_WIDTH_BYTES = 4 * Integer.BYTES;
     public static final int CRC16_SHIFT = 48;
     public static final ArrayTypeDriver INSTANCE = new ArrayTypeDriver();
     public static final long OFFSET_MAX = (1L << 48) - 1L;
-    private static final int ND_ARRAY_AUX_WIDTH_BYTES = 3 * Integer.BYTES;
     private static final long U32_MASK = 0xFFFFFFFFL;
 
     public static void appendValue(
@@ -196,7 +197,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     }
 
     public static long getAuxVectorOffsetStatic(long row) {
-        return ND_ARRAY_AUX_WIDTH_BYTES * row;
+        return ARRAY_AUX_WIDTH_BYTES * row;
     }
 
     public static long getIntAlignedLong(@NotNull MemoryR mem, long offset) {
@@ -231,7 +232,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
 
     @Override
     public long auxRowsToBytes(long rowCount) {
-        return ND_ARRAY_AUX_WIDTH_BYTES * rowCount;
+        return ARRAY_AUX_WIDTH_BYTES * rowCount;
     }
 
     @Override
@@ -281,8 +282,8 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
                 fd,
                 false,
                 fileName,
-                ND_ARRAY_AUX_WIDTH_BYTES * rowLo,
-                ND_ARRAY_AUX_WIDTH_BYTES * rowHi,
+                ARRAY_AUX_WIDTH_BYTES * rowLo,
+                ARRAY_AUX_WIDTH_BYTES * rowHi,
                 memoryTag,
                 opts
         );
@@ -302,11 +303,11 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     ) {
         long lo;
         if (rowLo > 0) {
-            lo = readDataOffset(auxMem, ND_ARRAY_AUX_WIDTH_BYTES * rowLo);
+            lo = readDataOffset(auxMem, ARRAY_AUX_WIDTH_BYTES * rowLo);
         } else {
             lo = 0;
         }
-        long hi = calcDataOffsetEnd(auxMem, ND_ARRAY_AUX_WIDTH_BYTES * (rowHi - 1));
+        long hi = calcDataOffsetEnd(auxMem, ARRAY_AUX_WIDTH_BYTES * (rowHi - 1));
         dataMem.ofOffset(
                 ff,
                 dataFd,
@@ -320,9 +321,8 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public long dedupMergeVarColumnSize(
-            long mergeIndexAddr, long mergeIndexCount, long srcDataFixAddr, long srcOooFixAddr
-    ) {
+    public long dedupMergeVarColumnSize(long mergeIndexAddr, long mergeIndexCount, long srcDataFixAddr, long srcOooFixAddr) {
+        // todo: impl
         throw new UnsupportedOperationException("nyi");
     }
 
@@ -333,7 +333,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
 
     @Override
     public long getAuxVectorSize(long storageRowCount) {
-        return ND_ARRAY_AUX_WIDTH_BYTES * storageRowCount;
+        return ARRAY_AUX_WIDTH_BYTES * storageRowCount;
     }
 
     @Override
@@ -343,7 +343,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
 
     @Override
     public long getDataVectorOffset(long auxMemAddr, long row) {
-        long auxEntry = auxMemAddr + ND_ARRAY_AUX_WIDTH_BYTES * row;
+        long auxEntry = auxMemAddr + ARRAY_AUX_WIDTH_BYTES * row;
         final long offset = readDataOffset(auxMemAddr);
         final int size = Unsafe.getUnsafe().getInt(auxEntry + Long.BYTES);
         assert size != 0;
@@ -363,7 +363,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
 
     @Override
     public long getDataVectorSizeAt(long auxMemAddr, long row) {
-        return calcDataOffsetEnd(auxMemAddr + (ND_ARRAY_AUX_WIDTH_BYTES * row));
+        return calcDataOffsetEnd(auxMemAddr + (ARRAY_AUX_WIDTH_BYTES * row));
     }
 
     @Override
@@ -378,25 +378,52 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
 
     @Override
     public void o3ColumnMerge(
-            long timestampMergeIndexAddr, long timestampMergeIndexCount, long srcAuxAddr1, long srcDataAddr1,
-            long srcAuxAddr2, long srcDataAddr2, long dstAuxAddr, long dstDataAddr, long dstDataOffset
+            long timestampMergeIndexAddr,
+            long timestampMergeIndexCount,
+            long srcAuxAddr1,
+            long srcDataAddr1,
+            long srcAuxAddr2,
+            long srcDataAddr2,
+            long dstAuxAddr,
+            long dstDataAddr,
+            long dstDataOffset
     ) {
+        // todo: impl
         throw new UnsupportedOperationException("nyi");
     }
 
     @Override
     public void o3copyAuxVector(
-            FilesFacade ff, long srcAddr, long srcLo, long srcHi, long dstAddr,
-            long dstFileOffset, long dstFd, boolean mixedIOFlag
+            FilesFacade ff,
+            long srcAddr,
+            long srcLo,
+            long srcHi,
+            long dstAddr,
+            long dstFileOffset,
+            long dstFd,
+            boolean mixedIOFlag
     ) {
-        throw new UnsupportedOperationException("nyi");
+        O3Utils.o3Copy(
+                ff,
+                dstAddr,
+                dstFileOffset,
+                dstFd,
+                srcAddr + (srcLo * ARRAY_AUX_WIDTH_BYTES),
+                (srcHi - srcLo + 1) * ARRAY_AUX_WIDTH_BYTES,
+                mixedIOFlag
+        );
     }
 
     @Override
     public void o3sort(
-            long sortedTimestampsAddr, long sortedTimestampsRowCount, MemoryCR srcDataMem,
-            MemoryCR srcAuxMem, MemoryCARW dstDataMem, MemoryCARW dstAuxMem
+            long sortedTimestampsAddr,
+            long sortedTimestampsRowCount,
+            MemoryCR srcDataMem,
+            MemoryCR srcAuxMem,
+            MemoryCARW dstDataMem,
+            MemoryCARW dstAuxMem
     ) {
+        // todo: impl
         throw new UnsupportedOperationException("nyi");
     }
 
@@ -408,11 +435,11 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         }
 
         // jump to the previous entry and calculate its data offset + data size
-        auxMem.jumpTo(ND_ARRAY_AUX_WIDTH_BYTES * (rowCount - 1));
+        auxMem.jumpTo(ARRAY_AUX_WIDTH_BYTES * (rowCount - 1));
         final long nextDataMemOffset = calcDataOffsetEnd(auxMem.getAppendAddress());
 
         // Jump to the end of file to correctly trim the file
-        auxMem.jumpTo(ND_ARRAY_AUX_WIDTH_BYTES * rowCount);
+        auxMem.jumpTo(ARRAY_AUX_WIDTH_BYTES * rowCount);
         return nextDataMemOffset;
     }
 
@@ -442,23 +469,25 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
 
     @Override
     public void setDataVectorEntriesToNull(long dataMemAddr, long rowCount) {
-        throw new UnsupportedOperationException("nyi");
+        // this is a no-op, NULLs do not occupy space in the data vector
     }
 
     @Override
     public void setFullAuxVectorNull(long auxMemAddr, long rowCount) {
+        // todo: impl
         throw new UnsupportedOperationException("nyi");
     }
 
     @Override
     public void setPartAuxVectorNull(long auxMemAddr, long initialOffset, long columnTop) {
+        // todo: impl
         throw new UnsupportedOperationException("nyi");
     }
 
     @Override
     public void shiftCopyAuxVector(long shift, long srcAddr, long srcLo, long srcHi, long dstAddr, long dstAddrSize) {
         // +1 since srcHi is inclusive
-        assert (srcHi - srcLo + 1) * ND_ARRAY_AUX_WIDTH_BYTES <= dstAddrSize;
+        assert (srcHi - srcLo + 1) * ARRAY_AUX_WIDTH_BYTES <= dstAddrSize;
         O3Utils.shiftCopyVarcharColumnAux(
                 shift,
                 srcAddr,
@@ -472,8 +501,9 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         assert auxMem != null;
         assert offset >= 0;
         assert offset < OFFSET_MAX;
-        putIntAlignedLong(auxMem, offset);
-        auxMem.putInt(0);  // zero-length array
+        auxMem.putLong(offset);
+        // size & padding
+        auxMem.putLong(0);
     }
 
     private static void appendNullImpl(MemoryA auxMem, MemoryA dataMem) {
@@ -485,18 +515,11 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         dataMem.zeroMem(skipsToAlign(dataMem.getAppendOffset(), byteAlignment));
     }
 
-    private static void putIntAlignedLong(MemoryA mem, long value) {
-        final int lower = (int) (value & U32_MASK);
-        final int upper = (int) (value >> 32);
-        mem.putInt(lower);
-        mem.putInt(upper);
-    }
-
     /**
      * Read the data offset from the aux entry that starts at the specified offset.
      */
     private static long readDataOffset(MemoryR auxMem, long offset) {
-        return getIntAlignedLong(auxMem, offset) & OFFSET_MAX;
+        return auxMem.getLong(offset) & OFFSET_MAX;
     }
 
     private static long readDataOffset(long address) {
@@ -508,8 +531,9 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         assert offset <= OFFSET_MAX;
         assert size >= 0;
         final long crcAndOffset = ((long) (short) 0 << CRC16_SHIFT) | offset;
-        putIntAlignedLong(auxMem, crcAndOffset);
+        auxMem.putLong(crcAndOffset);
         auxMem.putInt(size);
+        auxMem.putInt(0);
     }
 
     /**
@@ -534,7 +558,6 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     private static void writeShape(@NotNull MemoryA dataMem, @NotNull ArrayView arrayView) {
         assert dataMem.getAppendOffset() % Integer.BYTES == 0; // aligned integer write
         int dim = arrayView.getDim();
-        dataMem.putInt(dim);
         for (int i = 0; i < dim; ++i) {
             dataMem.putInt(arrayView.getDimLength(i));
         }
