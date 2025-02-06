@@ -54,11 +54,6 @@ import static io.questdb.griffin.model.IntervalUtils.parseFloorPartialTimestamp;
 
 
 public class MatViewTest extends AbstractCairoTest {
-    static {
-        // crc memory leak
-        Zip.init();
-    }
-
     @BeforeClass
     public static void setUpStatic() throws Exception {
         // override default to test copy
@@ -881,6 +876,13 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByNoFillNotKeyedAlignToCalendarTimezoneFixedFormat() throws Exception {
+        assertMemoryLeak(() -> {
+            testAlignToCalendarTimezoneOffset("GMT+01:00");
+        });
+    }
+
+    @Test
     @Ignore
     public void testSampleByNoFillNotKeyedAlignToCalendarTimezoneOct() throws Exception {
         // We are going over spring time change. Because time is "expanding" we don't have
@@ -957,22 +959,7 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testSampleByNoFillNotKeyedAlignToCalendarTimezoneOffset() throws Exception {
         assertMemoryLeak(() -> {
-            String viewName = "x_view";
-            String viewQuery = "select k, count() c from x sample by 90m align to calendar time zone 'PST' with offset '00:42'";
-            long startTs = 172800000000L;
-            long step = 300000000;
-            final int N = 100;
-            final int K = 5;
-            updateViewIncrementally(viewName, viewQuery, startTs, step, N, K);
-            String expected = "k\tc\n" +
-                    "1970-01-02T23:42:00.000000Z\t15\n" +
-                    "1970-01-03T01:12:00.000000Z\t18\n" +
-                    "1970-01-03T02:42:00.000000Z\t18\n" +
-                    "1970-01-03T04:12:00.000000Z\t18\n" +
-                    "1970-01-03T05:42:00.000000Z\t18\n" +
-                    "1970-01-03T07:12:00.000000Z\t13\n";
-            assertSql(expected, viewQuery);
-            assertSql(expected, viewName);
+            testAlignToCalendarTimezoneOffset("PST");
         });
     }
 
@@ -1259,16 +1246,35 @@ public class MatViewTest extends AbstractCairoTest {
         return out + " from (" + in + ")";
     }
 
-    private void testBaseTableInvalidateOnOperation(String operationSql) throws Exception {
-        testBaseTableInvalidateOnOperation(null, operationSql);
-    }
-
     private void refreshMatView() {
         drainWalQueue();
         try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
             refreshJob.run(0);
             drainWalQueue();
         }
+    }
+
+    private void testAlignToCalendarTimezoneOffset(final String timezone) throws SqlException {
+        String viewName = "x_view";
+        String viewQuery = "select k, count() c from x sample by 90m align to calendar time zone '" + timezone + "' with offset '00:42'";
+        long startTs = 172800000000L;
+        long step = 300000000;
+        final int N = 100;
+        final int K = 5;
+        updateViewIncrementally(viewName, viewQuery, startTs, step, N, K);
+        String expected = "k\tc\n" +
+                "1970-01-02T23:42:00.000000Z\t15\n" +
+                "1970-01-03T01:12:00.000000Z\t18\n" +
+                "1970-01-03T02:42:00.000000Z\t18\n" +
+                "1970-01-03T04:12:00.000000Z\t18\n" +
+                "1970-01-03T05:42:00.000000Z\t18\n" +
+                "1970-01-03T07:12:00.000000Z\t13\n";
+        assertSql(expected, viewQuery);
+        assertSql(expected, viewName);
+    }
+
+    private void testBaseTableInvalidateOnOperation(String operationSql) throws Exception {
+        testBaseTableInvalidateOnOperation(null, operationSql);
     }
 
     private void testBaseTableInvalidateOnOperation(
@@ -1316,14 +1322,6 @@ public class MatViewTest extends AbstractCairoTest {
         });
     }
 
-    private void updateViewIncrementally(String viewName, String viewQuery, long startTs, long step, int N, int K) throws SqlException {
-        updateViewIncrementally(viewName, viewQuery, " rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b,", startTs, step, N, K);
-    }
-
-    private void updateViewIncrementally(String viewName, String viewQuery, String columns, long startTs, long step, int N, int K) throws SqlException {
-        updateViewIncrementally(viewName, viewQuery, columns, null, startTs, step, N, K);
-    }
-
     private void testIncrementalRefresh0(String viewSql) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
         assertMemoryLeak(() -> {
@@ -1364,6 +1362,14 @@ public class MatViewTest extends AbstractCairoTest {
         });
     }
 
+    private void updateViewIncrementally(String viewName, String viewQuery, long startTs, long step, int N, int K) throws SqlException {
+        updateViewIncrementally(viewName, viewQuery, " rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b,", startTs, step, N, K);
+    }
+
+    private void updateViewIncrementally(String viewName, String viewQuery, String columns, long startTs, long step, int N, int K) throws SqlException {
+        updateViewIncrementally(viewName, viewQuery, columns, null, startTs, step, N, K);
+    }
+
     private void updateViewIncrementally(String viewName, String viewQuery, String columns, @Nullable String index, long startTs, long step, int N, int K) throws SqlException {
         Rnd rnd = new Rnd();
         int initSize = rnd.nextInt(N / K) + 1;
@@ -1396,6 +1402,11 @@ public class MatViewTest extends AbstractCairoTest {
         }
 
         Assert.assertEquals(0, remainingSize);
+    }
+
+    static {
+        // crc memory leak
+        Zip.init();
     }
 
 }

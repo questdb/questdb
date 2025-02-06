@@ -1948,12 +1948,6 @@ public final class TableUtils {
         offset += Vm.getStorageLength(baseTableName);
         final String baseTableNameStr = Chars.toString(baseTableName);
 
-        final long fromMicros = mem.getLong(offset);
-        offset += Long.BYTES;
-
-        final long toMicros = mem.getLong(offset);
-        offset += Long.BYTES;
-
         final long samplingInterval = mem.getLong(offset);
         offset += Long.BYTES;
 
@@ -1983,8 +1977,6 @@ public final class TableUtils {
                 baseTableNameStr,
                 samplingInterval,
                 samplingIntervalUnit,
-                fromMicros,
-                toMicros,
                 timeZoneStr,
                 timeZoneOffsetStr
         );

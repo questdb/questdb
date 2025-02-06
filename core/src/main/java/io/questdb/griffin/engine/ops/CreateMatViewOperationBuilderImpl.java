@@ -42,12 +42,10 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
     public static final ObjectFactory<CreateMatViewOperationBuilderImpl> FACTORY = CreateMatViewOperationBuilderImpl::new;
     private final CreateTableOperationBuilderImpl createTableOperationBuilder = new CreateTableOperationBuilderImpl();
     private String baseTableName;
-    private long fromMicros;
     private long samplingInterval;
     private char samplingIntervalUnit;
     private String timeZone;
     private String timeZoneOffset;
-    private long toMicros;
     private String viewSql;
 
     @Override
@@ -56,12 +54,10 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
         return new CreateMatViewOperationImpl(
                 createTableOperation,
                 baseTableName,
-                fromMicros,
                 samplingInterval,
                 samplingIntervalUnit,
                 timeZone,
                 timeZoneOffset,
-                toMicros,
                 viewSql
         );
     }
@@ -72,8 +68,6 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
         baseTableName = null;
         samplingInterval = -1;
         samplingIntervalUnit = '\0';
-        fromMicros = Long.MIN_VALUE;
-        toMicros = Long.MIN_VALUE;
         timeZone = null;
         timeZoneOffset = null;
         viewSql = null;
@@ -97,10 +91,6 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
         this.baseTableName = baseTableName;
     }
 
-    public void setFromMicros(long fromMicros) {
-        this.fromMicros = fromMicros;
-    }
-
     public void setSamplingInterval(long samplingInterval) {
         this.samplingInterval = samplingInterval;
     }
@@ -115,10 +105,6 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
 
     public void setTimeZoneOffset(String timeZoneOffset) {
         this.timeZoneOffset = timeZoneOffset;
-    }
-
-    public void setToMicros(long toMicros) {
-        this.toMicros = toMicros;
     }
 
     public void setViewSql(String viewSql) {

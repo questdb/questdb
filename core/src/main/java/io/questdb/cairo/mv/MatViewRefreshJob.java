@@ -129,7 +129,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             long minTs = txnRangeLoader.getMinTimestamp();
             long maxTs = txnRangeLoader.getMaxTimestamp();
 
-            if (minTs <= maxTs && minTs >= viewDefinition.getFromMicros()) {
+            if (minTs <= maxTs) {
                 // TODO(glasstiger): reuse the sampler instance
 
                 final TimestampSampler sampler = TimestampSamplerFactory.getInstance(

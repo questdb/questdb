@@ -38,34 +38,28 @@ import org.jetbrains.annotations.Nullable;
 public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final String baseTableName;
     private final CreateTableOperation createTableOperation;
-    private final long fromMicros;
     private final long samplingInterval;
     private final char samplingIntervalUnit;
     private final String timeZone;
     private final String timeZoneOffset;
-    private final long toMicros;
     private final String viewSql;
     private MatViewDefinition matViewDefinition;
 
     public CreateMatViewOperationImpl(
             CreateTableOperation createTableOperation,
             String baseTableName,
-            long fromMicros,
             long samplingInterval,
             char samplingIntervalUnit,
             String timeZone,
             String timeZoneOffset,
-            long toMicros,
             String viewSql
     ) {
         this.createTableOperation = createTableOperation;
         this.baseTableName = baseTableName;
-        this.fromMicros = fromMicros;
         this.samplingInterval = samplingInterval;
         this.samplingIntervalUnit = samplingIntervalUnit;
         this.timeZone = timeZone;
         this.timeZoneOffset = timeZoneOffset;
-        this.toMicros = toMicros;
         this.viewSql = viewSql;
     }
 
@@ -189,7 +183,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     public void init(TableToken tableToken) {
         matViewDefinition = new MatViewDefinition(
                 tableToken, viewSql, baseTableName, samplingInterval, samplingIntervalUnit,
-                fromMicros, toMicros, timeZone, timeZoneOffset
+                timeZone, timeZoneOffset
         );
     }
 
