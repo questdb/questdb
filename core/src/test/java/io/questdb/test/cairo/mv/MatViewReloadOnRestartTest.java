@@ -35,7 +35,6 @@ import io.questdb.cutlass.line.LineUdpSender;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.Zip;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.cutlass.http.SendAndReceiveRequestBuilder;
@@ -83,7 +82,8 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     refreshJob.run(0);
                     drainWalQueue(main1.getEngine());
 
-                    assertSql(main1,
+                    assertSql(
+                            main1,
                             "sym\tprice\tts\n" +
                                     "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
                                     "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
@@ -137,7 +137,8 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                                 "\r\n" +
                                 "2f\r\n" +
                                 "cannot modify materialized view [view=price_1h]\r\n" +
-                                "00\r\n");
+                                "00\r\n"
+                );
             }
         });
     }
@@ -167,7 +168,8 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     refreshJob.run(0);
                     drainWalQueue(main1.getEngine());
 
-                    assertSql(main1,
+                    assertSql(
+                            main1,
                             "sym\tprice\tts\n" +
                                     "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
                                     "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
@@ -254,7 +256,8 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     drainWalQueue(main1.getEngine());
                 }
 
-                assertSql(main1,
+                assertSql(
+                        main1,
                         "sym\tprice\tts\n" +
                                 "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
                                 "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
@@ -275,63 +278,6 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
             )) {
 
-                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main2.getEngine())) {
-                    refreshJob.run(0);
-                }
-
-                assertSql(
-                        main2,
-                        "count\n" +
-                                "0\n",
-                        "select count() from views();"
-                );
-            }
-        });
-    }
-
-    @Test
-    public void testMatViewsReloadOnServerStartMissingBaseTable() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain main1 = startWithEnvVariables0(
-                    PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
-                    PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
-            )) {
-                execute(main1, "create table base_price (" +
-                        "sym varchar, price double, ts timestamp" +
-                        ") timestamp(ts) partition by DAY WAL"
-                );
-
-                createMatView(main1, "price_1h", "select sym, last(price) as price, ts from base_price sample by 1h");
-
-                execute(main1, "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
-                        ",('gbpusd', 1.323, '2024-09-10T12:02')" +
-                        ",('jpyusd', 103.21, '2024-09-10T12:02')" +
-                        ",('gbpusd', 1.321, '2024-09-10T13:02')"
-                );
-                drainWalQueue(main1.getEngine());
-
-                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main1.getEngine())) {
-                    refreshJob.run(0);
-                    drainWalQueue(main1.getEngine());
-                }
-
-                assertSql(main1,
-                        "sym\tprice\tts\n" +
-                                "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                                "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
-                                "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
-                        "price_1h order by ts, sym"
-                );
-
-                // Drop base table.
-                execute(main1, "drop table base_price");
-            }
-
-            // The mat view should be skipped on server start.
-            try (final TestServerMain main2 = startWithEnvVariables0(
-                    PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
-                    PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
-            )) {
                 try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main2.getEngine())) {
                     refreshJob.run(0);
                 }
@@ -371,7 +317,8 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     refreshJob.run(0);
                     drainWalQueue(main1.getEngine());
 
-                    assertSql(main1,
+                    assertSql(
+                            main1,
                             "sym\tprice\tts\n" +
                                     "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
                                     "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
@@ -419,7 +366,8 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
 
                 assertSql(main2, "name\tinvalid\tlast_error\n" +
                                 "price_1h\tfalse\t\n",
-                        "select name, invalid, last_error from views()");
+                        "select name, invalid, last_error from views()"
+                );
             }
 
             try (final TestServerMain main3 = startWithEnvVariables0(
@@ -428,7 +376,66 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
             )) {
                 assertSql(main3, "name\tinvalid\tlast_error\n" +
                                 "price_1h\tfalse\t\n",
-                        "select name, invalid, last_error from views()");
+                        "select name, invalid, last_error from views()"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testMatViewsReloadOnServerStartMissingBaseTable() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain main1 = startWithEnvVariables0(
+                    PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
+                    PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
+            )) {
+                execute(main1, "create table base_price (" +
+                        "sym varchar, price double, ts timestamp" +
+                        ") timestamp(ts) partition by DAY WAL"
+                );
+
+                createMatView(main1, "price_1h", "select sym, last(price) as price, ts from base_price sample by 1h");
+
+                execute(main1, "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                        ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                        ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                        ",('gbpusd', 1.321, '2024-09-10T13:02')"
+                );
+                drainWalQueue(main1.getEngine());
+
+                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main1.getEngine())) {
+                    refreshJob.run(0);
+                    drainWalQueue(main1.getEngine());
+                }
+
+                assertSql(
+                        main1,
+                        "sym\tprice\tts\n" +
+                                "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                                "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
+                        "price_1h order by ts, sym"
+                );
+
+                // Drop base table.
+                execute(main1, "drop table base_price");
+            }
+
+            // The mat view should be skipped on server start.
+            try (final TestServerMain main2 = startWithEnvVariables0(
+                    PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
+                    PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
+            )) {
+                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main2.getEngine())) {
+                    refreshJob.run(0);
+                }
+
+                assertSql(
+                        main2,
+                        "count\n" +
+                                "0\n",
+                        "select count() from views();"
+                );
             }
         });
     }
@@ -495,7 +502,8 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 return new LineUdpSender(NetworkFacadeImpl.INSTANCE,
                         0,
                         Net.parseIPv4("127.0.0.1"),
-                        ILP_PORT, 200, 1);
+                        ILP_PORT, 200, 1
+                );
             case TCP:
                 return Sender.builder(Sender.Transport.TCP)
                         .address("localhost")
@@ -513,9 +521,5 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
         HTTP,
         UDP,
         TCP
-    }
-
-    static {
-        Zip.init();
     }
 }

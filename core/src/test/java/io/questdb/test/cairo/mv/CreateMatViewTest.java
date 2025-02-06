@@ -40,7 +40,6 @@ import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
-import io.questdb.std.Zip;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
@@ -51,9 +50,6 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-import java.text.ParseException;
-import java.text.SimpleDateFormat;
-import java.util.TimeZone;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -68,7 +64,6 @@ public class CreateMatViewTest extends AbstractCairoTest {
     public static void setUpStatic() throws Exception {
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
         AbstractCairoTest.setUpStatic();
-        Zip.init();
     }
 
     @Before
@@ -850,12 +845,6 @@ public class CreateMatViewTest extends AbstractCairoTest {
         for (int i = 0; i < 9; i++) {
             execute("insert into " + tableName + " values (" + (i * 10000000) + ", 'k" + i + "', " + i + ")");
         }
-    }
-
-    private long parseAsMicros(String date) throws ParseException {
-        final SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
-        sdf.setTimeZone(TimeZone.getTimeZone("UTC"));
-        return sdf.parse(date).getTime() * 1000;
     }
 
     private void testCreateMatViewNonDeterministicFunction(String func, String columnName) throws Exception {

@@ -35,7 +35,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
 import io.questdb.std.Rnd;
-import io.questdb.std.Zip;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -777,17 +776,13 @@ public class MatViewTest extends AbstractCairoTest {
                     ",('gbpusd', 1.328, '2024-10-28T01:00')"
             );
             drainWalQueue();
-            String exp2 = "sym\tfirst\tlast\tts\tberlin\n" +
+            String exp = "sym\tfirst\tlast\tts\tberlin\n" +
                     "gbpusd\t1.32\t1.321\t2024-10-25T22:00:00.000000Z\t2024-10-26T00:00:00.000000Z\n" +
                     "gbpusd\t1.325\t1.326\t2024-10-27T00:00:00.000000Z\t2024-10-27T02:00:00.000000Z\n" +
                     "gbpusd\t1.327\t1.328\t2024-10-27T23:00:00.000000Z\t2024-10-28T00:00:00.000000Z\n";
 
-            String exp = "sym\tfirst\tlast\tts\tberlin\n" +
-                    "gbpusd\t1.32\t1.321\t2024-10-25T22:00:00.000000Z\t2024-10-26T00:00:00.000000Z\n" +
-                    "gbpusd\t1.324\t1.326\t2024-10-26T22:00:00.000000Z\t2024-10-27T00:00:00.000000Z\n" +
-                    "gbpusd\t1.327\t1.328\t2024-10-27T23:00:00.000000Z\t2024-10-28T00:00:00.000000Z\n";
-
-            assertSql(exp2,
+            assertSql(
+                    exp,
                     "select sym, first(price) as first, last(price) as last, count() count, ts from base_price" +
                             " sample by 1d ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' order by ts, sym"
             );
@@ -1403,10 +1398,4 @@ public class MatViewTest extends AbstractCairoTest {
 
         Assert.assertEquals(0, remainingSize);
     }
-
-    static {
-        // crc memory leak
-        Zip.init();
-    }
-
 }

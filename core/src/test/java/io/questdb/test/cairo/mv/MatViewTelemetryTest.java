@@ -29,7 +29,6 @@ import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.NumericException;
-import io.questdb.std.Zip;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
@@ -47,7 +46,6 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
         // needed for static engine instance
         setProperty(CAIRO_MAT_VIEW_ENABLED, "true");
         AbstractCairoTest.setUpStatic();
-        Zip.init();
     }
 
     @Before
