@@ -211,7 +211,7 @@ public class ArrayViewImpl implements ArrayView {
         boolean complete = false;
         try {
             if (!ColumnType.isArray(type)) {
-                throw new AssertionError("type class is not ArrayView: " + type);
+                throw new AssertionError("type class is not ARRAY: " + type);
             }
             if (shapeLength != stridesLength) {
                 throw new AssertionError("shapeLength != stridesLength");
