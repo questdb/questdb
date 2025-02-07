@@ -1645,10 +1645,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             return;
         }
 
-        int ndims = arrayView.getDimCount();
+        int nDims = arrayView.getDimCount();
         int totalElements = 1;
-        for (int i = 0; i < ndims; i++) {
-            totalElements *= arrayView.getDimSize(i);
+        for (int i = 0; i < nDims; i++) {
+            totalElements *= arrayView.getDimLen(i);
         }
 
         int typeTag = ColumnType.decodeArrayElementType(columnType);
@@ -1656,13 +1656,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
         // array header
         long sizePtr = utf8Sink.skipInt();
-        utf8Sink.putNetworkInt(ndims);
+        utf8Sink.putNetworkInt(nDims);
         long hasNullPtr = utf8Sink.skipInt();
         utf8Sink.putNetworkInt(componentTypeOid);
 
         // Write dimension information
-        for (int i = 0; i < ndims; i++) {
-            utf8Sink.putNetworkInt(arrayView.getDimSize(i)); // length of each dimension
+        for (int i = 0; i < nDims; i++) {
+            utf8Sink.putNetworkInt(arrayView.getDimLen(i)); // length of each dimension
             utf8Sink.putNetworkInt(1); // lower bound, always 1 in PostgreSQL
         }
 

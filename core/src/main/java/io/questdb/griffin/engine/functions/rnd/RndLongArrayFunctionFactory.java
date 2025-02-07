@@ -93,7 +93,7 @@ public class RndLongArrayFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public int getDimSize(int dim) {
+        public int getDimLen(int dim) {
             return shape[dim];
         }
 

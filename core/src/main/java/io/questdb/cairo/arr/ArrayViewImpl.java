@@ -95,8 +95,8 @@ public class ArrayViewImpl implements ArrayView {
     }
 
     @Override
-    public int getDimSize(int dim) {
-        return shape.getDimSize(dim);
+    public int getDimLen(int dim) {
+        return shape.getDimLen(dim);
     }
 
     public double getDouble(DirectIntSlice coordinates) {
