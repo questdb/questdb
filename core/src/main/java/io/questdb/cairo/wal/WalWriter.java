@@ -46,8 +46,8 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.VarcharTypeDriver;
-import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -2174,6 +2174,16 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
+        public void putArray(int columnIndex, ArrayView arrayView) {
+            ArrayTypeDriver.appendValue(
+                    getSecondaryColumn(columnIndex),
+                    getPrimaryColumn(columnIndex),
+                    arrayView
+            );
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
         public void putBin(int columnIndex, long address, long len) {
             getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putBin(address, len));
             setRowValueNotNull(columnIndex);
@@ -2296,16 +2306,6 @@ public class WalWriter implements TableWriterAPI {
         @Override
         public void putLong256Utf8(int columnIndex, DirectUtf8Sequence hexString) {
             getPrimaryColumn(columnIndex).putLong256Utf8(hexString);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putArray(int columnIndex, ArrayView array) {
-            ArrayTypeDriver.appendValue(
-                    getSecondaryColumn(columnIndex),
-                    getPrimaryColumn(columnIndex),
-                    array
-            );
             setRowValueNotNull(columnIndex);
         }
 

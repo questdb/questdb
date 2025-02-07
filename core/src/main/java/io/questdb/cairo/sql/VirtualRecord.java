@@ -43,6 +43,11 @@ public class VirtualRecord implements ColumnTypes, Record {
         this.columnCount = functions.size();
     }
 
+    @Override
+    public ArrayView getArray(int col, int columnType) {
+        return getFunction(col).getArray(base);
+    }
+
     public Record getBaseRecord() {
         return base;
     }
@@ -169,11 +174,6 @@ public class VirtualRecord implements ColumnTypes, Record {
     @Override
     public Record getRecord(int col) {
         return getFunction(col).getRecord(base);
-    }
-
-    @Override
-    public ArrayView getArray(int col, int columnType) {
-        return getFunction(col).getArray(base);
     }
 
     @Override

@@ -32,6 +32,8 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.cairo.arr.ArrayTypeDriver.bytesToSkipForAlignment;
+
 public class ArrayMmapBuffer implements QuietCloseable {
     private final DirectIntList strides = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY_DBG3);
     private final ArrayViewImpl view = new ArrayViewImpl();
@@ -74,14 +76,14 @@ public class ArrayMmapBuffer implements QuietCloseable {
         assert (dataEntryPtr + Byte.BYTES) <= dataLim;
         final int shapeLength = ColumnType.decodeArrayDimensionality(columnType);
         assert (dataEntryPtr + shapeLength * Byte.BYTES) <= dataLim;
-        ArrayMeta.setDefaultStrides(dataEntryPtr, shapeLength, strides);
+        ArrayMeta.determineDefaultStrides(dataEntryPtr, shapeLength, strides);
 
         // Obtain the values ptr / len from the data.
         final int bitWidth = 1 << ColumnType.decodeArrayElementTypePrecision(columnType);
         final int requiredByteAlignment = Math.max(1, bitWidth / 8);
         final long unalignedValuesOffset = offset + ((long) (shapeLength) * Integer.BYTES);
-        final long toSkip = ArrayTypeDriver.skipsToAlign(unalignedValuesOffset, requiredByteAlignment);
-        final long valuesPtr = dataAddr + unalignedValuesOffset + toSkip;
+        final long bytesToSkipForAlignment = bytesToSkipForAlignment(unalignedValuesOffset, requiredByteAlignment);
+        final long valuesPtr = dataAddr + unalignedValuesOffset + bytesToSkipForAlignment;
         final int flatLength = ArrayMeta.flatLength(dataEntryPtr, shapeLength);
         final int valuesSize = ArrayMeta.calcRequiredValuesByteSize(columnType, flatLength);
         assert valuesPtr + valuesSize <= dataLim;

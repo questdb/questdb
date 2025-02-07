@@ -173,9 +173,9 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             char bracketHi
     ) {
         sink.putAscii(bracketLo);
-        int count = arrayView.getDimLength(dim); // Number of elements or subarrays at this dimension.
+        int count = arrayView.getDimSize(dim); // Number of elements or sub-arrays at this dimension.
         for (int i = 0; i < count; i++) {
-            if (dim == arrayView.getDim() - 1) {
+            if (dim == arrayView.getDimCount() - 1) {
                 // If we're at the last dimension, append the flat array element.
                 valueAppender.appendFromIndex(arrayView, sink, currentIndex);
                 currentIndex++; // Move to the next element in the flat array.
@@ -192,14 +192,21 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         return currentIndex;
     }
 
-    public static long getAuxVectorOffsetStatic(long row) {
-        return ARRAY_AUX_WIDTH_BYTES * row;
+    /**
+     * Determine the number of bytes to skip in order to get to the next aligned address/offset.
+     */
+    public static int bytesToSkipForAlignment(long unaligned, int byteAlignment) {
+        final int pastBy = (int) (unaligned % byteAlignment);
+        if (pastBy == 0) {
+            return 0;
+        }
+
+        // The number of bytes to skip is the complement of how many we're past by.
+        return byteAlignment - pastBy;
     }
 
-    public static long getIntAlignedLong(@NotNull MemoryR mem, long offset) {
-        final int lower = mem.getInt(offset);
-        final int upper = mem.getInt(offset + Integer.BYTES);
-        return ((long) upper << 32) | (lower & U32_MASK);
+    public static long getAuxVectorOffsetStatic(long row) {
+        return ARRAY_AUX_WIDTH_BYTES * row;
     }
 
     public static long getIntAlignedLong(long address) {
@@ -208,17 +215,10 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         return ((long) upper << 32) | (lower & U32_MASK);
     }
 
-    /**
-     * Number of bytes to skip to find the next aligned address/offset.
-     */
-    public static int skipsToAlign(long unaligned, int byteAlignment) {
-        final int pastBy = (int) (unaligned % byteAlignment);
-        if (pastBy == 0) {
-            return 0;
-        }
-
-        // The number of bytes to skip is the complement of how many we're past by.
-        return byteAlignment - pastBy;
+    public static long getIntAlignedLong(@NotNull MemoryR mem, long offset) {
+        final int lower = mem.getInt(offset);
+        final int upper = mem.getInt(offset + Integer.BYTES);
+        return ((long) upper << 32) | (lower & U32_MASK);
     }
 
     @Override
@@ -537,7 +537,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     }
 
     private static void padTo(@NotNull MemoryA dataMem, int byteAlignment) {
-        dataMem.zeroMem(skipsToAlign(dataMem.getAppendOffset(), byteAlignment));
+        dataMem.zeroMem(bytesToSkipForAlignment(dataMem.getAppendOffset(), byteAlignment));
     }
 
     /**
@@ -596,7 +596,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         final int bitWidth = 1 << ColumnType.decodeArrayElementTypePrecision(arrayView.getType());
         final int requiredByteAlignment = (bitWidth + 7) / 8;
         padTo(dataMem, requiredByteAlignment);
-        arrayView.appendRowMajor(dataMem);
+        arrayView.appendWithDefaultStrides(dataMem);
         // We pad at the end, ready for the next entry that starts with an int.
         padTo(dataMem, Integer.BYTES);
     }
@@ -606,9 +606,9 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
      */
     private static void writeShape(@NotNull MemoryA dataMem, @NotNull ArrayView arrayView) {
         assert dataMem.getAppendOffset() % Integer.BYTES == 0; // aligned integer write
-        int dim = arrayView.getDim();
+        int dim = arrayView.getDimCount();
         for (int i = 0; i < dim; ++i) {
-            dataMem.putInt(arrayView.getDimLength(i));
+            dataMem.putInt(arrayView.getDimSize(i));
         }
     }
 

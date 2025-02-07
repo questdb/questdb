@@ -87,29 +87,29 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void appendRowMajor(MemoryA mem) {
+        public void appendWithDefaultStrides(MemoryA mem) {
             for (int i = 0; i < size; i++) {
                 mem.putDouble(values[i]);
             }
         }
 
         @Override
-        public int getDim() {
+        public int getDimCount() {
             return dimensionCount;
         }
 
         @Override
-        public int getDimLength(int dim) {
+        public int getDimSize(int dim) {
             return shape[dim];
         }
 
         @Override
-        public double getDoubleFromRowMajor(int flatIndex) {
+        public double getDoubleAssumingDefaultStrides(int flatIndex) {
             return values[flatIndex];
         }
 
         @Override
-        public long getLongFromRowMajor(int flatIndex) {
+        public long getLongAssumingDefaultStrides(int flatIndex) {
             throw new UnsupportedOperationException();
         }
 

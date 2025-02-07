@@ -62,6 +62,9 @@ public interface Record {
         return sink;
     };
 
+    default ArrayView getArray(int col, int columnType) {
+        throw new UnsupportedOperationException();
+    }
 
     /**
      * Gets the value of a binary column by index
@@ -122,7 +125,6 @@ public interface Record {
     default long getDate(int col) {
         return getLong(col);
     }
-
 
     /**
      * Gets the value of a double column by index
@@ -459,10 +461,6 @@ public interface Record {
      * @return size of the varchar value or {@link TableUtils#NULL_LEN} in case of NULL
      */
     default int getVarcharSize(int col) {
-        throw new UnsupportedOperationException();
-    }
-
-    default ArrayView getArray(int col, int columnType) {
         throw new UnsupportedOperationException();
     }
 

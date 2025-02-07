@@ -26,7 +26,7 @@ package io.questdb.cairo.arr;
 
 public interface ArrayShape {
 
-    int getDimensionCount();
+    int getDimCount();
 
-    int getLength(int dimension);
+    int getDimSize(int dimension);
 }

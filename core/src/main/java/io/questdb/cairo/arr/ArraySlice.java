@@ -28,11 +28,11 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.bytes.DirectSequence;
 
 /**
- * A flyweight to an immutable byte sequence containing flattened Array values.
+ * A flyweight to an immutable byte sequence containing flattened ArrayView values.
  * <p><strong>IMPORTANT</strong>: The values are accessed by element index,
  * not by address offset.</p>
  */
-public class ArrayValuesSlice implements DirectSequence {
+public class ArraySlice implements DirectSequence {
     private long ptr = 0;
     private int size = 0;
 
@@ -91,7 +91,7 @@ public class ArrayValuesSlice implements DirectSequence {
         return Unsafe.getUnsafe().getShort(addr);
     }
 
-    public ArrayValuesSlice of(long ptr, int size) {
+    public ArraySlice of(long ptr, int size) {
         assert ptr > 0;
         assert size > 0;
         this.ptr = ptr;

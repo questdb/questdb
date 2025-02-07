@@ -30,20 +30,20 @@ import io.questdb.std.CRC16XModem;
 import io.questdb.std.DirectIntSlice;
 
 /**
- * A view over an immutable N-dimensional Array.
+ * A view over an immutable N-dimensional array.
  * This is a flyweight object.
  */
 public class ArrayViewImpl implements ArrayView {
     private final DirectIntSlice shape = new DirectIntSlice();
     private final DirectIntSlice strides = new DirectIntSlice();
-    private final ArrayValuesSlice values = new ArrayValuesSlice();
+    private final ArraySlice values = new ArraySlice();
     int valuesOffset = 0;
     private volatile short crc;
     // Encoded array type, contains element type class, type precision, and dimensionality
     private int type = ColumnType.UNDEFINED;
 
     @Override
-    public void appendRowMajor(MemoryA mem) {
+    public void appendWithDefaultStrides(MemoryA mem) {
         mem.putBlockOfBytes(values.ptr(), values.size());
     }
 
@@ -90,13 +90,13 @@ public class ArrayViewImpl implements ArrayView {
     }
 
     @Override
-    public int getDim() {
-        return shape.getDimensionCount();
+    public int getDimCount() {
+        return shape.getDimCount();
     }
 
     @Override
-    public int getDimLength(int dim) {
-        return shape.getLength(dim);
+    public int getDimSize(int dim) {
+        return shape.getDimSize(dim);
     }
 
     public double getDouble(DirectIntSlice coordinates) {
@@ -104,7 +104,7 @@ public class ArrayViewImpl implements ArrayView {
     }
 
     @Override
-    public double getDoubleFromRowMajor(int flatIndex) {
+    public double getDoubleAssumingDefaultStrides(int flatIndex) {
         return values.getDouble(flatIndex);
     }
 
@@ -121,7 +121,7 @@ public class ArrayViewImpl implements ArrayView {
     }
 
     @Override
-    public long getLongFromRowMajor(int flatIndex) {
+    public long getLongAssumingDefaultStrides(int flatIndex) {
         return values.getLong(flatIndex);
     }
 
@@ -162,7 +162,7 @@ public class ArrayViewImpl implements ArrayView {
      * with the numbers <code>[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4]</code>.</p>
      * <p><strong>IMPORTANT</strong>: The number of elements</p>
      */
-    public ArrayValuesSlice getValues() {
+    public ArraySlice getValues() {
         return values;
     }
 
@@ -211,7 +211,7 @@ public class ArrayViewImpl implements ArrayView {
         boolean complete = false;
         try {
             if (!ColumnType.isArray(type)) {
-                throw new AssertionError("type class is not Array: " + type);
+                throw new AssertionError("type class is not ArrayView: " + type);
             }
             if (shapeLength != stridesLength) {
                 throw new AssertionError("shapeLength != stridesLength");

@@ -28,22 +28,22 @@ import io.questdb.cairo.vm.api.MemoryA;
 
 public interface ArrayView {
 
-    void appendRowMajor(MemoryA mem);
+    void appendWithDefaultStrides(MemoryA mem);
 
-    int getDim();
+    int getDimCount();
 
-    int getDimLength(int dim);
+    int getDimSize(int dim);
 
     default double getDouble1D(int x) {
-        return getDoubleFromRowMajor(getValuesOffset() + x);
+        return getDoubleAssumingDefaultStrides(getValuesOffset() + x);
     }
 
     default double getDouble2D(int x, int y) {
-        return getDoubleFromRowMajor(getValuesOffset() + x * getStride(0) + y);
+        return getDoubleAssumingDefaultStrides(getValuesOffset() + x * getStride(0) + y);
     }
 
     default double getDouble3D(int x, int y, int z) {
-        return getDoubleFromRowMajor(getValuesOffset() + x * getStride(0) + y * getStride(1) + z);
+        return getDoubleAssumingDefaultStrides(getValuesOffset() + x * getStride(0) + y * getStride(1) + z);
     }
 
     /**
@@ -52,7 +52,7 @@ public interface ArrayView {
      * @param flatIndex flat index into the flat array
      * @return double value from the array
      */
-    double getDoubleFromRowMajor(int flatIndex);
+    double getDoubleAssumingDefaultStrides(int flatIndex);
 
     /**
      * Raw access into flat array with row major layout.
@@ -60,8 +60,11 @@ public interface ArrayView {
      * @param flatIndex flat index into the flat array
      * @return long value from the array
      */
-    long getLongFromRowMajor(int flatIndex);
+    long getLongAssumingDefaultStrides(int flatIndex);
 
+    /**
+     * Returns the total number of items in this array.
+     */
     int getSize();
 
     int getStride(int dimension);
