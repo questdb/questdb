@@ -318,14 +318,13 @@ void MULTI_VERSION_NAME (merge_copy_array_column)(
 ) {
     int64_t *src_fix[] = {src_ooo_fix, src_data_fix};
     char *src_var[] = {src_ooo_var, src_data_var};
-    const int64_t OFFSET_MAX = (1LL << 48) - 1L;
 
     for (int64_t l = 0; l < merge_index_size; l++) {
         const uint64_t row = merge_index[l].i;
         const uint32_t bit = (row >> 63);
         const uint64_t rr = row & ~(1ull << 63);
         const int64_t offset = src_fix[bit][rr * 2] & OFFSET_MAX;
-        uint32_t size = static_cast<int>(src_fix[bit][rr * 2 + 1] & 0xFFFFFFFFLL);
+        uint32_t size = static_cast<int>(src_fix[bit][rr * 2 + 1] & ARRAY_SIZE_MAX);
 
         const auto relocated_var_offset = dst_var_offset & OFFSET_MAX;
         if (size > 0) {

@@ -756,7 +756,7 @@ Java_io_questdb_std_Vect_dedupMergeArrayColumnSize(JNIEnv *env, jclass cl,
         const uint32_t bit = (row >> 63);
         const uint64_t rr = row & ~(1ull << 63);
         // add up non-zero array sizes
-        dst_var_offset += std::max(0LL, src_fix[bit][rr * 2 + 1] & 0xFFFFFFFFLL);
+        dst_var_offset += std::max(0LL, src_fix[bit][rr * 2 + 1] & ARRAY_SIZE_MAX);
     }
     return dst_var_offset;
 }

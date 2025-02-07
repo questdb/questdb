@@ -1300,14 +1300,13 @@ Java_io_questdb_std_Vect_sortArrayColumn(JNIEnv *env, jclass cl, jlong mergedTim
     const auto *src_aux = reinterpret_cast<const int64_t *>(srcAuxAddr);
     char *tgt_data = reinterpret_cast<char *>(tgtDataAddr);
     auto *tgt_aux = reinterpret_cast<int64_t *>(tgtAuxAddr);
-    const int64_t OFFSET_MAX = (1LL << 48) - 1L;
 
     int64_t offset = 0;
     for (int64_t i = 0; i < count; ++i) {
         MM_PREFETCH_T0(index + i + 64);
         const uint64_t row = index[i].i;
         const int64_t src_offset = src_aux[2 * row] & OFFSET_MAX;
-        const int64_t size = src_aux[2 * row + 1] & 0xFFFFFFFFLL;
+        const int64_t size = src_aux[2 * row + 1] & ARRAY_SIZE_MAX;
         tgt_aux[2 * i] = offset;
         tgt_aux[2 * i + 1] = size;
         if (size > 0) {
