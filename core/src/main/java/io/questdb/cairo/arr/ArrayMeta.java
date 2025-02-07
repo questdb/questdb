@@ -62,6 +62,34 @@ public class ArrayMeta {  // TODO(amunra): Rename to `ArrayMetaUtils`.
         return elementsCount << ColumnType.decodeArrayElementTypePrecision(type);
     }
 
+    public static void determineDefaultStrides(long shapePtr, int shapeLength, @NotNull DirectIntList stridesOut) {
+        stridesOut.clear();
+        if (shapeLength == 0) {
+            return;
+        }
+        if (stridesOut.getCapacity() < shapeLength) {
+            stridesOut.setCapacity(shapeLength);
+        }
+        for (int dimIndex = 0; dimIndex < shapeLength; dimIndex++) {
+            stridesOut.add(0);
+        }
+        int stride = 1;
+        for (int dimIndex = shapeLength - 1; dimIndex >= 0; --dimIndex) {
+            stridesOut.set(dimIndex, stride);
+            final long dimSizeAddr = shapePtr + ((long) dimIndex * Integer.BYTES);
+            final int dimSize = Unsafe.getUnsafe().getInt(dimSizeAddr);
+            stride *= dimSize;
+        }
+    }
+
+    /**
+     * Set the list to the default strides for a row-major vector of the specified dimensions.
+     * <p>The strides are expressed in element space (not byte space).</p>
+     */
+    public static void determineDefaultStrides(@NotNull DirectIntSlice shape, @NotNull DirectIntList strides) {
+        determineDefaultStrides(shape.ptr(), shape.length(), strides);
+    }
+
     /**
      * The product of all the shape's dimensions.
      * <p>This returns the number of elements contained in the values
@@ -99,34 +127,6 @@ public class ArrayMeta {  // TODO(amunra): Rename to `ArrayMetaUtils`.
             expected *= shape.get(dimIndex);
         }
         return true;
-    }
-
-    public static void setDefaultStrides(long shapePtr, int shapeLength, @NotNull DirectIntList strides) {
-        strides.clear();
-        if (shapeLength == 0) {
-            return;
-        }
-        if (strides.getCapacity() < shapeLength) {
-            strides.setCapacity(shapeLength);
-        }
-        for (int dimIndex = 0; dimIndex < shapeLength; dimIndex++) {
-            strides.add(0);
-        }
-        int stride = 1;
-        for (int dimIndex = shapeLength - 1; dimIndex >= 0; --dimIndex) {
-            strides.set(dimIndex, stride);
-            final long dimAddr = shapePtr + ((long) dimIndex * Integer.BYTES);
-            final int dim = Unsafe.getUnsafe().getInt(dimAddr);
-            stride *= dim;
-        }
-    }
-
-    /**
-     * Set the list to the default strides for a row-major vector of the specified dimensions.
-     * <p>The strides are expressed in element space (not byte space).</p>
-     */
-    public static void setDefaultStrides(@NotNull DirectIntSlice shape, @NotNull DirectIntList strides) {
-        setDefaultStrides(shape.ptr(), shape.length(), strides);
     }
 
     /**

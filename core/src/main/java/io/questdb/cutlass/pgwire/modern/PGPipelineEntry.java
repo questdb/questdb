@@ -32,8 +32,8 @@ import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
-import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
@@ -1645,10 +1645,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             return;
         }
 
-        int ndims = arrayView.getDim();
+        int ndims = arrayView.getDimCount();
         int totalElements = 1;
         for (int i = 0; i < ndims; i++) {
-            totalElements *= arrayView.getDimLength(i);
+            totalElements *= arrayView.getDimSize(i);
         }
 
         int typeTag = ColumnType.decodeArrayElementType(columnType);
@@ -1662,7 +1662,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
         // Write dimension information
         for (int i = 0; i < ndims; i++) {
-            utf8Sink.putNetworkInt(arrayView.getDimLength(i)); // length of each dimension
+            utf8Sink.putNetworkInt(arrayView.getDimSize(i)); // length of each dimension
             utf8Sink.putNetworkInt(1); // lower bound, always 1 in PostgreSQL
         }
 
@@ -1674,7 +1674,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 // Write array elements in row-major order, which is native to both
                 // PostgreSQL wire protocol and our ArrayView
                 for (int i = 0; i < totalElements; i++) {
-                    double d = arrayView.getDoubleFromRowMajor(i);
+                    double d = arrayView.getDoubleAssumingDefaultStrides(i);
                     if (Numbers.isNull(d)) {
                         hasNulls = true;
                         utf8Sink.setNullValue();
@@ -1686,7 +1686,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 break;
             case ColumnType.LONG:
                 for (int i = 0; i < totalElements; i++) {
-                    long l = arrayView.getLongFromRowMajor(i);
+                    long l = arrayView.getLongAssumingDefaultStrides(i);
                     if (l == Numbers.LONG_NULL) {
                         hasNulls = true;
                         utf8Sink.setNullValue();

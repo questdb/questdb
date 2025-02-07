@@ -60,6 +60,7 @@ import org.jetbrains.annotations.Nullable;
 public class PageFrameMemoryRecord implements Record, StableStringSource, QuietCloseable, Mutable {
     public static final byte RECORD_A_LETTER = 0;
     public static final byte RECORD_B_LETTER = 1;
+    private final ObjList<ArrayMmapBuffer> arrayBuffers = new ObjList<>();
     private final ObjList<MemoryCR.ByteSequenceView> bsViews = new ObjList<>();
     private final ObjList<DirectString> csViewsA = new ObjList<>();
     private final ObjList<DirectString> csViewsB = new ObjList<>();
@@ -68,7 +69,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     private final byte letter;
     private final ObjList<Long256Impl> longs256A = new ObjList<>();
     private final ObjList<Long256Impl> longs256B = new ObjList<>();
-    private final ObjList<ArrayMmapBuffer> arrayBuffers = new ObjList<>();
     private final ObjList<SymbolTable> symbolTableCache = new ObjList<>();
     private final ObjList<Utf8SplitString> utf8ViewsA = new ObjList<>();
     private final ObjList<Utf8SplitString> utf8ViewsB = new ObjList<>();
@@ -118,6 +118,24 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         Misc.freeObjList(arrayBuffers);
         symbolTableCache.clear();
         clear();
+    }
+
+    public ArrayView getArray(int columnIndex, int columnType) {
+        final long auxPageAddress = auxPageAddresses.getQuick(columnIndex);
+        if (auxPageAddress != 0) {
+            final long auxPageLim = auxPageAddress + auxPageSizes.getQuick(columnIndex);
+            final long dataPageAddress = pageAddresses.getQuick(columnIndex);
+            final long dataPageLim = dataPageAddress + pageSizes.getQuick(columnIndex);
+            final ArrayMmapBuffer buffer = ensureArrayMmapBuffer(arrayBuffers, columnIndex);
+            return buffer.of(
+                    columnType,
+                    auxPageAddress,
+                    auxPageLim,
+                    dataPageAddress,
+                    dataPageLim,
+                    rowIndex).getView();
+        }
+        return null;
     }
 
     @Override
@@ -331,22 +349,9 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return long256;
     }
 
-    public ArrayView getArray(int columnIndex, int columnType) {
-        final long auxPageAddress = auxPageAddresses.getQuick(columnIndex);
-        if (auxPageAddress != 0) {
-            final long auxPageLim = auxPageAddress + auxPageSizes.getQuick(columnIndex);
-            final long dataPageAddress = pageAddresses.getQuick(columnIndex);
-            final long dataPageLim = dataPageAddress + pageSizes.getQuick(columnIndex);
-            final ArrayMmapBuffer buffer = ensureArrayMmapBuffer(arrayBuffers, columnIndex);
-            return buffer.of(
-                    columnType,
-                    auxPageAddress,
-                    auxPageLim,
-                    dataPageAddress,
-                    dataPageLim,
-                    rowIndex).getView();
-        }
-        return null;
+    @Override
+    public long getLongIPv4(int columnIndex) {
+        return Numbers.ipv4ToLong(getIPv4(columnIndex));
     }
 
     @Override

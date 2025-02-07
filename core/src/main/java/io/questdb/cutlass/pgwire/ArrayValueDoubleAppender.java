@@ -37,7 +37,7 @@ public final class ArrayValueDoubleAppender implements JsonValueAppender {
 
     @Override
     public void appendFromIndex(ArrayView view, CharSink<?> sink, int index) {
-        double d = view.getDoubleFromRowMajor(index);
+        double d = view.getDoubleAssumingDefaultStrides(index);
         if (!Numbers.isNull(d)) {
             sink.put(d);
         } else {

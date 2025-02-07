@@ -382,7 +382,7 @@ public class ArrayParser implements QuietCloseable {
     }
 
     private void setArray() {
-        ArrayMeta.setDefaultStrides(bufs.shape.asSlice(), bufs.strides);
+        ArrayMeta.determineDefaultStrides(bufs.shape.asSlice(), bufs.strides);
         bufs.updateView(view);
     }
 

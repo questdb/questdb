@@ -37,7 +37,7 @@ public class ArrayValueLongAppender implements JsonValueAppender {
 
     @Override
     public void appendFromIndex(ArrayView view, CharSink<?> sink, int index) {
-        long d = view.getLongFromRowMajor(index);
+        long d = view.getLongAssumingDefaultStrides(index);
         if (d != Numbers.LONG_NULL) {
             sink.put(d);
         } else {

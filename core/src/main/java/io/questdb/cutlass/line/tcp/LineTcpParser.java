@@ -671,8 +671,8 @@ public class LineTcpParser implements QuietCloseable {
     }
 
     public class ProtoEntity implements QuietCloseable {
-        private final DirectUtf8String name = new DirectUtf8String();
         private final ArrayParser arrayParser = new ArrayParser();
+        private final DirectUtf8String name = new DirectUtf8String();
         private final DirectUtf8String value = new DirectUtf8String();
         private boolean booleanValue;
         private double floatValue;
@@ -683,6 +683,10 @@ public class LineTcpParser implements QuietCloseable {
         @Override
         public void close() {
             Misc.free(arrayParser);
+        }
+
+        public ArrayViewImpl getArray() {
+            return arrayParser.getView();
         }
 
         public boolean getBooleanValue() {
@@ -699,10 +703,6 @@ public class LineTcpParser implements QuietCloseable {
 
         public DirectUtf8Sequence getName() {
             return name;
-        }
-
-        public ArrayViewImpl getArray() {
-            return arrayParser.getView();
         }
 
         public byte getType() {
