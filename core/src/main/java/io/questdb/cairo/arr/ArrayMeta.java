@@ -149,5 +149,4 @@ public class ArrayMeta {  // TODO(amunra): Rename to `ArrayMetaUtils`.
                 throw new AssertionError(String.format("shape dimension %,d out of bounds: %,d", dimIndex, dim));
         }
     }
-
 }

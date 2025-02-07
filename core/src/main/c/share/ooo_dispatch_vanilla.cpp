@@ -342,7 +342,7 @@ void set_array_null_refs(int64_t *aux, int64_t offset, int64_t count) {
 void shift_copy_array_aux(int64_t shift, const int64_t *src, int64_t src_lo, int64_t src_hi, int64_t *dest) {
     const int64_t count = 2 * (src_hi - src_lo + 1);
     for (int64_t i = 0; i < count; i += 2) {
-        dest[i] = src[i + 2 * src_lo] - (shift << 16);
+        dest[i] = src[i + 2 * src_lo] - shift;
         dest[i + 1] = src[i + 2 * src_lo + 1];
     }
 }

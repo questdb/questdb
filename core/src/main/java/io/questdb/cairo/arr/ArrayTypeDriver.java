@@ -184,18 +184,6 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         return ARRAY_AUX_WIDTH_BYTES * row;
     }
 
-    public static long getIntAlignedLong(long address) {
-        final int lower = Unsafe.getUnsafe().getInt(address);
-        final int upper = Unsafe.getUnsafe().getInt(address + Integer.BYTES);
-        return ((long) upper << 32) | (lower & U32_MASK);
-    }
-
-    public static long getIntAlignedLong(@NotNull MemoryR mem, long offset) {
-        final int lower = mem.getInt(offset);
-        final int upper = mem.getInt(offset + Integer.BYTES);
-        return ((long) upper << 32) | (lower & U32_MASK);
-    }
-
     @Override
     public void appendNull(MemoryA auxMem, MemoryA dataMem) {
         appendNullImpl(auxMem, dataMem);
@@ -313,11 +301,8 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
 
     @Override
     public long getDataVectorOffset(long auxMemAddr, long row) {
-        long auxEntry = auxMemAddr + ARRAY_AUX_WIDTH_BYTES * row;
-        final long offset = readDataOffset(auxMemAddr);
-        final int size = Unsafe.getUnsafe().getInt(auxEntry + Long.BYTES);
-        assert size != 0;
-        return offset;
+        final long auxEntry = auxMemAddr + ARRAY_AUX_WIDTH_BYTES * row;
+        return readDataOffset(auxEntry) + readDataSize(auxEntry);
     }
 
     @Override
@@ -344,10 +329,6 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         final long auxFileOffset = ARRAY_AUX_WIDTH_BYTES * row;
         final long offset = readLong(ff, auxFd, auxFileOffset) & OFFSET_MAX;
         final int size = readInt(ff, auxFd, auxFileOffset + Long.BYTES);
-        if (size == 0) {
-            // value at row is NULL
-            return offset;
-        }
         return offset + size;
     }
 
@@ -562,8 +543,12 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         return auxMem.getLong(offset) & OFFSET_MAX;
     }
 
-    private static long readDataOffset(long address) {
-        return getIntAlignedLong(address) & OFFSET_MAX;
+    private static long readDataOffset(long auxEntryAddress) {
+        return Unsafe.getUnsafe().getLong(auxEntryAddress) & OFFSET_MAX;
+    }
+
+    private static int readDataSize(long auxEntryAddress) {
+        return (int) (Unsafe.getUnsafe().getLong(auxEntryAddress + Long.BYTES) & U32_MASK);
     }
 
     private static int readInt(FilesFacade ff, long fd, long offset) {
@@ -634,13 +619,13 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
      * <code>auxAddr</code>.
      */
     private long calcDataOffsetEnd(long auxAddr) {
-        final long offset = getIntAlignedLong(auxAddr) & OFFSET_MAX;
+        final long offset = Unsafe.getUnsafe().getLong(auxAddr) & OFFSET_MAX;
         final int size = Unsafe.getUnsafe().getInt(auxAddr + Long.BYTES);
         return offset + size;
     }
 
     private long calcDataOffsetEnd(@NotNull MemoryR mem, long auxOffset) {
-        final long offset = getIntAlignedLong(mem, auxOffset) & OFFSET_MAX;
+        final long offset = mem.getLong(auxOffset) & OFFSET_MAX;
         final int size = mem.getInt(auxOffset + Long.BYTES);
         return offset + size;
     }

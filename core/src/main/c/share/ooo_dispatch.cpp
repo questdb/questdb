@@ -289,18 +289,16 @@ void MULTI_VERSION_NAME (merge_copy_varchar_column)(
         const int64_t secondWord = src_fix[bit][rr * 2 + 1];
 
         auto originalData = secondWord & 0x000000000000ffffLL;
-        auto rellocatedSecondWord = originalData | (dst_var_offset << 16);
+        auto relocatedSecondWord = originalData | (dst_var_offset << 16);
         if ((firstWord & 1) == 0 && (firstWord & 4) == 0) {
             // not inlined and not null
             auto originalOffset = secondWord >> 16;
             auto len = (firstWord >> 4) & 0xffffff;
-            auto lenInDataMem = len;
-            auto data = src_var[bit] + originalOffset;
-            __MEMCPY(dst_var + dst_var_offset, data, lenInDataMem);
-            dst_var_offset += lenInDataMem;
+            __MEMCPY(dst_var + dst_var_offset, src_var[bit] + originalOffset, len);
+            dst_var_offset += len;
         }
         dst_fix[l * 2] = firstWord;
-        dst_fix[l * 2 + 1] = rellocatedSecondWord;
+        dst_fix[l * 2 + 1] = relocatedSecondWord;
     }
 }
 
@@ -323,14 +321,14 @@ void MULTI_VERSION_NAME (merge_copy_array_column)(
         const uint64_t row = merge_index[l].i;
         const uint32_t bit = (row >> 63);
         const uint64_t rr = row & ~(1ull << 63);
-        const int64_t offset = src_fix[bit][rr * 2] & OFFSET_MAX;
-        uint32_t size = static_cast<int>(src_fix[bit][rr * 2 + 1] & ARRAY_SIZE_MAX);
+        const int64_t src_var_offset = src_fix[bit][rr * 2] & OFFSET_MAX;
+        auto size = static_cast<uint32_t>(src_fix[bit][rr * 2 + 1] & ARRAY_SIZE_MAX);
 
         const auto relocated_var_offset = dst_var_offset & OFFSET_MAX;
         if (size > 0) {
-            // not inlined and not null
-            auto data = src_var[bit] + offset;
-            __MEMCPY(dst_var + dst_var_offset, data, size);
+            __MEMCPY(dst_var + dst_var_offset, src_var[bit] + src_var_offset, size);
+            // 2d array
+            printf("offset: %ld, i: %ld, %dx%d\n", dst_var_offset, l, reinterpret_cast<int32_t*>(dst_var + dst_var_offset) [0], reinterpret_cast<int32_t*>(dst_var + dst_var_offset) [1]);
             dst_var_offset += size;
         }
         dst_fix[l * 2] = relocated_var_offset;
@@ -617,10 +615,7 @@ void MULTI_VERSION_NAME (set_array_null_refs)(int64_t *aux, int64_t offset, int6
     // varchar aux is 16 bytes
     count *= 2;
     // offset for subsequent varchars stays the same
-    const int64_t o = offset << 16;
-
-    // 4 is null flag
-    Vec4q vec(4, o, 4, o);
+    Vec4q vec(offset, 0, offset, 0);
 
     int64_t i = 0;
     for (; i < count - 3; i += 4) {
@@ -629,7 +624,7 @@ void MULTI_VERSION_NAME (set_array_null_refs)(int64_t *aux, int64_t offset, int6
 
     // tail
     for (; i < count; i += 2) {
-        aux[i] = o;
+        aux[i] = offset;
         aux[i + 1] = 0;
     }
 }
@@ -640,7 +635,7 @@ void MULTI_VERSION_NAME (shift_copy_array_aux)(int64_t shift, const int64_t *src
 
     Vec4q vec;
     // The offset is stored in the first 8 bytes of arrays's 16 bytes.
-    auto vec_shift = Vec4q(shift << 16, 0, shift << 16, 0);
+    auto vec_shift = Vec4q(shift , 0, shift , 0);
 
     auto src_loo = src + 2 * src_lo;
     int64_t i = 0;
@@ -652,7 +647,7 @@ void MULTI_VERSION_NAME (shift_copy_array_aux)(int64_t shift, const int64_t *src
 
     // tail
     for (; i < count; i += 2) {
-        dest[i] = src[i + 2 * src_lo] - (shift << 16);
+        dest[i] = src[i + 2 * src_lo] - shift;
         dest[i + 1] = src[i + 2 * src_lo + 1];
     }
 }

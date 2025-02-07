@@ -133,7 +133,8 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
                     auxPageLim,
                     dataPageAddress,
                     dataPageLim,
-                    rowIndex).getView();
+                    rowIndex
+            ).getView();
         }
         return null;
     }

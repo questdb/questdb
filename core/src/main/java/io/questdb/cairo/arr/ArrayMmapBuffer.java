@@ -58,7 +58,7 @@ public class ArrayMmapBuffer implements QuietCloseable {
     ) {
         final long rowOffset = ArrayTypeDriver.getAuxVectorOffsetStatic(row);
         assert auxAddr + ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES <= auxLim;
-        final long crcAndOffset = ArrayTypeDriver.getIntAlignedLong(auxAddr + rowOffset);
+        final long crcAndOffset = Unsafe.getUnsafe().getLong(auxAddr + rowOffset);
         final long size = Unsafe.getUnsafe().getInt(auxAddr + rowOffset + Long.BYTES);
         if (size == 0) {
             // A null array
