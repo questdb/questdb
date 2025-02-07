@@ -32,6 +32,7 @@
 #include <cassert>
 #include "dedup.h"
 #include "dedup_comparers.h"
+
 #define assertm(exp, msg) assert(((void)msg, exp))
 template<typename LambdaDiff>
 inline int64_t branch_free_search(const index_t *array, int64_t count, int64_t value_index, LambdaDiff compare) {
@@ -756,7 +757,7 @@ Java_io_questdb_std_Vect_dedupMergeArrayColumnSize(JNIEnv *env, jclass cl,
         const uint32_t bit = (row >> 63);
         const uint64_t rr = row & ~(1ull << 63);
         // add up non-zero array sizes
-        dst_var_offset += std::max(0LL, src_fix[bit][rr * 2 + 1] & ARRAY_SIZE_MAX);
+        dst_var_offset += std::max<int64_t >(0LL, src_fix[bit][rr * 2 + 1] & ARRAY_SIZE_MAX);
     }
     return dst_var_offset;
 }
