@@ -547,13 +547,13 @@ public final class TestUtils {
         }
         Assert.assertNotNull("expected NON-NULL array", actual);
 
-        final int dim = expected.getDim();
+        final int dim = expected.getDimCount();
         // First, check if dimensions match
-        Assert.assertEquals("Array dimension mismatch. Expected: " + dim + ", actual: " + actual.getDim(), dim, actual.getDim());
+        Assert.assertEquals("Array dimension mismatch. Expected: " + dim + ", actual: " + actual.getDimCount(), dim, actual.getDimCount());
 
         // Check if each dimension has the same length
         for (int i = 0; i < dim; i++) {
-            Assert.assertEquals(expected.getDimLength(i), actual.getDimLength(i));
+            Assert.assertEquals(expected.getDimSize(i), actual.getDimSize(i));
         }
 
         // Compare elements using virtual indexing
@@ -1788,12 +1788,12 @@ public final class TestUtils {
 
     private static void assertEqualsRecursive(ArrayView expected, ArrayView actual, int dim, int expectedFlatIndex, int actualFlatIndex) {
         // last dimension
-        int dimLen = actual.getDimLength(dim);
-        if (dim == actual.getDim() - 1) {
+        int dimLen = actual.getDimSize(dim);
+        if (dim == actual.getDimCount() - 1) {
             for (int i = 0; i < dimLen; i++) {
                 Assert.assertEquals(
-                        expected.getDoubleFromRowMajor(expected.getValuesOffset() + expectedFlatIndex + i),
-                        actual.getDoubleFromRowMajor(actual.getValuesOffset() + actualFlatIndex + i),
+                        expected.getDoubleAtFlatIndex(expected.getValuesOffset() + expectedFlatIndex + i),
+                        actual.getDoubleAtFlatIndex(actual.getValuesOffset() + actualFlatIndex + i),
                         Numbers.TOLERANCE
                 );
             }
