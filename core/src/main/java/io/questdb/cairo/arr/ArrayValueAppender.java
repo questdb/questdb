@@ -27,6 +27,6 @@ package io.questdb.cairo.arr;
 import io.questdb.std.str.CharSink;
 
 @FunctionalInterface
-public interface JsonValueAppender {
-    void appendFromIndex(ArrayView view, CharSink<?> sink, int index);
+public interface ArrayValueAppender {
+    void appendFromFlatIndex(ArrayView view, CharSink<?> sink, int index);
 }

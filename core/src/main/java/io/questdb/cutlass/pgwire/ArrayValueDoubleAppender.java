@@ -24,20 +24,20 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.cairo.arr.ArrayValueAppender;
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.arr.JsonValueAppender;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 
-public final class ArrayValueDoubleAppender implements JsonValueAppender {
-    public static final JsonValueAppender INSTANCE = new ArrayValueDoubleAppender();
+public final class ArrayValueDoubleAppender implements ArrayValueAppender {
+    public static final ArrayValueAppender INSTANCE = new ArrayValueDoubleAppender();
 
     private ArrayValueDoubleAppender() {
     }
 
     @Override
-    public void appendFromIndex(ArrayView view, CharSink<?> sink, int index) {
-        double d = view.getDoubleAssumingDefaultStrides(index);
+    public void appendFromFlatIndex(ArrayView view, CharSink<?> sink, int index) {
+        double d = view.getDoubleAtFlatIndex(index);
         if (!Numbers.isNull(d)) {
             sink.put(d);
         } else {

@@ -35,15 +35,15 @@ public interface ArrayView {
     int getDimSize(int dim);
 
     default double getDouble1D(int x) {
-        return getDoubleAssumingDefaultStrides(getValuesOffset() + x);
+        return getDoubleAtFlatIndex(getValuesOffset() + x);
     }
 
     default double getDouble2D(int x, int y) {
-        return getDoubleAssumingDefaultStrides(getValuesOffset() + x * getStride(0) + y);
+        return getDoubleAtFlatIndex(getValuesOffset() + x * getStride(0) + y);
     }
 
     default double getDouble3D(int x, int y, int z) {
-        return getDoubleAssumingDefaultStrides(getValuesOffset() + x * getStride(0) + y * getStride(1) + z);
+        return getDoubleAtFlatIndex(getValuesOffset() + x * getStride(0) + y * getStride(1) + z);
     }
 
     /**
@@ -52,7 +52,7 @@ public interface ArrayView {
      * @param flatIndex flat index into the flat array
      * @return double value from the array
      */
-    double getDoubleAssumingDefaultStrides(int flatIndex);
+    double getDoubleAtFlatIndex(int flatIndex);
 
     /**
      * Raw access into flat array with row major layout.
@@ -60,7 +60,7 @@ public interface ArrayView {
      * @param flatIndex flat index into the flat array
      * @return long value from the array
      */
-    long getLongAssumingDefaultStrides(int flatIndex);
+    long getLongAtFlatIndex(int flatIndex);
 
     /**
      * Returns the total number of items in this array.

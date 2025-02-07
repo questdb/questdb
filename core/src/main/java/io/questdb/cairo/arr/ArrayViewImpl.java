@@ -104,7 +104,7 @@ public class ArrayViewImpl implements ArrayView {
     }
 
     @Override
-    public double getDoubleAssumingDefaultStrides(int flatIndex) {
+    public double getDoubleAtFlatIndex(int flatIndex) {
         return values.getDouble(flatIndex);
     }
 
@@ -121,7 +121,7 @@ public class ArrayViewImpl implements ArrayView {
     }
 
     @Override
-    public long getLongAssumingDefaultStrides(int flatIndex) {
+    public long getLongAtFlatIndex(int flatIndex) {
         return values.getLong(flatIndex);
     }
 

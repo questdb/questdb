@@ -138,62 +138,33 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     }
 
     /**
-     * Recursively builds a JSON string representation of a multi-dimensional array stored in row‑major order.
+     * Recursively builds a JSON representation of a multidimensional array stored in row‑major order.
      *
-     * @param valueAppender the function used to append the JSON representation of a single element
+     * @param valueAppender the function used to append the text representation of a single element
      * @param arrayView     the flat array containing all the elements
      * @param sink          the StringBuilder used to accumulate the JSON string
      */
     public static void arrayToJson(
-            JsonValueAppender valueAppender,
+            ArrayValueAppender valueAppender,
             ArrayView arrayView,
             CharSink<?> sink
     ) {
-        arrayToJson(valueAppender, arrayView, 0, 0, sink, '[', ']');
+        arrayToText(valueAppender, arrayView, 0, 0, sink, '[', ']');
     }
 
     /**
-     * Recursively builds a JSON string representation of a multi-dimensional array stored in row‑major order.
+     * Recursively builds a PG Wire representation of a multidimensional array stored in row‑major order.
      *
-     * @param valueAppender the function used to append the JSON representation of a single element
+     * @param valueAppender the function used to append the text representation of a single element
      * @param arrayView     the flat array containing all the elements
-     * @param dim           the current dimension being processed, starting at 0
-     * @param currentIndex  the index of the current element in the flat array, starting at 0
      * @param sink          the StringBuilder used to accumulate the JSON string
-     * @param bracketLo     the opening bracket for the current dimension, e.g. '[' for each dimension
-     * @param bracketHi     the closing bracket for the current dimension, e.g. ']' for each dimension
      */
-    public static int arrayToJson(
-            JsonValueAppender valueAppender,
+    public static void arrayToPgWireString(
+            ArrayValueAppender valueAppender,
             ArrayView arrayView,
-            int dim,
-            int currentIndex,
-            CharSink<?> sink,
-            char bracketLo,
-            char bracketHi
+            CharSink<?> sink
     ) {
-        if (arrayView == null) {
-            sink.put("null");
-        } else {
-            sink.putAscii(bracketLo);
-            int count = arrayView.getDimSize(dim); // Number of elements or sub-arrays at this dimension.
-            for (int i = 0; i < count; i++) {
-                if (dim == arrayView.getDimCount() - 1) {
-                    // If we're at the last dimension, append the flat array element.
-                    valueAppender.appendFromIndex(arrayView, sink, currentIndex);
-                    currentIndex++; // Move to the next element in the flat array.
-                } else {
-                    // Recursively build the JSON for the next dimension.
-                    currentIndex = arrayToJson(valueAppender, arrayView, dim + 1, currentIndex, sink, bracketLo, bracketHi);
-                }
-                // Append a comma if this is not the last element in the current dimension.
-                if (i < count - 1) {
-                    sink.putAscii(',');
-                }
-            }
-            sink.putAscii(bracketHi);
-        }
-        return currentIndex;
+        arrayToText(valueAppender, arrayView, 0, 0, sink, '{', '}');
     }
 
     /**
@@ -538,6 +509,46 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     private static void appendNullImpl(MemoryA auxMem, MemoryA dataMem) {
         final long offset = dataMem.getAppendOffset();
         appendNullImpl(auxMem, offset);
+    }
+
+    /**
+     * Recursively builds a string representation of a multidimensional array stored in row‑major order.
+     * With [] as open-close chars, it produces JSON. With {}, it produces PG Wire format.
+     *
+     * @param valueAppender the function used to append the text representation of a single element
+     * @param array         the flat array containing all the elements
+     * @param dim           the current dimension being processed, starting at 0
+     * @param flatIndex     the index of the current element in the flat array, starting at 0
+     * @param sink          the StringBuilder used to accumulate the JSON string
+     * @param openChar      the opening character for each array plane
+     * @param closeChar     the closing character for each array plane
+     */
+    private static void arrayToText(
+            ArrayValueAppender valueAppender,
+            ArrayView array,
+            int dim,
+            int flatIndex,
+            CharSink<?> sink,
+            char openChar,
+            char closeChar
+    ) {
+        final int count = array.getDimSize(dim);
+        final int stride = array.getStride(dim);
+        final boolean atDeepestDim = dim == array.getDimCount() - 1;
+
+        sink.putAscii(openChar);
+        for (int i = 0; i < count; i++) {
+            if (i != 0) {
+                sink.putAscii(',');
+            }
+            if (atDeepestDim) {
+                valueAppender.appendFromFlatIndex(array, sink, flatIndex);
+            } else {
+                arrayToText(valueAppender, array, dim + 1, flatIndex, sink, openChar, closeChar);
+            }
+            flatIndex += stride;
+        }
+        sink.putAscii(closeChar);
     }
 
     private static void padTo(@NotNull MemoryA dataMem, int byteAlignment) {
