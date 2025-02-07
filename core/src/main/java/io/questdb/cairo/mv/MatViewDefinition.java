@@ -28,11 +28,15 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.meta.AppendableBlock;
 import io.questdb.cairo.meta.MetaFileWriter;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.groupby.TimestampSampler;
+import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.std.datetime.microtime.Timestamps.MINUTE_MICROS;
@@ -44,17 +48,19 @@ public class MatViewDefinition {
     public static final byte MAT_VIEW_DEFINITION_FORMAT_MSG_VERSION = 0;
 
     private final String baseTableName;
+    // is not persisted, parsed from timeZoneOffset
+    private final long fixedOffset;
     private final String matViewSql;
     private final TableToken matViewToken;
+    // is not persisted, parsed from timeZone
+    private final @Nullable TimeZoneRules rules;
     private final long samplingInterval;
     private final char samplingIntervalUnit;
     private final String timeZone;
     private final String timeZoneOffset;
-
-    // is not persisted, parsed from timeZoneOffset
-    private long fixedOffset;
-    // is not persisted, parsed from timeZone
-    private @Nullable TimeZoneRules rules;
+    // is not persisted, parsed from samplingInterval and samplingIntervalUnit;
+    // access must be synchronized as this object is not thread-safe
+    private final TimestampSampler timestampSampler;
 
     public MatViewDefinition(
             TableToken matViewToken,
@@ -73,12 +79,25 @@ public class MatViewDefinition {
         this.timeZone = timeZone;
         this.timeZoneOffset = timeZoneOffset;
 
+        try {
+            this.timestampSampler = TimestampSamplerFactory.getInstance(
+                    samplingInterval,
+                    samplingIntervalUnit,
+                    0
+            );
+        } catch (SqlException e) {
+            throw CairoException.critical(0).put("invalid sampling interval and/or unit: ").put(samplingInterval)
+                    .put(", ").put(samplingIntervalUnit);
+        }
+
         if (timeZone != null) {
             try {
                 this.rules = Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, timeZone);
             } catch (NumericException e) {
                 throw CairoException.critical(0).put("invalid timezone: ").put(timeZone);
             }
+        } else {
+            this.rules = null;
         }
 
         if (timeZoneOffset != null) {
@@ -87,11 +106,37 @@ public class MatViewDefinition {
                 throw CairoException.critical(0).put("invalid offset: ").put(timeZoneOffset);
             }
             this.fixedOffset = Numbers.decodeLowInt(val) * MINUTE_MICROS;
+        } else {
+            this.fixedOffset = 0;
         }
+    }
+
+    public static void commitTo(@NotNull MetaFileWriter writer, @NotNull MatViewDefinition matViewDefinition) {
+        final AppendableBlock mem = writer.append();
+        writeTo(mem, matViewDefinition);
+        mem.commit(
+                MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE,
+                MAT_VIEW_DEFINITION_FORMAT_MSG_VERSION,
+                MAT_VIEW_DEFINITION_FORMAT_FLAGS
+        );
+        writer.commit();
+    }
+
+    public static void writeTo(@NotNull AppendableBlock mem, @NotNull MatViewDefinition matViewDefinition) {
+        mem.putStr(matViewDefinition.getBaseTableName());
+        mem.putLong(matViewDefinition.getSamplingInterval());
+        mem.putChar(matViewDefinition.getSamplingIntervalUnit());
+        mem.putStr(matViewDefinition.getTimeZone());
+        mem.putStr(matViewDefinition.getTimeZoneOffset());
+        mem.putStr(matViewDefinition.getMatViewSql());
     }
 
     public String getBaseTableName() {
         return baseTableName;
+    }
+
+    public long getFixedOffset() {
+        return fixedOffset;
     }
 
     public String getMatViewSql() {
@@ -118,31 +163,11 @@ public class MatViewDefinition {
         return timeZoneOffset;
     }
 
-    public long getFixedOffset() {
-        return fixedOffset;
-    }
-
-    public static void commitTo(final MetaFileWriter writer, final MatViewDefinition matViewDefinition) {
-        final AppendableBlock mem = writer.append();
-        writeTo(mem, matViewDefinition);
-        mem.commit(
-                MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE,
-                MAT_VIEW_DEFINITION_FORMAT_MSG_VERSION,
-                MAT_VIEW_DEFINITION_FORMAT_FLAGS
-        );
-        writer.commit();
+    public TimestampSampler getTimestampSampler() {
+        return timestampSampler;
     }
 
     public @Nullable TimeZoneRules getTzRules() {
         return rules;
-    }
-
-    public static void writeTo(final AppendableBlock mem, final MatViewDefinition matViewDefinition) {
-        mem.putStr(matViewDefinition.getBaseTableName());
-        mem.putLong(matViewDefinition.getSamplingInterval());
-        mem.putChar(matViewDefinition.getSamplingIntervalUnit());
-        mem.putStr(matViewDefinition.getTimeZone());
-        mem.putStr(matViewDefinition.getTimeZoneOffset());
-        mem.putStr(matViewDefinition.getMatViewSql());
     }
 }

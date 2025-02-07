@@ -102,7 +102,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     @Override
     public void close() {
-        this.txReader.close();
+        txReader.close();
         path.close();
     }
 

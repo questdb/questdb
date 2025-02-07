@@ -47,7 +47,6 @@ import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
-import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
@@ -117,12 +116,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     private boolean findCommitTimestampRanges(
-            MatViewRefreshExecutionContext executionContext,
-            TableReader baseTableReader,
-            long lastRefreshTxn,
-            MatViewDefinition viewDefinition
+            @NotNull MatViewRefreshExecutionContext executionContext,
+            @NotNull TableReader baseTableReader,
+            @NotNull MatViewDefinition viewDefinition,
+            long lastRefreshTxn
     ) throws SqlException {
-        long lastTxn = baseTableReader.getSeqTxn();
+        final long lastTxn = baseTableReader.getSeqTxn();
 
         if (lastRefreshTxn > 0) {
             txnRangeLoader.load(engine, Path.PATH.get(), baseTableReader.getTableToken(), lastRefreshTxn, lastTxn);
@@ -130,14 +129,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             long maxTs = txnRangeLoader.getMaxTimestamp();
 
             if (minTs <= maxTs) {
-                // TODO(glasstiger): reuse the sampler instance
-
-                final TimestampSampler sampler = TimestampSamplerFactory.getInstance(
-                        viewDefinition.getSamplingInterval(),
-                        viewDefinition.getSamplingIntervalUnit(),
-                        0
-                );
-
+                // there are no concurrent accesses to the sampler at this point
+                final TimestampSampler sampler = viewDefinition.getTimestampSampler();
                 sampler.setStart(viewDefinition.getFixedOffset());
                 TimeZoneRules rules = viewDefinition.getTzRules();
                 // convert UTC timestamp into Time Zone timestamp
@@ -630,7 +623,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // Operate SQL on a fixed reader that has known max transaction visible.
             engine.detachReader(baseTableReader);
             try {
-                if (findCommitTimestampRanges(mvRefreshExecutionContext, baseTableReader, fromBaseTxn, viewDef)) {
+                if (findCommitTimestampRanges(mvRefreshExecutionContext, baseTableReader, viewDef, fromBaseTxn)) {
                     toBaseTxn = baseTableReader.getSeqTxn();
 
                     try (TableWriterAPI commitWriter = engine.getTableWriterAPI(viewToken, "Mat View refresh")) {

@@ -35,6 +35,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -60,14 +61,14 @@ public class MatViewRefreshState implements QuietCloseable {
     private long recordRowCopierMetadataVersion;
     private RecordToRowCopier recordToRowCopier;
 
-    public MatViewRefreshState(MatViewDefinition viewDefinition, boolean isInvalid, MatViewTelemetryFacade telemetryFacade) {
+    public MatViewRefreshState(MatViewDefinition viewDefinition, boolean invalid, MatViewTelemetryFacade telemetryFacade) {
         this.viewDefinition = viewDefinition;
         this.telemetryFacade = telemetryFacade;
-        this.invalid = isInvalid;
+        this.invalid = invalid;
     }
 
     // refreshState can be null, in this case "default" record will be written
-    public static void commitTo(MetaFileWriter writer, @Nullable MatViewRefreshState refreshState) {
+    public static void commitTo(@NotNull MetaFileWriter writer, @Nullable MatViewRefreshState refreshState) {
         final AppendableBlock mem = writer.append();
         writeTo(mem, refreshState);
         mem.commit(
@@ -78,7 +79,7 @@ public class MatViewRefreshState implements QuietCloseable {
         writer.commit();
     }
 
-    public static boolean readFrom(MetaFileReader reader, MatViewRefreshState refreshState) {
+    public static boolean readFrom(@NotNull MetaFileReader reader, @NotNull MatViewRefreshState refreshState) {
         if (reader.getCursor().hasNext()) {
             final ReadableBlock mem = reader.getCursor().next();
             refreshState.invalid = mem.getBool(0);
@@ -88,7 +89,7 @@ public class MatViewRefreshState implements QuietCloseable {
         return false;
     }
 
-    public static void writeTo(AppendableBlock mem, @Nullable MatViewRefreshState refreshState) {
+    public static void writeTo(@NotNull AppendableBlock mem, @Nullable MatViewRefreshState refreshState) {
         if (refreshState == null) {
             mem.putBool(false);
             mem.putStr(null);
@@ -132,7 +133,7 @@ public class MatViewRefreshState implements QuietCloseable {
     }
 
     public void init() {
-        telemetryFacade.store(MAT_VIEW_CREATE, viewDefinition.getMatViewToken(), -1L, null, 0L);
+        telemetryFacade.store(MAT_VIEW_CREATE, viewDefinition.getMatViewToken(), -1, null, 0);
     }
 
     public boolean isDropped() {
@@ -153,39 +154,41 @@ public class MatViewRefreshState implements QuietCloseable {
 
     public void markAsDropped() {
         dropped = true;
-        telemetryFacade.store(MAT_VIEW_DROP, viewDefinition.getMatViewToken(), -1L, null, 0L);
+        telemetryFacade.store(MAT_VIEW_DROP, viewDefinition.getMatViewToken(), -1, null, 0);
     }
 
-    public void markAsInvalid(MetaFileWriter metaFileWriter, Path dbRoot, CharSequence errorMessage) {
-        boolean wasValid = !this.invalid;
-        boolean errorMessageChanged = Chars.compare(this.invalidationReason, errorMessage) != 0;
-        this.invalid = true;
-        this.invalidationReason = Chars.toString(errorMessage);
-        if (wasValid || errorMessageChanged) {
-            updateInvalidationStatus(metaFileWriter, dbRoot);
+    public void markAsInvalid(@NotNull MetaFileWriter metaFileWriter, @NotNull Path dbRoot, @Nullable CharSequence invalidationReason) {
+        final boolean wasValid = !invalid;
+        final boolean invalidationReasonChanged = Chars.compare(this.invalidationReason, invalidationReason) != 0;
+        if (invalidationReasonChanged) {
+            this.invalidationReason = Chars.toString(invalidationReason);
         }
-        telemetryFacade.store(MAT_VIEW_INVALIDATE, viewDefinition.getMatViewToken(), -1L, errorMessage, 0L);
+        this.invalid = true;
+        if (wasValid || invalidationReasonChanged) {
+            updateInvalidationStatus(metaFileWriter, dbRoot);
+            telemetryFacade.store(MAT_VIEW_INVALIDATE, viewDefinition.getMatViewToken(), -1, invalidationReason, 0);
+        }
     }
 
     public void markAsPendingInvalidation() {
         pendingInvalidation = true;
     }
 
-    public void markAsValid(MetaFileWriter metaFileWriter, Path dbRoot) {
-        boolean wasInvalid = this.invalid;
-        invalid = false;
-        pendingInvalidation = false;
-        invalidationReason = null;
+    public void markAsValid(@NotNull MetaFileWriter metaFileWriter, @NotNull Path dbRoot) {
+        boolean wasInvalid = invalid;
+        this.invalid = false;
+        this.pendingInvalidation = false;
+        this.invalidationReason = null;
         if (wasInvalid) {
             updateInvalidationStatus(metaFileWriter, dbRoot);
         }
     }
 
-    public void refreshFail(MetaFileWriter metaFileWriter, Path dbRoot, long refreshTimestamp, CharSequence errorMessage) {
+    public void refreshFail(@NotNull MetaFileWriter metaFileWriter, @NotNull Path dbRoot, long refreshTimestamp, CharSequence errorMessage) {
         assert latch.get();
         markAsInvalid(metaFileWriter, dbRoot, errorMessage);
-        lastRefreshTimestamp = refreshTimestamp;
-        telemetryFacade.store(MAT_VIEW_REFRESH_FAIL, viewDefinition.getMatViewToken(), -1L, errorMessage, 0L);
+        this.lastRefreshTimestamp = refreshTimestamp;
+        telemetryFacade.store(MAT_VIEW_REFRESH_FAIL, viewDefinition.getMatViewToken(), -1, errorMessage, 0);
     }
 
     public void refreshSuccess(
@@ -235,7 +238,7 @@ public class MatViewRefreshState implements QuietCloseable {
         }
     }
 
-    private void updateInvalidationStatus(MetaFileWriter metaFileWriter, Path dbRoot) {
+    private void updateInvalidationStatus(@NotNull MetaFileWriter metaFileWriter, @NotNull Path dbRoot) {
         dbRoot
                 .concat(getViewDefinition().getMatViewToken())
                 .concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
