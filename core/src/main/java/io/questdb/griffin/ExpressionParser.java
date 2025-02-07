@@ -349,8 +349,10 @@ public class ExpressionParser {
                             break;
                         }
                         thisBranch = BRANCH_LEFT_BRACKET;
-                        boolean isArrayConstructor = withinArrayConstructor() &&
-                                prevBranch != BRANCH_LITERAL && prevBranch != BRANCH_RIGHT_PARENTHESIS;
+                        boolean isArrayConstructor = withinArrayConstructor()
+                                && prevBranch != BRANCH_LITERAL
+                                && prevBranch != BRANCH_RIGHT_BRACKET
+                                && prevBranch != BRANCH_RIGHT_PARENTHESIS;
 
                         // entering bracketed context, push stuff onto the stacks
                         paramCountStack.push(paramCount);
@@ -362,7 +364,9 @@ public class ExpressionParser {
                         // pop left literal or . expression, e.g. "a.b[i]" and push to the output queue.
                         // the precedence of '[' is fixed to 2
                         ExpressionNode other;
-                        while ((other = opStack.peek()) != null && other.type == ExpressionNode.LITERAL) {
+                        while ((other = opStack.peek()) != null &&
+                                (other.type == ExpressionNode.LITERAL || other.type == ExpressionNode.ARRAY_CONSTRUCTOR)
+                        ) {
                             argStackDepth = onNode(listener, other, argStackDepth, false);
                             opStack.pop();
                         }
@@ -412,6 +416,7 @@ public class ExpressionParser {
                                     lastPos
                             );
                             node.paramCount = 2;
+                            opStack.push(node);
                         } else {
                             assert node.token.equals("[[") : "token is neither '[' nor '[['";
                             node = expressionNodePool.next().of(
@@ -421,6 +426,7 @@ public class ExpressionParser {
                                     lastPos
                             );
                             node.paramCount = paramCount + 1;
+                            argStackDepth = onNode(listener, node, argStackDepth, false);
                         }
                         if (argStackDepthStack.notEmpty()) {
                             argStackDepth += argStackDepthStack.pop();
@@ -428,7 +434,6 @@ public class ExpressionParser {
                         if (paramCountStack.notEmpty()) {
                             paramCount = paramCountStack.pop();
                         }
-                        opStack.push(node);
                         break;
                     }
                     case 'd':
