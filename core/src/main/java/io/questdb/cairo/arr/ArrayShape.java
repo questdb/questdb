@@ -28,5 +28,8 @@ public interface ArrayShape {
 
     int getDimCount();
 
-    int getDimSize(int dimension);
+    /**
+     * Returns the number of items in a dimension (sub-arrays or numbers)
+     */
+    int getDimLen(int dimension);
 }

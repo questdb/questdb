@@ -113,7 +113,7 @@ public class ArrayRowMajorTraversal implements QuietCloseable {
         // The `out` variable counts how many dims _will be_ reset to zero in the call to `next()` after this one.
         final int lastDimIndex = arrayView.getDimCount() - 1;
         for (int dimIndex = lastDimIndex; dimIndex >= 0; --dimIndex) {
-            final int dim = arrayView.getDimSize(dimIndex);
+            final int dim = arrayView.getDimLen(dimIndex);
             final int current = coordinates.get(dimIndex);
             if (out > 0) {
                 if (current + 1 == dim) {

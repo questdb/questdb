@@ -76,9 +76,9 @@ public class ArrayMeta {  // TODO(amunra): Rename to `ArrayMetaUtils`.
         int stride = 1;
         for (int dimIndex = shapeLength - 1; dimIndex >= 0; --dimIndex) {
             stridesOut.set(dimIndex, stride);
-            final long dimSizeAddr = shapePtr + ((long) dimIndex * Integer.BYTES);
-            final int dimSize = Unsafe.getUnsafe().getInt(dimSizeAddr);
-            stride *= dimSize;
+            final long dimLenAddr = shapePtr + ((long) dimIndex * Integer.BYTES);
+            final int dimLen = Unsafe.getUnsafe().getInt(dimLenAddr);
+            stride *= dimLen;
         }
     }
 

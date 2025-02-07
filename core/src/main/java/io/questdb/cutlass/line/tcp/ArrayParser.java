@@ -128,8 +128,8 @@ public class ArrayParser implements QuietCloseable {
 
     private void checkAndIncrementLevelCount(DirectIntList levelCounts, DirectIntList shape, int level) throws ParseException {
         int countSoFarAtCurrLevel = levelCounts.get(level);
-        int dimSize = shape.get(level);
-        if (countSoFarAtCurrLevel == dimSize) {
+        int dimLen = shape.get(level);
+        if (countSoFarAtCurrLevel == dimLen) {
             throw ParseException.irregularShape(position());
         }
         levelCounts.set(level, countSoFarAtCurrLevel + 1);
@@ -244,10 +244,10 @@ public class ArrayParser implements QuietCloseable {
                     if (!commaWelcome) {
                         throw ParseException.unexpectedToken(position());
                     }
-                    int dimSize = shape.get(level);
-                    if (dimSize == IntList.NO_ENTRY_VALUE) {
+                    int dimLen = shape.get(level);
+                    if (dimLen == IntList.NO_ENTRY_VALUE) {
                         shape.set(level, countAtCurrLevel);
-                    } else if (countAtCurrLevel != dimSize) {
+                    } else if (countAtCurrLevel != dimLen) {
                         throw ParseException.irregularShape(position());
                     }
                     level--;

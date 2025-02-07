@@ -26,13 +26,9 @@ package io.questdb.cairo.arr;
 
 import io.questdb.cairo.vm.api.MemoryA;
 
-public interface ArrayView {
+public interface ArrayView extends ArrayShape {
 
     void appendWithDefaultStrides(MemoryA mem);
-
-    int getDimCount();
-
-    int getDimSize(int dim);
 
     default double getDouble1D(int x) {
         return getDoubleAtFlatIndex(getValuesOffset() + x);

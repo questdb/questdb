@@ -513,7 +513,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             char openChar,
             char closeChar
     ) {
-        final int count = array.getDimSize(dim);
+        final int count = array.getDimLen(dim);
         final int stride = array.getStride(dim);
         final boolean atDeepestDim = dim == array.getDimCount() - 1;
 
@@ -608,7 +608,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         assert dataMem.getAppendOffset() % Integer.BYTES == 0; // aligned integer write
         int dim = arrayView.getDimCount();
         for (int i = 0; i < dim; ++i) {
-            dataMem.putInt(arrayView.getDimSize(i));
+            dataMem.putInt(arrayView.getDimLen(i));
         }
     }
 
