@@ -32,8 +32,8 @@ import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
-import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
@@ -1674,7 +1674,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 // Write array elements in row-major order, which is native to both
                 // PostgreSQL wire protocol and our ArrayView
                 for (int i = 0; i < totalElements; i++) {
-                    double d = arrayView.getDoubleAssumingDefaultStrides(i);
+                    double d = arrayView.getDoubleAtFlatIndex(i);
                     if (Numbers.isNull(d)) {
                         hasNulls = true;
                         utf8Sink.setNullValue();
@@ -1686,7 +1686,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 break;
             case ColumnType.LONG:
                 for (int i = 0; i < totalElements; i++) {
-                    long l = arrayView.getLongAssumingDefaultStrides(i);
+                    long l = arrayView.getLongAtFlatIndex(i);
                     if (l == Numbers.LONG_NULL) {
                         hasNulls = true;
                         utf8Sink.setNullValue();
@@ -1869,10 +1869,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         final long a = utf8Sink.skipInt();
         switch (ColumnType.decodeArrayElementType(columnType)) {
             case ColumnType.DOUBLE:
-                ArrayTypeDriver.arrayToJson(ArrayValueDoubleAppender.INSTANCE, arrayView, 0, 0, utf8Sink, '{', '}');
+                ArrayTypeDriver.arrayToPgWireString(ArrayValueDoubleAppender.INSTANCE, arrayView, utf8Sink);
                 break;
             case ColumnType.LONG:
-                ArrayTypeDriver.arrayToJson(ArrayValueLongAppender.INSTANCE, arrayView, 0, 0, utf8Sink, '{', '}');
+                ArrayTypeDriver.arrayToPgWireString(ArrayValueLongAppender.INSTANCE, arrayView, utf8Sink);
                 break;
             default:
                 assert false;

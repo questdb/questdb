@@ -104,12 +104,12 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public double getDoubleAssumingDefaultStrides(int flatIndex) {
+        public double getDoubleAtFlatIndex(int flatIndex) {
             return values[flatIndex];
         }
 
         @Override
-        public long getLongAssumingDefaultStrides(int flatIndex) {
+        public long getLongAtFlatIndex(int flatIndex) {
             throw new UnsupportedOperationException();
         }
 

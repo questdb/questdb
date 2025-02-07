@@ -24,20 +24,20 @@
 
 package io.questdb.cutlass.http.processors;
 
+import io.questdb.cairo.arr.ArrayValueAppender;
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.arr.JsonValueAppender;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 
-public class ArrayValueLongAppender implements JsonValueAppender {
+public class ArrayValueLongAppender implements ArrayValueAppender {
     public static final ArrayValueLongAppender INSTANCE = new ArrayValueLongAppender();
 
     private ArrayValueLongAppender() {
     }
 
     @Override
-    public void appendFromIndex(ArrayView view, CharSink<?> sink, int index) {
-        long d = view.getLongAssumingDefaultStrides(index);
+    public void appendFromFlatIndex(ArrayView view, CharSink<?> sink, int index) {
+        long d = view.getLongAtFlatIndex(index);
         if (d != Numbers.LONG_NULL) {
             sink.put(d);
         } else {
