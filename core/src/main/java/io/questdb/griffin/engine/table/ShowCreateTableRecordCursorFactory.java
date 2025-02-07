@@ -31,7 +31,6 @@ import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.MetadataCacheReader;
-import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
@@ -298,9 +297,7 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
         }
 
         protected void putPartitionBy() {
-            if (table.getPartitionBy() != PartitionBy.NONE) {
-                sink.putAscii(" PARTITION BY ").put(table.getPartitionByName());
-            }
+            sink.putAscii(" PARTITION BY ").put(table.getPartitionByName());
         }
 
         protected void putTimestamp() {

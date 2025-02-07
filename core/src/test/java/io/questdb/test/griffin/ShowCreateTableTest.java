@@ -25,9 +25,43 @@
 package io.questdb.test.griffin;
 
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class ShowCreateTableTest extends AbstractCairoTest {
+
+    @Test
+    public void testBypassWal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE 'network_nodes' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tnode_name SYMBOL CAPACITY 65536 CACHE INDEX CAPACITY 65536,\n" +
+                    "\thost_ip IPv4,\n" +
+                    "\tiprange_start IPv4,\n" +
+                    "\tiprange_end IPv4,\n" +
+                    "\tnode_type SYMBOL CAPACITY 1024 CACHE,\n" +
+                    "\tlocation SYMBOL CAPACITY 8 CACHE,\n" +
+                    "\tinterface SYMBOL CAPACITY 64 CACHE,\n" +
+                    "\tprotocol SYMBOL CAPACITY 64 CACHE,\n" +
+                    "\tstatus SYMBOL CAPACITY 8 CACHE,\n" +
+                    "\tip_subnet STRING,\n" +
+                    "\tvlan INT,\n" +
+                    "\tcomment STRING\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+
+            printSql("SHOW CREATE TABLE network_nodes;");
+            String printedSql = sink.toString().replace("ddl\n", "");
+
+            execute("drop table network_nodes;");
+
+            execute(printedSql);
+
+            printSql("SHOW CREATE TABLE network_nodes;");
+
+            TestUtils.assertEquals(sink.toString().replace("ddl\n", ""), printedSql);
+        });
+    }
 
     @Test
     public void testDedup() throws Exception {
@@ -53,7 +87,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                             "CREATE TABLE 'foo' ( \n" +
                             "\tts TIMESTAMP,\n" +
                             "\ts SYMBOL CAPACITY 128 CACHE\n" +
-                            ") timestamp(ts) BYPASS WAL\n" +
+                            ") timestamp(ts) PARTITION BY NONE BYPASS WAL\n" +
                             "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n",
                     "show create table foo");
         });
@@ -108,7 +142,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                             "\tl BYTE,\n" +
                             "\tm BINARY,\n" +
                             "\tn STRING\n" +
-                            ") timestamp(timestamp) BYPASS WAL\n" +
+                            ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
                             "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n",
                     "show create table foo");
         });
