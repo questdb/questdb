@@ -36,7 +36,7 @@ public final class ArrayValueDoubleAppender implements ArrayValueAppender {
     }
 
     @Override
-    public void appendFromFlatIndex(ArrayView view, CharSink<?> sink, int index) {
+    public void appendFromFlatIndex(ArrayView view, int index, CharSink<?> sink) {
         double d = view.getDoubleAtFlatIndex(index);
         if (!Numbers.isNull(d)) {
             sink.put(d);

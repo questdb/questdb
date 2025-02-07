@@ -36,7 +36,7 @@ public class ArrayValueLongAppender implements ArrayValueAppender {
     }
 
     @Override
-    public void appendFromFlatIndex(ArrayView view, CharSink<?> sink, int index) {
+    public void appendFromFlatIndex(ArrayView view, int index, CharSink<?> sink) {
         long d = view.getLongAtFlatIndex(index);
         if (d != Numbers.LONG_NULL) {
             sink.put(d);

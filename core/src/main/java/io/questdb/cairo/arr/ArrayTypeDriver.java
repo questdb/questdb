@@ -523,7 +523,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
                 sink.putAscii(',');
             }
             if (atDeepestDim) {
-                valueAppender.appendFromFlatIndex(array, sink, flatIndex);
+                valueAppender.appendFromFlatIndex(array, flatIndex, sink);
             } else {
                 arrayToText(valueAppender, array, dim + 1, flatIndex, sink, openChar, closeChar);
             }

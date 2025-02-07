@@ -1270,7 +1270,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testTempDeleteMe() {
-        ArrayValueAppender appender = (arr, snk, index) -> snk.put(arr.getDoubleAtFlatIndex(index));
+        ArrayValueAppender appender = (arr, index, snk) -> snk.put(arr.getDoubleAtFlatIndex(index));
         ArrayViewImpl array = new ArrayViewImpl();
         try (ArrayBuffers bufs = new ArrayBuffers();
              DirectUtf8Sink sink = new DirectUtf8Sink(20)

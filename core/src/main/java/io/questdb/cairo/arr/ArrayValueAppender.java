@@ -28,5 +28,5 @@ import io.questdb.std.str.CharSink;
 
 @FunctionalInterface
 public interface ArrayValueAppender {
-    void appendFromFlatIndex(ArrayView view, CharSink<?> sink, int index);
+    void appendFromFlatIndex(ArrayView view, int index, CharSink<?> sink);
 }
