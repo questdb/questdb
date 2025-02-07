@@ -304,6 +304,7 @@ public class WalTxnDetails implements QuietCloseable {
         int copyTaskCount = 0;
         boolean isLastSegmentUse = false;
         long roHi = 0;
+        long prevRoHi = -1;
 
         for (int i = 0; i < blockTransactionCount; i++) {
             int relativeSeqTxn = (int) (sortedBySegmentTxnSlice.getSeqTxn(i) - startSeqTxn);
@@ -320,6 +321,7 @@ public class WalTxnDetails implements QuietCloseable {
 
                     lastWalId = walId;
                     lastSegmentId = segmentId;
+                    prevRoHi = -1;
                 }
             } else {
                 segmentLo = roLo;
@@ -333,6 +335,14 @@ public class WalTxnDetails implements QuietCloseable {
             roHi = sortedBySegmentTxnSlice.getRoHi(i);
             long committedRowsCount = roHi - roLo;
             copyTasks.addTxn(roLo, relativeSeqTxn, committedRowsCount, copyTaskCount, minTimestamp, maxTimestamp);
+            if (prevRoHi != -1 && prevRoHi != roLo) {
+                // In theory it's possible but in practice it should not happen
+                // This means that some of the segment rows are not committed
+                // If this happens some optimisations will not be possible
+                // and the commit should fall back to txn by txn commit
+                copyTasks.setSegmentGap(true);
+            }
+            prevRoHi = roHi;
         }
 
         int lastIndex = blockTransactionCount - 1;

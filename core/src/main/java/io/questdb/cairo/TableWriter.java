@@ -313,8 +313,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final FragileCode RECOVER_FROM_COLUMN_OPEN_FAILURE = this::recoverOpenColumnFailure;
     private UpdateOperatorImpl updateOperatorImpl;
     private WalTxnDetails walTxnDetails;
-    private final ColumnTaskHandler cthProcessWalCommitBlockSortWalSegmentTimestampsDispatchColumnSortTasksCthMergeWalColumnManySegments = this::processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks_mergeWalColumnManySegments;
-    private final ColumnTaskHandler cthProcessWalCommitBlockSortWalSegmentTimestampsMapSymbols = this::processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks_mapSymbols;
+    private final ColumnTaskHandler cthMapSymbols = this::processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks_mapSymbols;
+    private final ColumnTaskHandler cthMergeWalColumnManySegments = this::processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks_mergeWalColumnManySegments;
 
 
     public TableWriter(
@@ -6893,6 +6893,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 .$(", maxTimestamp=").$ts(segmentCopyInfo.getMaxTimestamp())
                 .I$();
 
+        if (segmentCopyInfo.hasSegmentGaps()) {
+            LOG.info().$("some segments have gaps in committed rows [table=").$(tableToken).I$();
+            throw CairoException.txnApplyBlockError(tableToken);
+        }
         long rowCount;
 
         try {
@@ -6939,6 +6943,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // creates reverse long index at the end, e.g. it needs one more long per row
             // It does not need all 64 bits, most of the cases it can do with 32bit but here we over allocate
             // and let native code to use what's needed
+            // One more 64bit is used to add additional flags the native code passes
+            // between sort and shuffle calls about the format of the index
+            // e.g. how many bits is used for segment index values
             o3TimestampMem.jumpTo(totalRows * Long.BYTES * 3 + Long.BYTES);
             o3TimestampMemCpy.jumpTo(totalRows * Long.BYTES * 3 + Long.BYTES);
 
@@ -6993,7 +7000,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             totalSegmentAddresses,
                             indexFormat,
                             true,
-                            cthProcessWalCommitBlockSortWalSegmentTimestampsMapSymbols
+                            cthMapSymbols
                     );
                 }
 
@@ -7045,7 +7052,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     totalSegmentAddresses,
                     indexFormat,
                     false,
-                    cthProcessWalCommitBlockSortWalSegmentTimestampsDispatchColumnSortTasksCthMergeWalColumnManySegments
+                    cthMergeWalColumnManySegments
             );
 
             assert o3MemColumns1.get(getPrimaryColumnIndex(timestampIndex)) == o3TimestampMem;
@@ -7296,12 +7303,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     var destinationColumn = o3MemColumns1.get(getPrimaryColumnIndex(columnIndex));
                     destinationColumn.jumpTo(totalRows << shl);
 
-                    long rowCount = Vect.mergeShuffleColumnFromManyAddresses(
+                    long rowCount = Vect.mergeShuffleFixedColumnFromManyAddresses(
                             (1 << shl),
                             indexFormat,
                             mappedAddrBuffPrimary,
                             destinationColumn.getAddress(),
-                            mergeIndex
+                            mergeIndex,
+                            segmentCopyInfo.getSegmentsAddress(),
+                            segmentCopyInfo.getSegmentCount()
                     );
 
                     if (rowCount != totalRows) {
@@ -7360,12 +7369,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             }
                         } else {
                             // Shuffle as int32, no new symbols to add
-                            long rowCount = Vect.mergeShuffleColumnFromManyAddresses(
+                            long rowCount = Vect.mergeShuffleFixedColumnFromManyAddresses(
                                     (1 << shl),
                                     indexFormat,
                                     mappedAddrBuffPrimary,
                                     destinationColumn.getAddress(),
-                                    mergeIndex
+                                    mergeIndex,
+                                    segmentCopyInfo.getSegmentsAddress(),
+                                    segmentCopyInfo.getSegmentCount()
                             );
 
                             if (rowCount != totalRows) {

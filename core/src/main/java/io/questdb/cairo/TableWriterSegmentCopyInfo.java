@@ -32,6 +32,7 @@ import io.questdb.std.QuietCloseable;
 
 public class TableWriterSegmentCopyInfo implements QuietCloseable {
     private final IntList seqTxnOrder = new IntList();
+    private boolean hasSegmentGap;
     private long maxTimestamp = Long.MIN_VALUE;
     private long maxTxnRowCount;
     private long minTimestamp = Long.MAX_VALUE;
@@ -71,6 +72,7 @@ public class TableWriterSegmentCopyInfo implements QuietCloseable {
         startSeqTxn = 0;
         minTimestamp = Long.MAX_VALUE;
         maxTimestamp = Long.MIN_VALUE;
+        hasSegmentGap = false;
     }
 
     @Override
@@ -111,6 +113,10 @@ public class TableWriterSegmentCopyInfo implements QuietCloseable {
         return (int) segments.get(segmentIndex * 4L + 1);
     }
 
+    public long getSegmentsAddress() {
+        return segments.getAddress();
+    }
+
     public long getStartTxn() {
         return startSeqTxn;
     }
@@ -131,6 +137,10 @@ public class TableWriterSegmentCopyInfo implements QuietCloseable {
         return (int) segments.get(segmentIndex * 4L);
     }
 
+    public boolean hasSegmentGaps() {
+        return hasSegmentGap;
+    }
+
     public void initBlock(long startSeqTxn, int txnCount, boolean hasSymbols) {
         this.startSeqTxn = startSeqTxn;
         if (hasSymbols) {
@@ -140,5 +150,9 @@ public class TableWriterSegmentCopyInfo implements QuietCloseable {
 
     public boolean isLastSegmentUse(int segmentIndex) {
         return segments.get(segmentIndex * 4L + 3) > 0;
+    }
+
+    public void setSegmentGap(boolean value) {
+        hasSegmentGap = value;
     }
 }

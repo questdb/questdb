@@ -64,7 +64,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
     @Test
     public void apply1RowCommitsManyWriters() throws Exception {
-        testApply1RowCommitManyWriters(Timestamps.SECOND_MICROS, 200_000);
+        testApply1RowCommitManyWriters(Timestamps.SECOND_MICROS, 1_000_000);
     }
 
     @Test
@@ -1385,7 +1385,7 @@ public class WalWriterTest extends AbstractCairoTest {
             engine.load();
 
             try {
-                var lastTxn = engine.getTableSequencerAPI().lastTxn(tableToken);
+                engine.getTableSequencerAPI().lastTxn(tableToken);
                 assertExceptionNoLeakCheck("Exception expected");
             } catch (CairoException e) {
                 // The table is not dropped in the table registry, the exception should not be table dropped exception
@@ -3135,7 +3135,7 @@ public class WalWriterTest extends AbstractCairoTest {
             };
 
             try {
-                var lastTxn = engine.getTableSequencerAPI().lastTxn(tableToken);
+                engine.getTableSequencerAPI().lastTxn(tableToken);
                 Assert.fail("Exception expected");
             } catch (CairoException e) {
                 // We should receive table is dropped error
@@ -3428,7 +3428,9 @@ public class WalWriterTest extends AbstractCairoTest {
                 LOG.info().$("Time to drain WAL queue: ").$((end - start) / 1_000_000.0).$("s").$();
 
             } finally {
-                sharedWorkerPool.halt();
+                if (sharedWorkerPool != null) {
+                    sharedWorkerPool.halt();
+                }
             }
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));

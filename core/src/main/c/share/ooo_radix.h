@@ -508,6 +508,112 @@ int64_t merge_shuffle_column_from_many_addresses(
     return row_count;
 }
 
+template<typename T, typename TIdx, uint8_t MergeFormat>
+int64_t merge_shuffle_fixed_columns_by_rev_index(
+        const T **src_addresses,
+        T *dst_address,
+        const void *reverse_index_ptr,
+        const seg_info *segments,
+        int64_t segment_count
+) {
+    static_assert(std::is_integral_v<TIdx> && std::is_unsigned_v<TIdx>, "T must be an unsigned integer");
+    const TIdx *reverse_index = reinterpret_cast<const TIdx *>(reverse_index_ptr);
+
+    int64_t rev_row_index = 0;
+    for (uint64_t seg = 0; seg < segment_count; seg++) {
+        auto src = src_addresses[seg];
+        auto segment_lo = segments[seg].segment_lo;
+        auto segment_hi = segments[seg].segment_hi;
+
+        for (int64_t r = segment_lo; r < segment_hi; r++) {
+            auto dst_index = reverse_index[rev_row_index++];
+            if constexpr (MergeFormat == dedup_shuffle_index_format) {
+                if (dst_index == 0) {
+                    // 0 means this row is not in the result set
+                    continue;
+                }
+                // rows shifted by 1
+                dst_index--;
+            }
+            dst_address[dst_index] = src[r];
+        }
+    }
+    return rev_row_index;
+}
+
+template<typename T>
+int64_t merge_shuffle_fixed_columns_by_rev_index_from_many_addresses(
+        int32_t reverse_index_format_bytes, const void **src_addresses,
+        void *dst_address, const void *reverse_index,
+        const seg_info *segments, int64_t segment_count,
+        uint8_t merge_index_format
+) {
+    auto src = reinterpret_cast<const T **>(src_addresses);
+    auto dst = reinterpret_cast<T *>(dst_address);
+
+    if (merge_index_format == shuffle_index_format) {
+        switch (reverse_index_format_bytes) {
+            case 1:
+                return merge_shuffle_fixed_columns_by_rev_index<T, uint8_t, shuffle_index_format>(
+                        src, dst,
+                        reverse_index, segments,
+                        segment_count
+                );
+            case 2:
+                return merge_shuffle_fixed_columns_by_rev_index<T, uint16_t, shuffle_index_format>(
+                        src, dst,
+                        reverse_index, segments,
+                        segment_count
+                );
+            case 4:
+                return merge_shuffle_fixed_columns_by_rev_index<T, uint32_t, shuffle_index_format>(
+                        src, dst,
+                        reverse_index, segments,
+                        segment_count
+                );
+            case 8:
+                return merge_shuffle_fixed_columns_by_rev_index<T, uint64_t, shuffle_index_format>(
+                        src, dst,
+                        reverse_index, segments,
+                        segment_count
+                );
+            default:
+                return -1;
+        }
+    } else if (merge_index_format == dedup_shuffle_index_format) {
+        switch (reverse_index_format_bytes) {
+            case 1:
+                return merge_shuffle_fixed_columns_by_rev_index<T, uint8_t, dedup_shuffle_index_format>(
+                        src, dst,
+                        reverse_index, segments,
+                        segment_count
+                );
+            case 2:
+                return merge_shuffle_fixed_columns_by_rev_index<T, uint16_t, dedup_shuffle_index_format>(
+                        src, dst,
+                        reverse_index, segments,
+                        segment_count
+                );
+            case 4:
+                return merge_shuffle_fixed_columns_by_rev_index<T, uint32_t, dedup_shuffle_index_format>(
+                        src, dst,
+                        reverse_index, segments,
+                        segment_count
+                );
+            case 8:
+                return merge_shuffle_fixed_columns_by_rev_index<T, uint64_t, dedup_shuffle_index_format>(
+                        src, dst,
+                        reverse_index, segments,
+                        segment_count
+                );
+            default:
+                return -1;
+        }
+    }
+    return -2;
+}
+
+
 template<typename T, uint16_t Mult, uint16_t SegmentBits>
 int64_t merge_shuffle_string_column_from_many_addresses_segment_bits(
         const char **src_primary,

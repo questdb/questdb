@@ -498,6 +498,7 @@ void k_way_merge_long_index(
 }
 
 DECLARE_DISPATCHER(make_timestamp_index);
+
 void binary_merge_ts_long_index(
         const int64_t *timestamps,
         const int64_t timestampLo,
@@ -819,52 +820,70 @@ Java_io_questdb_std_Vect_radixSortManySegmentsIndexAsc(
 }
 
 JNIEXPORT jlong JNICALL
-Java_io_questdb_std_Vect_mergeShuffleColumnFromManyAddresses(
+Java_io_questdb_std_Vect_mergeShuffleFixedColumnFromManyAddresses(
         JNIEnv *env,
         jclass cl,
         jint columnSizeBytes,
         jlong indexFormat,
         jlong srcAddresses,
         jlong dstAddress,
-        jlong mergeIndex
+        jlong mergeIndex,
+        jlong segmentAddressPtr,
+        jlong segmentCount
 ) {
     auto merge_index_address = reinterpret_cast<const index_l *>(mergeIndex);
     auto row_count = read_row_count(indexFormat);
     auto column_size_bytes = (int32_t) columnSizeBytes;
-    auto index_segment_encoding_bytes = read_segment_bytes(indexFormat);
+    auto reverse_index_format_bytes = read_reverse_index_format_bytes(indexFormat);
     auto src_addresses = reinterpret_cast<const void **>(srcAddresses);
     auto dst_address = reinterpret_cast<void *>(dstAddress);
+    auto segment_address_ptr = reinterpret_cast<const seg_info *>(segmentAddressPtr);
+    auto segment_count = __JLONG_REINTERPRET_CAST__(int64_t, segmentCount);
+    auto reverse_index = read_reverse_index_ptr(mergeIndex, indexFormat);
+    auto merge_index_format = read_format(indexFormat);
 
     switch (column_size_bytes) {
         case 1:
-            return merge_shuffle_column_from_many_addresses<uint8_t>(
-                    index_segment_encoding_bytes, src_addresses,
-                    dst_address, merge_index_address, row_count
+            return merge_shuffle_fixed_columns_by_rev_index_from_many_addresses<uint8_t>(
+                    reverse_index_format_bytes, src_addresses,
+                    dst_address, reverse_index,
+                    segment_address_ptr, segment_count,
+                    merge_index_format
             );
         case 2:
-            return merge_shuffle_column_from_many_addresses<uint16_t>(
-                    index_segment_encoding_bytes, src_addresses,
-                    dst_address, merge_index_address, row_count
+            return merge_shuffle_fixed_columns_by_rev_index_from_many_addresses<uint16_t>(
+                    reverse_index_format_bytes, src_addresses,
+                    dst_address, reverse_index,
+                    segment_address_ptr, segment_count,
+                    merge_index_format
             );
         case 4:
-            return merge_shuffle_column_from_many_addresses<uint32_t>(
-                    index_segment_encoding_bytes, src_addresses,
-                    dst_address, merge_index_address, row_count
+            return merge_shuffle_fixed_columns_by_rev_index_from_many_addresses<uint32_t>(
+                    reverse_index_format_bytes, src_addresses,
+                    dst_address, reverse_index,
+                    segment_address_ptr, segment_count,
+                    merge_index_format
             );
         case 8:
-            return merge_shuffle_column_from_many_addresses<uint64_t>(
-                    index_segment_encoding_bytes, src_addresses,
-                    dst_address, merge_index_address, row_count
+            return merge_shuffle_fixed_columns_by_rev_index_from_many_addresses<uint64_t>(
+                    reverse_index_format_bytes, src_addresses,
+                    dst_address, reverse_index,
+                    segment_address_ptr, segment_count,
+                    merge_index_format
             );
         case 16:
-            return merge_shuffle_column_from_many_addresses<__int128>(
-                    index_segment_encoding_bytes, src_addresses,
-                    dst_address, merge_index_address, row_count
+            return merge_shuffle_fixed_columns_by_rev_index_from_many_addresses<__int128>(
+                    reverse_index_format_bytes, src_addresses,
+                    dst_address, reverse_index,
+                    segment_address_ptr, segment_count,
+                    merge_index_format
             );
         case 32:
-            return merge_shuffle_column_from_many_addresses<long_256bit>(
-                    index_segment_encoding_bytes, src_addresses,
-                    dst_address, merge_index_address, row_count
+            return merge_shuffle_fixed_columns_by_rev_index_from_many_addresses<long_256bit>(
+                    reverse_index_format_bytes, src_addresses,
+                    dst_address, reverse_index,
+                    segment_address_ptr, segment_count,
+                    merge_index_format
             );
         default:
             return -1;
@@ -965,43 +984,58 @@ Java_io_questdb_std_Vect_mergeShuffleVarcharColumnFromManyAddresses(
     int64_t end_dst_var_offset;
     switch (index_segment_encoding_bytes) {
         case 0:
-            end_dst_var_offset = merge_shuffle_varchar_column_from_many_addresses<0u>(src_primary, src_secondary, dst_primary, dst_secondary,
-                                                                 merge_index_address, row_count,
-                                                                 dst_var_offset);
+            end_dst_var_offset = merge_shuffle_varchar_column_from_many_addresses<0u>(src_primary, src_secondary,
+                                                                                      dst_primary, dst_secondary,
+                                                                                      merge_index_address, row_count,
+                                                                                      dst_var_offset);
             break;
         case 1:
-            end_dst_var_offset = merge_shuffle_varchar_column_from_many_addresses<8u>(src_primary, src_secondary, dst_primary, dst_secondary,
-                                                                 merge_index_address, row_count, dst_var_offset);
+            end_dst_var_offset = merge_shuffle_varchar_column_from_many_addresses<8u>(src_primary, src_secondary,
+                                                                                      dst_primary, dst_secondary,
+                                                                                      merge_index_address, row_count,
+                                                                                      dst_var_offset);
             break;
         case 2:
-            end_dst_var_offset = merge_shuffle_varchar_column_from_many_addresses<16u>(src_primary, src_secondary, dst_primary,
-                                                                  dst_secondary, merge_index_address, row_count,
-                                                                  dst_var_offset);
+            end_dst_var_offset = merge_shuffle_varchar_column_from_many_addresses<16u>(src_primary, src_secondary,
+                                                                                       dst_primary,
+                                                                                       dst_secondary,
+                                                                                       merge_index_address, row_count,
+                                                                                       dst_var_offset);
             break;
         case 3:
-            end_dst_var_offset = merge_shuffle_varchar_column_from_many_addresses<24u>(src_primary, src_secondary, dst_primary,
-                                                                  dst_secondary, merge_index_address, row_count,
-                                                                  dst_var_offset);
+            end_dst_var_offset = merge_shuffle_varchar_column_from_many_addresses<24u>(src_primary, src_secondary,
+                                                                                       dst_primary,
+                                                                                       dst_secondary,
+                                                                                       merge_index_address, row_count,
+                                                                                       dst_var_offset);
             break;
         case 4:
-            end_dst_var_offset = merge_shuffle_varchar_column_from_many_addresses<32u>(src_primary, src_secondary, dst_primary,
-                                                                  dst_secondary, merge_index_address, row_count,
-                                                                  dst_var_offset);
+            end_dst_var_offset = merge_shuffle_varchar_column_from_many_addresses<32u>(src_primary, src_secondary,
+                                                                                       dst_primary,
+                                                                                       dst_secondary,
+                                                                                       merge_index_address, row_count,
+                                                                                       dst_var_offset);
             break;
         case 5:
-            end_dst_var_offset = merge_shuffle_varchar_column_from_many_addresses<40u>(src_primary, src_secondary, dst_primary,
-                                                                  dst_secondary, merge_index_address, row_count,
-                                                                  dst_var_offset);
+            end_dst_var_offset = merge_shuffle_varchar_column_from_many_addresses<40u>(src_primary, src_secondary,
+                                                                                       dst_primary,
+                                                                                       dst_secondary,
+                                                                                       merge_index_address, row_count,
+                                                                                       dst_var_offset);
             break;
         case 6:
-            end_dst_var_offset = merge_shuffle_varchar_column_from_many_addresses<48u>(src_primary, src_secondary, dst_primary,
-                                                                  dst_secondary, merge_index_address, row_count,
-                                                                  dst_var_offset);
+            end_dst_var_offset = merge_shuffle_varchar_column_from_many_addresses<48u>(src_primary, src_secondary,
+                                                                                       dst_primary,
+                                                                                       dst_secondary,
+                                                                                       merge_index_address, row_count,
+                                                                                       dst_var_offset);
             break;
         case 7:
-            end_dst_var_offset = merge_shuffle_varchar_column_from_many_addresses<56u>(src_primary, src_secondary, dst_primary,
-                                                                  dst_secondary, merge_index_address, row_count,
-                                                                  dst_var_offset);
+            end_dst_var_offset = merge_shuffle_varchar_column_from_many_addresses<56u>(src_primary, src_secondary,
+                                                                                       dst_primary,
+                                                                                       dst_secondary,
+                                                                                       merge_index_address, row_count,
+                                                                                       dst_var_offset);
             break;
         default:
             return -1;

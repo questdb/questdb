@@ -307,7 +307,7 @@ int64_t dedup_sorted_timestamp_index_many_addresses(
         return dedup_sorted_timestamp_index(index_in, index_count, index_out);
     }
     const auto diff_l = [&](const index_tr_i<TIdx> l, const index_tr_i<TIdx> r) {
-        for (int c = 0; c < dedup_key_count; c++) {
+        for (size_t c = 0; c < dedup_key_count; c++) {
             const dedup_column_many_addresses *col_key = &src_keys[c];
             int diff;
             switch (col_key->value_size_bytes) {
