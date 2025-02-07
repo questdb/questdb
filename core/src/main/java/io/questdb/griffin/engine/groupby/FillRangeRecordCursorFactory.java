@@ -533,11 +533,6 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             }
 
             @Override
-            public long getLongIPv4(int col) {
-                return getLong(col);
-            }
-
-            @Override
             public short getShort(int col) {
                 if (gapFilling) {
                     return getFillFunction(col).getShort(null);

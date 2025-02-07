@@ -331,11 +331,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return long256;
     }
 
-    @Override
-    public long getLongIPv4(int columnIndex) {
-        return Numbers.ipv4ToLong(getIPv4(columnIndex));
-    }
-
     public ArrayView getArray(int columnIndex, int columnType) {
         final long auxPageAddress = auxPageAddresses.getQuick(columnIndex);
         if (auxPageAddress != 0) {
