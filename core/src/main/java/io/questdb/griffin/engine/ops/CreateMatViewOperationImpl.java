@@ -38,17 +38,18 @@ import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
+import io.questdb.std.Misc;
 import org.jetbrains.annotations.Nullable;
 
 public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final ObjList<String> baseKeyColumnNames = new ObjList<>();
     private final String baseTableName;
-    private final CreateTableOperation createTableOperation;
     private final long samplingInterval;
     private final char samplingIntervalUnit;
     private final String timeZone;
     private final String timeZoneOffset;
     private final String viewSql;
+    private CreateTableOperation createTableOperation;
     private MatViewDefinition matViewDefinition;
 
     public CreateMatViewOperationImpl(
@@ -76,7 +77,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
     @Override
     public void close() {
-        createTableOperation.close();
+        createTableOperation = Misc.free(createTableOperation);
     }
 
     @Override
@@ -196,9 +197,9 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     @Override
-    public void init(TableToken tableToken) {
+    public void init(TableToken matViewToken) {
         matViewDefinition = new MatViewDefinition(
-                tableToken, viewSql, baseTableName, samplingInterval, samplingIntervalUnit,
+                matViewToken, viewSql, baseTableName, samplingInterval, samplingIntervalUnit,
                 timeZone, timeZoneOffset
         );
     }

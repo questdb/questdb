@@ -108,19 +108,18 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         switch (type) {
             case INSERT:
                 return insertOp.execute(sqlExecutionContext);
-            case CREATE_TABLE:
-            case CREATE_TABLE_AS_SELECT:
-                assert false;
-                doneFuture.of(0);
             case UPDATE:
                 updateOp.withSqlStatement(sqlStatement);
                 return updateOperationDispatcher.execute(updateOp, sqlExecutionContext, eventSubSeq, closeOnDone);
             case ALTER:
                 alterOp.withSqlStatement(sqlStatement);
                 return alterOperationDispatcher.execute(alterOp, sqlExecutionContext, eventSubSeq, closeOnDone);
+            case CREATE_TABLE:
+            case CREATE_MAT_VIEW:
+            case CREATE_TABLE_AS_SELECT:
             case DROP:
                 assert false;
-                // fall thru
+                // fall through
             default:
                 return doneFuture.of(0);
         }
