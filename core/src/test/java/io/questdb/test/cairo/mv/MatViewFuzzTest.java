@@ -188,7 +188,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             Rnd rnd = fuzzer.generateRandom(LOG);
             setFuzzParams(rnd, 0);
             setFuzzProperties(rnd);
-            runMvFuzz(rnd, getTestName(), 1);
+            runMvFuzz(rnd, getTestName(), 4);
         });
     }
 

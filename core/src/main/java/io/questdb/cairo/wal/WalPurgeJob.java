@@ -31,6 +31,8 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.mv.MatViewRefreshState;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.log.Log;
@@ -46,6 +48,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -60,6 +63,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(WalPurgeJob.class);
     private final TableSequencerAPI.TableSequencerCallback broadSweepRef;
     private final long checkInterval;
+    private final ObjList<TableToken> childViewSink = new ObjList<>();
     private final MicrosecondClock clock;
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
@@ -352,12 +356,12 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     }
                     throw ex;
                 }
-                final long lastAppliedTxn = txReader.getSeqTxn();
+                final long safeToPurgeTxn = getSafeToPurgeTxn();
 
                 TableSequencerAPI tableSequencerAPI = engine.getTableSequencerAPI();
-                try (TransactionLogCursor transactionLogCursor = tableSequencerAPI.getCursor(tableToken, lastAppliedTxn)) {
+                try (TransactionLogCursor transactionLogCursor = tableSequencerAPI.getCursor(tableToken, safeToPurgeTxn)) {
                     int txnPartSize = transactionLogCursor.getPartitionSize();
-                    long currentSeqPart = getCurrentSeqPart(tableToken, lastAppliedTxn, txnPartSize, partsFound);
+                    long currentSeqPart = getCurrentSeqPart(tableToken, safeToPurgeTxn, txnPartSize, partsFound);
                     logic.trackCurrentSeqPart(currentSeqPart);
                     while (onDiskWalIDSet.size() > 0 && transactionLogCursor.hasNext()) {
                         int walId = transactionLogCursor.getWalId();
@@ -381,6 +385,22 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         return false;
         // If table is dropped, all wals can be deleted.
         // No need to do anything, all discovered segments / wals will be deleted
+    }
+
+    private long getSafeToPurgeTxn() {
+        long safeToPurgeTxn = txReader.getSeqTxn();
+        childViewSink.clear();
+        engine.getMatViewGraph().getDependentMatViews(tableToken, childViewSink);
+        for (int v = 0, n = childViewSink.size(); v < n; v++) {
+            final TableToken viewToken = childViewSink.get(v);
+            final MatViewRefreshState state = engine.getMatViewGraph().getViewRefreshState(viewToken);
+            if (state != null && !state.isPendingInvalidation() && !state.isInvalid() && !state.isDropped()) {
+                final SeqTxnTracker viewSeqTracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
+                final long appliedToViewTxn = Math.max(0, viewSeqTracker.getLastRefreshBaseTxn());
+                safeToPurgeTxn = Math.min(safeToPurgeTxn, appliedToViewTxn);
+            }
+        }
+        return safeToPurgeTxn;
     }
 
     private boolean recursiveDelete(Path path) {
