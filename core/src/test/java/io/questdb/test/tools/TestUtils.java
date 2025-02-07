@@ -553,7 +553,7 @@ public final class TestUtils {
 
         // Check if each dimension has the same length
         for (int i = 0; i < dim; i++) {
-            Assert.assertEquals(expected.getDimSize(i), actual.getDimSize(i));
+            Assert.assertEquals(expected.getDimLen(i), actual.getDimLen(i));
         }
 
         // Compare elements using virtual indexing
@@ -1788,7 +1788,7 @@ public final class TestUtils {
 
     private static void assertEqualsRecursive(ArrayView expected, ArrayView actual, int dim, int expectedFlatIndex, int actualFlatIndex) {
         // last dimension
-        int dimLen = actual.getDimSize(dim);
+        int dimLen = actual.getDimLen(dim);
         if (dim == actual.getDimCount() - 1) {
             for (int i = 0; i < dimLen; i++) {
                 Assert.assertEquals(
