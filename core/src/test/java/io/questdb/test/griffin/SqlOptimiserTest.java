@@ -4540,6 +4540,35 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                 "1970-01-01T00:00:06.000008Z\tB\t8.0\t8.0\n" +
                 "1970-01-01T00:00:06.000009Z\tA\t9.0\t9.0\n" +
                 "1970-01-01T00:00:06.000010Z\tB\t10.0\t10.0\n", q5);
+
+        String q6 = "SELECT * FROM (" +
+                "SELECT ts1, hostname, usage_system, " +
+                "row_number() OVER (partition by hostname order by ts1 desc RANGE BETWEEN 3 seconds preceding and current row), " +
+                "rank() OVER (partition by hostname order by ts1 desc RANGE BETWEEN 3 seconds preceding and current row), " +
+                "lead(usage_system) OVER (partition by hostname order by ts1 desc RANGE BETWEEN 3 seconds preceding and current row), " +
+                "lag(usage_system) OVER (partition by hostname order by ts1 desc RANGE BETWEEN 3 seconds preceding and current row), " +
+                "dense_rank() OVER (partition by hostname order by ts1 desc RANGE BETWEEN 3 seconds preceding and current row) " +
+                "from (select * from cpu_ts order by ts1 desc))" +
+                "order by ts1 desc";
+        assertPlanNoLeakCheck(
+                q6,
+                "CachedWindow\n" +
+                        "  unorderedFunctions: [row_number() over (partition by [hostname]),rank() over (partition by [hostname]),lead(usage_system, 1, NULL) over (partition by [hostname]),lag(usage_system, 1, NULL) over (partition by [hostname]),dense_rank() over (partition by [hostname])]\n" +
+                        "    PageFrame\n" +
+                        "        Row backward scan\n" +
+                        "        Frame backward scan on: cpu_ts\n"
+        );
+        assertSql("ts1\thostname\tusage_system\trow_number\trank\tlead\tlag\tdense_rank\n" +
+                "1970-01-01T00:00:00.000010Z\tB\t10.0\t1\t1\t8.0\tnull\t1\n" +
+                "1970-01-01T00:00:00.000009Z\tA\t9.0\t1\t1\t2.0\tnull\t1\n" +
+                "1970-01-01T00:00:00.000008Z\tB\t8.0\t2\t2\t3.0\t10.0\t2\n" +
+                "1970-01-01T00:00:00.000007Z\tC\t7.0\t1\t1\t6.0\tnull\t1\n" +
+                "1970-01-01T00:00:00.000006Z\tC\t6.0\t2\t2\t5.0\t7.0\t2\n" +
+                "1970-01-01T00:00:00.000005Z\tC\t5.0\t3\t3\t4.0\t6.0\t3\n" +
+                "1970-01-01T00:00:00.000004Z\tC\t4.0\t4\t4\tnull\t5.0\t4\n" +
+                "1970-01-01T00:00:00.000003Z\tB\t3.0\t3\t3\tnull\t8.0\t3\n" +
+                "1970-01-01T00:00:00.000002Z\tA\t2.0\t2\t2\t1.0\t9.0\t2\n" +
+                "1970-01-01T00:00:00.000001Z\tA\t1.0\t3\t3\tnull\t2.0\t3\n", q6);
     }
 
     @Test

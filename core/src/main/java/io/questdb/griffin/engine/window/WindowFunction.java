@@ -54,9 +54,9 @@ public interface WindowFunction extends Function {
     default void initRecordComparator(SqlCodeGenerator sqlGenerator,
                                       RecordMetadata metadata,
                                       ArrayColumnTypes chainTypes,
-                                      IntList OrderIndices,
-                                      ObjList<ExpressionNode> orderby,
-                                      IntList orderbyDirections) throws SqlException {
+                                      IntList orderIndices,
+                                      ObjList<ExpressionNode> orderBy,
+                                      IntList orderByDirections) throws SqlException {
     }
 
     /**

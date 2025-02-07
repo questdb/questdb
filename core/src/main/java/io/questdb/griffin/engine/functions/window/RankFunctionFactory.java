@@ -44,6 +44,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.griffin.PlanSink;
@@ -144,6 +145,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             return rank;
         }
 
+        @Override
         public void computeNext(Record record) {
             partitionByRecord.of(record);
             MapKey key = map.withKey();
@@ -175,14 +177,14 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         public void initRecordComparator(SqlCodeGenerator sqlGenerator,
                                          RecordMetadata metadata,
                                          ArrayColumnTypes chainTypes,
-                                         IntList OrderIndices,
+                                         IntList orderIndices,
                                          ObjList<ExpressionNode> orderBy,
                                          IntList orderByDirection) throws SqlException {
-            if (OrderIndices == null) {
-                OrderIndices = sqlGenerator.toOrderIndices(metadata, orderBy, orderByDirection);
+            if (orderIndices == null) {
+                orderIndices = sqlGenerator.toOrderIndices(metadata, orderBy, orderByDirection);
             }
 
-            if (chainTypes.getColumnCount() == 0) { // for WindowCursorFactory
+            if (chainTypes.getColumnCount() == 0) { // for WindowRecordCursorFactory
                 EntityColumnFilter entityColumnFilter = sqlGenerator.getEntityColumnFilter();
                 for (int i = 0, size = metadata.getColumnCount(); i < size; i++) {
                     chainTypes.add(metadata.getColumnType(i));
@@ -191,7 +193,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                 chainTypeIndex = metadata.getColumnCount();
                 entityColumnFilter.of(chainTypeIndex);
                 recordValueSink = RecordValueSinkFactory.getInstance(sqlGenerator.getAsm(), chainTypes, entityColumnFilter);
-                this.recordComparator = sqlGenerator.getRecordComparatorCompiler().compile(chainTypes, OrderIndices);
+                this.recordComparator = sqlGenerator.getRecordComparatorCompiler().compile(chainTypes, orderIndices);
                 chainTypes.add(ColumnType.LONG);
                 chainTypes.add(ColumnType.LONG);
                 this.map = MapFactory.createUnorderedMap(
@@ -199,13 +201,13 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                         keyColumnTypes,
                         chainTypes
                 );
-            } else { // for CachedWindowCursorFactory
+            } else { // for CachedWindowRecordCursorFactory
                 map = MapFactory.createUnorderedMap(
                         configuration,
                         keyColumnTypes,
                         RANK_COLUMN_TYPES
                 );
-                this.recordComparator = sqlGenerator.getRecordComparatorCompiler().compile(chainTypes, OrderIndices);
+                this.recordComparator = sqlGenerator.getRecordComparatorCompiler().compile(chainTypes, orderIndices);
             }
         }
 
@@ -233,6 +235,12 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             mapValue.putLong(1, rank);
             mapValue.putLong(2, count + 1);
             Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), rank);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext);
         }
 
         @Override
@@ -291,7 +299,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         private final String name;
 
         private long rank;
-        private long count = 0;
+        private long count = 1;
         private RecordComparator recordComparator;
         private int columnIndex;
         private SingleRecordSink singleRecordSinkA;
@@ -310,13 +318,13 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             return rank;
         }
 
+        @Override
         public void computeNext(Record record) {
             SingleRecordSink singleRecordSink = count % 2 == 0 ? singleRecordSinkA : singleRecordSinkB;
             singleRecordSink.clear();
             recordSink.copy(record, singleRecordSink);
-            if (count == 0) {
+            if (count == 1) {
                 rank = 1;
-                count = 1;
             } else {
                 if (!singleRecordSinkA.memeq(singleRecordSinkB)) {
                     rank = dense ? rank + 1 : count;
@@ -362,9 +370,8 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            if (count == 0) {
+            if (count == 1) {
                 rank = 1;
-                count = 1;
             } else {
                 recordComparator.setLeft(record);
                 if (recordComparator.compare(spi.getRecordAt(lastRecordOffset)) != 0) {
@@ -394,7 +401,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
 
         @Override
         public void reopen() {
-            count = 0;
+            count = 1;
             if (singleRecordSinkA != null) {
                 singleRecordSinkA.reopen();
             }
@@ -405,12 +412,12 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
 
         @Override
         public void reset() {
-            count = 0;
+            count = 1;
         }
 
         @Override
         public void toTop() {
-            count = 0;
+            count = 1;
             super.toTop();
         }
 
@@ -419,7 +426,6 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             super.close();
             Misc.free(singleRecordSinkA);
             Misc.free(singleRecordSinkB);
-            count = 0;
         }
     }
 
@@ -449,6 +455,14 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), RANK_CONST);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            if (partitionByRecord != null) {
+                Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext);
+            }
         }
 
         @Override

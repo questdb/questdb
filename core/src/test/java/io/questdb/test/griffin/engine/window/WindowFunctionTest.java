@@ -3964,6 +3964,39 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRowNumberWithPartitionByScalarFunction() throws Exception {
+        assertQuery(
+                "row_number\tts\n" +
+                        "1\t1970-01-01T00:00:00.000000Z\n" +
+                        "2\t1970-01-02T03:46:40.000000Z\n" +
+                        "1\t1970-01-03T07:33:20.000000Z\n" +
+                        "1\t1970-01-04T11:20:00.000000Z\n" +
+                        "2\t1970-01-05T15:06:40.000000Z\n" +
+                        "3\t1970-01-06T18:53:20.000000Z\n" +
+                        "4\t1970-01-07T22:40:00.000000Z\n" +
+                        "2\t1970-01-09T02:26:40.000000Z\n" +
+                        "3\t1970-01-10T06:13:20.000000Z\n" +
+                        "3\t1970-01-11T10:00:00.000000Z\n",
+                "select row_number() over (partition by concat(symbol, '_foo') order by symbol), ts from trades",
+                "create table trades as " +
+                        "(" +
+                        "select" +
+                        " rnd_symbol('AA','BB','CC') symbol," +
+                        " timestamp_sequence(0, 100000000000) ts" +
+                        " from long_sequence(10)" +
+                        ") timestamp(ts) partition by day",
+                "ts",
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testWindowStopPropagateOrderByFunction() {
+
+    }
+
+    @Test
     public void testWindowBufferExceedsLimit() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 4096);
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES, 10);
@@ -5272,17 +5305,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     "ts\trank\tdense_rank\n" +
                             "1970-01-01T00:00:00.000000Z\t1\t1\n" +
-                            "1970-01-01T00:00:00.000000Z\t2\t2\n" +
-                            "1970-01-01T00:00:00.000000Z\t2\t2\n" +
-                            "1970-01-01T00:00:00.000001Z\t4\t3\n" +
-                            "1970-01-01T00:00:00.000001Z\t4\t3\n" +
-                            "1970-01-01T00:00:00.000001Z\t4\t3\n" +
-                            "1970-01-01T00:00:00.000001Z\t4\t3\n" +
-                            "1970-01-01T00:00:00.000002Z\t8\t4\n" +
-                            "1970-01-01T00:00:00.000002Z\t8\t4\n" +
-                            "1970-01-01T00:00:00.000002Z\t8\t4\n" +
-                            "1970-01-01T00:00:00.000002Z\t8\t4\n" +
-                            "1970-01-01T00:00:00.000003Z\t12\t5\n",
+                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000001Z\t4\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\t4\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\t4\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\t4\t2\n" +
+                            "1970-01-01T00:00:00.000002Z\t8\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\t8\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\t8\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\t8\t3\n" +
+                            "1970-01-01T00:00:00.000003Z\t12\t4\n",
                     "select ts," +
                             "rank() over (order by ts), " +
                             "dense_rank() over (order by ts) " +
@@ -5294,18 +5327,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     "ts\ts\trank\tdense_rank\n" +
-                            "1970-01-01T00:00:00.000000Z\tk0\t2\t2\n" +
-                            "1970-01-01T00:00:00.000001Z\tk0\t4\t3\n" +
-                            "1970-01-01T00:00:00.000001Z\tk0\t4\t3\n" +
-                            "1970-01-01T00:00:00.000002Z\tk0\t8\t4\n" +
-                            "1970-01-01T00:00:00.000002Z\tk0\t8\t4\n" +
-                            "1970-01-01T00:00:00.000003Z\tk0\t12\t5\n" +
+                            "1970-01-01T00:00:00.000000Z\tk0\t1\t1\n" +
+                            "1970-01-01T00:00:00.000001Z\tk0\t4\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\tk0\t4\t2\n" +
+                            "1970-01-01T00:00:00.000002Z\tk0\t8\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\tk0\t8\t3\n" +
+                            "1970-01-01T00:00:00.000003Z\tk0\t12\t4\n" +
                             "1970-01-01T00:00:00.000000Z\tk1\t1\t1\n" +
-                            "1970-01-01T00:00:00.000000Z\tk1\t2\t2\n" +
-                            "1970-01-01T00:00:00.000001Z\tk1\t4\t3\n" +
-                            "1970-01-01T00:00:00.000001Z\tk1\t4\t3\n" +
-                            "1970-01-01T00:00:00.000002Z\tk1\t8\t4\n" +
-                            "1970-01-01T00:00:00.000002Z\tk1\t8\t4\n",
+                            "1970-01-01T00:00:00.000000Z\tk1\t1\t1\n" +
+                            "1970-01-01T00:00:00.000001Z\tk1\t4\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\tk1\t4\t2\n" +
+                            "1970-01-01T00:00:00.000002Z\tk1\t8\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\tk1\t8\t3\n",
                     "select ts, s," +
                             "rank() over (order by ts), " +
                             "dense_rank() over (order by ts) " +
@@ -5318,17 +5351,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     "ts\trank\tdense_rank\n" +
                             "1970-01-01T00:00:00.000000Z\t1\t1\n" +
-                            "1970-01-01T00:00:00.000000Z\t2\t2\n" +
-                            "1970-01-01T00:00:00.000000Z\t2\t2\n" +
-                            "1970-01-01T00:00:00.000001Z\t4\t3\n" +
-                            "1970-01-01T00:00:00.000001Z\t4\t3\n" +
-                            "1970-01-01T00:00:00.000001Z\t4\t3\n" +
-                            "1970-01-01T00:00:00.000001Z\t4\t3\n" +
-                            "1970-01-01T00:00:00.000002Z\t8\t4\n" +
-                            "1970-01-01T00:00:00.000002Z\t8\t4\n" +
-                            "1970-01-01T00:00:00.000002Z\t8\t4\n" +
-                            "1970-01-01T00:00:00.000002Z\t8\t4\n" +
-                            "1970-01-01T00:00:00.000003Z\t12\t5\n",
+                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000001Z\t4\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\t4\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\t4\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\t4\t2\n" +
+                            "1970-01-01T00:00:00.000002Z\t8\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\t8\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\t8\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\t8\t3\n" +
+                            "1970-01-01T00:00:00.000003Z\t12\t4\n",
                     "select ts," +
                             "rank() over (order by ts), " +
                             "dense_rank() over (order by ts) " +
@@ -5340,25 +5373,48 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     "ts\trank\tdense_rank\trank1\tdense_rank1\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t4\t1\t4\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t4\t1\t4\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t4\t1\t4\n" +
-                            "1970-01-01T00:00:00.000001Z\t4\t3\t4\t3\n" +
-                            "1970-01-01T00:00:00.000001Z\t4\t3\t4\t3\n" +
-                            "1970-01-01T00:00:00.000001Z\t4\t3\t4\t3\n" +
-                            "1970-01-01T00:00:00.000001Z\t4\t3\t4\t3\n" +
-                            "1970-01-01T00:00:00.000002Z\t8\t2\t8\t2\n" +
-                            "1970-01-01T00:00:00.000002Z\t8\t2\t8\t2\n" +
-                            "1970-01-01T00:00:00.000002Z\t8\t2\t8\t2\n" +
-                            "1970-01-01T00:00:00.000002Z\t8\t2\t8\t2\n" +
-                            "1970-01-01T00:00:00.000003Z\t12\t1\t12\t1\n",
+                            "1970-01-01T00:00:00.000000Z\t1\t1\t10\t4\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\t10\t4\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\t10\t4\n" +
+                            "1970-01-01T00:00:00.000001Z\t4\t2\t6\t3\n" +
+                            "1970-01-01T00:00:00.000001Z\t4\t2\t6\t3\n" +
+                            "1970-01-01T00:00:00.000001Z\t4\t2\t6\t3\n" +
+                            "1970-01-01T00:00:00.000001Z\t4\t2\t6\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\t8\t3\t2\t2\n" +
+                            "1970-01-01T00:00:00.000002Z\t8\t3\t2\t2\n" +
+                            "1970-01-01T00:00:00.000002Z\t8\t3\t2\t2\n" +
+                            "1970-01-01T00:00:00.000002Z\t8\t3\t2\t2\n" +
+                            "1970-01-01T00:00:00.000003Z\t12\t4\t1\t1\n",
                     "select ts," +
                             "rank() over (order by ts), " +
-                            "dense_rank() over (order by ts desc), " +
-                            "rank() over (order by ts), " +
+                            "dense_rank() over (order by ts), " +
+                            "rank() over (order by ts desc), " +
                             "dense_rank() over (order by ts desc) " +
                             "from tab",
                     "ts",
+                    true,
+                    false
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\ts\trank\tdense_rank\n" +
+                            "1970-01-01T00:00:00.000000Z\tk0\t6\t4\n" +
+                            "1970-01-01T00:00:00.000001Z\tk0\t4\t3\n" +
+                            "1970-01-01T00:00:00.000001Z\tk0\t4\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\tk0\t2\t2\n" +
+                            "1970-01-01T00:00:00.000002Z\tk0\t2\t2\n" +
+                            "1970-01-01T00:00:00.000003Z\tk0\t1\t1\n" +
+                            "1970-01-01T00:00:00.000000Z\tk1\t5\t3\n" +
+                            "1970-01-01T00:00:00.000000Z\tk1\t5\t3\n" +
+                            "1970-01-01T00:00:00.000001Z\tk1\t3\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\tk1\t3\t2\n" +
+                            "1970-01-01T00:00:00.000002Z\tk1\t1\t1\n" +
+                            "1970-01-01T00:00:00.000002Z\tk1\t1\t1\n",
+                    "select ts, s," +
+                            "rank() over (partition by concat(s,'foobar') order by ts desc)," +
+                            "dense_rank() over (partition by concat(s,'foobar') order by ts desc)" +
+                            "from tab order by s, ts",
+                    "",
                     true,
                     false
             );

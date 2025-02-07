@@ -52,7 +52,7 @@ import io.questdb.std.Unsafe;
 
 public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
 
-    private static final String NAME = "lead";
+    public static final String NAME = "lead";
     private static final String SIGNATURE = NAME + "(DV)";
 
     @Override

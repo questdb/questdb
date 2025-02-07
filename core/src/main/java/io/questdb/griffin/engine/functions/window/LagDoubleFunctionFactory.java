@@ -54,7 +54,7 @@ import io.questdb.std.Unsafe;
 
 public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
 
-    private static final String NAME = "lag";
+    public static final String NAME = "lag";
     private static final String SIGNATURE = NAME + "(DV)";
     public static final ArrayColumnTypes LAG_COLUMN_TYPES;
 
