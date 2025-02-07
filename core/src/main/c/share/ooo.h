@@ -26,9 +26,9 @@
 #ifndef QUESTDB_OOO_H
 #define QUESTDB_OOO_H
 
-constexpr uint8_t DEDUP_INDEX_FORMAT = 1;
-constexpr uint8_t SHUFFLE_INDEX_FORMAT = 2;
-constexpr uint8_t DEDUP_SHUFFLE_INDEX_FORMAT = 3;
+constexpr uint8_t dedup_index_format = 1;
+constexpr uint8_t shuffle_index_format = 2;
+constexpr uint8_t dedup_shuffle_index_format = 3;
 
 template<auto Start, auto End, auto Inc, class F>
 constexpr void constexpr_for(F &&f) {
@@ -93,7 +93,7 @@ inline int64_t read_row_count(jlong index_format) {
 
 inline void* read_reverse_index_ptr(jlong mergeIndexPtr, jlong index_format) {
     auto format = read_format(index_format);
-    if (format == SHUFFLE_INDEX_FORMAT || format == DEDUP_SHUFFLE_INDEX_FORMAT) {
+    if (format == shuffle_index_format || format == dedup_shuffle_index_format) {
         auto row_count = read_row_count(index_format);
         return reinterpret_cast<void *>(mergeIndexPtr + row_count * sizeof(index_l) + sizeof (int64_t));
     }
@@ -102,10 +102,10 @@ inline void* read_reverse_index_ptr(jlong mergeIndexPtr, jlong index_format) {
 
 inline int64_t read_reverse_index_row_count(jlong mergeIndexPtr, jlong index_format) {
     auto format = read_format(index_format);
-    if (format == SHUFFLE_INDEX_FORMAT) {
+    if (format == shuffle_index_format) {
         return read_row_count(index_format);
     }
-    if (format == DEDUP_SHUFFLE_INDEX_FORMAT) {
+    if (format == dedup_shuffle_index_format) {
         auto index_rows = read_row_count(index_format);
         return (reinterpret_cast<int64_t *>(mergeIndexPtr + index_rows * sizeof(index_l)))[0];
     }

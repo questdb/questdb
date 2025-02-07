@@ -235,20 +235,20 @@ void radix_sort_long_index_asc_in_place(T *array, uint64_t size, T *cpy) {
 }
 
 
-template<uint16_t n>
+template<uint16_t N>
 void
 radix_sort_ab_long_index_asc(const int64_t *arrayA, const uint64_t sizeA, const index_l *arrayB, const uint64_t sizeB,
                              index_l *out, index_l *cpy, int64_t minValue) {
-    uint64_t counts[n][256] = {{0}};
+    uint64_t counts[N][256] = {{0}};
     uint64_t x;
 
     // calculate counts
     for (x = 0; x < sizeA; x++) {
         uint64_t value = arrayA[x] - minValue;
         // should be unrolled by compiler, n is a compile time const
-        constexpr_for<0, n, 1>(
+        constexpr_for<0, N, 1>(
                 [&](auto i) {
-                    constexpr uint64_t shift = 8u * (n - i - 1);
+                    constexpr uint64_t shift = 8u * (N - i - 1);
                     const auto t0 = (value >> shift) & 0xffu;
                     counts[i][t0]++;
                 }
@@ -259,9 +259,9 @@ radix_sort_ab_long_index_asc(const int64_t *arrayA, const uint64_t sizeA, const 
     for (x = 0; x < sizeB; x++) {
         uint64_t value = arrayB[x].ts - minValue;
         // should be unrolled by compiler, n is a compile time const
-        constexpr_for<0, n, 1>(
+        constexpr_for<0, N, 1>(
                 [&](auto i) {
-                    constexpr uint64_t shift = 8u * (n - i - 1);
+                    constexpr uint64_t shift = 8u * (N - i - 1);
                     const auto t0 = (value >> shift) & 0xffu;
                     counts[i][t0]++;
                 }
@@ -271,10 +271,10 @@ radix_sort_ab_long_index_asc(const int64_t *arrayA, const uint64_t sizeA, const 
 
     // convert counts to offsets
     MM_PREFETCH_T0(&counts);
-    uint64_t o[n] = {0};
+    uint64_t o[N] = {0};
     for (x = 0; x < 256; x++) {
         // should be unrolled by compiler, n is a compile time const
-        constexpr_for<0, n, 1>(
+        constexpr_for<0, N, 1>(
                 [&](auto i) {
                     auto t0 = o[i] + counts[i][x];
                     counts[i][x] = o[i];
@@ -287,50 +287,50 @@ radix_sort_ab_long_index_asc(const int64_t *arrayA, const uint64_t sizeA, const 
     auto size = sizeA + sizeB;
     auto *ucpy = (index_t *) cpy;
     auto *uout = (index_t *) out;
-    radix_shuffle_ab<0u>(counts[n - 1], arrayA, sizeA, arrayB, sizeB, ucpy, minValue);
+    radix_shuffle_ab<0u>(counts[N - 1], arrayA, sizeA, arrayB, sizeB, ucpy, minValue);
 
-    if constexpr (n > 2) {
-        radix_shuffle<8u>(counts[n - 2], ucpy, uout, size);
-        if constexpr (n > 3) {
-            radix_shuffle<16u>(counts[n - 3], uout, ucpy, size);
-            if constexpr (n > 4) {
-                radix_shuffle<24u>(counts[n - 4], ucpy, uout, size);
-                if constexpr (n > 5) {
-                    radix_shuffle<32u>(counts[n - 5], uout, ucpy, size);
-                    if constexpr (n > 6) {
-                        radix_shuffle<40u>(counts[n - 6], ucpy, uout, size);
-                        if constexpr (n > 7) {
-                            radix_shuffle<48u>(counts[n - 7], uout, ucpy, size);
-                            radix_shuffle<56u>(counts[n - 8], ucpy, out, size, minValue);
+    if constexpr (N > 2) {
+        radix_shuffle<8u>(counts[N - 2], ucpy, uout, size);
+        if constexpr (N > 3) {
+            radix_shuffle<16u>(counts[N - 3], uout, ucpy, size);
+            if constexpr (N > 4) {
+                radix_shuffle<24u>(counts[N - 4], ucpy, uout, size);
+                if constexpr (N > 5) {
+                    radix_shuffle<32u>(counts[N - 5], uout, ucpy, size);
+                    if constexpr (N > 6) {
+                        radix_shuffle<40u>(counts[N - 6], ucpy, uout, size);
+                        if constexpr (N > 7) {
+                            radix_shuffle<48u>(counts[N - 7], uout, ucpy, size);
+                            radix_shuffle<56u>(counts[N - 8], ucpy, out, size, minValue);
                         } else {
-                            radix_shuffle<48u>(counts[n - 7], uout, cpy, size, minValue);
+                            radix_shuffle<48u>(counts[N - 7], uout, cpy, size, minValue);
                         }
                     } else {
-                        radix_shuffle<40u>(counts[n - 6], ucpy, out, size, minValue);
+                        radix_shuffle<40u>(counts[N - 6], ucpy, out, size, minValue);
                     }
                 } else {
-                    radix_shuffle<32u>(counts[n - 5], uout, cpy, size, minValue);
+                    radix_shuffle<32u>(counts[N - 5], uout, cpy, size, minValue);
                 }
             } else {
-                radix_shuffle<24u>(counts[n - 4], ucpy, out, size, minValue);
+                radix_shuffle<24u>(counts[N - 4], ucpy, out, size, minValue);
             }
         } else {
-            radix_shuffle<16u>(counts[n - 3], uout, cpy, size, minValue);
+            radix_shuffle<16u>(counts[N - 3], uout, cpy, size, minValue);
         }
-    } else if constexpr (n > 1) {
-        radix_shuffle<8u>(counts[n - 2], ucpy, out, size, minValue);
+    } else if constexpr (N > 1) {
+        radix_shuffle<8u>(counts[N - 2], ucpy, out, size, minValue);
     }
 
-    if constexpr (n == 1) {
+    if constexpr (N == 1) {
         if (minValue != 0) {
-            auto usrc = n % 2 == 1 ? ucpy : uout;
+            auto usrc = N % 2 == 1 ? ucpy : uout;
             for (x = 0; x < size; x++) {
                 out[x].ts = (int64_t) (minValue + usrc[x].ts);
                 out[x].i = usrc[x].i;
             }
         }
     }
-    if constexpr (n % 2 == 1) {
+    if constexpr (N % 2 == 1) {
         __MEMCPY(out, cpy, size * sizeof(index_t));
     }
 }
@@ -498,7 +498,6 @@ void k_way_merge_long_index(
 }
 
 DECLARE_DISPATCHER(make_timestamp_index);
-
 void binary_merge_ts_long_index(
         const int64_t *timestamps,
         const int64_t timestampLo,
@@ -897,7 +896,7 @@ Java_io_questdb_std_Vect_mergeShuffleStringColumnFromManyAddresses(
     auto format = read_format(indexFormat);
     auto dst_var_size = __JLONG_REINTERPRET_CAST__(int64_t, dstVarSize);
 
-    if (format != SHUFFLE_INDEX_FORMAT && format != DEDUP_SHUFFLE_INDEX_FORMAT) {
+    if (format != shuffle_index_format && format != dedup_shuffle_index_format) {
         return -2;
     }
 
@@ -959,7 +958,7 @@ Java_io_questdb_std_Vect_mergeShuffleVarcharColumnFromManyAddresses(
     auto index_segment_encoding_bytes = read_segment_bytes(indexFormat);
     auto format = read_format(indexFormat);
 
-    if (format != SHUFFLE_INDEX_FORMAT && format != DEDUP_SHUFFLE_INDEX_FORMAT) {
+    if (format != shuffle_index_format && format != dedup_shuffle_index_format) {
         return -2;
     }
 
@@ -1046,10 +1045,10 @@ Java_io_questdb_std_Vect_mergeShuffleSymbolColumnFromManyAddresses(
 
     jlong rows_processed;
 
-    if (format == SHUFFLE_INDEX_FORMAT) {
+    if (format == shuffle_index_format) {
         switch (row_index_bytes) {
             case 1:
-                rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint8_t, SHUFFLE_INDEX_FORMAT>(
+                rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint8_t, shuffle_index_format>(
                         src, dst,
                         txn_info_addr, txn_count, symbol_map,
                         reverse_index_ptr,
@@ -1057,7 +1056,7 @@ Java_io_questdb_std_Vect_mergeShuffleSymbolColumnFromManyAddresses(
                 );
                 break;
             case 2:
-                rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint16_t, SHUFFLE_INDEX_FORMAT>(
+                rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint16_t, shuffle_index_format>(
                         src, dst,
                         txn_info_addr, txn_count, symbol_map,
                         reverse_index_ptr,
@@ -1065,7 +1064,7 @@ Java_io_questdb_std_Vect_mergeShuffleSymbolColumnFromManyAddresses(
                 );
                 break;
             case 4:
-                rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint32_t, SHUFFLE_INDEX_FORMAT>(
+                rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint32_t, shuffle_index_format>(
                         src, dst,
                         txn_info_addr, txn_count, symbol_map,
                         reverse_index_ptr,
@@ -1073,7 +1072,7 @@ Java_io_questdb_std_Vect_mergeShuffleSymbolColumnFromManyAddresses(
                 );
                 break;
             case 8:
-                rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint64_t, SHUFFLE_INDEX_FORMAT>(
+                rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint64_t, shuffle_index_format>(
                         src, dst,
                         txn_info_addr, txn_count, symbol_map,
                         reverse_index_ptr,
@@ -1083,10 +1082,10 @@ Java_io_questdb_std_Vect_mergeShuffleSymbolColumnFromManyAddresses(
             default:
                 return -1;
         }
-    } else if (format == DEDUP_SHUFFLE_INDEX_FORMAT) {
+    } else if (format == dedup_shuffle_index_format) {
         switch (row_index_bytes) {
             case 1:
-                rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint8_t, DEDUP_SHUFFLE_INDEX_FORMAT>(
+                rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint8_t, dedup_shuffle_index_format>(
                         src, dst,
                         txn_info_addr, txn_count, symbol_map,
                         reverse_index_ptr,
@@ -1094,7 +1093,7 @@ Java_io_questdb_std_Vect_mergeShuffleSymbolColumnFromManyAddresses(
                 );
                 break;
             case 2:
-                rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint16_t, DEDUP_SHUFFLE_INDEX_FORMAT>(
+                rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint16_t, dedup_shuffle_index_format>(
                         src, dst,
                         txn_info_addr, txn_count, symbol_map,
                         reverse_index_ptr,
@@ -1102,7 +1101,7 @@ Java_io_questdb_std_Vect_mergeShuffleSymbolColumnFromManyAddresses(
                 );
                 break;
             case 4:
-                rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint32_t, DEDUP_SHUFFLE_INDEX_FORMAT>(
+                rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint32_t, dedup_shuffle_index_format>(
                         src, dst,
                         txn_info_addr, txn_count, symbol_map,
                         reverse_index_ptr,
@@ -1110,7 +1109,7 @@ Java_io_questdb_std_Vect_mergeShuffleSymbolColumnFromManyAddresses(
                 );
                 break;
             case 8:
-                rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint64_t, DEDUP_SHUFFLE_INDEX_FORMAT>(
+                rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint64_t, dedup_shuffle_index_format>(
                         src, dst,
                         txn_info_addr, txn_count, symbol_map,
                         reverse_index_ptr,
@@ -1144,28 +1143,28 @@ Java_io_questdb_std_Vect_shuffleSymbolColumnByReverseIndex(
     auto format = read_format(indexFormat);
     auto rev_index_row_count = read_reverse_index_row_count(mergeIndex, indexFormat);
 
-    if (format == SHUFFLE_INDEX_FORMAT) {
+    if (format == shuffle_index_format) {
         switch (row_index_bytes) {
             case 1:
-                return merge_shuffle_symbol_column_by_reverse_index<uint8_t, SHUFFLE_INDEX_FORMAT>(
+                return merge_shuffle_symbol_column_by_reverse_index<uint8_t, shuffle_index_format>(
                         src, dst,
                         reverse_index_ptr,
                         rev_index_row_count
                 );
             case 2:
-                return merge_shuffle_symbol_column_by_reverse_index<uint16_t, SHUFFLE_INDEX_FORMAT>(
+                return merge_shuffle_symbol_column_by_reverse_index<uint16_t, shuffle_index_format>(
                         src, dst,
                         reverse_index_ptr,
                         rev_index_row_count
                 );
             case 4:
-                return merge_shuffle_symbol_column_by_reverse_index<uint32_t, SHUFFLE_INDEX_FORMAT>(
+                return merge_shuffle_symbol_column_by_reverse_index<uint32_t, shuffle_index_format>(
                         src, dst,
                         reverse_index_ptr,
                         rev_index_row_count
                 );
             case 8:
-                return merge_shuffle_symbol_column_by_reverse_index<uint64_t, SHUFFLE_INDEX_FORMAT>(
+                return merge_shuffle_symbol_column_by_reverse_index<uint64_t, shuffle_index_format>(
                         src, dst,
                         reverse_index_ptr,
                         rev_index_row_count
@@ -1173,28 +1172,28 @@ Java_io_questdb_std_Vect_shuffleSymbolColumnByReverseIndex(
             default:
                 return -1;
         }
-    } else if (format == DEDUP_SHUFFLE_INDEX_FORMAT) {
+    } else if (format == dedup_shuffle_index_format) {
         switch (row_index_bytes) {
             case 1:
-                return merge_shuffle_symbol_column_by_reverse_index<uint8_t, DEDUP_SHUFFLE_INDEX_FORMAT>(
+                return merge_shuffle_symbol_column_by_reverse_index<uint8_t, dedup_shuffle_index_format>(
                         src, dst,
                         reverse_index_ptr,
                         rev_index_row_count
                 );
             case 2:
-                return merge_shuffle_symbol_column_by_reverse_index<uint16_t, DEDUP_SHUFFLE_INDEX_FORMAT>(
+                return merge_shuffle_symbol_column_by_reverse_index<uint16_t, dedup_shuffle_index_format>(
                         src, dst,
                         reverse_index_ptr,
                         rev_index_row_count
                 );
             case 4:
-                return merge_shuffle_symbol_column_by_reverse_index<uint32_t, DEDUP_SHUFFLE_INDEX_FORMAT>(
+                return merge_shuffle_symbol_column_by_reverse_index<uint32_t, dedup_shuffle_index_format>(
                         src, dst,
                         reverse_index_ptr,
                         rev_index_row_count
                 );
             case 8:
-                return merge_shuffle_symbol_column_by_reverse_index<uint64_t, DEDUP_SHUFFLE_INDEX_FORMAT>(
+                return merge_shuffle_symbol_column_by_reverse_index<uint64_t, dedup_shuffle_index_format>(
                         src, dst,
                         reverse_index_ptr,
                         rev_index_row_count

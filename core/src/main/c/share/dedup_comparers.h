@@ -66,16 +66,16 @@ public:
     }
 };
 
-template<typename T, uint16_t segment_bits, typename TIdx>
+template<typename T, uint16_t SegmentBits, typename TIdx>
 class SortColumnComparerManyAddresses : dedup_column_many_addresses {
 public:
     inline int operator()(index_tr_i<TIdx> l, index_tr_i<TIdx> r) const {
-        constexpr uint64_t segment_mask = (1ULL << segment_bits) - 1;
+        constexpr uint64_t segment_mask = (1ULL << SegmentBits) - 1;
 
-        auto l_row_index = l.i >> segment_bits;
+        auto l_row_index = l.i >> SegmentBits;
         auto l_src_index = l.i & segment_mask;
 
-        auto r_row_index = r.i >> segment_bits;
+        auto r_row_index = r.i >> SegmentBits;
         auto r_src_index = r.i & segment_mask;
 
         const T l_val = reinterpret_cast<T *>(column_data[l_src_index])[l_row_index];
@@ -221,19 +221,19 @@ public:
 };
 
 
-template<uint16_t segment_bits, typename TIdx>
+template<uint16_t SegmentBits, typename TIdx>
 class SortVarcharColumnComparerManyAddresses : dedup_column_many_addresses {
 
 public:
     inline int operator()(index_tr_i<TIdx> l, index_tr_i<TIdx> r) const {
         auto column_aux = reinterpret_cast<uint8_t **>(this->column_data);
         auto column_var_data = reinterpret_cast<uint8_t **>(this->column_var_data);
-        constexpr uint64_t segment_mask = (1ULL << segment_bits) - 1;
+        constexpr uint64_t segment_mask = (1ULL << SegmentBits) - 1;
 
-        auto l_row_index = l.i >> segment_bits;
+        auto l_row_index = l.i >> SegmentBits;
         auto l_src_index = l.i & segment_mask;
 
-        auto r_row_index = r.i >> segment_bits;
+        auto r_row_index = r.i >> SegmentBits;
         auto r_src_index = r.i & segment_mask;
 
         return compare_varchar(
@@ -244,7 +244,7 @@ public:
 };
 
 
-template<typename T, int item_size>
+template<typename T, int ItemSize>
 inline int compare_str_bin(const uint8_t *l_val, const uint8_t *r_val) {
     T l_size = *reinterpret_cast<const T *>(l_val);
     T r_size = *reinterpret_cast<const T *>(r_val);
@@ -258,12 +258,12 @@ inline int compare_str_bin(const uint8_t *l_val, const uint8_t *r_val) {
             return 0;
 
         default: {
-            return memcmp(l_val + sizeof(T), r_val + sizeof(T), l_size * item_size);
+            return memcmp(l_val + sizeof(T), r_val + sizeof(T), l_size * ItemSize);
         }
     }
 };
 
-template<typename T, int item_size>
+template<typename T, int ItemSize>
 class SortStrBinColumnComparer : dedup_column {
 
 public:
@@ -278,14 +278,14 @@ public:
         const auto r_val_offset = reinterpret_cast<int64_t *>(r_col->aux_data)[r & ~(1ull << 63)];
         assertm(r_val_offset < r_col->var_data_len, "ERROR: column aux data point beyond var data buffer");
 
-        return compare_str_bin<T, item_size>(
+        return compare_str_bin<T, ItemSize>(
                 l_col->var_data + l_val_offset,
                 r_col->var_data + r_val_offset
         );
     }
 };
 
-template<typename T, int item_size, int segment_bits, typename TIdx>
+template<typename T, int ItemSize, int SegmentBits, typename TIdx>
 class SortStrBinColumnComparerManyAddresses : dedup_column_many_addresses {
 
 public:
@@ -293,12 +293,12 @@ public:
         auto column_aux = reinterpret_cast<int64_t **>(this->column_data);
         auto column_var_data = reinterpret_cast<uint8_t **>(this->column_var_data);
 
-        constexpr uint64_t segment_mask = (1ULL << segment_bits) - 1;
+        constexpr uint64_t segment_mask = (1ULL << SegmentBits) - 1;
 
-        auto l_row_index = l.i >> segment_bits;
+        auto l_row_index = l.i >> SegmentBits;
         auto l_src_index = l.i & segment_mask;
 
-        auto r_row_index = r.i >> segment_bits;
+        auto r_row_index = r.i >> SegmentBits;
         auto r_src_index = r.i & segment_mask;
 
         const auto l_val_offset = column_aux[l_src_index][l_row_index];
@@ -307,7 +307,7 @@ public:
         const auto r_val_offset = column_aux[r_src_index][r_row_index];
         assertm(r_val_offset >= 0, "ERROR: column aux data point beyond var data buffer");
 
-        return compare_str_bin<T, item_size>(
+        return compare_str_bin<T, ItemSize>(
                 column_var_data[l_src_index] + l_val_offset,
                 column_var_data[r_src_index] + r_val_offset
         );
@@ -328,7 +328,7 @@ public:
     }
 };
 
-template<typename T, int item_size>
+template<typename T, int ItemSize>
 class MergeStrBinColumnComparer : dedup_column {
 public:
     inline int operator()(int64_t col_index, int64_t index_index) const {
@@ -345,7 +345,7 @@ public:
         assertm(r_val_offset < o3_var_data_len, "ERROR: column aux data point beyond var data buffer");
         const uint8_t *r_val_ptr = reinterpret_cast<const uint8_t *>(o3_var_data) + r_val_offset;
 
-        return compare_str_bin<T, item_size>(l_val_ptr, r_val_ptr);
+        return compare_str_bin<T, ItemSize>(l_val_ptr, r_val_ptr);
     }
 };
 
