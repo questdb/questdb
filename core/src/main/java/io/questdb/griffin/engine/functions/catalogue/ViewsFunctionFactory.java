@@ -130,7 +130,6 @@ public class ViewsFunctionFactory implements FunctionFactory {
                     final TableToken viewToken = viewTokens.get(viewIndex);
                     final MatViewRefreshState viewState = matViewGraph.getViewRefreshState(viewToken);
                     if (viewState != null && !viewState.isDropped()) {
-                        // TODO(puzpuzpuz): include lastRefreshBaseTxn and base table txn
                         record.of(
                                 viewState.getViewDefinition(),
                                 viewState.getLastRefreshTimestamp(),

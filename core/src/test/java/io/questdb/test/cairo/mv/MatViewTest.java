@@ -258,9 +258,10 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testCheckMatViewModification() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table base_price (" +
-                    "sym varchar, price double, ts timestamp" +
-                    ") timestamp(ts) partition by DAY WAL"
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
             );
 
             createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
@@ -396,16 +397,20 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testIncrementalRefreshWithViewWhereClauseSymbolFilters() throws Exception {
-        testIncrementalRefresh0("select sym, last(price) as price, ts from base_price " +
-                "WHERE sym = 'gbpusd' or sym = 'jpyusd' " +
-                "sample by 1h");
+        testIncrementalRefresh0(
+                "select sym, last(price) as price, ts from base_price " +
+                        "WHERE sym = 'gbpusd' or sym = 'jpyusd' " +
+                        "sample by 1h"
+        );
     }
 
     @Test
     public void testIncrementalRefreshWithViewWhereClauseTimestampFilters() throws Exception {
-        testIncrementalRefresh0("select sym, last(price) price, ts from base_price " +
-                "WHERE ts > 0 or ts < '2040-01-01' " +
-                "sample by 1h");
+        testIncrementalRefresh0(
+                "select sym, last(price) price, ts from base_price " +
+                        "WHERE ts > 0 or ts < '2040-01-01' " +
+                        "sample by 1h"
+        );
     }
 
     @Test
@@ -688,6 +693,35 @@ public class MatViewTest extends AbstractCairoTest {
 
             assertSql(expected, outSelect(out, viewQuery));
             assertSql(expected, outSelect(out, viewName));
+        });
+    }
+
+    @Test
+    public void testQueryError() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, amount int, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            createMatView("select sym, last(price) as price, ts from base_price where npe() sample by 1h");
+
+            execute(
+                    "insert into base_price (sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            );
+            drainWalQueue();
+
+            refreshMatView();
+
+            assertSql(
+                    "name\tbase_table_name\tinvalid\tinvalidation_reason\n" +
+                            "price_1h\tbase_price\ttrue\t[-1] unexpected filter error\n",
+                    "select name, base_table_name, invalid, invalidation_reason from views"
+            );
         });
     }
 
