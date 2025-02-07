@@ -185,7 +185,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
             long destVarOffset,
             long destDataSize
     ) {
-        long rowCount = Vect.mergeShuffleStringColumnFromManyAddresses(
+        return Vect.mergeShuffleStringColumnFromManyAddresses(
                 indexFormat,
                 (int) getDataVectorMinEntrySize(),
                 primaryAddressList,
@@ -196,10 +196,6 @@ public class StringTypeDriver implements ColumnTypeDriver {
                 destVarOffset,
                 destDataSize
         );
-        if (rowCount < 0) {
-            throw new IllegalArgumentException("cannot merge shuffle string column, returned row count: " + rowCount);
-        }
-        return rowCount;
     }
 
     @Override

@@ -236,6 +236,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final Row row = new RowImpl();
     private final LongList rowValueIsNotNull = new LongList();
     private final TableWriterSegmentCopyInfo segmentCopyInfo = new TableWriterSegmentCopyInfo();
+    private final TableWriterSegmentFileCache segmentFileCache;
     private final TxReader slaveTxReader;
     private final ObjList<MapWriter> symbolMapWriters;
     private final IntList symbolRewriteMap = new IntList();
@@ -246,7 +247,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private final Uuid uuid = new Uuid();
     private final LowerCaseCharSequenceIntHashMap validationMap = new LowerCaseCharSequenceIntHashMap();
-    private final TableWriterSegmentFileCache segmentFileCache;
     private ObjList<? extends MemoryA> activeColumns;
     private ObjList<Runnable> activeNullSetters;
     private ColumnVersionReader attachColumnVersionReader;
@@ -450,12 +450,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             o3LastTimestampSpreads = new long[configuration.getO3LagCalculationWindowsSize()];
             Arrays.fill(o3LastTimestampSpreads, 0);
 
-            // Some wal specific initialization
-            if (metadata.isWalEnabled()) {
-                segmentFileCache = new TableWriterSegmentFileCache(tableToken, configuration);
-            } else {
-                segmentFileCache = null;
-            }
+            // wal specific
+            segmentFileCache = metadata.isWalEnabled() ? new TableWriterSegmentFileCache(tableToken, configuration) : null;
         } catch (Throwable e) {
             doClose(false);
             throw e;
@@ -2640,6 +2636,43 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    public boolean processWalCommit(Path walPath, long seqTxn, TableWriterPressureControl pressureControl, long commitToTimestamp) {
+        boolean committed;
+        int walId = walTxnDetails.getWalId(seqTxn);
+        long txnMinTs = walTxnDetails.getMinTimestamp(seqTxn);
+        long txnMaxTs = walTxnDetails.getMaxTimestamp(seqTxn);
+        long rowLo = walTxnDetails.getSegmentRowLo(seqTxn);
+        long rowHi = walTxnDetails.getSegmentRowHi(seqTxn);
+        boolean inOrder = walTxnDetails.getTxnInOrder(seqTxn);
+
+        LOG.info().$("processing WAL [path=").$substr(pathRootSize, walPath).$(", roLo=").$(rowLo)
+                .$(", roHi=").$(rowHi)
+                .$(", seqTxn=").$(seqTxn)
+                .$(", tsMin=").$ts(txnMinTs).$(", tsMax=").$ts(txnMaxTs)
+                .$(", commitToTs=").$ts(commitToTimestamp)
+                .I$();
+
+        final int segmentId = walTxnDetails.getSegmentId(seqTxn);
+        boolean isLastSegmentUsage = walTxnDetails.isLastSegmentUsage(seqTxn);
+        SymbolMapDiffCursor mapDiffCursor = walTxnDetails.getWalSymbolDiffCursor(seqTxn);
+
+        long walIdSegmentId = Numbers.encodeLowHighInts(segmentId, walId);
+        committed = processWalCommit(
+                walPath,
+                inOrder,
+                rowLo,
+                rowHi,
+                txnMinTs,
+                txnMaxTs,
+                mapDiffCursor,
+                commitToTimestamp,
+                walIdSegmentId,
+                isLastSegmentUsage,
+                pressureControl
+        );
+        return committed;
+    }
+
     public void publishAsyncWriterCommand(AsyncWriterCommand asyncWriterCommand) {
         while (true) {
             long seq = commandPubSeq.next();
@@ -3804,11 +3837,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
     }
-
-    private void closeWalColumns() {
-        segmentFileCache.closeWalFiles(segmentCopyInfo, metadata.getColumnCount());
-    }
-
 
     /**
      * Commits newly added rows of data. This method updates transaction file with pointers to end of appended data.
@@ -6845,43 +6873,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private boolean processWalCommit(Path walPath, long seqTxn, TableWriterPressureControl pressureControl, long commitToTimestamp) {
-        boolean committed;
-        int walId = walTxnDetails.getWalId(seqTxn);
-        long txnMinTs = walTxnDetails.getMinTimestamp(seqTxn);
-        long txnMaxTs = walTxnDetails.getMaxTimestamp(seqTxn);
-        long rowLo = walTxnDetails.getSegmentRowLo(seqTxn);
-        long rowHi = walTxnDetails.getSegmentRowHi(seqTxn);
-        boolean inOrder = walTxnDetails.getTxnInOrder(seqTxn);
-
-        LOG.info().$("processing WAL [path=").$substr(pathRootSize, walPath).$(", roLo=").$(rowLo)
-                .$(", roHi=").$(rowHi)
-                .$(", seqTxn=").$(seqTxn)
-                .$(", tsMin=").$ts(txnMinTs).$(", tsMax=").$ts(txnMaxTs)
-                .$(", commitToTs=").$ts(commitToTimestamp)
-                .I$();
-
-        final int segmentId = walTxnDetails.getSegmentId(seqTxn);
-        boolean isLastSegmentUsage = walTxnDetails.isLastSegmentUsage(seqTxn);
-        SymbolMapDiffCursor mapDiffCursor = walTxnDetails.getWalSymbolDiffCursor(seqTxn);
-
-        long walIdSegmentId = Numbers.encodeLowHighInts(segmentId, walId);
-        committed = processWalCommit(
-                walPath,
-                inOrder,
-                rowLo,
-                rowHi,
-                txnMinTs,
-                txnMaxTs,
-                mapDiffCursor,
-                commitToTimestamp,
-                walIdSegmentId,
-                isLastSegmentUsage,
-                pressureControl
-        );
-        return committed;
-    }
-
     private int processWalCommitBlock(
             long startSeqTxn,
             int blockTransactionCount,
@@ -6908,7 +6899,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             segmentFileCache.mmapWalColumns(segmentCopyInfo, metadata, path);
             rowCount = processWalCommitBlockSortWalSegmentTimestamps();
         } finally {
-            closeWalColumns();
+            segmentFileCache.closeWalFiles(segmentCopyInfo, metadata.getColumnCount());
         }
 
         if (rowCount > 0) {
@@ -7255,7 +7246,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 );
 
                 if (rowCount != totalRows) {
-                    throwColumnShuffleFailed(columnIndex, columnType, totalRows, rowCount);
+                    throwApplyBlockColumnShuffleFailed(columnIndex, columnType, totalRows, rowCount);
                 }
 
                 // Save the hint that this symbol is already re-mapped and results are in o3MemColumns2
@@ -7314,7 +7305,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     );
 
                     if (rowCount != totalRows) {
-                        throwColumnShuffleFailed(columnIndex, columnType, totalRows, rowCount);
+                        throwApplyBlockColumnShuffleFailed(columnIndex, columnType, totalRows, rowCount);
                     }
                 } else {
                     var destinationColumn = o3MemColumns1.get(getPrimaryColumnIndex(columnIndex));
@@ -7331,8 +7322,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 mergeIndex
                         );
 
-                        if (rowCount < totalRows) {
-                            throwColumnShuffleFailed(columnIndex, columnType, totalRows, rowCount);
+                        if (rowCount < 0 || (rowCount != totalRows && (!isDeduplicationEnabled() || rowCount < totalRows))) {
+                            throwApplyBlockColumnShuffleFailed(columnIndex, columnType, totalRows, rowCount);
                         }
                     } else {
 
@@ -7364,8 +7355,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     symbolMapMem.getAppendOffset()
                             );
 
-                            if (rowCount != totalRows && (!isDeduplicationEnabled() || rowCount < totalRows)) {
-                                throwColumnShuffleFailed(columnIndex, columnType, totalRows, rowCount);
+                            if (rowCount < 0 || (rowCount != totalRows && (!isDeduplicationEnabled() || rowCount < totalRows))) {
+                                throwApplyBlockColumnShuffleFailed(columnIndex, columnType, totalRows, rowCount);
                             }
                         } else {
                             // Shuffle as int32, no new symbols to add
@@ -7378,7 +7369,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             );
 
                             if (rowCount != totalRows) {
-                                throwColumnShuffleFailed(columnIndex, columnType, totalRows, rowCount);
+                                throwApplyBlockColumnShuffleFailed(columnIndex, columnType, totalRows, rowCount);
                             }
                         }
                     }
@@ -7405,7 +7396,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 );
 
                 if (rowCount != totalRows) {
-                    throwColumnShuffleFailed(columnIndex, columnType, totalRows, rowCount);
+                    throwApplyBlockColumnShuffleFailed(columnIndex, columnType, totalRows, rowCount);
                 }
             }
         } catch (Throwable th) {
@@ -8780,7 +8771,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void throwColumnShuffleFailed(int columnIndex, int columnType, long totalRows, long rowCount) {
+    private void throwApplyBlockColumnShuffleFailed(int columnIndex, int columnType, long totalRows, long rowCount) {
         LOG.error().$("wal block apply failed [table=").$(tableToken.getDirName())
                 .$(", column=").$(metadata.getColumnName(columnIndex))
                 .$(", columnType=").$(ColumnType.nameOf(columnType))
