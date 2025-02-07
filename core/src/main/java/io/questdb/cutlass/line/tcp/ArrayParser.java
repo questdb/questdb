@@ -173,7 +173,7 @@ public class ArrayParser implements QuietCloseable {
                 assert false : "Unexpected type class";
         }
 
-        final int arrayType = ColumnType.encodeArrayType(typeClass, 1);
+        final int arrayType = ColumnType.encodeArrayTypex(typeClass, typePrecision, 1);
         if (arrayType == -1) {
             throw ParseException.invalidType(position());
         }
