@@ -323,6 +323,28 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
+    @Override
+    public String matViewInvalidationReason() {
+        switch (command) {
+            case DROP_COLUMN:
+                return "drop column operation";
+            case RENAME_COLUMN:
+                return "rename column operation";
+            case CHANGE_COLUMN_TYPE:
+                return "change column type operation";
+            case DROP_PARTITION:
+                return "drop partition operation";
+            case DETACH_PARTITION:
+                return "detach partition operation";
+            case ATTACH_PARTITION:
+                return "attach partition operation";
+            case SET_DEDUP_ENABLE:
+                return "enable deduplication operation";
+            default:
+                return null;
+        }
+    }
+
     public AlterOperation of(
             short command,
             TableToken tableToken,
@@ -364,23 +386,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         assert toTableName != null && toTableName.length() > 0;
         extraStrInfo.strings.add(fromTableToken.getTableName());
         extraStrInfo.strings.add(toTableName);
-    }
-
-    @Override
-    public boolean requiresMatViewInvalidation() {
-        switch (command) {
-            case DROP_COLUMN:
-            case RENAME_COLUMN:
-            case CHANGE_COLUMN_TYPE:
-            case DROP_PARTITION:
-            case DETACH_PARTITION:
-            case ATTACH_PARTITION:
-            case SET_DEDUP_ENABLE:
-            case SET_DEDUP_DISABLE:
-                return true;
-            default:
-                return false;
-        }
     }
 
     @Override

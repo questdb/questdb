@@ -53,8 +53,8 @@ public class MatViewRefreshState implements QuietCloseable {
     private final MatViewDefinition viewDefinition;
     private RecordCursorFactory cursorFactory;
     private volatile boolean dropped;
-    private volatile @Nullable String errorMessage;
     private volatile boolean invalid;
+    private volatile String invalidationReason;
     private volatile long lastRefreshTimestamp = Numbers.LONG_NULL;
     private volatile boolean pendingInvalidation;
     private long recordRowCopierMetadataVersion;
@@ -82,7 +82,7 @@ public class MatViewRefreshState implements QuietCloseable {
         if (reader.getCursor().hasNext()) {
             final ReadableBlock mem = reader.getCursor().next();
             refreshState.invalid = mem.getBool(0);
-            refreshState.errorMessage = Chars.toString(mem.getStr(Byte.BYTES));
+            refreshState.invalidationReason = Chars.toString(mem.getStr(Byte.BYTES));
             return true;
         }
         return false;
@@ -95,7 +95,7 @@ public class MatViewRefreshState implements QuietCloseable {
             return;
         }
         mem.putBool(refreshState.isInvalid());
-        mem.putStr(refreshState.getErrorMessage());
+        mem.putStr(refreshState.getInvalidationReason());
     }
 
     public RecordCursorFactory acquireRecordFactory() {
@@ -111,8 +111,8 @@ public class MatViewRefreshState implements QuietCloseable {
     }
 
     @Nullable
-    public String getErrorMessage() {
-        return errorMessage;
+    public String getInvalidationReason() {
+        return invalidationReason;
     }
 
     public long getLastRefreshTimestamp() {
@@ -147,8 +147,8 @@ public class MatViewRefreshState implements QuietCloseable {
         return latch.get();
     }
 
-    public boolean isPendindInvalidation() {
-        return invalid;
+    public boolean isPendingInvalidation() {
+        return pendingInvalidation;
     }
 
     public void markAsDropped() {
@@ -158,9 +158,9 @@ public class MatViewRefreshState implements QuietCloseable {
 
     public void markAsInvalid(MetaFileWriter metaFileWriter, Path dbRoot, CharSequence errorMessage) {
         boolean wasValid = !this.invalid;
-        boolean errorMessageChanged = Chars.compare(this.errorMessage, errorMessage) != 0;
+        boolean errorMessageChanged = Chars.compare(this.invalidationReason, errorMessage) != 0;
         this.invalid = true;
-        this.errorMessage = Chars.toString(errorMessage);
+        this.invalidationReason = Chars.toString(errorMessage);
         if (wasValid || errorMessageChanged) {
             updateInvalidationStatus(metaFileWriter, dbRoot);
         }
@@ -175,7 +175,7 @@ public class MatViewRefreshState implements QuietCloseable {
         boolean wasInvalid = this.invalid;
         invalid = false;
         pendingInvalidation = false;
-        errorMessage = null;
+        invalidationReason = null;
         if (wasInvalid) {
             updateInvalidationStatus(metaFileWriter, dbRoot);
         }

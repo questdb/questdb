@@ -39,6 +39,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class UpdateOperation extends AbstractOperation {
     public static final String CMD_NAME = "UPDATE";
+    public static final String MAT_VIEW_INVALIDATION_REASON = "update operation";
     public static final int SENDER_CLOSED_INCREMENT = 7;
     public static final int WRITER_CLOSED_INCREMENT = 10;
     public static final int FULLY_CLOSED_STATE = WRITER_CLOSED_INCREMENT + SENDER_CLOSED_INCREMENT;
@@ -117,8 +118,8 @@ public class UpdateOperation extends AbstractOperation {
     }
 
     @Override
-    public boolean requiresMatViewInvalidation() {
-        return true;
+    public String matViewInvalidationReason() {
+        return MAT_VIEW_INVALIDATION_REASON;
     }
 
     @Override

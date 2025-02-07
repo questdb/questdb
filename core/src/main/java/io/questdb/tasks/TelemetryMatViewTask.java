@@ -49,7 +49,7 @@ public class TelemetryMatViewTask implements AbstractTelemetryTask {
                                 "event SHORT, " +
                                 "viewTableId INT, " +
                                 "baseTableTxn LONG, " +
-                                "errorMessage VARCHAR, " +
+                                "invalidationReason VARCHAR, " +
                                 "latency FLOAT" +
                                 ") TIMESTAMP(created) PARTITION BY DAY TTL 1 WEEK BYPASS WAL"
                         );
@@ -72,7 +72,7 @@ public class TelemetryMatViewTask implements AbstractTelemetryTask {
         };
     };
     private static final Log LOG = LogFactory.getLog(TelemetryMatViewTask.class);
-    private final Utf8StringSink errorMessage = new Utf8StringSink();
+    private final Utf8StringSink invalidationReason = new Utf8StringSink();
     private long baseTableTxn;
     private short event;
     private float latency; // millis
@@ -82,14 +82,21 @@ public class TelemetryMatViewTask implements AbstractTelemetryTask {
     private TelemetryMatViewTask() {
     }
 
-    public static void store(@NotNull Telemetry<TelemetryMatViewTask> telemetry, short event, int viewTableId, long baseTableTxn, CharSequence errorMessage, long latencyUs) {
+    public static void store(
+            @NotNull Telemetry<TelemetryMatViewTask> telemetry,
+            short event,
+            int viewTableId,
+            long baseTableTxn,
+            CharSequence errorMessage,
+            long latencyUs
+    ) {
         final TelemetryMatViewTask task = telemetry.nextTask();
         if (task != null) {
             task.event = event;
             task.viewTableId = viewTableId;
             task.baseTableTxn = baseTableTxn;
-            task.errorMessage.clear();
-            task.errorMessage.put(errorMessage);
+            task.invalidationReason.clear();
+            task.invalidationReason.put(errorMessage);
             task.latency = latencyUs / 1000.0f; // millis
             telemetry.store(task);
         }
@@ -111,7 +118,7 @@ public class TelemetryMatViewTask implements AbstractTelemetryTask {
             row.putShort(1, event);
             row.putInt(2, viewTableId);
             row.putLong(3, baseTableTxn);
-            row.putVarchar(4, errorMessage);
+            row.putVarchar(4, invalidationReason);
             row.putFloat(5, latency);
             row.append();
         } catch (CairoException e) {

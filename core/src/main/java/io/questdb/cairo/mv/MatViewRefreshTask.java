@@ -28,21 +28,23 @@ import io.questdb.cairo.TableToken;
 import io.questdb.mp.ValueHolder;
 
 public class MatViewRefreshTask implements ValueHolder<MatViewRefreshTask> {
-    public static final int INCREMENTAL_REFRESH = 0;
     public static final int INVALIDATE = 2;
-    public static final int REBUILD = 1;
-    public static final int UNSET = -1;
+    public static final int REBUILD = 1; // full mat view rebuild
+    public static final int REFRESH = 0; // incremental refresh
+    public static final int UNDEFINED = -1;
     public TableToken baseTableToken;
-    public int operation = UNSET;
-    public long refreshTriggeredTimestamp;
+    public String invalidationReason;
     public TableToken matViewToken;
+    public int operation = UNDEFINED;
+    public long refreshTriggeredTimestamp;
 
     @Override
     public void clear() {
-        operation = UNSET;
+        operation = UNDEFINED;
         baseTableToken = null;
         matViewToken = null;
-        refreshTriggeredTimestamp = -1L;
+        invalidationReason = null;
+        refreshTriggeredTimestamp = -1;
     }
 
     @Override
@@ -50,6 +52,7 @@ public class MatViewRefreshTask implements ValueHolder<MatViewRefreshTask> {
         anotherHolder.operation = operation;
         anotherHolder.baseTableToken = baseTableToken;
         anotherHolder.matViewToken = matViewToken;
+        anotherHolder.invalidationReason = invalidationReason;
         anotherHolder.refreshTriggeredTimestamp = refreshTriggeredTimestamp;
     }
 }

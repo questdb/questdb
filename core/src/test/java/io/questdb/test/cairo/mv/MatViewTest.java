@@ -90,59 +90,49 @@ public class MatViewTest extends AbstractCairoTest {
                         Assert.assertTrue(Files.rename(path.$(), other.$()) > -1);
                     }
                 },
-                "alter table base_price attach partition list '" + partition + "';"
+                "alter table base_price attach partition list '" + partition + "';",
+                "attach partition operation"
         );
     }
 
     @Test
     public void testBaseTableInvalidateOnChangeColumnType() throws Exception {
-        testBaseTableInvalidateOnOperation("alter table base_price alter column amount type long;");
-    }
-
-    @Test
-    public void testBaseTableInvalidateOnDedupDisable() throws Exception {
-        testBaseTableInvalidateOnOperation(
-                () -> {
-                    execute("alter table base_price dedup enable upsert keys(ts, sym);");
-                    drainWalQueue();
-                },
-                "alter table base_price dedup disable;"
-        );
+        testBaseTableInvalidateOnOperation("alter table base_price alter column amount type long;", "change column type operation");
     }
 
     @Test
     public void testBaseTableInvalidateOnDedupEnable() throws Exception {
-        testBaseTableInvalidateOnOperation("alter table base_price dedup enable upsert keys(ts);");
+        testBaseTableInvalidateOnOperation("alter table base_price dedup enable upsert keys(ts);", "enable deduplication operation");
     }
 
     @Test
     public void testBaseTableInvalidateOnDetachPartition() throws Exception {
-        testBaseTableInvalidateOnOperation("alter table base_price detach partition where ts > 0;");
+        testBaseTableInvalidateOnOperation("alter table base_price detach partition where ts > 0;", "detach partition operation");
     }
 
     @Test
     public void testBaseTableInvalidateOnDropColumn() throws Exception {
-        testBaseTableInvalidateOnOperation("alter table base_price drop column amount;");
+        testBaseTableInvalidateOnOperation("alter table base_price drop column amount;", "drop column operation");
     }
 
     @Test
     public void testBaseTableInvalidateOnDropPartition() throws Exception {
-        testBaseTableInvalidateOnOperation("alter table base_price drop partition where ts > 0;");
+        testBaseTableInvalidateOnOperation("alter table base_price drop partition where ts > 0;", "drop partition operation");
     }
 
     @Test
     public void testBaseTableInvalidateOnRenameColumn() throws Exception {
-        testBaseTableInvalidateOnOperation("alter table base_price rename column amount to amount2;");
+        testBaseTableInvalidateOnOperation("alter table base_price rename column amount to amount2;", "rename column operation");
     }
 
     @Test
     public void testBaseTableInvalidateOnTruncate() throws Exception {
-        testBaseTableInvalidateOnOperation("truncate table base_price;");
+        testBaseTableInvalidateOnOperation("truncate table base_price;", "truncate operation");
     }
 
     @Test
     public void testBaseTableInvalidateOnUpdate() throws Exception {
-        testBaseTableInvalidateOnOperation("update base_price set amount = 42;");
+        testBaseTableInvalidateOnOperation("update base_price set amount = 42;", "update operation");
     }
 
     @Test
@@ -168,7 +158,7 @@ public class MatViewTest extends AbstractCairoTest {
             refreshMatView();
 
             assertSql(
-                    "name\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tlast_error\tinvalid\n" +
+                    "name\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tinvalid\n" +
                             "price_1h\tbase_price\t2024-10-24T17:22:09.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tfalse\n",
                     "views"
             );
@@ -179,7 +169,7 @@ public class MatViewTest extends AbstractCairoTest {
             refreshMatView();
 
             assertSql(
-                    "name\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tlast_error\tinvalid\n" +
+                    "name\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tinvalid\n" +
                             "price_1h\tbase_price\t2024-10-24T18:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\ttable does not exist [table=base_price]\ttrue\n",
                     "views"
             );
@@ -196,7 +186,7 @@ public class MatViewTest extends AbstractCairoTest {
             refreshMatView();
 
             assertSql(
-                    "name\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tlast_error\tinvalid\n" +
+                    "name\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tinvalid\n" +
                             "price_1h\tbase_price\t2024-10-24T19:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\tbase table is not a WAL table\ttrue\n",
                     "views"
             );
@@ -724,7 +714,7 @@ public class MatViewTest extends AbstractCairoTest {
             refreshMatView();
 
             assertSql(
-                    "name\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tlast_error\tinvalid\n" +
+                    "name\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tinvalid\n" +
                             "price_1h\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tfalse\n",
                     "views"
             );
@@ -739,8 +729,8 @@ public class MatViewTest extends AbstractCairoTest {
             refreshMatView();
 
             assertSql(
-                    "name\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tlast_error\tinvalid\n" +
-                            "price_1h\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\tTODO: invalidation reason\ttrue\n",
+                    "name\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tinvalid\n" +
+                            "price_1h\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\tdrop column operation\ttrue\n",
                     "views"
             );
 
@@ -748,7 +738,7 @@ public class MatViewTest extends AbstractCairoTest {
             refreshMatView();
 
             assertSql(
-                    "name\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tlast_error\tinvalid\n" +
+                    "name\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tinvalid\n" +
                             "price_1h\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tfalse\n",
                     "views"
             );
@@ -1265,13 +1255,14 @@ public class MatViewTest extends AbstractCairoTest {
         assertSql(expected, viewName);
     }
 
-    private void testBaseTableInvalidateOnOperation(String operationSql) throws Exception {
-        testBaseTableInvalidateOnOperation(null, operationSql);
+    private void testBaseTableInvalidateOnOperation(String operationSql, String invalidationReason) throws Exception {
+        testBaseTableInvalidateOnOperation(null, operationSql, invalidationReason);
     }
 
     private void testBaseTableInvalidateOnOperation(
             @Nullable TestUtils.LeakProneCode runBeforeMatViewCreate,
-            String operationSql
+            String operationSql,
+            String invalidationReason
     ) throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -1307,9 +1298,9 @@ public class MatViewTest extends AbstractCairoTest {
             refreshMatView();
 
             assertSql(
-                    "name\tbase_table_name\tinvalid\n" +
-                            "price_1h\tbase_price\ttrue\n",
-                    "select name, base_table_name, invalid from views"
+                    "name\tbase_table_name\tinvalid\tinvalidation_reason\n" +
+                            "price_1h\tbase_price\ttrue\t" + invalidationReason + "\n",
+                    "select name, base_table_name, invalid, invalidation_reason from views"
             );
         });
     }

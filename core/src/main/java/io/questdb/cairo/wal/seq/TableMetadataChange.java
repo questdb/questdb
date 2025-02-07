@@ -32,9 +32,9 @@ public interface TableMetadataChange {
     long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException;
 
     /**
-     * Should return true in case when the operation on the base table leaves dependent mat views in invalid state.
+     * Should return a non-null string in case when the operation on the base table leaves dependent mat views in invalid state.
      */
-    default boolean requiresMatViewInvalidation() {
-        return false;
+    default String matViewInvalidationReason() {
+        return null;
     }
 }

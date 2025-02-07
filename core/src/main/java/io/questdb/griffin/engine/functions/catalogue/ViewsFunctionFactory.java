@@ -76,8 +76,8 @@ public class ViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_LAST_REFRESH_TIMESTAMP = COLUMN_BASE_TABLE_NAME + 1;
         private static final int COLUMN_VIEW_SQL = COLUMN_LAST_REFRESH_TIMESTAMP + 1;
         private static final int COLUMN_TABLE_DIR_NAME = COLUMN_VIEW_SQL + 1;
-        private static final int COLUMN_LAST_ERROR = COLUMN_TABLE_DIR_NAME + 1;
-        private static final int COLUMN_INVALID = COLUMN_LAST_ERROR + 1;
+        private static final int COLUMN_INVALIDATION_REASON = COLUMN_TABLE_DIR_NAME + 1;
+        private static final int COLUMN_INVALID = COLUMN_INVALIDATION_REASON + 1;
         private static final RecordMetadata METADATA;
         private final ViewsListCursor cursor = new ViewsListCursor();
 
@@ -134,7 +134,7 @@ public class ViewsFunctionFactory implements FunctionFactory {
                         record.of(
                                 viewState.getViewDefinition(),
                                 viewState.getLastRefreshTimestamp(),
-                                viewState.getErrorMessage(),
+                                viewState.getInvalidationReason(),
                                 viewState.isInvalid()
                         );
                         viewIndex++;
@@ -164,7 +164,7 @@ public class ViewsFunctionFactory implements FunctionFactory {
 
             private static class ViewsListRecord implements Record {
                 private boolean invalid;
-                private String lastError;
+                private String invalidationReason;
                 private long lastRefreshTimestamp;
                 private MatViewDefinition viewDefinition;
 
@@ -192,8 +192,8 @@ public class ViewsFunctionFactory implements FunctionFactory {
                             return viewDefinition.getMatViewSql();
                         case COLUMN_TABLE_DIR_NAME:
                             return viewDefinition.getMatViewToken().getDirName();
-                        case COLUMN_LAST_ERROR:
-                            return lastError != null && !lastError.isEmpty() ? lastError : null;
+                        case COLUMN_INVALIDATION_REASON:
+                            return invalidationReason != null && !invalidationReason.isEmpty() ? invalidationReason : null;
                         default:
                             return null;
                     }
@@ -212,7 +212,7 @@ public class ViewsFunctionFactory implements FunctionFactory {
                 ) {
                     this.viewDefinition = viewDefinition;
                     this.lastRefreshTimestamp = lastRefreshTimestamp;
-                    this.lastError = lastError;
+                    this.invalidationReason = lastError;
                     this.invalid = invalid;
                 }
             }
@@ -225,7 +225,7 @@ public class ViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("last_refresh_timestamp", ColumnType.TIMESTAMP));
             metadata.add(new TableColumnMetadata("view_sql", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("view_table_dir_name", ColumnType.STRING));
-            metadata.add(new TableColumnMetadata("last_error", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("invalidation_reason", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("invalid", ColumnType.BOOLEAN));
             METADATA = metadata;
         }

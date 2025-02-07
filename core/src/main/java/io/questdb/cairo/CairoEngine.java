@@ -1399,7 +1399,7 @@ public class CairoEngine implements Closeable, WriterSource {
                             MatViewRefreshState.readFrom(reader, state);
 
                             if (!state.isInvalid()) {
-                                matViewGraph.refresh(tableToken, MatViewRefreshTask.INCREMENTAL_REFRESH);
+                                matViewGraph.enqueueRefresh(tableToken);
                             }
                         }
                     } catch (CairoException e) {

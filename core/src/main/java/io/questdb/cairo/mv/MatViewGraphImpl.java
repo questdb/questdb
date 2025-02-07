@@ -100,7 +100,7 @@ public class MatViewGraphImpl implements MatViewGraph {
     @Override
     public void createView(MatViewDefinition viewDefinition) {
         addView(viewDefinition).init();
-        enqueueRefreshTask(viewDefinition.getMatViewToken(), MatViewRefreshTask.INCREMENTAL_REFRESH);
+        enqueueRefreshTask(viewDefinition.getMatViewToken(), MatViewRefreshTask.REFRESH, null);
     }
 
     @Override
@@ -126,6 +126,28 @@ public class MatViewGraphImpl implements MatViewGraph {
                     dependentViews.unlockAfterWrite();
                 }
             }
+        }
+    }
+
+    @Override
+    public void enqueueInvalidate(TableToken matViewToken, String invalidationReason) {
+        enqueueRefreshTaskIfStateExists(matViewToken, MatViewRefreshTask.INVALIDATE, invalidationReason);
+    }
+
+    @Override
+    public void enqueueRebuild(TableToken matViewToken) {
+        enqueueRefreshTaskIfStateExists(matViewToken, MatViewRefreshTask.REBUILD, null);
+    }
+
+    @Override
+    public void enqueueRefresh(TableToken matViewToken) {
+        enqueueRefreshTaskIfStateExists(matViewToken, MatViewRefreshTask.REFRESH, null);
+    }
+
+    public void enqueueRefreshTaskIfStateExists(TableToken matViewToken, int operation, String invalidationReason) {
+        final MatViewRefreshState state = refreshStateByTableDirName.get(matViewToken.getDirName());
+        if (state != null && !state.isDropped()) {
+            enqueueRefreshTask(matViewToken, operation, invalidationReason);
         }
     }
 
@@ -194,23 +216,16 @@ public class MatViewGraphImpl implements MatViewGraph {
     }
 
     @Override
-    public void refresh(TableToken matViewToken, int operation) {
-        final MatViewRefreshState state = refreshStateByTableDirName.get(matViewToken.getDirName());
-        if (state != null && !state.isDropped()) {
-            enqueueRefreshTask(matViewToken, operation);
-        }
-    }
-
-    @Override
     public boolean tryDequeueRefreshTask(MatViewRefreshTask task) {
         return refreshTaskQueue.tryDequeue(task);
     }
 
-    private void enqueueRefreshTask(TableToken matViewToken, int operation) {
+    private void enqueueRefreshTask(TableToken matViewToken, int operation, String invalidationReason) {
         final MatViewRefreshTask task = taskHolder.get();
         task.baseTableToken = null;
         task.matViewToken = matViewToken;
         task.operation = operation;
+        task.invalidationReason = invalidationReason;
         task.refreshTriggeredTimestamp = microsecondClock.getTicks();
         refreshTaskQueue.enqueue(task);
     }

@@ -83,7 +83,7 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                 dropMatView("2024-10-24T17:00:33.000000Z", telemetryJob);
 
                 assertSql(
-                        "created\tevent\tviewTableId\tbaseTableTxn\terrorMessage\tlatency\n" +
+                        "created\tevent\tviewTableId\tbaseTableTxn\tinvalidationReason\tlatency\n" +
                                 "2024-10-24T17:00:15.000000Z\t200\t6\t-1\t\t0.0000\n" +
                                 "2024-10-24T17:00:25.000000Z\t204\t6\t1\t\t10000.0000\n" +
                                 "2024-10-24T17:00:33.000000Z\t201\t6\t-1\t\t0.0000\n",
@@ -123,10 +123,10 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                 }
 
                 assertSql(
-                        "created\tevent\tviewTableId\tbaseTableTxn\terrorMessage\tlatency\n" +
+                        "created\tevent\tviewTableId\tbaseTableTxn\tinvalidationReason\tlatency\n" +
                                 "2024-10-24T17:00:15.000000Z\t200\t6\t-1\t\t0.0000\n" +
                                 "2024-10-24T17:00:25.000000Z\t204\t6\t1\t\t10000.0000\n" +
-                                "2024-10-24T17:00:41.000000Z\t202\t6\t-1\tTODO: invalidation reason\t0.0000\n",
+                                "2024-10-24T17:00:41.000000Z\t202\t6\t-1\ttruncate operation\t0.0000\n",
                         "sys.telemetry_mat_view"
                 );
             }
@@ -164,7 +164,7 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                 }
 
                 assertSql(
-                        "created\tevent\tviewTableId\tbaseTableTxn\terrorMessage\tlatency\n" +
+                        "created\tevent\tviewTableId\tbaseTableTxn\tinvalidationReason\tlatency\n" +
                                 "2024-10-24T17:00:15.000000Z\t200\t6\t-1\t\t0.0000\n" +
                                 "2024-10-24T17:00:25.000000Z\t204\t6\t1\t\t10000.0000\n" +
                                 "2024-10-24T17:00:33.000000Z\t202\t6\t-1\ttable does not exist [table=base_price]\t0.0000\n" +
@@ -212,7 +212,7 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                 assertViewMatchesSqlOverBaseTable();
 
                 assertSql(
-                        "created\tevent\tviewTableId\tbaseTableTxn\terrorMessage\tlatency\n" +
+                        "created\tevent\tviewTableId\tbaseTableTxn\tinvalidationReason\tlatency\n" +
                                 "2024-10-24T17:00:20.000000Z\t200\t6\t-1\t\t0.0000\n" +
                                 "2024-10-24T17:01:00.000000Z\t204\t6\t1\t\t40000.0000\n" +
                                 "2024-10-24T17:01:30.000000Z\t204\t6\t2\t\t30000.0000\n",

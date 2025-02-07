@@ -49,6 +49,12 @@ public interface MatViewGraph extends QuietCloseable, Mutable {
 
     void dropViewIfExists(TableToken matViewToken);
 
+    void enqueueInvalidate(TableToken matViewToken, String invalidationReason);
+
+    void enqueueRebuild(TableToken matViewToken);
+
+    void enqueueRefresh(TableToken matViewToken);
+
     void getDependentMatViews(TableToken baseTableToken, ObjList<TableToken> sink);
 
     @Nullable
@@ -62,8 +68,6 @@ public interface MatViewGraph extends QuietCloseable, Mutable {
     void notifyBaseRefreshed(MatViewRefreshTask task, long seqTxn);
 
     void notifyTxnApplied(MatViewRefreshTask task, long seqTxn);
-
-    void refresh(TableToken matViewToken, int operation);
 
     boolean tryDequeueRefreshTask(MatViewRefreshTask task);
 }

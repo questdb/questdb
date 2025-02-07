@@ -54,6 +54,18 @@ public class NoOpMatViewGraph implements MatViewGraph {
     }
 
     @Override
+    public void enqueueInvalidate(TableToken matViewToken, String invalidationReason) {
+    }
+
+    @Override
+    public void enqueueRebuild(TableToken matViewToken) {
+    }
+
+    @Override
+    public void enqueueRefresh(TableToken matViewToken) {
+    }
+
+    @Override
     public void getDependentMatViews(TableToken baseTableToken, ObjList<TableToken> sink) {
     }
 
@@ -77,10 +89,6 @@ public class NoOpMatViewGraph implements MatViewGraph {
 
     @Override
     public void notifyTxnApplied(MatViewRefreshTask task, long seqTxn) {
-    }
-
-    @Override
-    public void refresh(TableToken matViewToken, int operation) {
     }
 
     @Override
