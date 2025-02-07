@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayBuffers;
 import io.questdb.cairo.arr.ArrayMeta;
 import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.arr.ArrayValueAppender;
 import io.questdb.cairo.arr.ArrayViewImpl;
 import io.questdb.griffin.ExpressionParser;
 import io.questdb.griffin.SqlCompiler;
@@ -39,6 +40,8 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import static org.junit.Assert.assertEquals;
 
 public class ExpressionParserTest extends AbstractCairoTest {
     private final static RpnBuilder rpnBuilder = new RpnBuilder();
@@ -784,7 +787,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testExtractGeoHashBitsSuffixNoSuffix() throws SqlException {
         for (String tok : new String[]{"#", "#/", "#p", "#pp", "#ppp", "#0", "#01", "#001"}) {
-            Assert.assertEquals(
+            assertEquals(
                     Numbers.encodeLowHighShorts((short) 0, (short) (5 * (tok.length() - 1))),
                     ExpressionParser.extractGeoHashSuffix(0, tok));
         }
@@ -797,17 +800,17 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testExtractGeoHashBitsSuffixValid() throws SqlException {
         for (int bits = 1; bits < 10; bits++) {
-            Assert.assertEquals(
+            assertEquals(
                     Numbers.encodeLowHighShorts((short) 2, (short) bits),
                     ExpressionParser.extractGeoHashSuffix(0, "#/" + bits)); // '/d'
         }
         for (int bits = 1; bits < 10; bits++) {
-            Assert.assertEquals(
+            assertEquals(
                     Numbers.encodeLowHighShorts((short) 3, (short) bits),
                     ExpressionParser.extractGeoHashSuffix(0, "#/0" + bits)); // '/0d'
         }
         for (int bits = 10; bits <= 60; bits++) {
-            Assert.assertEquals(
+            assertEquals(
                     Numbers.encodeLowHighShorts((short) 3, (short) bits),
                     ExpressionParser.extractGeoHashSuffix(0, "#/" + bits)); // '/dd'
         }
@@ -1267,6 +1270,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testTempDeleteMe() {
+        ArrayValueAppender appender = (arr, snk, index) -> snk.put(arr.getDoubleAtFlatIndex(index));
         ArrayViewImpl array = new ArrayViewImpl();
         try (ArrayBuffers bufs = new ArrayBuffers();
              DirectUtf8Sink sink = new DirectUtf8Sink(20)
@@ -1281,10 +1285,15 @@ public class ExpressionParserTest extends AbstractCairoTest {
             bufs.values.putDouble(4.0);
             bufs.updateView(array);
             sink.clear();
-            ArrayTypeDriver.arrayToJson(
-                    (arr, snk, index) -> snk.put(arr.getDoubleAtFlatIndex(index)),
-                    array, sink);
-            System.out.println(sink);
+            ArrayTypeDriver.arrayToJson(appender, array, sink);
+            assertEquals("[[1.0,2.0],[3.0,4.0]]", sink.toString());
+
+            // transpose the array
+            bufs.strides.reverse();
+            bufs.updateView(array);
+            sink.clear();
+            ArrayTypeDriver.arrayToJson(appender, array, sink);
+            assertEquals("[[1.0,3.0],[2.0,4.0]]", sink.toString());
         }
     }
 
@@ -1379,7 +1388,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
             compiler.testParseExpression(content, rpnBuilder);
             Assert.fail("expected exception");
         } catch (SqlException e) {
-            Assert.assertEquals(pos, e.getPosition());
+            assertEquals(pos, e.getPosition());
             if (!Chars.contains(e.getFlyweightMessage(), contains)) {
                 Assert.fail(e.getMessage() + " does not contain '" + contains + '\'');
             }
