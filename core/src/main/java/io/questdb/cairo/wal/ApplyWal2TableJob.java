@@ -49,7 +49,6 @@ import io.questdb.mp.Job;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
-import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -83,7 +82,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private final WalMetrics metrics;
     private final MicrosecondClock microClock;
     private final OperationExecutor operationExecutor;
-    private final Rnd rnd = new Rnd();
     private final long tableTimeQuotaMicros;
     private final Telemetry<TelemetryTask> telemetry;
     private final TelemetryFacade telemetryFacade;
@@ -538,7 +536,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     final WalEventCursor.SqlInfo sqlInfo = walEventCursor.getSqlInfo();
                     final long start = microClock.getTicks();
                     walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, -1L, start - commitTimestamp);
-                    final long rowsAffected = processWalSql(writer, sqlInfo, operationExecutor, seqTxn);
+                    processWalSql(writer, sqlInfo, operationExecutor, seqTxn);
                     walTelemetryFacade.store(WAL_TXN_SQL_APPLIED, writer.getTableToken(), walId, seqTxn, -1L, -1L, microClock.getTicks() - start);
                     lastCommittedRows = 0;
                     return 1;
@@ -559,7 +557,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         }
     }
 
-    private long processWalSql(TableWriter tableWriter, WalEventCursor.SqlInfo sqlInfo, OperationExecutor operationExecutor, long seqTxn) {
+    private void processWalSql(TableWriter tableWriter, WalEventCursor.SqlInfo sqlInfo, OperationExecutor operationExecutor, long seqTxn) {
         final int cmdType = sqlInfo.getCmdType();
         final CharSequence sql = sqlInfo.getSql();
         operationExecutor.resetRnd(sqlInfo.getRndSeed0(), sqlInfo.getRndSeed1());
@@ -570,9 +568,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     switch (cmdType) {
                         case CMD_ALTER_TABLE:
                             operationExecutor.executeAlter(tableWriter, sql, seqTxn);
-                            return -1;
+                            return;
                         case CMD_UPDATE_TABLE:
-                            return operationExecutor.executeUpdate(tableWriter, sql, seqTxn);
+                            operationExecutor.executeUpdate(tableWriter, sql, seqTxn);
+                            return;
                         default:
                             throw new UnsupportedOperationException("Unsupported command type: " + cmdType);
                     }
@@ -624,7 +623,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             } else {
                 // Mark as applied.
                 tableWriter.commitSeqTxn(seqTxn);
-                return -1;
             }
         }
     }

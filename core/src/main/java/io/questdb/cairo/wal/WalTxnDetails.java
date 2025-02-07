@@ -26,7 +26,7 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MapWriter;
-import io.questdb.cairo.SegmentCopyInfo;
+import io.questdb.cairo.TableWriterSegmentCopyInfo;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCARW;
@@ -101,7 +101,7 @@ public class WalTxnDetails implements QuietCloseable {
         this.maxLookaheadRows = maxLookaheadRows;
     }
 
-    public boolean buildTxnSymbolMap(SegmentCopyInfo transactions, int columnIndex, MapWriter mapWriter, MemoryCARW outMem) {
+    public boolean buildTxnSymbolMap(TableWriterSegmentCopyInfo transactions, int columnIndex, MapWriter mapWriter, MemoryCARW outMem) {
         // Header, 2 ints per txn,
         // - clear symbol count
         // - offset of the map start for the transactions
@@ -294,7 +294,7 @@ public class WalTxnDetails implements QuietCloseable {
         return (isOutOfOrder & FLAG_IS_LAST_SEGMENT_USAGE) != 0;
     }
 
-    public void prepareCopySegments(long startSeqTxn, int blockTransactionCount, SegmentCopyInfo copyTasks, boolean hasSymbols) {
+    public void prepareCopySegments(long startSeqTxn, int blockTransactionCount, TableWriterSegmentCopyInfo copyTasks, boolean hasSymbols) {
         copyTasks.initBlock(startSeqTxn, blockTransactionCount, hasSymbols);
         var sortedBySegmentTxnSlice = sortSliceByWalAndSegment(startSeqTxn, blockTransactionCount);
         int lastSegmentId = -1;

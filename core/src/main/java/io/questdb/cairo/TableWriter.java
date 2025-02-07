@@ -39,7 +39,6 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCARW;
-import io.questdb.cairo.vm.api.MemoryCMOR;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMA;
@@ -55,7 +54,6 @@ import io.questdb.cairo.wal.SymbolMapDiff;
 import io.questdb.cairo.wal.SymbolMapDiffCursor;
 import io.questdb.cairo.wal.SymbolMapDiffEntry;
 import io.questdb.cairo.wal.WalTxnDetails;
-import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WriterRowUtils;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.ConvertOperatorImpl;
@@ -91,14 +89,12 @@ import io.questdb.std.FindVisitor;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.LongList;
-import io.questdb.std.LongObjHashMap;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
-import io.questdb.std.ObjectFactory;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
 import io.questdb.std.PagedDirectLongList;
@@ -107,7 +103,6 @@ import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Uuid;
 import io.questdb.std.Vect;
-import io.questdb.std.WeakClosableObjectPool;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
@@ -163,7 +158,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public static final int PARTITION_SINK_SIZE_LONGS = 8;
     public static final int PARTITION_SINK_COL_TOP_OFFSET = PARTITION_SINK_SIZE_LONGS * Long.BYTES;
     public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
-    private static final ObjectFactory<MemoryCMOR> GET_MEMORY_CMOR = Vm::getMemoryCMOR;
     private static final long IGNORE = -1L;
     private static final Log LOG = LogFactory.getLog(TableWriter.class);
     /*
@@ -241,7 +235,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final AtomicLong physicallyWrittenRowsSinceLastCommit = new AtomicLong();
     private final Row row = new RowImpl();
     private final LongList rowValueIsNotNull = new LongList();
-    private final SegmentCopyInfo segmentCopyInfo = new SegmentCopyInfo();
+    private final TableWriterSegmentCopyInfo segmentCopyInfo = new TableWriterSegmentCopyInfo();
     private final TxReader slaveTxReader;
     private final ObjList<MapWriter> symbolMapWriters;
     private final IntList symbolRewriteMap = new IntList();
@@ -252,11 +246,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private final Uuid uuid = new Uuid();
     private final LowerCaseCharSequenceIntHashMap validationMap = new LowerCaseCharSequenceIntHashMap();
-    private final WeakClosableObjectPool<MemoryCMOR> walColumnMemoryPool;
-    private final LongObjHashMap<LongList> walFdCache = new LongObjHashMap<>();
-    private final WeakClosableObjectPool<LongList> walFdCacheListPool = new WeakClosableObjectPool<>(LongList::new, 5, true);
-    private final LongObjHashMap.LongObjConsumer<LongList> walFdCloseCachedFdAction;
-    private final ObjList<MemoryCMOR> walMappedColumns = new ObjList<>();
+    private final TableWriterSegmentFileCache segmentFileCache;
     private ObjList<? extends MemoryA> activeColumns;
     private ObjList<Runnable> activeNullSetters;
     private ColumnVersionReader attachColumnVersionReader;
@@ -322,7 +312,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final FragileCode RECOVER_FROM_SWAP_RENAME_FAILURE = this::recoverFromSwapRenameFailure;
     private final FragileCode RECOVER_FROM_COLUMN_OPEN_FAILURE = this::recoverOpenColumnFailure;
     private UpdateOperatorImpl updateOperatorImpl;
-    private int walFdCacheSize;
     private WalTxnDetails walTxnDetails;
     private final ColumnTaskHandler cthProcessWalCommitBlockSortWalSegmentTimestampsDispatchColumnSortTasksCthMergeWalColumnManySegments = this::processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks_mergeWalColumnManySegments;
     private final ColumnTaskHandler cthProcessWalCommitBlockSortWalSegmentTimestampsMapSymbols = this::processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks_mapSymbols;
@@ -463,19 +452,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // Some wal specific initialization
             if (metadata.isWalEnabled()) {
-                walColumnMemoryPool = new WeakClosableObjectPool<>(GET_MEMORY_CMOR, configuration.getWalMaxSegmentFileDescriptorsCache(), true);
-                walFdCloseCachedFdAction = (key, fdList) -> {
-                    for (int i = 0, n = fdList.size(); i < n; i++) {
-                        long fd = fdList.get(i);
-                        LOG.debug().$("closing wal fd cache [fd=").$(fd).I$();
-                        ff.close(fd);
-                    }
-                    fdList.clear();
-                    walFdCacheListPool.push(fdList);
-                };
+                segmentFileCache = new TableWriterSegmentFileCache(tableToken, configuration);
             } else {
-                walColumnMemoryPool = null;
-                walFdCloseCachedFdAction = null;
+                segmentFileCache = null;
             }
         } catch (Throwable e) {
             doClose(false);
@@ -2437,7 +2416,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean isLastSegmentUsage,
             TableWriterPressureControl pressureControl
     ) {
-        int initialSize = walMappedColumns.size();
+        int initialSize = segmentFileCache.getWalMappedColumns().size();
         int timestampIndex = metadata.getTimestampIndex();
         int walRootPathLen = walPath.size();
         long maxTimestamp = txWriter.getMaxTimestamp();
@@ -2465,7 +2444,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean forceFullCommit = commitToTimestamp == WalTxnDetails.FORCE_FULL_COMMIT;
             final long maxLagRows = getWalMaxLagRows();
             final long walLagMaxTimestampBefore = txWriter.getLagMaxTimestamp();
-            mmapWalColumns(walPath, walIdSegmentId, timestampIndex, rowLo, rowHi);
+            segmentFileCache.mmapSegments(metadata, walPath, walIdSegmentId, rowLo, rowHi);
+            o3Columns = segmentFileCache.getWalMappedColumns();
             final long newMinLagTimestamp = Math.min(o3TimestampMin, txWriter.getLagMinTimestamp());
             long initialPartitionTimestampHi = partitionTimestampHi;
 
@@ -2558,7 +2538,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 boolean needsDedup = isDeduplicationEnabled();
 
                 long timestampAddr = 0;
-                MemoryCR walTimestampColumn = walMappedColumns.getQuick(getPrimaryColumnIndex(timestampIndex));
+                MemoryCR walTimestampColumn = segmentFileCache.getWalMappedColumns().getQuick(getPrimaryColumnIndex(timestampIndex));
                 o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath);
 
                 if (needsOrdering || needsDedup) {
@@ -2633,7 +2613,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 } else {
                     // Wal column can are lazily mapped to improve performance. It works ok, except in this case
                     // where access getAddress() calls are concurrent. Map them eagerly now.
-                    mmapWalColsEager();
+                    segmentFileCache.mmapWalColsEager();
 
                     timestampAddr = walTimestampColumn.addressOf(0);
                     copiedToMemory = false;
@@ -2656,7 +2636,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw th;
         } finally {
             walPath.trimTo(walRootPathLen);
-            closeWalColumns(isLastSegmentUsage || !success, walIdSegmentId, initialSize);
+            segmentFileCache.closeWalFiles(isLastSegmentUsage || !success, walIdSegmentId, initialSize);
         }
     }
 
@@ -3826,77 +3806,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void closeWalColumns() {
-        for (int seg = segmentCopyInfo.getSegmentCount() - 1; seg > -1; seg--) {
-            int segmentId = segmentCopyInfo.getSegmentId(seg);
-            int walId = segmentCopyInfo.getWalId(seg);
-            long walIdSegmentId = Numbers.encodeLowHighInts(segmentId, walId);
-            boolean isLastSegmentUse = segmentCopyInfo.isLastSegmentUse(seg);
-
-            int lo = walMappedColumns.size() - metadata.getColumnCount() * 2;
-            closeWalColumns(isLastSegmentUse, walIdSegmentId, lo);
-        }
+        segmentFileCache.closeWalFiles(segmentCopyInfo, metadata.getColumnCount());
     }
 
-    private void closeWalColumns(boolean isLastSegmentUsage, long walSegmentId, int lo) {
-        LOG.debug().$("closing wal columns [table=").$(tableToken.getDirName()).$(", walSegmentId=").$(walSegmentId)
-                .$(", isLastSegmentUsage=").$(isLastSegmentUsage).I$();
-
-        int key = walFdCache.keyIndex(walSegmentId);
-        boolean cacheIsFull = !isLastSegmentUsage && key > -1 && walFdCacheSize == configuration.getWalMaxSegmentFileDescriptorsCache();
-        if (isLastSegmentUsage || cacheIsFull) {
-            if (key < 0) {
-                LongList fds = walFdCache.valueAt(key);
-                walFdCache.removeAt(key);
-                walFdCacheSize--;
-                fds.clear();
-                walFdCacheListPool.push(fds);
-            }
-
-            for (int col = lo, n = walMappedColumns.size(); col < n; col++) {
-                MemoryCMOR mappedColumnMem = walMappedColumns.getQuick(col);
-                if (mappedColumnMem != null) {
-                    Misc.free(mappedColumnMem);
-                    walColumnMemoryPool.push(mappedColumnMem);
-                }
-            }
-            walMappedColumns.setPos(lo);
-        } else {
-            LongList fds = null;
-            if (key > -1) {
-                // Add FDs to a new FD cache list
-                fds = walFdCacheListPool.pop();
-                walFdCache.putAt(key, walSegmentId, fds);
-                walFdCacheSize++;
-            }
-
-            for (int col = lo, n = walMappedColumns.size(); col < n; col++) {
-                MemoryCMOR mappedColumnMem = walMappedColumns.getQuick(col);
-                if (mappedColumnMem != null) {
-                    long fd = mappedColumnMem.detachFdClose();
-                    if (fds != null) {
-                        fds.add(fd);
-                    }
-                    walColumnMemoryPool.push(mappedColumnMem);
-                }
-            }
-            walMappedColumns.setPos(lo);
-        }
-
-        if (cacheIsFull) {
-            // Close all cached FDs.
-            // It is possible to use more complicated algo and evict only those which
-            // will not be used in the near future, but it's non-trivial
-            // and can ruin the benefit of caching any FDs.
-            // This supposed to happen rarely.
-            closeWalFiles();
-        }
-    }
-
-    private void closeWalFiles() {
-        walFdCache.forEach(walFdCloseCachedFdAction);
-        walFdCache.clear();
-        walFdCacheSize = 0;
-    }
 
     /**
      * Commits newly added rows of data. This method updates transaction file with pointers to end of appended data.
@@ -5084,7 +4996,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(segmentCopyInfo);
         Misc.free(walTxnDetails);
         tempDirectMemList = Misc.free(tempDirectMemList);
-        closeWalFiles();
+        if (segmentFileCache != null) {
+            segmentFileCache.closeWalFiles();
+        }
         updateOperatorImpl = Misc.free(updateOperatorImpl);
         convertOperatorImpl = Misc.free(convertOperatorImpl);
         dropIndexOperator = null;
@@ -5700,130 +5614,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void mapAppendColumnBufferRelease(long address, long offset, long size) {
         if (address < 0) {
             TableUtils.mapAppendColumnBufferRelease(ff, -address, offset, size, MemoryTag.MMAP_TABLE_WRITER);
-        }
-    }
-
-    private void mmapWalColsEager() {
-        for (int i = 0, n = walMappedColumns.size(); i < n; i++) {
-            MemoryCR columnMem = o3Columns.get(i);
-            if (columnMem != null) {
-                columnMem.map();
-            }
-        }
-    }
-
-    private void mmapWalColumns(SegmentCopyInfo copyTasks) {
-        this.walMappedColumns.clear();
-        try {
-            path.concat(WalUtils.WAL_NAME_BASE);
-            int walBaseLen = path.size();
-            int timestampIndex = metadata.getTimestampIndex();
-            for (int i = 0; i < copyTasks.getSegmentCount(); i++) {
-                int walId = copyTasks.getWalId(i);
-                int segmentId = copyTasks.getSegmentId(i);
-                path.trimTo(walBaseLen).put(walId).put(Files.SEPARATOR).put(segmentId);
-                long rowLo = copyTasks.getRowLo(i);
-                long rowHi = copyTasks.getRowHi(i);
-                long walIdSegmentId = Numbers.encodeLowHighInts(segmentId, walId);
-                mmapWalColumns(path, walIdSegmentId, timestampIndex, rowLo, rowHi);
-            }
-        } finally {
-            path.trimTo(pathSize);
-        }
-    }
-
-    private void mmapWalColumns(@Transient Path walPath, long walSegmentId, int timestampIndex, long rowLo, long rowHi) {
-        LOG.debug().$("open columns [table=").$(tableToken.getDirName()).$(", walSegmentId=").$(walSegmentId).I$();
-        int walPathLen = walPath.size();
-        final int columnCount = metadata.getColumnCount();
-        int fdCacheKey = walFdCache.keyIndex(walSegmentId);
-        LongList fds = null;
-        if (fdCacheKey < 0) {
-            fds = walFdCache.valueAt(fdCacheKey);
-        }
-
-        try {
-            int file = 0;
-            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                final int columnType = metadata.getColumnType(columnIndex);
-                o3RowCount = rowHi - rowLo;
-                if (columnType > 0) {
-                    int sizeBitsPow2 = ColumnType.getWalDataColumnShl(columnType, columnIndex == timestampIndex);
-
-                    if (ColumnType.isVarSize(columnType)) {
-                        MemoryCMOR auxMem = walColumnMemoryPool.pop();
-                        MemoryCMOR dataMem = walColumnMemoryPool.pop();
-
-                        walMappedColumns.add(dataMem);
-                        walMappedColumns.add(auxMem);
-
-                        final long dataFd = fds != null ? fds.get(file++) : -1;
-                        final long auxFd = fds != null ? fds.get(file++) : -1;
-
-                        final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
-
-                        LPSZ ifile = auxFd == -1 ? iFile(walPath, metadata.getColumnName(columnIndex), -1L) : null;
-                        if (auxFd != -1) {
-                            LOG.debug().$("reusing file descriptor for WAL files [fd=").$(auxFd).$(", path=").$(walPath).$(", walSegment=").$(walSegmentId).I$();
-                        }
-                        columnTypeDriver.configureAuxMemOM(
-                                configuration.getFilesFacade(),
-                                auxMem,
-                                auxFd,
-                                ifile,
-                                rowLo,
-                                rowHi,
-                                MemoryTag.MMAP_TABLE_WRITER,
-                                CairoConfiguration.O_NONE
-                        );
-                        walPath.trimTo(walPathLen);
-
-                        LPSZ dfile = dataFd == -1 ? dFile(walPath, metadata.getColumnName(columnIndex), -1L) : null;
-                        if (dataFd != -1) {
-                            LOG.debug().$("reusing file descriptor for WAL files [fd=").$(dataFd).$(", wal=").$(walPath).$(", walSegment=").$(walSegmentId).I$();
-                        }
-                        columnTypeDriver.configureDataMemOM(
-                                configuration.getFilesFacade(),
-                                auxMem,
-                                dataMem,
-                                dataFd,
-                                dfile,
-                                rowLo,
-                                rowHi,
-                                MemoryTag.MMAP_TABLE_WRITER,
-                                CairoConfiguration.O_NONE
-                        );
-                    } else {
-                        MemoryCMOR primary = walColumnMemoryPool.pop();
-                        walMappedColumns.add(primary);
-                        walMappedColumns.add(null);
-
-                        long fd = fds != null ? fds.get(file++) : -1;
-                        LPSZ dfile = fd == -1 ? dFile(walPath, metadata.getColumnName(columnIndex), -1L) : null;
-                        if (fd != -1) {
-                            LOG.debug().$("reusing file descriptor for WAL files [fd=").$(fd).$(", path=").$(walPath).$(", walSegment=").$(walSegmentId).I$();
-                        }
-                        primary.ofOffset(
-                                configuration.getFilesFacade(),
-                                fd,
-                                false,
-                                dfile,
-                                rowLo << sizeBitsPow2,
-                                rowHi << sizeBitsPow2,
-                                MemoryTag.MMAP_TABLE_WRITER,
-                                CairoConfiguration.O_NONE
-                        );
-                    }
-                    walPath.trimTo(walPathLen);
-                } else {
-                    walMappedColumns.add(null);
-                    walMappedColumns.add(null);
-                }
-            }
-            o3Columns = walMappedColumns;
-        } catch (Throwable th) {
-            closeWalColumns(true, walSegmentId, 0);
-            throw th;
         }
     }
 
@@ -7106,8 +6896,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long rowCount;
 
         try {
-            mmapWalColumns(segmentCopyInfo);
-            rowCount = processWalCommitBlockSortWalSegmentTimestamps(walMappedColumns);
+            segmentFileCache.mmapWalColumns(segmentCopyInfo, metadata, path);
+            rowCount = processWalCommitBlockSortWalSegmentTimestamps();
         } finally {
             closeWalColumns();
         }
@@ -7128,7 +6918,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     // Name of the method starts from processWalCommitBlock to keep the methods close together after code formatting
-    private long processWalCommitBlockSortWalSegmentTimestamps(ObjList<MemoryCMOR> walMappedColumns) {
+    private long processWalCommitBlockSortWalSegmentTimestamps() {
         int timestampIndex = metadata.getTimestampIndex();
         // Timestamp column is special, exclude it here
         int walColumnCountPerSegment = metadata.getColumnCount() * 2;
@@ -7142,7 +6932,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             tsAddresses.setPos(totalColumnAddressSize);
             tsAddresses.zero(0);
 
-            segmentCopyInfo.createAddressBuffersPrimary(timestampIndex, metadata.getColumnCount(), walMappedColumns, tsAddresses.getAddress());
+            segmentFileCache.createAddressBuffersPrimary(timestampIndex, metadata.getColumnCount(), segmentCopyInfo.getSegmentCount(), tsAddresses.getAddress());
 
             long totalRows = segmentCopyInfo.getTotalRows();
             // This sort apart from creating normal merge index with 2 longs
@@ -7295,7 +7085,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             int valueSizeBytes = ColumnType.isVarSize(columnType) ? -1 : ColumnType.sizeOf(columnType);
 
                             if (!ColumnType.isSymbol(columnType) || Unsafe.getUnsafe().getLong(columnAddressBufferPrimary) == 0) {
-                                segmentCopyInfo.createAddressBuffersPrimary(i, columnCount, walMappedColumns, columnAddressBufferPrimary);
+                                segmentFileCache.createAddressBuffersPrimary(i, columnCount, segmentCopyInfo.getSegmentCount(), columnAddressBufferPrimary);
                                 dataAddresses = columnAddressBufferPrimary;
                             } else {
                                 // Symbols are already re-mapped and the buffer is in o3ColumnMem2
@@ -7317,8 +7107,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             } else {
                                 long columnAddressBufferSecondary = columnAddressBufferPrimary + bytesPerColumn;
                                 ColumnTypeDriver driver = ColumnType.getDriver(columnType);
-                                segmentCopyInfo.createAddressBuffersPrimary(i, columnCount, walMappedColumns, columnAddressBufferPrimary);
-                                segmentCopyInfo.createAddressBuffersSecondary(i, columnCount, walMappedColumns, columnAddressBufferSecondary, driver);
+                                segmentFileCache.createAddressBuffersPrimary(i, columnCount, segmentCopyInfo.getSegmentCount(), columnAddressBufferPrimary);
+                                segmentFileCache.createAddressBuffersSecondary(i, columnCount, segmentCopyInfo, columnAddressBufferSecondary, driver);
 
                                 DedupColumnCommitAddresses.setColAddressValues(addr, columnAddressBufferSecondary, columnAddressBufferPrimary, 0L);
                                 DedupColumnCommitAddresses.setO3DataAddressValues(addr, DedupColumnCommitAddresses.NULL, DedupColumnCommitAddresses.NULL, 0);
@@ -7443,7 +7233,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             if (needsRemapping) {
                 long txnCount = this.segmentCopyInfo.getTxnCount();
-                segmentCopyInfo.createAddressBuffersPrimary(columnIndex, metadata.getColumnCount(), walMappedColumns, mappedAddrBuffPrimary);
+                segmentFileCache.createAddressBuffersPrimary(columnIndex, metadata.getColumnCount(), segmentCopyInfo.getSegmentCount(), mappedAddrBuffPrimary);
                 var destinationColumn = o3MemColumns2.get(getPrimaryColumnIndex(columnIndex));
                 destinationColumn.jumpTo(totalRows << shl);
 
@@ -7494,7 +7284,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long firstPointer = Unsafe.getUnsafe().getLong(mappedAddrBuffPrimary);
             boolean pointersNotCreated = firstPointer == 0;
             if (pointersNotCreated) {
-                segmentCopyInfo.createAddressBuffersPrimary(columnIndex, metadata.getColumnCount(), walMappedColumns, mappedAddrBuffPrimary);
+                segmentFileCache.createAddressBuffersPrimary(columnIndex, metadata.getColumnCount(), segmentCopyInfo.getSegmentCount(), mappedAddrBuffPrimary);
             } else {
                 // This should only be the case when table already went thought deduplication
                 assert isDeduplicationEnabled() && metadata.isDedupKey(columnIndex);
@@ -7588,7 +7378,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 long mappedAddrBuffSecondary = mappedAddrBuffPrimary + totalSegmentAddressesBytes;
                 var destinationColumnSecondary = o3MemColumns1.get(getSecondaryColumnIndex(columnIndex));
                 ColumnTypeDriver driver = ColumnType.getDriver(columnType);
-                long totalVarSize = segmentCopyInfo.createAddressBuffersSecondary(columnIndex, metadata.getColumnCount(), walMappedColumns, mappedAddrBuffSecondary, driver);
+                long totalVarSize = segmentFileCache.createAddressBuffersSecondary(columnIndex, metadata.getColumnCount(), segmentCopyInfo, mappedAddrBuffSecondary, driver);
 
                 destinationColumnSecondary.jumpTo(driver.getAuxVectorSize(totalRows));
                 var destinationColumnPrimary = o3MemColumns1.get(getPrimaryColumnIndex(columnIndex));

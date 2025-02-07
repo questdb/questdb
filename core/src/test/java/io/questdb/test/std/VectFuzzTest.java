@@ -27,7 +27,7 @@ package io.questdb.test.std;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DedupColumnCommitAddresses;
-import io.questdb.cairo.SegmentCopyInfo;
+import io.questdb.cairo.TableWriterSegmentCopyInfo;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.cairo.vm.api.MemoryCMARW;
@@ -371,7 +371,7 @@ public class VectFuzzTest {
                             int combinedKey = 0;
                             for (int k = 0; k < keyCount; k++) {
                                 DirectLongList keyList = keys.get(k);
-                                Assert.assertTrue("key index not in expected range", rowIndex >= 0 && rowIndex / 2L < keyList.size());
+                                Assert.assertTrue("key index not in expected range", rowIndex / 2L < keyList.size());
                                 long keyLong = getIndexChecked(keyList, rowIndex / 2L);
                                 int key = rowIndex % 2 == 0 ? Numbers.decodeLowInt(keyLong) : Numbers.decodeHighInt(keyLong);
                                 Assert.assertTrue(key < 256);
@@ -498,7 +498,7 @@ public class VectFuzzTest {
             int srcLen = 10;
             try (DirectLongList src = new DirectLongList(srcLen, MemoryTag.NATIVE_DEFAULT)) {
                 int indexLen = 0;
-                try (DirectLongList index = new DirectLongList(indexLen * 2, MemoryTag.NATIVE_DEFAULT)) {
+                try (DirectLongList index = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT)) {
                     try (DirectLongList dest = new DirectLongList((srcLen + indexLen) * 2, MemoryTag.NATIVE_DEFAULT)) {
                         src.setPos(srcLen);
                         for (int i = 0; i < srcLen; i++) {
@@ -506,7 +506,7 @@ public class VectFuzzTest {
                         }
                         Assert.assertEquals("[10, 20, 30, 40, 50, 60, 70, 80, 90, 100]", src.toString());
 
-                        index.setPos(indexLen * 2);
+                        index.setPos(0);
                         Assert.assertEquals("[]", index.toString());
 
                         long mergedCount = Vect.mergeDedupTimestampWithLongIndexAsc(
@@ -1101,7 +1101,7 @@ public class VectFuzzTest {
     public void testQuickSort1M() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             rnd = TestUtils.generateRandom(null);
-            testQuickSort(1_000_000);
+            testQuickSort(1 + rnd.nextInt(1_000_000));
         });
     }
 
@@ -1516,13 +1516,6 @@ public class VectFuzzTest {
         return indexAddr;
     }
 
-    private void seedMem1Long(int count, long p) {
-        for (int i = 0; i < count; i++) {
-            final long z = rnd.nextPositiveLong();
-            Unsafe.getUnsafe().putLong(p + (long) i * Long.BYTES, z);
-        }
-    }
-
     private void seedMem1Long(int count, long p, long min, long max) {
         for (int i = 0; i < count; i++) {
             final long z = min + rnd.nextLong(max - min);
@@ -1641,7 +1634,7 @@ public class VectFuzzTest {
             }
             long lagBuf = Unsafe.malloc(lagRows * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
 
-            try (SegmentCopyInfo segmentCopyInfo = new SegmentCopyInfo()) {
+            try (TableWriterSegmentCopyInfo segmentCopyInfo = new TableWriterSegmentCopyInfo()) {
 
                 for (int s = 0; s < segmentCount; s++) {
                     long segmentAddr = segmentAddresses.get(s);

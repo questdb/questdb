@@ -24,21 +24,14 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.api.MemoryCMOR;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
-import io.questdb.std.Unsafe;
 
-import java.util.function.IntBinaryOperator;
-
-public class SegmentCopyInfo implements QuietCloseable {
-    private static final IntBinaryOperator assertSeqTxnOrderComparer = (a, b) -> a - b;
+public class TableWriterSegmentCopyInfo implements QuietCloseable {
     private final IntList seqTxnOrder = new IntList();
-    private int distinctWalSegmentCount;
     private long maxTimestamp = Long.MIN_VALUE;
     private long maxTxnRowCount;
     private long minTimestamp = Long.MAX_VALUE;
@@ -84,28 +77,6 @@ public class SegmentCopyInfo implements QuietCloseable {
     public void close() {
         segments = Misc.free(segments);
         txns = Misc.free(txns);
-    }
-
-    public void createAddressBuffersPrimary(int columnIndex, int columnCount, ObjList<MemoryCMOR> walMappedColumns, long mappedAddrBuffPrimary) {
-        int walColumnCountPerSegment = columnCount * 2;
-
-        for (int i = 0, n = getSegmentCount(); i < n; i++) {
-            var segmentColumnPrimary = walMappedColumns.get(walColumnCountPerSegment * i + 2 * columnIndex);
-            Unsafe.getUnsafe().putLong(mappedAddrBuffPrimary + (long) i * Long.BYTES, segmentColumnPrimary.addressOf(0));
-        }
-    }
-
-    public long createAddressBuffersSecondary(int columnIndex, int columnCount, ObjList<MemoryCMOR> walMappedColumns, long mappedAddrBuffSecondary, ColumnTypeDriver driver) {
-        int walColumnCountPerSegment = columnCount * 2;
-
-        long totalVarSize = 0;
-        for (int i = 0, n = getSegmentCount(); i < n; i++) {
-            var segmentColumnAux = walMappedColumns.get(walColumnCountPerSegment * i + 2 * columnIndex + 1);
-            long segmentColumnAuxAddr = segmentColumnAux.addressOf(0);
-            Unsafe.getUnsafe().putLong(mappedAddrBuffSecondary + (long) i * Long.BYTES, segmentColumnAuxAddr);
-            totalVarSize += driver.getDataVectorSize(segmentColumnAuxAddr, getRowLo(i), getRowHi(i) - 1);
-        }
-        return totalVarSize;
     }
 
     public int getMappingOrder(long absoluteSeqTxn) {

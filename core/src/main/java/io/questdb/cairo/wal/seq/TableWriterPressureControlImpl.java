@@ -45,7 +45,7 @@ public class TableWriterPressureControlImpl implements TableWriterPressureContro
     // positive int: holds max parallelism
     // negative int: holds backoff counter
     private int memoryPressureRegulationValue = Integer.MAX_VALUE;
-    private long walBackoffUntil = -1;
+    private long walBackoffUntilEpochMs = -1;
 
     public long getMaxBlockRowCount() {
         return Math.max(1, maxBlockRowCount);
@@ -66,7 +66,7 @@ public class TableWriterPressureControlImpl implements TableWriterPressureContro
     }
 
     public boolean isReadyToProcess() {
-        return getTicks() > walBackoffUntil;
+        return getTicks() > walBackoffUntilEpochMs;
     }
 
     @Override
@@ -78,7 +78,7 @@ public class TableWriterPressureControlImpl implements TableWriterPressureContro
     @Override
     public boolean onEnoughMemory() {
         maxRecordedInflightPartitions = 1;
-        walBackoffUntil = -1;
+        walBackoffUntilEpochMs = -1;
         maxBlockRowCount = Math.max(maxBlockRowCount, maxBlockRowCount * TXN_COUNT_SCALE_UP_FACTOR);
 
         if (memoryPressureRegulationValue == Integer.MAX_VALUE) {
@@ -115,7 +115,7 @@ public class TableWriterPressureControlImpl implements TableWriterPressureContro
             // There was no parallelism and no multi transaction block
             if (memoryPressureRegulationValue <= -5) {
                 // Maximum backoff already tried => fail
-                walBackoffUntil = -1;
+                walBackoffUntilEpochMs = -1;
                 return;
             }
             if (memoryPressureRegulationValue > 0) {
@@ -126,11 +126,11 @@ public class TableWriterPressureControlImpl implements TableWriterPressureContro
                 memoryPressureRegulationValue--;
             }
             int delayMillis = MEM_PRESSURE_RND.nextInt(4_000);
-            walBackoffUntil = getTicks() + delayMillis;
+            walBackoffUntilEpochMs = getTicks() + delayMillis;
             return;
         }
         // There was some parallelism, halve max parallelism
-        walBackoffUntil = -1;
+        walBackoffUntilEpochMs = -1;
         memoryPressureRegulationValue = maxRecordedInflightPartitions / PARTITION_COUNT_SCALE_DOWN_FACTOR;
         maxRecordedInflightPartitions = 1;
     }
