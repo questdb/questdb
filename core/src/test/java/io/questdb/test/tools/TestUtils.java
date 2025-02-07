@@ -43,6 +43,7 @@ import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -537,6 +538,26 @@ public final class TestUtils {
         ) {
             assertEquals(c1, f1.getMetadata(), c2, f2.getMetadata(), true);
         }
+    }
+
+    public static void assertEquals(ArrayView expected, ArrayView actual) {
+        if (expected == null) {
+            Assert.assertNull("expected NULL array", actual);
+            return;
+        }
+        Assert.assertNotNull("expected NON-NULL array", actual);
+
+        final int dim = expected.getDim();
+        // First, check if dimensions match
+        Assert.assertEquals("Array dimension mismatch. Expected: " + dim + ", actual: " + actual.getDim(), dim, actual.getDim());
+
+        // Check if each dimension has the same length
+        for (int i = 0; i < dim; i++) {
+            Assert.assertEquals(expected.getDimLength(i), actual.getDimLength(i));
+        }
+
+        // Compare elements using virtual indexing
+        assertEqualsRecursive(expected, actual, 0, 0, 0);
     }
 
     public static void assertEqualsExactOrder(
@@ -1715,6 +1736,9 @@ public final class TestUtils {
                         Assert.assertEquals(rr.getLong128Hi(i), lr.getLong128Hi(i));
                         Assert.assertEquals(rr.getLong128Lo(i), lr.getLong128Lo(i));
                         break;
+                    case ColumnType.ARRAY:
+                        assertEquals(rr.getArray(i, columnType), lr.getArray(i, columnType));
+                        break;
                     default:
                         // Unknown record type.
                         assert false;
@@ -1759,6 +1783,30 @@ public final class TestUtils {
             columnType2 = genericStringMatch && (ColumnType.isSymbol(columnType2) || columnType2 == ColumnType.VARCHAR
                     || columnType2 == ColumnType.CHAR) ? ColumnType.STRING : columnType2;
             Assert.assertEquals("Column type " + i, columnType1, columnType2);
+        }
+    }
+
+    private static void assertEqualsRecursive(ArrayView expected, ArrayView actual, int dim, int expectedFlatIndex, int actualFlatIndex) {
+        // last dimension
+        int dimLen = actual.getDimLength(dim);
+        if (dim == actual.getDim() - 1) {
+            for (int i = 0; i < dimLen; i++) {
+                Assert.assertEquals(
+                        expected.getDoubleFromRowMajor(expected.getValuesOffset() + expectedFlatIndex + i),
+                        actual.getDoubleFromRowMajor(actual.getValuesOffset() + actualFlatIndex + i),
+                        Numbers.TOLERANCE
+                );
+            }
+        } else {
+            for (int i = 0; i < dimLen; i++) {
+                assertEqualsRecursive(
+                        expected,
+                        actual,
+                        dim + 1,
+                        expectedFlatIndex + dim * expected.getStride(dim),
+                        actualFlatIndex + dim * actual.getStride(dim)
+                );
+            }
         }
     }
 

@@ -202,19 +202,6 @@ public final class ColumnType {
         return (byte2 << (2 * BYTE_BITS)) | (byte1 << BYTE_BITS) | ARRAY;
     }
 
-    public static int getArrayCommonWideningType(int typeA, int typeB) {
-        assert isArray(typeA);
-        assert isArray(typeB);
-        final char typeClass = getArrayCommonWideningTypeClass(
-                decodeArrayElementType(typeA),
-                decodeArrayElementType(typeB)
-        );
-        final int nDims = Math.max(
-                decodeArrayDimensionality(typeA),
-                decodeArrayDimensionality(typeB));
-        return encodeArrayType(typeClass, nDims);
-    }
-
     public static ColumnTypeDriver getDriver(int columnType) {
         switch (tagOf(columnType)) {
             case STRING:
@@ -390,12 +377,6 @@ public final class ColumnType {
                 || isArrayCast(fromType, toType);
     }
 
-    private static boolean isArrayCast(int fromType, int toType) {
-        return isArray(fromType) && isArray(toType)
-                && decodeArrayElementType(fromType) == decodeArrayElementType(toType)
-                && decodeArrayDimensionality(fromType) == decodeArrayDimensionality(toType);
-    }
-
     public static boolean isUndefined(int columnType) {
         return columnType == UNDEFINED;
     }
@@ -491,17 +472,10 @@ public final class ColumnType {
         return nameTypeMap.get(name);
     }
 
-    /**
-     * Find the common widening type class for the specified pair.
-     * Unsigned -> Signed -> Floating
-     */
-    private static char getArrayCommonWideningTypeClass(int tc1, int tc2) {
-        assert tc1 == 'u' || tc1 == 'i' || tc1 == 'f';
-        assert tc2 == 'u' || tc2 == 'i' || tc2 == 'f';
-        // This works, but by coincidence.
-        // Replace with a weights table if adding another type where the
-        // type class letter does not reverse-sort.
-        return (char) Math.min(tc1, tc2);
+    private static boolean isArrayCast(int fromType, int toType) {
+        return isArray(fromType) && isArray(toType)
+                && decodeArrayElementType(fromType) == decodeArrayElementType(toType)
+                && decodeArrayDimensionality(fromType) == decodeArrayDimensionality(toType);
     }
 
     private static boolean isGeoHashWideningCast(int fromType, int toType) {

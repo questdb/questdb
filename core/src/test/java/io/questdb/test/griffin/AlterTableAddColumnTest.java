@@ -111,6 +111,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                         // make sure we don't release writer until main test finishes
                         Assert.assertTrue(haltLatch.await(5, TimeUnit.SECONDS));
                     } catch (Throwable e) {
+                        //noinspection CallToPrintStackTrace
                         e.printStackTrace();
                         errorCounter.incrementAndGet();
                     } finally {
@@ -703,7 +704,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                             "\tm BINARY,\n" +
                             "\tn STRING,\n" +
                             "\tarr INT[]\n" + // <-- array should be present
-                            ") timestamp(timestamp) BYPASS WAL\n" +
+                            ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
                             "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n",
                     "show create table x;");
         });

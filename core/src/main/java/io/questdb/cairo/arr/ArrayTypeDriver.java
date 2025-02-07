@@ -172,23 +172,27 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             char bracketLo,
             char bracketHi
     ) {
-        sink.putAscii(bracketLo);
-        int count = arrayView.getDimLength(dim); // Number of elements or subarrays at this dimension.
-        for (int i = 0; i < count; i++) {
-            if (dim == arrayView.getDim() - 1) {
-                // If we're at the last dimension, append the flat array element.
-                valueAppender.appendFromIndex(arrayView, sink, currentIndex);
-                currentIndex++; // Move to the next element in the flat array.
-            } else {
-                // Recursively build the JSON for the next dimension.
-                currentIndex = arrayToJson(valueAppender, arrayView, dim + 1, currentIndex, sink, bracketLo, bracketHi);
+        if (arrayView == null) {
+            sink.put("null");
+        } else {
+            sink.putAscii(bracketLo);
+            int count = arrayView.getDimLength(dim); // Number of elements or subarrays at this dimension.
+            for (int i = 0; i < count; i++) {
+                if (dim == arrayView.getDim() - 1) {
+                    // If we're at the last dimension, append the flat array element.
+                    valueAppender.appendFromIndex(arrayView, sink, currentIndex);
+                    currentIndex++; // Move to the next element in the flat array.
+                } else {
+                    // Recursively build the JSON for the next dimension.
+                    currentIndex = arrayToJson(valueAppender, arrayView, dim + 1, currentIndex, sink, bracketLo, bracketHi);
+                }
+                // Append a comma if this is not the last element in the current dimension.
+                if (i < count - 1) {
+                    sink.putAscii(',');
+                }
             }
-            // Append a comma if this is not the last element in the current dimension.
-            if (i < count - 1) {
-                sink.putAscii(',');
-            }
+            sink.putAscii(bracketHi);
         }
-        sink.putAscii(bracketHi);
         return currentIndex;
     }
 

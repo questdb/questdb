@@ -106,6 +106,7 @@ import io.questdb.griffin.engine.functions.cast.CastTimestampToVarcharFunctionFa
 import io.questdb.griffin.engine.functions.cast.CastUuidToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastUuidToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastVarcharToGeoHashFunctionFactory;
+import io.questdb.griffin.engine.functions.columns.ArrayColumn;
 import io.questdb.griffin.engine.functions.columns.BinColumn;
 import io.questdb.griffin.engine.functions.columns.BooleanColumn;
 import io.questdb.griffin.engine.functions.columns.ByteColumn;
@@ -469,17 +470,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final boolean aIsArray = tagA == ColumnType.ARRAY;
         final boolean bIsArray = tagB == ColumnType.ARRAY;
         if (aIsArray && bIsArray) {
-            return ColumnType.getArrayCommonWideningType(typeA, typeB);
-        } else if (aIsArray || bIsArray) {
-            // We're in scalar-to-array promotion territory.
-            final int arrayType = aIsArray ? typeA : typeB;
-            final int otherType = aIsArray ? typeB : typeA;
-            final int nDims = ColumnType.decodeArrayDimensionality(arrayType);
-            final int promotedArrayType = ColumnType.encodeArrayType(otherType, nDims);
-            if (promotedArrayType == -1) {
-                return ColumnType.VARCHAR;  // stringify, as last resort.
+            if (
+                    ColumnType.decodeArrayElementType(typeA) == ColumnType.decodeArrayElementType(typeB)
+                            && ColumnType.decodeArrayDimensionality(typeA) == ColumnType.decodeArrayDimensionality(typeB)
+            ) {
+                return typeA;
             }
-            return ColumnType.getArrayCommonWideningType(arrayType, promotedArrayType);
+            // array widening is unsupported for now
+            return -1;
+        } else if (aIsArray || bIsArray) {
+            // scalar to array widening is unsupported for now
+            return -1;
         }
 
         int geoBitsA = getGeoHashBits(typeA);
@@ -2012,6 +2013,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         break;
                     case ColumnType.INTERVAL:
                         castFunctions.add(IntervalColumn.newInstance(i));
+                        break;
+                    case ColumnType.ARRAY:
+                        // there is no cast, entity function
+                        castFunctions.add(ArrayColumn.newInstance(i, fromType));
                         break;
                 }
             }
