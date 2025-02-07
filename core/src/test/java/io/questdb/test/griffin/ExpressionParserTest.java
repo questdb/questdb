@@ -24,11 +24,17 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.arr.ArrayBuffers;
+import io.questdb.cairo.arr.ArrayMeta;
+import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.arr.ArrayViewImpl;
 import io.questdb.griffin.ExpressionParser;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -1257,6 +1263,29 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testStringConcat() throws SqlException {
         x("a 'b' || c || d ||", "a||'b'||c||d");
+    }
+
+    @Test
+    public void testTempDeleteMe() {
+        ArrayViewImpl array = new ArrayViewImpl();
+        try (ArrayBuffers bufs = new ArrayBuffers();
+             DirectUtf8Sink sink = new DirectUtf8Sink(20)
+        ) {
+            bufs.shape.add(2);
+            bufs.shape.add(2);
+            bufs.type = ColumnType.encodeArrayTypex('f', 6, (int) bufs.shape.size());
+            ArrayMeta.determineDefaultStrides(bufs.shape.asSlice(), bufs.strides);
+            bufs.values.putDouble(1.0);
+            bufs.values.putDouble(2.0);
+            bufs.values.putDouble(3.0);
+            bufs.values.putDouble(4.0);
+            bufs.updateView(array);
+            sink.clear();
+            ArrayTypeDriver.arrayToJson(
+                    (arr, snk, index) -> snk.put(arr.getDoubleAtFlatIndex(index)),
+                    array, sink);
+            System.out.println(sink);
+        }
     }
 
     @Test
