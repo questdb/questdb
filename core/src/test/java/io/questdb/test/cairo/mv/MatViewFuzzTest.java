@@ -179,11 +179,104 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testRebuildAfterUnsupportedOperations() throws Exception {
+        assertMemoryLeak(() -> {
+            final Rnd rnd = fuzzer.generateRandom(LOG);
+
+            fuzzer.setFuzzCounts(
+                    rnd.nextBoolean(),
+                    rnd.nextInt(2_000_000),
+                    rnd.nextInt(1000),
+                    rnd.nextInt(3),
+                    rnd.nextInt(5),
+                    rnd.nextInt(1000),
+                    rnd.nextInt(1_000_000),
+                    5 + rnd.nextInt(10)
+            );
+
+            // Don't rename/drop/change type for existing columns to keep the mat view query valid
+            fuzzer.setFuzzProbabilities(
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.3,
+                    0.3,
+                    0.0,
+                    0.0,
+                    0.0,
+                    1,
+                    0.0,
+                    0.3,
+                    0.3,
+                    0.0,
+                    0.3
+            );
+
+            setFuzzProperties(rnd);
+
+            final String testTableName = getTestName();
+            final int tableCount = 1 + rnd.nextInt(3);
+
+            final AtomicBoolean stop = new AtomicBoolean();
+            final Thread refreshJobThread = startRefreshJob(0, stop, rnd);
+
+            final ObjList<ObjList<FuzzTransaction>> fuzzTransactions = new ObjList<>();
+            final ObjList<String> viewSqls = new ObjList<>();
+
+            for (int i = 0; i < tableCount; i++) {
+                final String tableNameBase = testTableName + "_" + i;
+                final String tableNameMv = tableNameBase + "_mv";
+                final String viewSql = "select min(c3), max(c3), ts from  " + tableNameBase + " sample by 1h";
+                final ObjList<FuzzTransaction> transactions = createTransactionsAndMv(rnd, tableNameBase, tableNameMv, viewSql);
+                fuzzTransactions.add(transactions);
+                viewSqls.add(viewSql);
+            }
+
+            // Can help to reduce memory consumption.
+            engine.releaseInactive();
+            fuzzer.applyManyWalParallel(fuzzTransactions, rnd, testTableName, true, true);
+
+            stop.set(true);
+            refreshJobThread.join();
+
+            drainWalQueue();
+            fuzzer.checkNoSuspendedTables();
+
+            runRefreshJobAndDrainWalQueue();
+            fuzzer.checkNoSuspendedTables();
+
+            for (int i = 0; i < tableCount; i++) {
+                final String viewSql = viewSqls.getQuick(i);
+                final String mvName = testTableName + "_" + i + "_mv";
+
+                execute("refresh materialized view '" + mvName + "';");
+                runRefreshJobAndDrainWalQueue();
+
+                LOG.info().$("asserting view ").$(mvName).$(" against ").$(viewSql).$();
+                assertSql(
+                        "count\n" +
+                                "1\n",
+                        "select count() from views where name = '" + mvName + "' and not invalid;"
+                );
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    TestUtils.assertSqlCursors(
+                            compiler,
+                            sqlExecutionContext,
+                            viewSql,
+                            mvName,
+                            LOG
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testStressWalPurgeJob() throws Exception {
         // Here we generate many WAL segments and run WalPurgeJob frequently.
         // The goal is to make sure WalPurgeJob doesn't delete WAL-E files used by MatViewRefreshJob.
-        setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, "10");
-        setProperty(PropertyKey.CAIRO_WAL_PURGE_INTERVAL, "10");
+        setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 10);
+        setProperty(PropertyKey.CAIRO_WAL_PURGE_INTERVAL, 10);
         assertMemoryLeak(() -> {
             Rnd rnd = fuzzer.generateRandom(LOG);
             setFuzzParams(rnd, 0);
@@ -193,11 +286,14 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     }
 
     private static void createMatView(String viewSql, String mvName) throws SqlException {
-        execute(
-                "create materialized view " + mvName + " as (" +
-                        viewSql +
-                        ") partition by DAY"
-        );
+        execute("create materialized view " + mvName + " as (" + viewSql + ") partition by DAY");
+    }
+
+    private static void runRefreshJobAndDrainWalQueue() {
+        try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
+            refreshJob.run(0);
+            drainWalQueue();
+        }
     }
 
     private ObjList<FuzzTransaction> createTransactionsAndMv(Rnd rnd, String tableNameBase, String matViewName, String viewSql) throws SqlException, NumericException {
@@ -214,7 +310,6 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     private void runMvFuzz(Rnd rnd, String testTableName, int tableCount) throws Exception {
         AtomicBoolean stop = new AtomicBoolean();
         ObjList<Thread> refreshJobs = new ObjList<>();
-        ObjList<Thread> rebuildThreads = new ObjList<>();
         int refreshJobCount = 1 + rnd.nextInt(4);
 
         for (int i = 0; i < refreshJobCount; i++) {
@@ -231,7 +326,6 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             ObjList<FuzzTransaction> transactions = createTransactionsAndMv(rnd, tableNameBase, tableNameMv, viewSql);
             fuzzTransactions.add(transactions);
             viewSqls.add(viewSql);
-            rebuildThreads.add(startRebuildThread(1000 * i, tableNameMv, stop, rnd));
         }
 
         // Can help to reduce memory consumption.
@@ -243,18 +337,10 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             refreshJobs.getQuick(i).join();
         }
 
-        for (int i = 0; i < tableCount; i++) {
-            rebuildThreads.getQuick(i).join();
-        }
-
         drainWalQueue();
         fuzzer.checkNoSuspendedTables();
 
-        try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
-            refreshJob.run(0);
-            drainWalQueue();
-        }
-
+        runRefreshJobAndDrainWalQueue();
         fuzzer.checkNoSuspendedTables();
 
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -307,25 +393,6 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 0.0,
                 0.0
         );
-    }
-
-    private Thread startRebuildThread(int workerId, final String matView, AtomicBoolean stop, Rnd outsideRnd) {
-        Rnd rnd = new Rnd(outsideRnd.nextLong(), outsideRnd.nextLong());
-        Thread th = new Thread(() -> {
-            try {
-                while (!stop.get()) {
-                    execute("refresh materialized view '" + matView + "';");
-                    Os.sleep(rnd.nextInt(1000));
-                }
-            } catch (Throwable throwable) {
-                LOG.error().$("Rebuild thread failed: ").$(throwable).$();
-            } finally {
-                Path.clearThreadLocals();
-                LOG.info().$("Rebuild thread stopped").$();
-            }
-        }, "rebuild-thread" + workerId);
-        th.start();
-        return th;
     }
 
     private Thread startRefreshJob(int workerId, AtomicBoolean stop, Rnd outsideRnd) {
