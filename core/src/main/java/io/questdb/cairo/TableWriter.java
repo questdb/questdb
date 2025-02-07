@@ -4146,9 +4146,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 denseSymbolMapWriters.size(),
                 txWriter
         );
-        // In case there are some dirty files left from rolled back transaction
-        // clean the newly created symbol files.
-        w.truncate();
+
+        try {
+            // In case there are some dirty files left from rolled back transaction
+            // clean the newly created symbol files.
+            w.truncate();
+        } catch (Throwable t) {
+            // oh, well, we tried and it failed. this can happen if there is e.g. I/O issue.
+            // we can't do much about it but make sure we close the writer to avoid leaks
+            w.close();
+            throw t;
+        }
+
         denseSymbolMapWriters.add(w);
         symbolMapWriters.extendAndSet(columnCount, w);
     }
