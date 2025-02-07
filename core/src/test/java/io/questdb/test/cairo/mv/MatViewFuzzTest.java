@@ -178,11 +178,25 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         });
     }
 
+    @Test
+    public void testStressWalPurgeJob() throws Exception {
+        // Here we generate many WAL segments and run WalPurgeJob frequently.
+        // The goal is to make sure WalPurgeJob doesn't delete WAL-E files used by MatViewRefreshJob.
+        setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, "10");
+        setProperty(PropertyKey.CAIRO_WAL_PURGE_INTERVAL, "10");
+        assertMemoryLeak(() -> {
+            Rnd rnd = fuzzer.generateRandom(LOG);
+            setFuzzParams(rnd, 0);
+            setFuzzProperties(rnd);
+            runMvFuzz(rnd, getTestName(), 1);
+        });
+    }
+
     private static void createMatView(String viewSql, String mvName) throws SqlException {
         execute(
-                "create materialized view " + mvName + " as ("
-                        + viewSql
-                        + ") partition by DAY"
+                "create materialized view " + mvName + " as (" +
+                        viewSql +
+                        ") partition by DAY"
         );
     }
 

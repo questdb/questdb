@@ -171,7 +171,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             int seqPartsCount = discoverSequencerParts();
 
             if (logic.hasOnDiskSegments()) {
-
                 try {
                     tableDropped = fetchSequencerPairs(seqPartsCount);
                 } catch (Throwable th) {
@@ -544,7 +543,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                         // Delete a wal or segment directory only if:
                         //   * It has been fully applied to the table.
                         //   * Is not locked.
-                        //   * None of its segments have pending tasks
+                        //   * None of its segments have pending tasks.
 
                         if (isWalDir(segmentId, walId)) {
                             final boolean walAlreadyApplied = nextToApplySegmentId == -1;
@@ -686,11 +685,13 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     }
 
     private class FsDeleter implements Deleter {
+
         @Override
         public void deleteSegmentDirectory(int walId, int segmentId, long lockFd) {
             LOG.debug().$("deleting WAL segment directory [table=").utf8(tableToken.getDirName())
                     .$(", walId=").$(walId)
-                    .$(", segmentId=").$(segmentId).$(']').$();
+                    .$(", segmentId=").$(segmentId)
+                    .I$();
             if (recursiveDelete(setSegmentPath(tableToken, walId, segmentId))) {
                 ff.closeRemove(lockFd, setSegmentLockPath(tableToken, walId, segmentId).$());
             } else {
@@ -701,7 +702,8 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         @Override
         public void deleteSequencerPart(int seqPart) {
             LOG.debug().$("deleting sequencer part [table=").utf8(tableToken.getDirName())
-                    .$(", part=").$(seqPart).$(']').$();
+                    .$(", part=").$(seqPart)
+                    .I$();
             Path path = setSeqPartPath(tableToken).put(Files.SEPARATOR).put(seqPart);
             // If error removing, will be retried on next run.
             ff.removeQuiet(path.$());
@@ -710,7 +712,8 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         @Override
         public void deleteWalDirectory(int walId, long lockFd) {
             LOG.debug().$("deleting WAL directory [table=").utf8(tableToken.getDirName())
-                    .$(", walId=").$(walId).$(']').$();
+                    .$(", walId=").$(walId)
+                    .I$();
             if (recursiveDelete(setWalPath(tableToken, walId))) {
                 ff.closeRemove(lockFd, setWalLockPath(tableToken, walId).$());
             } else {
