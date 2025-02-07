@@ -315,7 +315,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         if (state != null && !state.isDropped()) {
             if (!state.tryLock()) {
                 LOG.debug().$("skipping materialized view invalidation, locked by another refresh run [view=").$(viewToken).I$();
-                state.setPendingInvalidation();
+                state.markAsPendingInvalidation();
                 viewGraph.refresh(viewToken, MatViewRefreshTask.INVALIDATE);
                 return;
             }
@@ -337,7 +337,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // Someone is refreshing the view, so we're going for another attempt.
             // Just mark the view invalid to prevent intermediate incremental refreshes and republish the task.
             LOG.info().$("delaying materialized view rebuild, locked by another refresh run [view=").$(viewToken).I$();
-            state.setPendingInvalidation();
+            state.markAsPendingInvalidation();
             viewGraph.refresh(viewToken, MatViewRefreshTask.REBUILD);
             return false;
         }
@@ -459,7 +459,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
             if (appliedToViewTxn < 0 || appliedToViewTxn < lastBaseQueryableTxn) {
                 final MatViewRefreshState state = viewGraph.getViewRefreshState(viewToken);
-                if (state != null && !state.isInvalid() && !state.isDropped()) {
+                if (state != null && !state.isPendindInvalidation() && !state.isInvalid() && !state.isDropped()) {
                     if (!state.tryLock()) {
                         LOG.debug().$("skipping materialized view refresh, locked by another refresh run [view=").$(viewToken).I$();
                         continue;
@@ -487,7 +487,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return refreshed;
     }
 
-    private void refreshFailState(final MatViewRefreshState state, long refreshTimestamp, final CharSequence errorMessage) {
+    private void refreshFailState(MatViewRefreshState state, long refreshTimestamp, CharSequence errorMessage) {
         state.refreshFail(metaFileWriter, dbRoot.trimTo(dbRootLen), refreshTimestamp, errorMessage);
     }
 
@@ -542,7 +542,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
     private boolean refreshView(@NotNull TableToken viewToken, MatViewGraph viewGraph, long refreshTriggeredTimestamp) {
         final MatViewRefreshState state = viewGraph.getViewRefreshState(viewToken);
-        if (state == null || state.isInvalid() || state.isDropped()) {
+        if (state == null || state.isPendindInvalidation() || state.isInvalid() || state.isDropped()) {
             return false;
         }
 

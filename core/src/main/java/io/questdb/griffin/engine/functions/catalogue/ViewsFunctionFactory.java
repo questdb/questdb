@@ -77,8 +77,7 @@ public class ViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_VIEW_SQL = COLUMN_LAST_REFRESH_TIMESTAMP + 1;
         private static final int COLUMN_TABLE_DIR_NAME = COLUMN_VIEW_SQL + 1;
         private static final int COLUMN_LAST_ERROR = COLUMN_TABLE_DIR_NAME + 1;
-        private static final int COLUMN_LAST_ERROR_CODE = COLUMN_LAST_ERROR + 1;
-        private static final int COLUMN_INVALID = COLUMN_LAST_ERROR_CODE + 1;
+        private static final int COLUMN_INVALID = COLUMN_LAST_ERROR + 1;
         private static final RecordMetadata METADATA;
         private final ViewsListCursor cursor = new ViewsListCursor();
 
@@ -132,12 +131,10 @@ public class ViewsFunctionFactory implements FunctionFactory {
                     final MatViewRefreshState viewState = matViewGraph.getViewRefreshState(viewToken);
                     if (viewState != null && !viewState.isDropped()) {
                         // TODO(puzpuzpuz): include lastRefreshBaseTxn and base table txn
-                        // TODO(puzpuzpuz): include error code and message from telemetry table once we have it
                         record.of(
                                 viewState.getViewDefinition(),
                                 viewState.getLastRefreshTimestamp(),
                                 viewState.getErrorMessage(),
-                                0,
                                 viewState.isInvalid()
                         );
                         viewIndex++;
@@ -167,19 +164,13 @@ public class ViewsFunctionFactory implements FunctionFactory {
 
             private static class ViewsListRecord implements Record {
                 private boolean invalid;
-                private CharSequence lastError;
-                private int lastErrorCode;
+                private String lastError;
                 private long lastRefreshTimestamp;
                 private MatViewDefinition viewDefinition;
 
                 @Override
                 public boolean getBool(int col) {
                     return col == COLUMN_INVALID && invalid;
-                }
-
-                @Override
-                public int getInt(int col) {
-                    return col == COLUMN_LAST_ERROR_CODE ? lastErrorCode : 0;
                 }
 
                 @Override
@@ -202,7 +193,7 @@ public class ViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_TABLE_DIR_NAME:
                             return viewDefinition.getMatViewToken().getDirName();
                         case COLUMN_LAST_ERROR:
-                            return lastError != null && lastError.length() != 0 ? lastError : null;
+                            return lastError != null && !lastError.isEmpty() ? lastError : null;
                         default:
                             return null;
                     }
@@ -216,14 +207,12 @@ public class ViewsFunctionFactory implements FunctionFactory {
                 public void of(
                         MatViewDefinition viewDefinition,
                         long lastRefreshTimestamp,
-                        CharSequence lastError,
-                        int lastErrorCode,
+                        String lastError,
                         boolean invalid
                 ) {
                     this.viewDefinition = viewDefinition;
                     this.lastRefreshTimestamp = lastRefreshTimestamp;
-                    this.lastError = lastError != null && lastError.length() != 0 ? lastError : null;
-                    this.lastErrorCode = this.lastError != null ? lastErrorCode : Integer.MIN_VALUE;
+                    this.lastError = lastError;
                     this.invalid = invalid;
                 }
             }
@@ -237,7 +226,6 @@ public class ViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("view_sql", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("view_table_dir_name", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("last_error", ColumnType.STRING));
-            metadata.add(new TableColumnMetadata("last_error_code", ColumnType.INT));
             metadata.add(new TableColumnMetadata("invalid", ColumnType.BOOLEAN));
             METADATA = metadata;
         }
