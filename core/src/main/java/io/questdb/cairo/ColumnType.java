@@ -179,7 +179,7 @@ public final class ColumnType {
     public static int encodeArrayType(int typeTag, int nDims) {
         assert nDims >= 1 && nDims <= ARRAY_DIMENSION_LIMIT;
         nDims = (nDims - 1) & 0xF;
-        int shlTypePrecision = pow2SizeOf(typeTag);
+        int shlTypePrecision = pow2SizeOf(typeTag) + 3;
         shlTypePrecision &= 0xF;
         int byte1 = shlTypePrecision << 4 | nDims;
         int byte2 = typeTag & 0x1F;
