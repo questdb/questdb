@@ -32,6 +32,8 @@ import io.questdb.cairo.arr.ArrayValueAppender;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.ArrayViewImpl;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cutlass.http.processors.ArrayValueDoubleAppender;
+import io.questdb.cutlass.http.processors.ArrayValueLongAppender;
 import io.questdb.cutlass.line.tcp.ArrayParser;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.DirectUtf8String;
@@ -45,8 +47,7 @@ public class ArrayTest extends AbstractCairoTest {
 
     @Test
     public void testArrayToJsonDouble() {
-        ArrayValueAppender appender = (arr, index, snk) -> snk.put(arr.getDoubleAtFlatIndex(index));
-
+        ArrayValueAppender appender = ArrayValueDoubleAppender.INSTANCE;
         ArrayViewImpl array = new ArrayViewImpl();
         try (ArrayBuffers bufs = new ArrayBuffers();
              DirectUtf8Sink sink = new DirectUtf8Sink(20)
@@ -75,7 +76,7 @@ public class ArrayTest extends AbstractCairoTest {
 
     @Test
     public void testArrayToJsonLong() {
-        ArrayValueAppender appender = (arr, index, snk) -> snk.put(arr.getLongAtFlatIndex(index));
+        ArrayValueAppender appender = ArrayValueLongAppender.INSTANCE;
         ArrayViewImpl array = new ArrayViewImpl();
         try (ArrayBuffers bufs = new ArrayBuffers();
              DirectUtf8Sink sink = new DirectUtf8Sink(20)
@@ -105,11 +106,11 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testArrayToJsonUsingParser() {
         DirectUtf8String str = new DirectUtf8String();
-        ArrayValueAppender appender = (arr, index, snk) -> snk.put(arr.getLongAtFlatIndex(index));
+        ArrayValueAppender appender = ArrayValueLongAppender.INSTANCE;
         try (ArrayParser parser = new ArrayParser();
              DirectUtf8Sink sink = new DirectUtf8Sink(20)
         ) {
-            String arrayExpr = "[1,2]";
+            String arrayExpr = "[[1,2],[3,4]]";
             sink.clear();
             sink.put("[6i").put(arrayExpr.substring(1));
             parser.parse(str.of(sink.lo(), sink.hi()));
