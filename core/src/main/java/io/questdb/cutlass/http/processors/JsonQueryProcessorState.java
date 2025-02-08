@@ -722,7 +722,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     putIntervalValue(response, record, columnIdx);
                     break;
                 case ColumnType.ARRAY:
-                    putArrayValue(columnType, response, record, columnIdx);
+                    ArrayTypeDriver.arrayToJson(record.getArray(columnIdx, columnType), response);
                     break;
                 default:
                     // this should never happen since metadata are already validated
@@ -873,28 +873,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         queryState = QUERY_PREFIX;
         JsonQueryProcessor.header(response, getHttpConnectionContext(), keepAliveHeader, 200);
         onQueryPrefix(response, columnCount);
-    }
-
-    private void putArrayValue(int columnType, HttpChunkedResponse response, Record record, int columnIdx) {
-        switch (ColumnType.decodeArrayElementType(columnType)) {
-            case ColumnType.DOUBLE:
-                ArrayTypeDriver.arrayToJson(
-                        ArrayValueDoubleAppender.INSTANCE,
-                        record.getArray(columnIdx, columnType),
-                        response
-                );
-                break;
-            case ColumnType.LONG:
-                ArrayTypeDriver.arrayToJson(
-                        ArrayValueLongAppender.INSTANCE,
-                        record.getArray(columnIdx, columnType),
-                        response
-                );
-                break;
-            default:
-                assert false;
-                break;
-        }
     }
 
     private void putBinValue(HttpChunkedResponse response) {

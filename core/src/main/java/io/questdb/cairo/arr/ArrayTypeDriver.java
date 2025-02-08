@@ -119,6 +119,8 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     public static final ArrayTypeDriver INSTANCE = new ArrayTypeDriver();
     public static final long OFFSET_MAX = (1L << 48) - 1L;
     private static final long U32_MASK = 0xFFFFFFFFL;
+    private static final ArrayValueAppender VALUE_APPENDER_DOUBLE = ArrayTypeDriver::appendDoubleFromArrayToSink;
+    private static final ArrayValueAppender VALUE_APPENDER_LONG = ArrayTypeDriver::appendLongFromArrayToSink;
 
     public static void appendValue(
             @NotNull MemoryA auxMem,
@@ -138,33 +140,23 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     }
 
     /**
-     * Recursively builds a JSON representation of a multidimensional array stored in row‑major order.
-     *
-     * @param valueAppender the function used to append the text representation of a single element
-     * @param arrayView     the flat array containing all the elements
-     * @param sink          the StringBuilder used to accumulate the JSON string
+     * Appends a JSON representation of the provided array to the provided character sink.
      */
     public static void arrayToJson(
-            ArrayValueAppender valueAppender,
-            ArrayView arrayView,
-            CharSink<?> sink
+            @NotNull ArrayView arrayView,
+            @NotNull CharSink<?> sink
     ) {
-        arrayToText(valueAppender, arrayView, 0, 0, sink, '[', ']');
+        arrayToText(arrayView, 0, 0, sink, resolveAppender(arrayView), '[', ']', "null");
     }
 
     /**
-     * Recursively builds a PG Wire representation of a multidimensional array stored in row‑major order.
-     *
-     * @param valueAppender the function used to append the text representation of a single element
-     * @param arrayView     the flat array containing all the elements
-     * @param sink          the StringBuilder used to accumulate the JSON string
+     * Appends a PG Wire representation of the provided array to the provided character sink.
      */
-    public static void arrayToPgWireString(
-            ArrayValueAppender valueAppender,
-            ArrayView arrayView,
-            CharSink<?> sink
+    public static void arrayToPgWire(
+            @NotNull ArrayView arrayView,
+            @NotNull CharSink<?> sink
     ) {
-        arrayToText(valueAppender, arrayView, 0, 0, sink, '{', '}');
+        arrayToText(arrayView, 0, 0, sink, resolveAppender(arrayView), '{', '}', "NULL");
     }
 
     /**
@@ -496,22 +488,23 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
      * Recursively builds a string representation of a multidimensional array stored in row‑major order.
      * With [] as open-close chars, it produces JSON. With {}, it produces PG Wire format.
      *
-     * @param valueAppender the function used to append the text representation of a single element
-     * @param array         the flat array containing all the elements
-     * @param dim           the current dimension being processed, starting at 0
-     * @param flatIndex     the index of the current element in the flat array, starting at 0
-     * @param sink          the StringBuilder used to accumulate the JSON string
-     * @param openChar      the opening character for each array plane
-     * @param closeChar     the closing character for each array plane
+     * @param array       flat array containing all the elements
+     * @param dim         current dimension being processed, starting at 0
+     * @param flatIndex   index of the current element in the flat array, starting at 0
+     * @param sink        sink that accumulates the JSON string
+     * @param openChar    opening character for each array plane
+     * @param closeChar   closing character for each array plane
+     * @param nullLiteral text that represents a null value
      */
     private static void arrayToText(
-            ArrayValueAppender valueAppender,
-            ArrayView array,
+            @NotNull ArrayView array,
             int dim,
             int flatIndex,
-            CharSink<?> sink,
+            @NotNull CharSink<?> sink,
+            @NotNull ArrayValueAppender appender,
             char openChar,
-            char closeChar
+            char closeChar,
+            @NotNull String nullLiteral
     ) {
         final int count = array.getDimLen(dim);
         final int stride = array.getStride(dim);
@@ -523,9 +516,9 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
                 sink.putAscii(',');
             }
             if (atDeepestDim) {
-                valueAppender.appendFromFlatIndex(array, flatIndex, sink);
+                appender.appendFromFlatIndex(array, flatIndex, sink, nullLiteral);
             } else {
-                arrayToText(valueAppender, array, dim + 1, flatIndex, sink, openChar, closeChar);
+                arrayToText(array, dim + 1, flatIndex, sink, appender, openChar, closeChar, nullLiteral);
             }
             flatIndex += stride;
         }
@@ -575,6 +568,22 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
                     .put(']');
         }
         return res;
+    }
+
+    private static @NotNull ArrayValueAppender resolveAppender(@NotNull ArrayView arrayView) {
+        ArrayValueAppender appender;
+        int elemType = ColumnType.decodeArrayElementType(arrayView.getType());
+        switch (elemType) {
+            case ColumnType.DOUBLE:
+                appender = VALUE_APPENDER_DOUBLE;
+                break;
+            case ColumnType.LONG:
+                appender = VALUE_APPENDER_LONG;
+                break;
+            default:
+                throw new AssertionError("No appender for ColumnType " + elemType);
+        }
+        return appender;
     }
 
     private static void writeAuxEntry(MemoryA auxMem, long offset, int size) {
@@ -628,5 +637,43 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         final long offset = mem.getLong(auxOffset) & OFFSET_MAX;
         final int size = mem.getInt(auxOffset + Long.BYTES);
         return offset + size;
+    }
+
+    static void appendDoubleFromArrayToSink(
+            @NotNull ArrayView view,
+            int index,
+            @NotNull CharSink<?> sink,
+            @NotNull String nullLiteral
+    ) {
+        double d = view.getDoubleAtFlatIndex(index);
+        if (!Numbers.isNull(d)) {
+            sink.put(d);
+        } else {
+            sink.putAscii(nullLiteral);
+        }
+    }
+
+    static void appendLongFromArrayToSink(
+            @NotNull ArrayView view,
+            int index,
+            @NotNull CharSink<?> sink,
+            @NotNull String nullLiteral
+    ) {
+        long d = view.getLongAtFlatIndex(index);
+        if (d != Numbers.LONG_NULL) {
+            sink.put(d);
+        } else {
+            sink.putAscii(nullLiteral);
+        }
+    }
+
+    @FunctionalInterface
+    private interface ArrayValueAppender {
+        void appendFromFlatIndex(
+                @NotNull ArrayView view,
+                int index,
+                @NotNull CharSink<?> sink,
+                @NotNull String nulLiteral
+        );
     }
 }

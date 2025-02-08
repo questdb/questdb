@@ -45,8 +45,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
-import io.questdb.cutlass.pgwire.ArrayValueDoubleAppender;
-import io.questdb.cutlass.pgwire.ArrayValueLongAppender;
 import io.questdb.cutlass.pgwire.BadProtocolException;
 import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.cutlass.pgwire.PGResponseSink;
@@ -1865,19 +1863,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             utf8Sink.setNullValue();
             return;
         }
-
-        final long a = utf8Sink.skipInt();
-        switch (ColumnType.decodeArrayElementType(columnType)) {
-            case ColumnType.DOUBLE:
-                ArrayTypeDriver.arrayToPgWireString(ArrayValueDoubleAppender.INSTANCE, arrayView, utf8Sink);
-                break;
-            case ColumnType.LONG:
-                ArrayTypeDriver.arrayToPgWireString(ArrayValueLongAppender.INSTANCE, arrayView, utf8Sink);
-                break;
-            default:
-                assert false;
-                break;
-        }
+        long a = utf8Sink.skipInt();
+        ArrayTypeDriver.arrayToPgWire(arrayView, utf8Sink);
         utf8Sink.putLenEx(a);
     }
 
