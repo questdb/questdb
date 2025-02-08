@@ -598,8 +598,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         // We could be storing values of different datatypes.
         // We thus need to align accordingly. I.e., if we store doubles, we need to align on an 8-byte boundary.
         // for shorts, it's on a 2-byte boundary. For booleans, we align to the byte.
-        final int bitWidth = 1 << ColumnType.decodeArrayElementTypePrecision(arrayView.getType());
-        final int requiredByteAlignment = (bitWidth + 7) / 8;
+        final int requiredByteAlignment = ColumnType.sizeOf(ColumnType.decodeArrayElementType(arrayView.getType()));
         padTo(dataMem, requiredByteAlignment);
         arrayView.appendWithDefaultStrides(dataMem);
         // We pad at the end, ready for the next entry that starts with an int.

@@ -74,12 +74,6 @@ public class ArrayViewImpl implements ArrayView {
             }
 
             // Add the values next.
-            if ((ColumnType.decodeArrayElementTypePrecision(type) < 3) && (valuesOffset > 0)) {
-                // We don't currently support walking data that has a byte-unaligned start.
-                // In other words, a scenario where the first value is not at the start of a byte boundary.
-                // We simplify this even further by not supporting `valuesOffset` at all yet.
-                throw new UnsupportedOperationException("nyi");
-            }
             if (!hasDefaultStrides()) {
                 throw new UnsupportedOperationException("nyi");
             }
@@ -256,8 +250,9 @@ public class ArrayViewImpl implements ArrayView {
     }
 
     private static void validateValuesSize(int type, int valuesOffset, int valuesLength, int valuesSize) {
+        assert ColumnType.isArray(type) : "type class is not Array";
         final int totExpectedElementCapacity = valuesOffset + valuesLength;
-        final int expectedByteSize = ArrayMeta.calcRequiredValuesByteSize(type, totExpectedElementCapacity);
+        final int expectedByteSize = totExpectedElementCapacity * ColumnType.sizeOf(ColumnType.decodeArrayElementType(type));
         if (valuesSize != expectedByteSize) {
             throw new AssertionError(String.format("invalid valuesSize, expected %,d actual %,d", expectedByteSize, valuesSize));
         }

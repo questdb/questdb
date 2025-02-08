@@ -714,7 +714,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
     public void testAlterTableAddArrayColumnWithInvalidArrayType() throws Exception {
         assertMemoryLeak(() -> {
             createX();
-            assertException("alter table x add column arr varchar[];", 29, "VARCHAR array type is not supported");
+            assertException("alter table x add column arr varchar[];", 29, "VARCHAR is not supported as an array element type");
         });
     }
 

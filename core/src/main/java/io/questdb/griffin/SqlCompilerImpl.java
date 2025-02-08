@@ -504,16 +504,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         CharSequence tok;
         tok = expectToken(lexer, "column type");
 
-        int columnType = SqlUtil.toPersistedTypeTag(tok, lexer.lastTokenPosition());
+        short typeTag = SqlUtil.toPersistedTypeTag(tok, lexer.lastTokenPosition());
         int typePosition = lexer.lastTokenPosition();
 
         int dim = SqlUtil.parseArrayDimensions(lexer);
+        int columnType;
         if (dim > 0) {
-            if (ColumnType.isSupportedArrayType((short) columnType)) {
-                columnType = ColumnType.encodeArrayType(columnType, dim); // dim is 0 - based here, but 1-based in ColumnType
-            } else {
-                throw SqlException.position(typePosition).put(ColumnType.nameOf(columnType)).put(" array type is not supported");
+            if (!ColumnType.isSupportedArrayElementType(typeTag)) {
+                throw SqlException.position(typePosition).put(ColumnType.nameOf(typeTag))
+                        .put(" is not supported as an array element type");
             }
+            columnType = ColumnType.encodeArrayType(typeTag, dim);
+        } else {
+            columnType = typeTag;
         }
 
         tok = SqlUtil.fetchNext(lexer);

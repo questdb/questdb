@@ -232,12 +232,14 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testTypeCast() {
         for (int i = 1; i < ColumnType.ARRAY_DIMENSION_LIMIT; i++) {
-            for (int j = 0; j < ColumnType.ARRAY; j++) {
+            for (short j = ColumnType.BOOLEAN; j <= ColumnType.IPv4; j++) {
+                if (!ColumnType.isSupportedArrayElementType(j)) {
+                    continue;
+                }
                 Assert.assertTrue(ColumnType.isAssignableFrom(
                         ColumnType.encodeArrayType(j, i),
                         ColumnType.encodeArrayType(j, i)
                 ));
-
                 Assert.assertTrue(ColumnType.isAssignableFrom(
                         ColumnType.NULL,
                         ColumnType.encodeArrayType(j, i)
@@ -246,18 +248,14 @@ public class ArrayTest extends AbstractCairoTest {
         }
 
         for (int i = 1; i < ColumnType.ARRAY_DIMENSION_LIMIT; i++) {
-            for (int j = 0; j < ColumnType.ARRAY; j++) {
+            for (short j = ColumnType.BOOLEAN; j <= ColumnType.IPv4; j++) {
+                if (!ColumnType.isSupportedArrayElementType(j)) {
+                    continue;
+                }
                 // not assignable from scalar to any array
-                Assert.assertFalse(ColumnType.isAssignableFrom(
-                        j,
-                        ColumnType.encodeArrayType(j, i)
-                ));
-
-                // and other way around
-                Assert.assertFalse(ColumnType.isAssignableFrom(
-                        ColumnType.encodeArrayType(j, i),
-                        j
-                ));
+                Assert.assertFalse(ColumnType.isAssignableFrom(j, ColumnType.encodeArrayType(j, i)));
+                // ... nor the other way around
+                Assert.assertFalse(ColumnType.isAssignableFrom(ColumnType.encodeArrayType(j, i), j));
             }
         }
     }

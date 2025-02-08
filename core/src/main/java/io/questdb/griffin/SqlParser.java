@@ -3246,7 +3246,7 @@ public class SqlParser {
 
         int dim = SqlUtil.parseArrayDimensions(lexer);
         if (dim > 0) {
-            if (ColumnType.isSupportedArrayType(typeTag)) {
+            if (ColumnType.isSupportedArrayElementType(typeTag)) {
                 if (dim <= ColumnType.ARRAY_DIMENSION_LIMIT) {
                     return ColumnType.encodeArrayType(typeTag, dim);
                 } else {

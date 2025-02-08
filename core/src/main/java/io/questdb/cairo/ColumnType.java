@@ -134,41 +134,17 @@ public final class ColumnType {
     private ColumnType() {
     }
 
-    public static int decodeArrayDimensionality(int type) {
-        if (ColumnType.tagOf(type) == ColumnType.ARRAY) {
-            return ((type >> BYTE_BITS) & 0xF) + 1; // dimensionality is encoded in 4 bits.
-        }
-        return -1;
+    public static int decodeArrayDimensionality(int encodedType) {
+        assert ColumnType.tagOf(encodedType) == ColumnType.ARRAY;
+        return ((encodedType >> 13) & 0x0F) + 1;
     }
 
     /**
-     * Get the N-dimensional array element type's class.
-     * <p>'i' for a signed integer, 'u' for an unsigned integer, 'f' for a floating point number.</p>
-     * returns <code>Character.MAX_VALUE</code> if the type is not an array.
+     * Returns the int constant denoting the type of the elements in an array of the given encoded type.
      */
-    public static int decodeArrayElementType(int encodedType) {
-        if (ColumnType.tagOf(encodedType) == ColumnType.ARRAY) {
-            return ((encodedType >> (2 * BYTE_BITS)) & 0x1F); // typeClass is encoded in 5 bits.
-        }
-        return Character.MAX_VALUE;
-    }
-
-    /**
-     * Get the N-dimensional array element type's precision.
-     * <p>The returned value is log2(number of bits in the type):</p>
-     * <ul>
-     *     <li>0: 1-bit type</li>
-     *     <li>1: 2-bit type</li>
-     *     <li>2: 4-bit type</li>
-     *     <li>3: 8-bit type</li>
-     *     <li>4: 16-bit type</li>
-     *     <li>5: 32-bit type</li>
-     *     <li>6: 64-bit type</li>
-     * </ul>
-     */
-    public static int decodeArrayElementTypePrecision(int type) {
-        assert ColumnType.tagOf(type) == ColumnType.ARRAY;
-        return (byte) ((type >> 12) & 0xF); // precision is encoded in 4 bits.
+    public static short decodeArrayElementType(int encodedType) {
+        assert ColumnType.tagOf(encodedType) == ColumnType.ARRAY;
+        return (short) ((encodedType >> 8) & 0x1F);
     }
 
     public static boolean defaultStringImplementationIsUtf8() {
@@ -176,30 +152,26 @@ public final class ColumnType {
     }
 
     /**
-     * Builds an array type from a type class, precision, and dimensionality.
-     * <p>Precision is log2(bitWidth). E.g. precision = 5 means the value size is
-     * 2^5 == 32 bits. It can range from 0 to 15.</p>
-     * <p>Dimensionality can be from 1 to 16.</p>
-     * <p>The resulting type is laid out as follows:</p>
+     * Encodes the array type tag from the element type and dimensionality.
+     * <br/>
+     * The encoded type is laid out as follows:
      * <pre>
-     * Inclusive bit ranges:
-     *     31~21      20~16       15~12       11~8          7~0
-     * +----------+-----------+-----------+----------+---------------+
-     * | Reserved |  colType  | precision |  nDims   |   ND_ARRAY    |
-     * +----------+-----------+-----------+----------+---------------+
-     * |          |   5 bits  |  4 bits   |  4 bits  |   type tag    |
-     * |          |           |         byte         |      byte     |
+     *     31~17      16~13      12~8           7~0
+     * +----------+----------+-----------+------------------+
+     * | Reserved |  nDims   | elemType  | ColumnType.ARRAY |
+     * +----------+----------+-----------+------------------+
+     * |          |  4 bits  |  5 bits   |      8 bits      |
      * </pre>
+     *
+     * @param elemType one of the supported array element type tags.
+     * @param nDims    dimensionality, from 1 to {@value ARRAY_DIMENSION_LIMIT}.
      */
-    public static int encodeArrayType(int typeTag, int nDims) {
-        // TODO[mtopolnik]: precision is redundantly encoded, it can be derived from column type
-        assert nDims >= 1 && nDims <= ARRAY_DIMENSION_LIMIT;
-        nDims = (nDims - 1) & 0xF;
-        int shlTypePrecision = pow2SizeOf(typeTag) + 3;
-        shlTypePrecision &= 0xF;
-        int byte1 = shlTypePrecision << 4 | nDims;
-        int byte2 = typeTag & 0x1F;
-        return (byte2 << (2 * BYTE_BITS)) | (byte1 << BYTE_BITS) | ARRAY;
+    public static int encodeArrayType(short elemType, int nDims) {
+        assert nDims >= 1 && nDims <= ARRAY_DIMENSION_LIMIT : "nDims out of range: " + nDims;
+        assert isSupportedArrayElementType(elemType) : "not supported as array element type: " + elemType;
+
+        nDims = (nDims - 1) & 0x0F;
+        return nDims << 13 | (elemType & 0x1F) << 8 | ARRAY;
     }
 
     public static ColumnTypeDriver getDriver(int columnType) {
@@ -350,7 +322,7 @@ public final class ColumnType {
         return columnType == STRING;
     }
 
-    public static boolean isSupportedArrayType(short typeTag) {
+    public static boolean isSupportedArrayElementType(short typeTag) {
         return arrayTypeSet.contains(typeTag);
     }
 
@@ -643,13 +615,13 @@ public final class ColumnType {
 
         arrayTypeSet.add(BOOLEAN);
         arrayTypeSet.add(BYTE);
-        arrayTypeSet.add(DOUBLE);
-        arrayTypeSet.add(FLOAT);
+        arrayTypeSet.add(SHORT);
         arrayTypeSet.add(INT);
         arrayTypeSet.add(LONG);
-        arrayTypeSet.add(SHORT);
         arrayTypeSet.add(DATE);
         arrayTypeSet.add(TIMESTAMP);
+        arrayTypeSet.add(FLOAT);
+        arrayTypeSet.add(DOUBLE);
         arrayTypeSet.add(LONG256);
         arrayTypeSet.add(UUID);
         arrayTypeSet.add(IPv4);
@@ -776,7 +748,7 @@ public final class ColumnType {
         // add array type names up to dimension limit
         // this has to be done after we configured type bit widths
         for (int i = 0, n = arrayTypeSet.size(); i < n; i++) {
-            int type = arrayTypeSet.get(i);
+            short type = (short) arrayTypeSet.get(i);
             sink.clear();
             sink.put(nameOf(type));
             for (int d = 1; d <= ARRAY_DIMENSION_LIMIT; d++) {

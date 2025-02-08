@@ -142,7 +142,7 @@ public class ArrayParser implements QuietCloseable {
 
         final byte typePrecision = parseTypePrecision();
         final char typeClass = parseTypeClass();
-        final int colType;
+        final short colType;
         final int elementSize = 1 << typePrecision;
         switch (typeClass) {
             case 'i':
@@ -204,7 +204,7 @@ public class ArrayParser implements QuietCloseable {
      * </pre>
      */
     private void parseElements() throws ParseException {
-        final int elemType = ColumnType.decodeArrayElementType(bufs.type);
+        final short elemType = ColumnType.decodeArrayElementType(bufs.type);
         final DirectIntList shape = bufs.shape;
         final DirectIntList levelCounts = bufs.currCoords;
 
