@@ -25,12 +25,79 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.arr.ArrayBuffers;
+import io.questdb.cairo.arr.ArrayMeta;
+import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.arr.ArrayValueAppender;
+import io.questdb.cairo.arr.ArrayViewImpl;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static org.junit.Assert.assertEquals;
+
 public class ArrayTest extends AbstractCairoTest {
+
+    @Test
+    public void testArrayToJsonDouble() {
+        ArrayValueAppender appender = (arr, index, snk) -> snk.put(arr.getDoubleAtFlatIndex(index));
+
+        ArrayViewImpl array = new ArrayViewImpl();
+        try (ArrayBuffers bufs = new ArrayBuffers();
+             DirectUtf8Sink sink = new DirectUtf8Sink(20)
+        ) {
+            bufs.shape.add(2);
+            bufs.shape.add(2);
+            bufs.type = ColumnType.encodeArrayTypex('f', 6, (int) bufs.shape.size());
+            ArrayMeta.determineDefaultStrides(bufs.shape.asSlice(), bufs.strides);
+            bufs.values.putDouble(1.0);
+            bufs.values.putDouble(2.0);
+            bufs.values.putDouble(3.0);
+            bufs.values.putDouble(4.0);
+            bufs.updateView(array);
+            sink.clear();
+            ArrayTypeDriver.arrayToJson(appender, array, sink);
+            assertEquals("[[1.0,2.0],[3.0,4.0]]", sink.toString());
+
+            // transpose the array
+            bufs.strides.reverse();
+            bufs.updateView(array);
+            sink.clear();
+            ArrayTypeDriver.arrayToJson(appender, array, sink);
+            assertEquals("[[1.0,3.0],[2.0,4.0]]", sink.toString());
+        }
+    }
+
+    @Test
+    public void testArrayToJsonLong() {
+        ArrayValueAppender appender = (arr, index, snk) -> snk.put(arr.getLongAtFlatIndex(index));
+        ArrayViewImpl array = new ArrayViewImpl();
+        try (ArrayBuffers bufs = new ArrayBuffers();
+             DirectUtf8Sink sink = new DirectUtf8Sink(20)
+        ) {
+            bufs.shape.add(2);
+            bufs.shape.add(2);
+            bufs.type = ColumnType.encodeArrayTypex('i', 6, (int) bufs.shape.size());
+            ArrayMeta.determineDefaultStrides(bufs.shape.asSlice(), bufs.strides);
+            bufs.values.putLong(1);
+            bufs.values.putLong(2);
+            bufs.values.putLong(3);
+            bufs.values.putLong(4);
+            bufs.updateView(array);
+            sink.clear();
+            ArrayTypeDriver.arrayToJson(appender, array, sink);
+            assertEquals("[[1,2],[3,4]]", sink.toString());
+
+            // transpose the array
+            bufs.strides.reverse();
+            bufs.updateView(array);
+            sink.clear();
+            ArrayTypeDriver.arrayToJson(appender, array, sink);
+            assertEquals("[[1,3],[2,4]]", sink.toString());
+        }
+    }
 
     @Test
     public void testCreateAsSelectDoubleNoWAL() throws Exception {
@@ -211,4 +278,5 @@ public class ArrayTest extends AbstractCairoTest {
             );
         });
     }
+
 }
