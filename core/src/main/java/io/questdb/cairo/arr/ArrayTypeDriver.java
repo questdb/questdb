@@ -571,19 +571,15 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     }
 
     private static @NotNull ArrayValueAppender resolveAppender(@NotNull ArrayView arrayView) {
-        ArrayValueAppender appender;
         int elemType = ColumnType.decodeArrayElementType(arrayView.getType());
         switch (elemType) {
             case ColumnType.DOUBLE:
-                appender = VALUE_APPENDER_DOUBLE;
-                break;
+                return VALUE_APPENDER_DOUBLE;
             case ColumnType.LONG:
-                appender = VALUE_APPENDER_LONG;
-                break;
+                return VALUE_APPENDER_LONG;
             default:
                 throw new AssertionError("No appender for ColumnType " + elemType);
         }
-        return appender;
     }
 
     private static void writeAuxEntry(MemoryA auxMem, long offset, int size) {
