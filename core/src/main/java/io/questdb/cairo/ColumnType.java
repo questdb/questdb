@@ -155,7 +155,7 @@ public final class ColumnType {
 
     /**
      * Get the N-dimensional array element type's precision.
-     * <p>The returned value is to be interpreted as a power of two to obtain the number of bits in the type</p>
+     * <p>The returned value is log2(number of bits in the type):</p>
      * <ul>
      *     <li>0: 1-bit type</li>
      *     <li>1: 2-bit type</li>
@@ -165,7 +165,6 @@ public final class ColumnType {
      *     <li>5: 32-bit type</li>
      *     <li>6: 64-bit type</li>
      * </ul>
-     * returns -1 if the type is not an array.
      */
     public static int decodeArrayElementTypePrecision(int type) {
         assert ColumnType.tagOf(type) == ColumnType.ARRAY;
@@ -174,16 +173,6 @@ public final class ColumnType {
 
     public static boolean defaultStringImplementationIsUtf8() {
         return Chars.equals(nameOf(STRING), "VARCHAR");
-    }
-
-    public static int encodeArrayType(int typeTag, int nDims) {
-        assert nDims >= 1 && nDims <= ARRAY_DIMENSION_LIMIT;
-        nDims = (nDims - 1) & 0xF;
-        int shlTypePrecision = pow2SizeOf(typeTag) + 3;
-        shlTypePrecision &= 0xF;
-        int byte1 = shlTypePrecision << 4 | nDims;
-        int byte2 = typeTag & 0x1F;
-        return (byte2 << (2 * BYTE_BITS)) | (byte1 << BYTE_BITS) | ARRAY;
     }
 
     /**
@@ -196,43 +185,21 @@ public final class ColumnType {
      * Inclusive bit ranges:
      *     31~21      20~16       15~12       11~8          7~0
      * +----------+-----------+-----------+----------+---------------+
-     * | Reserved | typeClass | precision |  nDims   |   ND_ARRAY    |
+     * | Reserved |  colType  | precision |  nDims   |   ND_ARRAY    |
      * +----------+-----------+-----------+----------+---------------+
      * |          |   5 bits  |  4 bits   |  4 bits  |   type tag    |
      * |          |           |         byte         |      byte     |
      * </pre>
      */
-    public static int encodeArrayTypex(char typeClass, int typePrecision, int nDims) {
-        assert typeClass >= 'a' && typeClass <= 'z';
-        assert typePrecision >= 0 && typePrecision <= 15;
-        assert nDims >= 1 && nDims <= 16;
-
-        if (
-            // Types which we don't support are commented out.
-                (typeClass == 'u' && typePrecision == 0) ||  // boolean
-//                        (typeClass == 'u' && typePrecision == 1) ||
-//                        (typeClass == 'u' && typePrecision == 2) ||
-//                        (typeClass == 'u' && typePrecision == 3) ||
-//                        (typeClass == 'u' && typePrecision == 4) ||
-//                        (typeClass == 'u' && typePrecision == 5) ||
-//                        (typeClass == 'u' && typePrecision == 6) ||
-                        (typeClass == 'i' && typePrecision == 3) ||  // byte
-                        (typeClass == 'i' && typePrecision == 4) ||  // short
-                        (typeClass == 'i' && typePrecision == 5) ||  // int
-                        (typeClass == 'i' && typePrecision == 6) ||  // long
-//                        (typeClass == 'f' && typePrecision == 3) ||
-//                        (typeClass == 'f' && typePrecision == 4) ||
-                        (typeClass == 'f' && typePrecision == 5) ||  // float
-                        (typeClass == 'f' && typePrecision == 6)     // double
-        ) {
-            nDims = (nDims - 1) & 0xF;
-            typePrecision &= 0xF;
-            int byte1 = typePrecision << 4 | nDims;
-            int byte2 = (typeClass - 'a') & 0x1F;
-            return (byte2 << (2 * BYTE_BITS)) | (byte1 << BYTE_BITS) | ARRAY;
-        } else {
-            return -1;
-        }
+    public static int encodeArrayType(int typeTag, int nDims) {
+        // TODO[mtopolnik]: precision is redundantly encoded, it can be derived from column type
+        assert nDims >= 1 && nDims <= ARRAY_DIMENSION_LIMIT;
+        nDims = (nDims - 1) & 0xF;
+        int shlTypePrecision = pow2SizeOf(typeTag) + 3;
+        shlTypePrecision &= 0xF;
+        int byte1 = shlTypePrecision << 4 | nDims;
+        int byte2 = typeTag & 0x1F;
+        return (byte2 << (2 * BYTE_BITS)) | (byte1 << BYTE_BITS) | ARRAY;
     }
 
     public static ColumnTypeDriver getDriver(int columnType) {

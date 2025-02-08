@@ -142,14 +142,22 @@ public class ArrayParser implements QuietCloseable {
 
         final byte typePrecision = parseTypePrecision();
         final char typeClass = parseTypeClass();
-        int elementSize = 1 << typePrecision;
+        final int colType;
+        final int elementSize = 1 << typePrecision;
         switch (typeClass) {
             case 'i':
                 switch (elementSize) {
                     case 8:
+                        colType = ColumnType.BYTE;
+                        break;
                     case 16:
+                        colType = ColumnType.SHORT;
+                        break;
                     case 32:
+                        colType = ColumnType.INT;
+                        break;
                     case 64:
+                        colType = ColumnType.LONG;
                         break;
                     default:
                         throw ParseException.invalidType(position());
@@ -158,7 +166,10 @@ public class ArrayParser implements QuietCloseable {
             case 'f':
                 switch (elementSize) {
                     case 32:
+                        colType = ColumnType.FLOAT;
+                        break;
                     case 64:
+                        colType = ColumnType.DOUBLE;
                         break;
                     default:
                         throw ParseException.invalidType(position());
@@ -168,12 +179,13 @@ public class ArrayParser implements QuietCloseable {
                 if (elementSize != 1) {
                     throw ParseException.invalidType(position());
                 }
+                colType = ColumnType.BOOLEAN;
                 break;
             default:
-                assert false : "Unexpected type class";
+                throw new AssertionError("Unexpected type class");
         }
 
-        final int arrayType = ColumnType.encodeArrayTypex(typeClass, typePrecision, 1);
+        final int arrayType = ColumnType.encodeArrayType(colType, 1);
         if (arrayType == -1) {
             throw ParseException.invalidType(position());
         }
@@ -192,9 +204,7 @@ public class ArrayParser implements QuietCloseable {
      * </pre>
      */
     private void parseElements() throws ParseException {
-        final int typeClass = ColumnType.decodeArrayElementType(bufs.type);
-        final int typePrecision = ColumnType.decodeArrayElementTypePrecision(bufs.type);
-        final int typeBitSize = 1 << typePrecision;
+        final int elemType = ColumnType.decodeArrayElementType(bufs.type);
         final DirectIntList shape = bufs.shape;
         final DirectIntList levelCounts = bufs.currCoords;
 
@@ -281,56 +291,45 @@ public class ArrayParser implements QuietCloseable {
                                 ? ParseException.prematureEnd(position())
                                 : ParseException.unexpectedToken(position());
                     }
-                    parseLeaf(typeClass, typeBitSize, tokenLimit);
+                    parseLeaf(elemType, tokenLimit);
                     commaWelcome = true;
                     input.advance(tokenLimit);
                 }
             }
         }
-        bufs.type = ColumnType.encodeArrayType(typeClass, nDims);
+        bufs.type = ColumnType.encodeArrayType(elemType, nDims);
     }
 
-    private void parseLeaf(int typeClass, int bitSize, int tokenLimit) throws ParseException {
+    private void parseLeaf(int elemType, int tokenLimit) throws ParseException {
         try {
-            switch (typeClass) {
-                case 'i':
-                    switch (bitSize) {
-                        case 8:
-                            bufs.values.putByte(Numbers.parseByte(input, 0, tokenLimit));
-                            break;
-                        case 16:
-                            bufs.values.putShort(Numbers.parseShort(input, 0, tokenLimit));
-                            break;
-                        case 32:
-                            bufs.values.putInt(Numbers.parseInt(input, 0, tokenLimit));
-                            break;
-                        case 64:
-                            bufs.values.putLong(Numbers.parseLong(input, 0, tokenLimit));
-                            break;
-                        default:
-                            throw new AssertionError("Unexpected signed element size");
-                    }
-                    break;
-                case 'u':
-                    assert bitSize == 1 : "Unexpected unsigned element size";
+            switch (elemType) {
+                case ColumnType.BOOLEAN:
                     int n = Numbers.parseInt(input, 0, tokenLimit);
                     if (n != (n & 1)) {
                         throw ParseException.unexpectedToken(position());
                     }
                     bufs.values.putByte((byte) n);
                     break;
-                case 'f':
-                    switch (bitSize) {
-                        case 32:
-                            bufs.values.putFloat(Numbers.parseFloat(input.ptr(), tokenLimit));
-                            break;
-                        case 64:
-                            bufs.values.putDouble(Numbers.parseDouble(input.ptr(), tokenLimit));
-                            break;
-                        default:
-                            throw new AssertionError("Unexpected floating-point element size");
-                    }
+                case ColumnType.BYTE:
+                    bufs.values.putByte(Numbers.parseByte(input, 0, tokenLimit));
                     break;
+                case ColumnType.SHORT:
+                    bufs.values.putShort(Numbers.parseShort(input, 0, tokenLimit));
+                    break;
+                case ColumnType.INT:
+                    bufs.values.putInt(Numbers.parseInt(input, 0, tokenLimit));
+                    break;
+                case ColumnType.LONG:
+                    bufs.values.putLong(Numbers.parseLong(input, 0, tokenLimit));
+                    break;
+                case ColumnType.FLOAT:
+                    bufs.values.putFloat(Numbers.parseFloat(input.ptr(), tokenLimit));
+                    break;
+                case ColumnType.DOUBLE:
+                    bufs.values.putDouble(Numbers.parseDouble(input.ptr(), tokenLimit));
+                    break;
+                default:
+                    throw new AssertionError("Unexpected floating-point element size");
             }
         } catch (NumericException e) {
             throw ParseException.unexpectedToken(position());

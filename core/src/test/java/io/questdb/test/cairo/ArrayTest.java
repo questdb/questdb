@@ -29,9 +29,12 @@ import io.questdb.cairo.arr.ArrayBuffers;
 import io.questdb.cairo.arr.ArrayMeta;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayValueAppender;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.ArrayViewImpl;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cutlass.line.tcp.ArrayParser;
 import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.DirectUtf8String;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -50,7 +53,7 @@ public class ArrayTest extends AbstractCairoTest {
         ) {
             bufs.shape.add(2);
             bufs.shape.add(2);
-            bufs.type = ColumnType.encodeArrayTypex('f', 6, (int) bufs.shape.size());
+            bufs.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, (int) bufs.shape.size());
             ArrayMeta.determineDefaultStrides(bufs.shape.asSlice(), bufs.strides);
             bufs.values.putDouble(1.0);
             bufs.values.putDouble(2.0);
@@ -79,7 +82,7 @@ public class ArrayTest extends AbstractCairoTest {
         ) {
             bufs.shape.add(2);
             bufs.shape.add(2);
-            bufs.type = ColumnType.encodeArrayTypex('i', 6, (int) bufs.shape.size());
+            bufs.type = ColumnType.encodeArrayType(ColumnType.LONG, (int) bufs.shape.size());
             ArrayMeta.determineDefaultStrides(bufs.shape.asSlice(), bufs.strides);
             bufs.values.putLong(1);
             bufs.values.putLong(2);
@@ -96,6 +99,26 @@ public class ArrayTest extends AbstractCairoTest {
             sink.clear();
             ArrayTypeDriver.arrayToJson(appender, array, sink);
             assertEquals("[[1,3],[2,4]]", sink.toString());
+        }
+    }
+
+    @Test
+    public void testArrayToJsonUsingParser() {
+        DirectUtf8String str = new DirectUtf8String();
+        ArrayValueAppender appender = (arr, index, snk) -> snk.put(arr.getLongAtFlatIndex(index));
+        try (ArrayParser parser = new ArrayParser();
+             DirectUtf8Sink sink = new DirectUtf8Sink(20)
+        ) {
+            String arrayExpr = "[1,2]";
+            sink.clear();
+            sink.put("[6i").put(arrayExpr.substring(1));
+            parser.parse(str.of(sink.lo(), sink.hi()));
+            ArrayView view = parser.getView();
+            sink.clear();
+            ArrayTypeDriver.arrayToJson(appender, view, sink);
+            assertEquals(arrayExpr, sink.toString());
+        } catch (ArrayParser.ParseException e) {
+            throw new RuntimeException(e);
         }
     }
 
