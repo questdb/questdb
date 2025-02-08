@@ -59,7 +59,8 @@ public class ArrayMeta {  // TODO(amunra): Rename to `ArrayMetaUtils`.
      */
     public static int calcRequiredValuesByteSize(int type, int elementsCount) {
         assert ColumnType.isArray(type) : "type class is not Array";
-        return elementsCount << ColumnType.decodeArrayElementTypePrecision(type);
+        int bytesPerElement = 1 << Math.max(0, ColumnType.decodeArrayElementTypePrecision(type) - 3);
+        return elementsCount * bytesPerElement;
     }
 
     public static void determineDefaultStrides(long shapePtr, int shapeLength, @NotNull DirectIntList stridesOut) {
