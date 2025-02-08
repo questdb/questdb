@@ -86,7 +86,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             throw SqlException.emptyWindowContext(position);
         }
 
-        if (windowContext.getNullsDescPos() > 0 && !this.supportNullsDesc()) {
+        if (windowContext.getNullsDescPos() > 0) {
             throw SqlException.$(windowContext.getNullsDescPos(), "RESPECT/IGNORE NULLS is not supported for current window function");
         }
 
