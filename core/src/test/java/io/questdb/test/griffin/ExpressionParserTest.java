@@ -1277,7 +1277,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
         ) {
             bufs.shape.add(2);
             bufs.shape.add(2);
-            bufs.type = ColumnType.encodeArrayTypex('f', 6, (int) bufs.shape.size());
+            bufs.type = ColumnType.encodeArrayType(ColumnType.DOUBLE,2);
             ArrayMeta.determineDefaultStrides(bufs.shape.asSlice(), bufs.strides);
             bufs.values.putDouble(1.0);
             bufs.values.putDouble(2.0);
