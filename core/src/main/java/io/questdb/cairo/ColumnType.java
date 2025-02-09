@@ -157,7 +157,7 @@ public final class ColumnType {
 
     /**
      * Encodes the array type tag from the element type tag and dimensionality.
-     * <br/>
+     * <br>
      * The encoded type is laid out as follows:
      * <pre>
      *     31~19      18~14       13~8           7~0
