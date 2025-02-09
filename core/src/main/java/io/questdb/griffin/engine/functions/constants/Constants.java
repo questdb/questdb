@@ -67,6 +67,10 @@ public final class Constants {
     }
 
     public static TypeConstant getTypeConstant(int columnType) {
+        if (ColumnType.isArray(columnType)) {
+            // todo: avoid object creation
+            return new ArrayTypeConstant(columnType);
+        }
         // GEOHASH takes a different path, no need to extract tag
         return typeConstants.getQuick(columnType);
     }
