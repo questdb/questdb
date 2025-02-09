@@ -1353,8 +1353,6 @@ public class PGJobContextTest extends BasePGTest {
 
     @Test
     public void testArrayBind() throws Exception {
-        sendBufferSize = 1000 * 1024; // use large enough buffer, otherwise we will get fragmented messages and this currently leads to non-deterministic results of rnd_double_array
-
         skipOnWalRun();
         skipInLegacyMode();
 
