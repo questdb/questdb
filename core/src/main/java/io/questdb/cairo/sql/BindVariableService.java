@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
@@ -57,6 +58,8 @@ public interface BindVariableService extends Mutable {
      * @return list of named variables in a query
      */
     ObjList<CharSequence> getNamedVariables();
+
+    void setArray(int i, ArrayView ab) throws SqlException;
 
     /**
      * Set the type of bind variable by name as binary and provide a value

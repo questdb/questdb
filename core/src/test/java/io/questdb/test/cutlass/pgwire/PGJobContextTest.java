@@ -98,6 +98,7 @@ import org.postgresql.util.PSQLException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Field;
+import java.sql.Array;
 import java.sql.CallableStatement;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
@@ -1345,6 +1346,46 @@ public class PGJobContextTest extends BasePGTest {
                     try (ResultSet rs = statement.executeQuery()) {
                         assertResultSet(header + (i < results.length ? results[i] : ""), sink, rs);
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testArrayBind() throws Exception {
+        sendBufferSize = 1000 * 1024; // use large enough buffer, otherwise we will get fragmented messages and this currently leads to non-deterministic results of rnd_double_array
+
+        skipOnWalRun();
+        skipInLegacyMode();
+
+        // todo: run with all modes
+        assertWithPgServerExtendedBinaryOnly((connection, binary, mode, port) -> {
+            try (PreparedStatement stmt = connection.prepareStatement("create table x (al long[])")) {
+                stmt.execute();
+            }
+
+            try (PreparedStatement stmt = connection.prepareStatement("insert into x values (?)")) {
+
+                // it looks like unwrapping to PGConnection is needed to create an array of primitive longs
+                // since a generic Connection createArrayOf cannot accept primitive types
+                // primitive longs are needed to exercise binary protocol for arrays
+                // we would need to create Object[] which is then serialized into string.....
+                PGConnection pgConnection = connection.unwrap(PGConnection.class);
+                Array arr = pgConnection.createArrayOf("long", new long[]{1, 2, 3, 4, 5});
+
+                stmt.setArray(1, arr);
+                stmt.execute();
+            }
+
+
+            try (PreparedStatement stmt = connection.prepareStatement("select * from x")) {
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("al[ARRAY]\n" +
+                                    "{1,2,3,4,5}\n",
+                            sink,
+                            rs
+                    );
                 }
             }
         });

@@ -81,8 +81,12 @@ public class PGOids {
     public static final int PG_UUID = 2950;
     public static final int PG_VARCHAR = 1043;
     public static final int PG_VOID = 2278;
+    @SuppressWarnings("NumericOverflow")
     public static final int X_PG_ARR_FLOAT8 = ((PG_ARR_FLOAT8 >> 24) & 0xff) | ((PG_ARR_FLOAT8 << 8) & 0xff0000) | ((PG_ARR_FLOAT8 >> 8) & 0xff00) | ((PG_ARR_FLOAT8 << 24) & 0xff000000);
     public static final int X_B_PG_ARR_FLOAT8 = 1 | X_PG_ARR_FLOAT8;
+    @SuppressWarnings("NumericOverflow")
+    public static final int X_PG_ARR_INT8 = ((PG_ARR_INT8 >> 24) & 0xff) | ((PG_ARR_INT8 << 8) & 0xff0000) | ((PG_ARR_INT8 >> 8) & 0xff00) | ((PG_ARR_INT8 << 24) & 0xff000000);
+    public static final int X_X_PG_ARR_INT8 = 1 | X_PG_ARR_INT8;
     public static final int X_PG_BOOL = ((PG_BOOL >> 24) & 0xff) | ((PG_BOOL << 8) & 0xff0000) | ((PG_BOOL >> 8) & 0xff00) | ((PG_BOOL << 24) & 0xff000000);
     public static final int X_B_PG_BOOL = 1 | X_PG_BOOL;
     public static final int X_PG_BYTEA = ((PG_BYTEA >> 24) & 0xff) | ((PG_BYTEA << 8) & 0xff0000) | ((PG_BYTEA >> 8) & 0xff00) | ((PG_BYTEA << 24) & 0xff000000);

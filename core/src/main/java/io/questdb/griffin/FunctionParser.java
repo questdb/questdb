@@ -802,9 +802,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         break;
                     }
 
-                    final boolean isArray = FunctionFactoryDescriptor.isArray(sigArgTypeMask);
-                    final boolean isScalar = arg instanceof ScalarFunction;
-                    if ((isArray && isScalar) || (!isArray && !isScalar)) {
+                    final boolean sigIsArray = FunctionFactoryDescriptor.isArray(sigArgTypeMask);
+                    final boolean argIsScalar = arg instanceof ScalarFunction;
+                    if ((sigIsArray && argIsScalar) || (!sigIsArray && !argIsScalar)) {
                         match = MATCH_NO_MATCH; // no match
                         break;
                     }

@@ -131,7 +131,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private final BitSet msgBindSelectFormatCodes = new BitSet();
     // types are sent to us via "parse" message
     private final IntList msgParseParameterTypeOIDs;
-
     // List with encoded bind variable types. It combines types client sent to us in PARSE message and types
     // inferred by the SQL compiler. Each entry uses lower 32 bits for QuestDB native type and upper 32 bits
     // contains PGWire OID type. If a client sent us a type, then the high 32 bits (=OID type) is set to the same value.
@@ -143,6 +142,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     //    and we have to respect this. Thus, if a PARSE message contains a type VARCHAR then
     //    we need to read it from wire as VARCHAR even we use e.g. INT internally. So we need both native and wire types.
     private final LongList outParameterTypeDescriptionTypes;
+    private final ObjectPool<PgNonNullBinaryArrayView> pgNonNullBinaryArrayViewPool = new ObjectPool<>(PgNonNullBinaryArrayView::new, 1);
     private final ObjList<String> pgResultSetColumnNames;
     // list of pair: column types (with format flag stored in first bit) AND additional type flag
     private final IntList pgResultSetColumnTypes;
@@ -319,6 +319,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         stateSync = SYNC_PARSE;
         tai = null;
         tas = null;
+        pgNonNullBinaryArrayViewPool.clear();
     }
 
     public void commit(ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters) throws BadProtocolException {
@@ -1199,6 +1200,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     case X_PG_UUID:
                         setUuidBindVariable(i, lo, valueSize, bindVariableService);
                         break;
+                    case X_PG_ARR_INT8:
+                        setBindVariableAsLongArray(i, lo, valueSize, msgLimit, bindVariableService);
+                        break;
                     default:
                         // before we bind a string, we need to define the type of the variable
                         // so the binding process can cast the string as required
@@ -1275,6 +1279,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 break;
             case X_PG_UUID:
                 bindVariableService.define(j, ColumnType.UUID, 0);
+                break;
+            case X_PG_ARR_INT8:
+                bindVariableService.define(j, ColumnType.ARRAY, 0);
                 break;
             case PG_UNSPECIFIED:
                 // unknown types, we are not defining them for now - this gives
@@ -2544,6 +2551,46 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     ) throws BadProtocolException, SqlException {
         ensureValueLength(variableIndex, Long.BYTES, valueSize);
         bindVariableService.setLong(variableIndex, getLongUnsafe(valueAddr));
+    }
+
+    private void setBindVariableAsLongArray(int i, long lo, int valueSize, long msgLimit, BindVariableService bindVariableService) throws SqlException, BadProtocolException {
+        PgNonNullBinaryArrayView arrayView = pgNonNullBinaryArrayViewPool.next();
+
+        int dimensions = getInt(lo, msgLimit, "malformed array dimensions");
+        lo += Integer.BYTES;
+        valueSize -= Integer.BYTES;
+
+        int hasNull = getInt(lo, msgLimit, "malformed array null flag");
+        if (hasNull == 1) {
+            // arrays with null elements do not have a fixed length per element in pgwire
+            // how come? each array element is encoded as (length, value) pair.
+            // but null elements have length of -1 and value is entirely missing.
+            // thus to calculate memory offset for n-th element we need to know
+            // how many nulls are in front of it.
+            // thus we either need implement more complex view or perhaps
+            // transcode the received array to a fixed-element size.
+            throw new UnsupportedOperationException("arrays with nulls are not supported yet");
+        }
+        lo += Integer.BYTES;
+        valueSize -= Integer.BYTES;
+
+        int componentOid = getInt(lo, msgLimit, "malformed array component oid");
+        lo += Integer.BYTES;
+        valueSize -= Integer.BYTES;
+
+        IntList dimensionSizes = new IntList();
+        for (int j = 0; j < dimensions; j++) {
+            int dimensionSize = getInt(lo, msgLimit, "malformed array dimension size");
+            arrayView.addDimSize(dimensionSize);
+            dimensionSizes.add(dimensionSize);
+            lo += Integer.BYTES;
+            valueSize -= Integer.BYTES;
+
+            lo += Integer.BYTES; // skip lower bound, it's always 1
+            valueSize -= Integer.BYTES;
+        }
+        arrayView.setPtrAndCalculateStrides(lo, lo + valueSize, componentOid);
+        bindVariableService.setArray(i, arrayView);
     }
 
     private void setBindVariableAsShort(

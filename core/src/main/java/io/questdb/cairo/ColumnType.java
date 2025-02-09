@@ -219,6 +219,10 @@ public final class ColumnType {
         return ColumnType.tagOf(columnType) == ColumnType.ARRAY;
     }
 
+    public static boolean isArrayUnknown(int columnType) {
+        return tagOf(columnType) == ARRAY && decodeArrayElementType(columnType) == UNDEFINED;
+    }
+
     public static boolean isAssignableFrom(int fromType, int toType) {
         return isToSameOrWider(fromType, toType) || isNarrowingCast(fromType, toType);
     }
