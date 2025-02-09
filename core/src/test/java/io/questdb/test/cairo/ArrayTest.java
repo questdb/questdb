@@ -231,7 +231,7 @@ public class ArrayTest extends AbstractCairoTest {
 
     @Test
     public void testTypeCast() {
-        for (int i = 1; i < ColumnType.ARRAY_DIMENSION_LIMIT; i++) {
+        for (int i = 1; i < ColumnType.ARRAY_NDIMS_LIMIT; i++) {
             for (short j = ColumnType.BOOLEAN; j <= ColumnType.IPv4; j++) {
                 if (!ColumnType.isSupportedArrayElementType(j)) {
                     continue;
@@ -247,7 +247,7 @@ public class ArrayTest extends AbstractCairoTest {
             }
         }
 
-        for (int i = 1; i < ColumnType.ARRAY_DIMENSION_LIMIT; i++) {
+        for (int i = 1; i < ColumnType.ARRAY_NDIMS_LIMIT; i++) {
             for (short j = ColumnType.BOOLEAN; j <= ColumnType.IPv4; j++) {
                 if (!ColumnType.isSupportedArrayElementType(j)) {
                     continue;
@@ -270,9 +270,9 @@ public class ArrayTest extends AbstractCairoTest {
                 Assert.assertEquals("INT[][][][][][][][][][][][][][][][]", ColumnType.nameOf(m.getColumnType(0)));
             }
             assertExceptionNoLeakCheck(
-                    "create table y (a int[][][][][][][][][][][][][][][][][])", // 17 dimensions
+                    "create table y (a int[][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][])", // 33 dimensions
                     18,
-                    "array dimension limit is 16"
+                    "array dimension limit is 32"
             );
         });
     }

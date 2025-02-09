@@ -54,7 +54,7 @@ import io.questdb.std.str.StringSink;
  * Column types as numeric (integer) values
  */
 public final class ColumnType {
-    public static final int ARRAY_DIMENSION_LIMIT = 16; // inclusive
+    public static final int ARRAY_NDIMS_LIMIT = 32; // inclusive
     public static final int GEOBYTE_MAX_BITS = 7;
     // geohash bits <-> backing primitive types bit boundaries
     public static final int GEOBYTE_MIN_BITS = 1;
@@ -122,6 +122,10 @@ public final class ColumnType {
     public static final int VERSION = 426;
     static final int[] GEO_TYPE_SIZE_POW2;
     private static final boolean ALLOW_DEFAULT_STRING_CHANGE = false;
+    private static final int ARRAY_ELEMTYPE_FIELD_MASK = 0x3F;
+    private static final int ARRAY_ELEMTYPE_FIELD_POS = 8;
+    private static final int ARRAY_NDIMS_FIELD_MASK = ARRAY_NDIMS_LIMIT - 1;
+    private static final int ARRAY_NDIMS_FIELD_POS = 14;
     private static final int BYTE_BITS = 8;
     private static final short[][] OVERLOAD_PRIORITY;
     private static final int TYPE_FLAG_DESIGNATED_TIMESTAMP = (1 << 17);
@@ -136,7 +140,7 @@ public final class ColumnType {
 
     public static int decodeArrayDimensionality(int encodedType) {
         assert ColumnType.tagOf(encodedType) == ColumnType.ARRAY;
-        return ((encodedType >> 13) & 0x0F) + 1;
+        return ((encodedType >> ARRAY_NDIMS_FIELD_POS) & ARRAY_NDIMS_FIELD_MASK) + 1;
     }
 
     /**
@@ -144,7 +148,7 @@ public final class ColumnType {
      */
     public static short decodeArrayElementType(int encodedType) {
         assert ColumnType.tagOf(encodedType) == ColumnType.ARRAY;
-        return (short) ((encodedType >> 8) & 0x1F);
+        return (short) ((encodedType >> ARRAY_ELEMTYPE_FIELD_POS) & ARRAY_ELEMTYPE_FIELD_MASK);
     }
 
     public static boolean defaultStringImplementationIsUtf8() {
@@ -152,26 +156,28 @@ public final class ColumnType {
     }
 
     /**
-     * Encodes the array type tag from the element type and dimensionality.
+     * Encodes the array type tag from the element type tag and dimensionality.
      * <br/>
      * The encoded type is laid out as follows:
      * <pre>
-     *     31~17      16~13      12~8           7~0
+     *     31~19      18~14       13~8           7~0
      * +----------+----------+-----------+------------------+
      * | Reserved |  nDims   | elemType  | ColumnType.ARRAY |
      * +----------+----------+-----------+------------------+
-     * |          |  4 bits  |  5 bits   |      8 bits      |
+     * |          |  5 bits  |  6 bits   |      8 bits      |
      * </pre>
      *
      * @param elemType one of the supported array element type tags.
-     * @param nDims    dimensionality, from 1 to {@value ARRAY_DIMENSION_LIMIT}.
+     * @param nDims    dimensionality, from 1 to {@value ARRAY_NDIMS_LIMIT}.
      */
     public static int encodeArrayType(short elemType, int nDims) {
-        assert nDims >= 1 && nDims <= ARRAY_DIMENSION_LIMIT : "nDims out of range: " + nDims;
+        assert nDims >= 1 && nDims <= ARRAY_NDIMS_LIMIT : "nDims out of range: " + nDims;
         assert isSupportedArrayElementType(elemType) : "not supported as array element type: " + elemType;
 
-        nDims = (nDims - 1) & 0x0F;
-        return nDims << 13 | (elemType & 0x1F) << 8 | ARRAY;
+        nDims--; // 0 == one dimension
+        return (nDims & ARRAY_NDIMS_FIELD_MASK) << ARRAY_NDIMS_FIELD_POS
+                | (elemType & ARRAY_ELEMTYPE_FIELD_MASK) << ARRAY_ELEMTYPE_FIELD_POS
+                | ARRAY;
     }
 
     public static ColumnTypeDriver getDriver(int columnType) {
@@ -751,7 +757,7 @@ public final class ColumnType {
             short type = (short) arrayTypeSet.get(i);
             sink.clear();
             sink.put(nameOf(type));
-            for (int d = 1; d <= ARRAY_DIMENSION_LIMIT; d++) {
+            for (int d = 1; d <= ARRAY_NDIMS_LIMIT; d++) {
                 sink.put("[]");
                 int arrayType = encodeArrayType(type, d);
                 String name = sink.toString();

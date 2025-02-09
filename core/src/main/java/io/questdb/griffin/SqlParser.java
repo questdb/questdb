@@ -3247,10 +3247,10 @@ public class SqlParser {
         int dim = SqlUtil.parseArrayDimensions(lexer);
         if (dim > 0) {
             if (ColumnType.isSupportedArrayElementType(typeTag)) {
-                if (dim <= ColumnType.ARRAY_DIMENSION_LIMIT) {
+                if (dim <= ColumnType.ARRAY_NDIMS_LIMIT) {
                     return ColumnType.encodeArrayType(typeTag, dim);
                 } else {
-                    throw SqlException.position(typePosition).put("array dimension limit is ").put(ColumnType.ARRAY_DIMENSION_LIMIT);
+                    throw SqlException.position(typePosition).put("array dimension limit is ").put(ColumnType.ARRAY_NDIMS_LIMIT);
                 }
             }
             throw SqlException.position(typePosition).put(ColumnType.nameOf(typeTag)).put(" array type is not supported");
