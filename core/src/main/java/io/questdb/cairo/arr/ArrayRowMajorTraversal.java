@@ -33,7 +33,7 @@ import io.questdb.std.QuietCloseable;
 import java.io.Closeable;
 
 /**
- * An iterator-like utility to traverse an {@link BorrowedNativeArrayView} in row-major order.
+ * An iterator-like utility to traverse an {@link BorrowedDirectArrayView} in row-major order.
  * Instead of obtaining the values, this traversal class computes the coordinates.
  * <p>
  * It is down to the user to then pass those coordinates to the type-appropriate

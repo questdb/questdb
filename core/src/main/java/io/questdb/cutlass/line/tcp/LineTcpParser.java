@@ -24,7 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.arr.BorrowedNativeArrayView;
+import io.questdb.cairo.arr.BorrowedDirectArrayView;
 import io.questdb.cutlass.line.tcp.ArrayParser.ParseException;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.log.Log;
@@ -685,7 +685,7 @@ public class LineTcpParser implements QuietCloseable {
             Misc.free(arrayParser);
         }
 
-        public BorrowedNativeArrayView getArray() {
+        public BorrowedDirectArrayView getArray() {
             return arrayParser.getView();
         }
 

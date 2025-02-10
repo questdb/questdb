@@ -32,7 +32,7 @@ import io.questdb.std.DirectIntSlice;
 /**
  * An immutable view over a native-memory array. This is a flyweight object.
  */
-public class BorrowedNativeArrayView implements ArrayView {
+public class BorrowedDirectArrayView implements ArrayView {
     private final DirectIntSlice shape = new DirectIntSlice();
     private final DirectIntSlice strides = new DirectIntSlice();
     private final ArraySlice values = new ArraySlice();

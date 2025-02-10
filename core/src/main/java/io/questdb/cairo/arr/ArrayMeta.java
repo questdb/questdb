@@ -84,7 +84,7 @@ public class ArrayMeta {  // TODO(amunra): Rename to `ArrayMetaUtils`.
     /**
      * The product of all the shape's dimensions.
      * <p>This returns the number of elements contained in the values
-     * vector returned by {@link BorrowedNativeArrayView#getValues()}.</p>
+     * vector returned by {@link BorrowedDirectArrayView#getValues()}.</p>
      */
     public static int flatLength(@NotNull DirectIntSlice shape) {
         return flatLength(shape.ptr(), shape.length());
@@ -105,7 +105,7 @@ public class ArrayMeta {  // TODO(amunra): Rename to `ArrayMetaUtils`.
 
     /**
      * Determine if the strides are the default strides.
-     * <p>If they are, the data can be iterated in order simply by accessing the {@link BorrowedNativeArrayView#getValues()} vec.</p>
+     * <p>If they are, the data can be iterated in order simply by accessing the {@link BorrowedDirectArrayView#getValues()} vec.</p>
      */
     public static boolean isDefaultStrides(DirectIntSlice shape, DirectIntSlice strides) {
         assert shape.length() == strides.length();
