@@ -237,14 +237,14 @@ public class ViewsFunctionFactory implements FunctionFactory {
         static {
             final GenericRecordMetadata metadata = new GenericRecordMetadata();
             metadata.add(new TableColumnMetadata("name", ColumnType.STRING));
-            metadata.add(new TableColumnMetadata("base_table_name", ColumnType.STRING));
-            metadata.add(new TableColumnMetadata("last_refresh_timestamp", ColumnType.TIMESTAMP));
-            metadata.add(new TableColumnMetadata("view_sql", ColumnType.STRING));
-            metadata.add(new TableColumnMetadata("view_table_dir_name", ColumnType.STRING));
-            metadata.add(new TableColumnMetadata("invalidation_reason", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("baseTableName", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("lastRefreshTimestamp", ColumnType.TIMESTAMP));
+            metadata.add(new TableColumnMetadata("viewSql", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("viewTableDirName", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("invalidationReason", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("invalid", ColumnType.BOOLEAN));
-            metadata.add(new TableColumnMetadata("last_refresh_base_table_txn", ColumnType.LONG));
-            metadata.add(new TableColumnMetadata("last_applied_base_table_txn", ColumnType.LONG));
+            metadata.add(new TableColumnMetadata("baseTableTxn", ColumnType.LONG));
+            metadata.add(new TableColumnMetadata("appliedBaseTableTxn", ColumnType.LONG));
             METADATA = metadata;
         }
     }

@@ -353,9 +353,9 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     refreshJob.run(0);
                     assertSql(
                             main1,
-                            "name\tinvalid\tinvalidation_reason\n" +
+                            "name\tinvalid\tinvalidationReason\n" +
                                     "price_1h\ttrue\ttruncate operation\n",
-                            "select name, invalid, invalidation_reason from views()"
+                            "select name, invalid, invalidationReason from views()"
                     );
                 }
             }
@@ -366,9 +366,9 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
             )) {
                 assertSql(
                         main2,
-                        "name\tinvalid\tinvalidation_reason\n" +
+                        "name\tinvalid\tinvalidationReason\n" +
                                 "price_1h\ttrue\ttruncate operation\n",
-                        "select name, invalid, invalidation_reason from views()"
+                        "select name, invalid, invalidationReason from views()"
                 );
 
                 execute(main2, "refresh materialized view price_1h");
@@ -380,9 +380,9 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
 
                 assertSql(
                         main2,
-                        "name\tinvalid\tinvalidation_reason\n" +
+                        "name\tinvalid\tinvalidationReason\n" +
                                 "price_1h\tfalse\t\n",
-                        "select name, invalid, invalidation_reason from views()"
+                        "select name, invalid, invalidationReason from views()"
                 );
             }
 
@@ -392,9 +392,9 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
             )) {
                 assertSql(
                         main3,
-                        "name\tinvalid\tinvalidation_reason\n" +
+                        "name\tinvalid\tinvalidationReason\n" +
                                 "price_1h\tfalse\t\n",
-                        "select name, invalid, invalidation_reason from views()"
+                        "select name, invalid, invalidationReason from views()"
                 );
             }
         });
