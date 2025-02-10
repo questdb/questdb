@@ -34,7 +34,6 @@ public final class ArrayTypeConstant extends ArrayFunction implements TypeConsta
         this.type = type;
     }
 
-
     @Override
     public ArrayView getArray(Record rec) {
         throw new AssertionError();

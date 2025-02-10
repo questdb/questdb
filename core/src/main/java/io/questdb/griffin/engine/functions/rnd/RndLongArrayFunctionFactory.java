@@ -25,13 +25,12 @@
 package io.questdb.griffin.engine.functions.rnd;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.HeapLongArray;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -62,122 +61,45 @@ public class RndLongArrayFunctionFactory implements FunctionFactory {
         return new RndLongArrayFunction(dimensionCount);
     }
 
-    public static class ArrayArrayView implements ArrayView {
-
-        private static final int MAX_LEN = 16;
-        private final int dimensionCount;
-        private final int[] shape;
-        private final int[] strides;
-        private final int type;
-        private Rnd rnd;
-        private int size;
-        private long[] values;
-
-        public ArrayArrayView(int dimensionCount, int type) {
-            this.dimensionCount = dimensionCount;
-            this.shape = new int[dimensionCount];
-            this.strides = new int[dimensionCount];
-            this.type = type;
-        }
-
-        @Override
-        public void appendWithDefaultStrides(MemoryA mem) {
-            for (int i = 0; i < size; i++) {
-                mem.putLong(values[i]);
-            }
-        }
-
-        @Override
-        public int getDimCount() {
-            return dimensionCount;
-        }
-
-        @Override
-        public int getDimLen(int dim) {
-            return shape[dim];
-        }
-
-        @Override
-        public double getDoubleAtFlatIndex(int flatIndex) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public long getLongAtFlatIndex(int flatIndex) {
-            return values[flatIndex];
-        }
-
-        @Override
-        public int getSize() {
-            return size;
-        }
-
-        @Override
-        public int getStride(int dimension) {
-            return strides[dimension];
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        public void setRnd(Rnd rnd) {
-            this.rnd = rnd;
-        }
-
-        private ArrayArrayView refresh() {
-            size = 1;
-            for (int i = 0; i < dimensionCount; i++) {
-                shape[i] = (rnd.nextPositiveInt() % (MAX_LEN - 1)) + 1;
-                size *= shape[i];
-            }
-
-            int stride = 1;
-            for (int i = shape.length - 1; i >= 0; i--) {
-                strides[i] = stride;
-                stride *= shape[i];
-            }
-
-            if (values == null || values.length < size) {
-                values = new long[size];
-            }
-
-            for (int i = 0; i < size; i++) {
-                values[i] = rnd.nextLong();
-            }
-            return this;
-        }
-    }
-
     public static class RndLongArrayFunction extends ArrayFunction {
-        private final ArrayArrayView arrayView;
-        private final int type;
+        private static final int MAX_DIM_LEN = 16;
+        private final HeapLongArray array;
+        private Rnd rnd;
 
-        public RndLongArrayFunction(int dimensionCount) {
-            this.type = ColumnType.encodeArrayType(ColumnType.LONG, dimensionCount);
-            this.arrayView = new ArrayArrayView(dimensionCount, this.type);
+        public RndLongArrayFunction(int nDims) {
+            this.array = new HeapLongArray(nDims);
         }
 
         @Override
         public ArrayView getArray(Record rec) {
-            return arrayView.refresh();
+            regenerate();
+            return array;
         }
 
         @Override
         public int getType() {
-            return type;
+            return array.getType();
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
-            arrayView.setRnd(executionContext.getRandom());
+            this.rnd = executionContext.getRandom();
         }
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("rnd_long_array").val('(').val(arrayView.dimensionCount).val(')');
+            sink.val("rnd_long_array").val('(').val(array.getDimCount()).val(')');
+        }
+
+        private void regenerate() {
+            for (int n = array.getDimCount(), i = 0; i < n; i++) {
+                array.setDimLen(i, (rnd.nextPositiveInt() % (MAX_DIM_LEN - 1)) + 1);
+            }
+            array.applyShape();
+            for (int n = array.getFlatElemCount(), i = 0; i < n; i++) {
+                array.setLongAtFlatIndex(i, rnd.nextLong());
+            }
         }
     }
 }

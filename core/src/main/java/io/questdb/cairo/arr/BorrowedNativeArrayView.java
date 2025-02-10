@@ -30,8 +30,7 @@ import io.questdb.std.CRC16XModem;
 import io.questdb.std.DirectIntSlice;
 
 /**
- * A view over an immutable N-dimensional array.
- * This is a flyweight object.
+ * An immutable view over a native-memory array. This is a flyweight object.
  */
 public class BorrowedNativeArrayView implements ArrayView {
     private final DirectIntSlice shape = new DirectIntSlice();
@@ -102,6 +101,11 @@ public class BorrowedNativeArrayView implements ArrayView {
         return values.getDouble(flatIndex);
     }
 
+    @Override
+    public int getFlatElemCount() {
+        return values.size();
+    }
+
     public float getFloat(DirectIntSlice coordinates) {
         return values.getFloat(flatIndex(coordinates));
     }
@@ -124,18 +128,11 @@ public class BorrowedNativeArrayView implements ArrayView {
     }
 
     @Override
-    public int getSize() {
-        return values.size();
-    }
-
-    @Override
     public int getStride(int dimension) {
         return strides.get(dimension);
     }
 
-    /**
-     * Get the array's type
-     */
+    @Override
     public int getType() {
         return type;
     }

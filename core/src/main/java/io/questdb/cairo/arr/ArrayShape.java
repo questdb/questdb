@@ -26,10 +26,13 @@ package io.questdb.cairo.arr;
 
 public interface ArrayShape {
 
+    /**
+     * Returns the number of dimensions in this array (i.e., its dimensionality).
+     */
     int getDimCount();
 
     /**
-     * Returns the number of items in a dimension (sub-arrays or numbers)
+     * Returns the number of elements in the given dimension (sub-arrays or leaf values)
      */
     int getDimLen(int dimension);
 }
