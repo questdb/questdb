@@ -35,7 +35,7 @@ import io.questdb.std.DirectIntSlice;
 public class BorrowedDirectArrayView implements ArrayView {
     private final DirectIntSlice shape = new DirectIntSlice();
     private final DirectIntSlice strides = new DirectIntSlice();
-    private final ArraySlice values = new ArraySlice();
+    private final DirectArraySlice values = new DirectArraySlice();
     int valuesOffset = 0;
     private volatile short crc;
     // Encoded array type, contains element type class, type precision, and dimensionality
@@ -153,7 +153,7 @@ public class BorrowedDirectArrayView implements ArrayView {
      * with the numbers <code>[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4]</code>.</p>
      * <p><strong>IMPORTANT</strong>: The number of elements</p>
      */
-    public ArraySlice getValues() {
+    public DirectArraySlice getValues() {
         return values;
     }
 
