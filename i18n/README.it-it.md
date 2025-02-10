@@ -15,6 +15,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/questdb/questdb">English</a> |
   <a href="README.zh-cn.md">简体中文</a> |
   <a href="README.zh-hk.md">繁體中文</a> |
   <a href="README.ar-dz.md">العربية</a> |

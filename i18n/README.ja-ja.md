@@ -1,165 +1,248 @@
 <div align="center">
-   <a href="https://questdb.io/" target="blank"><img alt="QuestDB Logo" src="https://questdb.io/img/questdb-logo-themed.svg" width="305px"/></a>
+  <a href="https://questdb.io/" target="blank">
+    <img alt="QuestDB ロゴ" src="https://questdb.io/img/questdb-logo-themed.svg" width="305px"/>
+  </a>
 </div>
 <p>&nbsp;</p>
 
 <p align="center">
   <a href="https://slack.questdb.io">
-    <img src="https://slack.questdb.io/badge.svg" alt="QuestDB community Slack channel"/>
+    <img src="https://slack.questdb.io/badge.svg" alt="QuestDB コミュニティ Slack チャンネル"/>
   </a>
   <a href="#contribute">
-    <img src="https://img.shields.io/github/contributors/questdb/questdb" alt="QuestDB open source contributors"/>
+    <img src="https://img.shields.io/github/contributors/questdb/questdb" alt="QuestDB オープンソース コントリビューター"/>
   </a>
   <a href="https://search.maven.org/search?q=g:org.questdb">
     <img src="https://img.shields.io/maven-central/v/org.questdb/questdb" alt="QuestDB on Apache Maven"/>
   </a>
 </p>
 
-[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md) | [Italiano](README.it-it.md) | [Українська](README.ua-ua.md) | [Español](README.es-es.md) | [Português](README.pt.md) |
-日本語 | [Türkçe](README.tr-tr.md) | [हिंदी](README.hn-in.md) | [Tiếng Việt](README.vi-vn.md)
+<p align="center">
+  <a href="https://github.com/questdb/questdb">English</a> |
+  <a href="README.zh-cn.md">简体中文</a> |
+  <a href="README.zh-hk.md">繁體中文</a> |
+  <a href="README.ar-dz.md">العربية</a> |
+  <a href="README.it-it.md">Italiano</a> |
+  <a href="README.ua-ua.md">Українська</a> |
+  <a href="README.es-es.md">Español</a> |
+  <a href="README.pt.md">Português</a> |
+  日本語 |
+  <a href="README.tr-tr.md">Türkçe</a> |
+  <a href="README.hn-in.md">हिंदी</a> |
+  <a href="README.vi-vn.md">Tiếng Việt</a>
+</p>
 
 # QuestDB
 
-QuestDB は、アプリケーション向けの高性能なオープンソース SQL データベースです。
-金融サービス、IoT、機械学習、DevOps、可観測性。 それが含まれています
-PostgreSQL ワイヤ プロトコルのエンドポイント、高スループットのスキーマに依存しない
-InfluxDB Line Protocol を使用した取り込み、およびクエリ用の REST API、バルク
-輸入、および輸出。
+QuestDB は、驚異的な高速データ取り込みと動的な低レイテンシ SQL クエリを提供する、最も急速に成長しているオープンソースの時系列データベースです。  
+この高性能なコードベースは、Java、C++、および Rust でゼロから構築され、外部依存関係がなく、ガベージコレクションも発生しません。
 
-QuestDB は、時間指向言語のネイティブ拡張を使用して ANSI SQL を実装します
-特徴。 これらの拡張機能により、複数のデータを簡単に関連付けることができます
-リレーショナル結合と時系列結合を使用したソース。 QuestDB は高い成果を上げています
-列指向のストレージ モデル、大規模並列化ベクトルによるパフォーマンス
-実行、SIMD 命令、およびさまざまな低レイテンシ技術。 全体
-コードベースは Java と C++ でゼロから構築されており、依存関係はありません。
-ガベージ コレクションから 100% 解放されます。
+私たちは以下の技術によって高いパフォーマンスを実現しています：
+- 列指向ストレージモデル
+- 並列化されたベクトル実行
+- SIMD 命令
+- 低レイテンシ技術
 
+また、QuestDB はハードウェアを効率的に活用し、迅速なセットアップと運用の効率性も兼ね備えています。
+
+QuestDB は、ネイティブの時系列 SQL 拡張を伴う ANSI SQL を実装しています。  
+これらの拡張により、複数のソースからのデータをリレーショナルおよび時系列のジョインで簡単に相関付けることができます。
+
+> 準備はいいですか？ [はじめに](#はじめに) をご覧ください。
+
+<p>&nbsp;</p>
 
 <div align="center">
-  <a href="https://demo.questdb.io">
-    <img alt="QuestDB Web Console showing multiple SQL statements and visualizing a query as a chart" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="600" />
+  <a href="https://demo.questdb.io/">
+    <img alt="QuestDB Web Console が SQL ステートメントとクエリ結果を表示している様子" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="900" />
   </a>
+  <p><em>QuestDB Web Console – デモを起動するにはクリックしてください</em></p>
 </div>
 
-## 試す QuestDB
+<p>&nbsp;</p>
 
-最新の [ライブ デモ](https://demo.questdb.io/)
-QuestDB リリースとサンプル データセット:
+## QuestDB の利点
 
-- 16 億行の 10 年間の NYC タクシー旅行
-- 暗号通貨取引所からのライブ取引データ
-- 250,000 隻のユニークな船の経時的なジオロケーション
+QuestDB は以下の用途に最適です：
+- 金融市場のデータ
+- 高カーディナリティを持つ IoT センサーデータ
+- リアルタイムダッシュボード
 
-## インストール QuestDB
+主な特徴：
+- 強力な、SIMD 最適化された時系列 SQL 拡張付きの SQL
+- InfluxDB Line Protocol を用いた高速データ取り込み
+- ハードウェアが限られていても優れたパフォーマンス
+- 列指向のストレージフォーマット（ネイティブまたは [Apache Parquet](https://questdb.io/glossary/apache-parquet/)）、時間に基づいたパーティショニングとソート
+- エラー処理機能付きで直感的な Web コンソールによるクエリおよびデータ管理
+- [高カーディナリティ](https://questdb.io/glossary/high-cardinality/) にも優れたパフォーマンス – [ベンチマークを見る](#questdb-performance-vs-other-oss-databases)
 
-QuestDB を実行するには、Docker を使用してすぐに開始できます。
+### なぜ時系列データベースを使うのか？
+
+パフォーマンスと効率性に加え、時系列データベースを使うことで、以下の点を気にする必要がなくなります：
+- 順不同のデータ
+- 重複データ
+- “正確に 1 つ” のセマンティクス
+- 低レイテンシーなストリーミングデータ
+- 大量の同時リクエスト
+- 不安定でバーストするデータ
+- データの取り込み中にスキーマ変更（新しいカラムの追加など）
+
+## QuestDB を試す – デモとダッシュボード
+
+最新の QuestDB リリースとサンプルデータセットを搭載した [ライブデモ](https://demo.questdb.io/) では以下が体験できます：
+- **Trips:** 10 年間の NYC タクシー旅行データ（1.6 億行以上）
+- **Trades:** 毎月 3000 万行以上のライブ暗号通貨市場データ
+- **Pos:** 時系列に沿った 25 万隻のユニークな船舶のジオロケーション
+
+サンプルクエリを実行するか、独自のクエリを記述してください！
+
+_このパブリックデモは、1.6B 行以上に対してクエリを実行し、48 vCPU および 348GB RAM を搭載した `r6a.12xlarge` インスタンス上で動作しています。_
+
+| Query                                                                         | 実行時間                                                                                                                                                                                             |
+|-------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `SELECT sum(double) FROM trips`                                               | [0.15 秒](https://demo.questdb.io/?query=SELECT%20sum(trip_distance)%20FROM%20trips;&executeQuery=true)                                                                                             |
+| `SELECT sum(double), avg(double) FROM trips`                                  | [0.5 秒](https://demo.questdb.io/?query=SELECT%20sum(fare_amount),%20avg(fare_amount)%20FROM%20trips;&executeQuery=true)                                                                                   |
+| `SELECT avg(double) FROM trips WHERE time in '2019'`                          | [0.02 秒](https://demo.questdb.io/?query=SELECT%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019%27;&executeQuery=true)                                                |
+| `SELECT time, avg(double) FROM trips WHERE time in '2019-01-01' SAMPLE BY 1h` | [0.01 秒](https://demo.questdb.io/?query=SELECT%20pickup_datetime,%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019-01-01%27%20SAMPLE%20BY%201h;&executeQuery=true) |
+| `SELECT * FROM trades LATEST ON timestamp PARTITION BY symbol`                | [0.00025 秒](https://demo.questdb.io/?query=SELECT%20*%20FROM%20trades%20LATEST%20ON%20timestamp%20PARTITION%20BY%20symbol;&executeQuery=true)                                                  |
+
+また、[Grafana](https://questdb.io/docs/third-party-tools/grafana/) のネイティブプラグインを使用したリアルタイムダッシュボードも提供しています：
+- [リアルタイム暗号通貨取引:](https://questdb.io/dashboards/crypto/) – OKX の 20 以上の資産の取引を表示
+- [NYC タクシーデータ:](https://questdb.io/dashboards/taxi/) – 2016 年の NYC タクシー旅行をリアルタイムで再現
+
+## QuestDB performance vs. other OSS databases
+
+QuestDB は、他のオープンソースデータベースと比較して非常に高いパフォーマンスを示しています。
+
+内部の詳細やパフォーマンスに関するブログ記事：
+- [QuestDB vs InfluxDB](https://questdb.io/blog/2024/02/26/questdb-versus-influxdb/)
+- [QuestDB vs TimescaleDB](https://questdb.io/blog/timescaledb-vs-questdb-comparison/)
+- [QuestDB vs MongoDB](https://questdb.io/blog/mongodb-time-series-benchmark-review/)
+
+いつものように、ぜひご自身でもベンチマークを実施してください。
+
+<div align="center">
+  <img alt="QuestDB、InfluxDB、TimescaleDB の取り込み速度を比較するグラフ" src=".github/readme-benchmark.png" width="600"/>
+</div>
+
+## はじめに
+
+### QuestDB のインストール
+
+QuestDB をすぐに実行するには、[Docker](https://www.docker.com/) を使用します：
 
 ```bash
 docker run -p 9000:9000 -p 9009:9009 -p 8812:8812 questdb/questdb
 ```
 
-macOS ユーザーは Homebrew を使用できます。
+macOS ユーザーは Homebrew を利用できます：
 
 ```bash
 brew install questdb
 brew services start questdb
 
-questdb start // To start questdb
-questdb stop  // To stop questdb
+questdb start   # QuestDB を起動
+questdb stop    # QuestDB を停止
 ```
 
-[QuestDB ダウンロード ページ](https://questdb.io/get-questdb/) では、直接
-バイナリのダウンロード、およびその他のインストールと展開の詳細があります
-メソッド。
+また、完全なオンボーディング体験を始めるには、当社の簡潔な [Quick Start Guide](https://questdb.io/docs/quick-start/) をご覧ください。
 
-### に接続します QuestDB
+### 公式 Ingestion クライアント
 
-次のインターフェイスを使用して QuestDB とやり取りできます。
+QuestDB は、InfluxDB Line Protocol を通じたデータ取り込み用に、以下の公式クライアントを提供しています：
 
-- [Web コンソール](https://questdb.io/docs/develop/web-console/) ポートでリッスン
-  `9000`
-- [REST API](https://questdb.io/docs/reference/api/rest/) ポート `9000` で
-- [PostgreSQL](https://questdb.io/docs/reference/api/postgres/) ワイヤー プロトコル
-  ポート「8812」
-- [InfluxDB](https://questdb.io/docs/reference/api/influxdb/) の回線プロトコル
-  ポート「9009」での高スループット取り込み
+- [Python](https://questdb.io/docs/clients/ingest-python/)
+- [.NET](https://questdb.io/docs/clients/ingest-dotnet/)
+- [C/C++](https://questdb.io/docs/clients/ingest-c-and-cpp/)
+- [Go](https://questdb.io/docs/clients/ingest-go/)
+- [Java](https://questdb.io/docs/clients/java_ilp/)
+- [NodeJS](https://questdb.io/docs/clients/ingest-node/)
+- [Rust](https://questdb.io/docs/clients/ingest-rust/)
 
-## QuestDB と他のオープンソース TSDB との比較
+### QuestDB への接続
 
-ここに高カーディナリティがあります
-[時系列ベンチマーク スイート](https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/)
-AMD Ryzen 3970X で 6 ワーカーの「cpu-only」ユース ケースを使用した結果:
+QuestDB やデータにアクセスするために、以下のインターフェイスを利用できます：
 
+- ポート `9000` で動作する [Web コンソール](https://questdb.io/docs/web-console/)（インタラクティブな SQL エディタおよび CSV インポート）
+- ポート `9000` でのストリーミング取り込み用 [InfluxDB Line Protocol](https://questdb.io/docs/reference/api/ilp/overview/)
+- ポート `8812` でのプログラム的クエリ用 [PostgreSQL ワイヤープロトコル](https://questdb.io/docs/reference/api/postgres/)
+- ポート `9000` での CSV インポートや cURL 用 [REST API](https://questdb.io/docs/reference/api/rest/)
 
-<div align="center">
-  <a href="https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/">
-<!--     <img  src=".github/tsbs-results.png"/> -->
-    <img alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB." width="600" alt="tsbs-results" src="https://user-images.githubusercontent.com/91843271/197382161-e5f3f5b0-18bf-439a-94e4-83ab4bf91d7c.png">
-  </a>
-</div>
+### サードパーティーツール
 
+QuestDB は以下のサードパーティーツールと統合されています：
 
+- [Apache Kafka](https://questdb.io/docs/third-party-tools/kafka/)
+- [Grafana](https://questdb.io/docs/third-party-tools/grafana/)
+- [Superset](https://questdb.io/docs/third-party-tools/superset/)
+- [Telegraf](https://questdb.io/docs/third-party-tools/telegraf/)
+- [Apache Flink](https://questdb.io/docs/third-party-tools/flink/)
+- [qStudio](https://questdb.io/docs/third-party-tools/qstudio/)
+- [MindsDB](https://questdb.io/docs/third-party-tools/mindsdb/)
 
-次の表は、1 つのサーバーで実行された 10 億行のクエリ実行時間を示しています。
-利用可能な 96 個のスレッドのうち 16 個を使用する `c5.metal` インスタンス:
+### エンドツーエンドのスキャフォールド
 
-| クエリ                                                          | ランタイム      |
-|--------------------------------------------------------------|------------|
-| `SELECT sum(double) FROM 1bn`                                | 0.061 secs |
-| `SELECT tag, sum(double) FROM 1bn`                           | 0.179 secs |
-| `SELECT tag, sum(double) FROM 1bn WHERE timestamp in '2019'` | 0.05 secs  |
+リアルタイムデータの取り込みから、Grafana を使ったビジュアライゼーションまで、  
+当社の [Quickstart リポジトリ](https://github.com/questdb/questdb-quickstart) から始めてください。
 
-## 資力
+### プロダクション環境向けの QuestDB の設定
+
+[Capacity Planning ガイド](https://questdb.io/docs/deployment/capacity-planning/) を参照して、  
+プロダクション向けに QuestDB を最適化してください。
+
+### QuestDB Enterprise
+
+大規模な運用や大企業向けに、QuestDB Enterprise は以下の追加機能を提供します：
+
+- マルチプライマリ取り込み
+- リードレプリカ
+- コールドストレージとの連携
+- ロールベースのアクセス制御
+- TLS 暗号化
+- オブジェクトストレージ経由での Parquet ファイルのネイティブクエリ
+- SLA サポート、強化されたモニタリングなど
+
+詳細については、[Enterprise ページ](https://questdb.io/enterprise/)をご覧ください。
+
+## 追加リソース
 
 ### 📚 ドキュメントを読む
 
-- [QuestDB ドキュメント:](https://questdb.io/docs/introduction/) 方法を理解する
-  QuestDB を実行および構成します。
-- [チュートリアル:](https://questdb.io/tutorial/) QuestDB で何ができるかを学ぶ
-  一歩一歩。
-- [製品ロードマップ:](https://github.com/questdb/questdb/projects) チェックアウト
-  今後のリリースの計画。
+- [QuestDB ドキュメント:](https://questdb.io/docs/introduction/) QuestDB のセットアップと構成方法を学びます。
+- [チュートリアル:](https://questdb.io/tutorial/) QuestDB で何が可能かをステップバイステップで学びます。
+- [プロダクトロードマップ:](https://github.com/questdb/questdb/projects) 今後のリリース計画をご確認ください。
 
-### ❓ 支持を得ます
+### ❓ サポートを受ける
 
-- [Community Slack:](https://slack.questdb.io) 技術的な議論に参加し、質問してください
-  質問して、他のユーザーに会いましょう！
-- [GitHub の問題:](https://github.com/questdb/questdb/issues) バグを報告するか、
-  QuestDB の問題。
-- [GitHub ディスカッション:](https://github.com/questdb/questdb/discussions) 提案
-  新しい機能を紹介したり、作成したものを表示したりできます。
-- [スタック オーバーフロー:](https://stackoverflow.com/questions/tagged/questdb) 探します
-  一般的なトラブルシューティング ソリューション。
+- [Community Slack:](https://slack.questdb.io/) 技術的な議論に参加し、質問し、他のユーザーと交流しましょう。
+- [GitHub Issues:](https://github.com/questdb/questdb/issues) QuestDB に関するバグや問題を報告してください。
+- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) 一般的なトラブルシューティングの解決策を探してください。
 
-### 🚢 QuestDB をデプロイする
+### 🚢 QuestDB のデプロイ
 
 - [AWS AMI](https://questdb.io/docs/guides/aws-official-ami)
-- [Google クラウド プラットフォーム](https://questdb.io/docs/guides/google-cloud-platform)
+- [Google Cloud Platform](https://questdb.io/docs/guides/google-cloud-platform)
 - [公式 Docker イメージ](https://questdb.io/docs/get-started/docker)
-- [DigitalOcean ドロップレット](https://questdb.io/docs/guides/digitalocean)
-- [Kubernetes Helm チャート](https://questdb.io/docs/guides/kubernetes)
+- [DigitalOcean Droplets](https://questdb.io/docs/guides/digitalocean)
+- [Kubernetes Helm Charts](https://questdb.io/docs/guides/kubernetes)
 
-## 助ける
+## コントリビュート
 
-それがソースであるかどうかにかかわらず、私たちは常にプロジェクトへの貢献を喜んでいます
-コード、ドキュメント、バグ レポート、機能のリクエスト、またはフィードバック。 始めるには
-貢献して：
+QuestDB への貢献（ソースコード、ドキュメント、バグ報告、機能リクエスト、フィードバック）は常に歓迎されています。
 
-- ラベルが付けられた GitHub の問題に目を通してください。
-  「[良い初号](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)」.
-- 読む
-  [貢献ガイド](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md)。
-- QuestDB の構築の詳細については、
-  [ビルド手順](https://github.com/questdb/questdb/blob/master/core/README.md)。
-- [フォークを作成する](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo)
-  QuestDB の を作成し、提案された変更を含むプル リクエストを送信してください。
+### 貢献を始めるには？
 
-✨ 感謝の印として、**QuestDB グッズ** を
-貢献者。 [ここであなたのスワッグを請求してください。](https://questdb.io/community)
+- GitHub 上で "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)" とラベル付けされた issue をご覧ください。
+- [Contributing ガイド](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md) をお読みください。
+- QuestDB のビルド、パッケージング、インストールの詳細については、[Build Instructions](https://github.com/questdb/questdb/blob/master/core/README.md) を参照してください。
+- QuestDB の [Fork](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo) を作成し、提案する変更を含む pull request を送信してください。
+- 困った場合は、ぜひ [パブリック Slack](https://slack.questdb.io/) に参加してサポートを受けてください。
 
-貢献してくれた次の素晴らしい人々に感謝します
-QuestDB: ([絵文字キー](https://allcontributors.org/docs/en/emoji-key)):
+✨ 感謝の印として、私たちは貢献者に **QuestDB Swag** を送付しています。  
+[こちらから Swag を請求してください](https://questdb.io/community).
 
+QuestDB に貢献してくださった以下の素晴らしい皆さんに心より感謝します:  
+([Emoji キー](https://allcontributors.org/docs/en/emoji-key))
 
 <!-- ALL-CONTRIBUTORS-LIST:START - このセクションを削除または変更しないでください -->
 <!-- prettier-ignore-start -->
@@ -314,11 +397,5 @@ QuestDB: ([絵文字キー](https://allcontributors.org/docs/en/emoji-key)):
 
 <!-- ALL-CONTRIBUTORS-LIST:END -->
 
-このプロジェクトは、
-[すべての貢献者](https://github.com/all-contributors/all-contributors)
-仕様。 あらゆる種類の貢献を歓迎します!
- 
-
-
-
-
+このプロジェクトは [all‑contributors](https://github.com/all-contributors/all-contributors) 仕様に準拠しています。  
+あらゆる形の貢献を歓迎します！
