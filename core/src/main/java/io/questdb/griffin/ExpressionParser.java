@@ -69,7 +69,7 @@ public class ExpressionParser {
     private static final LowerCaseAsciiCharSequenceObjHashMap<CharSequence> allFunctions = new LowerCaseAsciiCharSequenceObjHashMap<>();
     private static final LowerCaseAsciiCharSequenceIntHashMap caseKeywords = new LowerCaseAsciiCharSequenceIntHashMap();
     // columnTypes that an expression can be cast into, in addition to the range BOOLEAN..LONG256
-    private static final IntHashSet castTargetTypes = new IntHashSet();
+    private static final IntHashSet moreCastTargetTypes = new IntHashSet();
     private static final IntHashSet nonLiteralBranches = new IntHashSet(); // branches that can't be followed by constants
     private final OperatorRegistry activeRegistry;
     private final IntStack argStackDepthStack = new IntStack();
@@ -137,7 +137,7 @@ public class ExpressionParser {
     private static boolean isCastTargetType(int typeTag, boolean isFromNull) {
         return typeTag >= ColumnType.BOOLEAN && typeTag <= ColumnType.LONG256 ||
                 isFromNull && (typeTag == ColumnType.BINARY || typeTag == ColumnType.INTERVAL) ||
-                castTargetTypes.contains(typeTag);
+                moreCastTargetTypes.contains(typeTag);
     }
 
     private static SqlException missingArgs(int position) {
@@ -1521,10 +1521,10 @@ public class ExpressionParser {
         caseKeywords.put("then", IDX_THEN);
         caseKeywords.put("else", IDX_ELSE);
 
-        castTargetTypes.add(ColumnType.UUID);
-        castTargetTypes.add(ColumnType.IPv4);
-        castTargetTypes.add(ColumnType.VARCHAR);
-        castTargetTypes.add(ColumnType.ARRAY);
+        moreCastTargetTypes.add(ColumnType.UUID);
+        moreCastTargetTypes.add(ColumnType.IPv4);
+        moreCastTargetTypes.add(ColumnType.VARCHAR);
+        moreCastTargetTypes.add(ColumnType.ARRAY);
 
         allFunctions.put("<>", "<>all");
         allFunctions.put("!=", "<>all");
