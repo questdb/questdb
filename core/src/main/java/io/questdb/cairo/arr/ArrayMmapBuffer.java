@@ -69,7 +69,6 @@ public class ArrayMmapBuffer implements QuietCloseable {
 
         // A non-null array, we need to access the data vec.
         final long offset = crcAndOffset & ArrayTypeDriver.OFFSET_MAX;
-        final short crc = (short) (crcAndOffset >> ArrayTypeDriver.CRC16_SHIFT);
 
         // Decode the shape and set the default strides.
         final long dataEntryPtr = dataAddr + offset;
