@@ -520,16 +520,18 @@ int64_t merge_shuffle_fixed_columns_by_rev_index(
     const TIdx *reverse_index = reinterpret_cast<const TIdx *>(reverse_index_ptr);
 
     int64_t rev_row_index = 0;
+    int64_t dups = 0;
     for (uint64_t seg = 0; seg < segment_count; seg++) {
         auto src = src_addresses[seg];
         auto segment_lo = segments[seg].segment_lo;
-        auto segment_hi = segments[seg].segment_hi;
+        auto segment_hi = std::abs(segments[seg].segment_hi);
 
         for (int64_t r = segment_lo; r < segment_hi; r++) {
             auto dst_index = reverse_index[rev_row_index++];
             if constexpr (MergeFormat == dedup_shuffle_index_format) {
                 if (dst_index == 0) {
                     // 0 means this row is not in the result set
+                    dups++;
                     continue;
                 }
                 // rows shifted by 1
@@ -538,7 +540,7 @@ int64_t merge_shuffle_fixed_columns_by_rev_index(
             dst_address[dst_index] = src[r];
         }
     }
-    return rev_row_index;
+    return rev_row_index - dups;
 }
 
 template<typename T>
@@ -766,6 +768,7 @@ jlong merge_shuffle_symbol_column_from_many_addresses(
 
     int64_t out_index = 0;
     jlong rows_processed = 0;
+    jlong dups = 0;
     for (uint64_t txn_index = 0; txn_index < txn_count; txn_index++) {
         auto segment_addr = src[segment_txns[txn_index].seg_info_index];
         uint64_t hi = segment_txns[txn_index].segment_row_offset + segment_txns[txn_index].row_count;
@@ -777,6 +780,7 @@ jlong merge_shuffle_symbol_column_from_many_addresses(
             if constexpr (MergeFormat == dedup_shuffle_index_format) {
                 if (dst_index == 0) {
                     // 0 means this row is not in the result set
+                    dups++;
                     continue;
                 }
                 // rows shifted by 1
@@ -794,7 +798,7 @@ jlong merge_shuffle_symbol_column_from_many_addresses(
             rows_processed++;
         }
     }
-    return rows_processed;
+    return rows_processed - dups;
 }
 
 template<typename TIdx, uint8_t MergeFormat>
@@ -807,11 +811,13 @@ jlong merge_shuffle_symbol_column_by_reverse_index(
     static_assert(std::is_integral_v<TIdx> && std::is_unsigned_v<TIdx>, "T must be an unsigned integer");
     const TIdx *reverse_index = reinterpret_cast<const TIdx *>(reverse_index_ptr);
 
+    int64_t dups = 0;
     for (int64_t r_index = 0; r_index < revrese_index_row_count; r_index++) {
         auto dst_index = reverse_index[r_index];
         if constexpr (MergeFormat == dedup_shuffle_index_format) {
             if (dst_index == 0) {
                 // 0 means this row is not in the result set
+                dups++;
                 continue;
             }
             // rows shifted by 1
@@ -820,7 +826,7 @@ jlong merge_shuffle_symbol_column_by_reverse_index(
 
         dst[dst_index] = src[r_index];
     }
-    return revrese_index_row_count;
+    return revrese_index_row_count - dups;
 }
 
 
