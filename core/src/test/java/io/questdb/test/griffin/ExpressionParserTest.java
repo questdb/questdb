@@ -32,6 +32,7 @@ import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
@@ -61,6 +62,12 @@ public class ExpressionParserTest extends AbstractCairoTest {
     public void testAllNotEqual() throws SqlException {
         x("a b <>all", "a <> all(b)");
         x("a b <>all", "a != all(b)");
+    }
+
+    @Ignore
+    @Test
+    public void testArrayCast() throws SqlException {
+        x("'{1, 2, 3, 4}' int[] cast", "cast('{1, 2, 3, 4}' as int[])");
     }
 
     @Test

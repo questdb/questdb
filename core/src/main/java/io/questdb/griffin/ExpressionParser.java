@@ -343,7 +343,7 @@ public class ExpressionParser {
                         break;
                     }
                     case '[': {
-                        if (isTypeQualifier()) {
+                        if (isTypeQualifier() || scopeStack.peek(1) == Scope.CAST_AS) {
                             ExpressionNode en = opStack.peek();
                             ((GenericLexer.FloatingSequence) en.token).setHi(lastPos + 1);
                             break;
@@ -378,7 +378,7 @@ public class ExpressionParser {
                         break;
                     }
                     case ']': {
-                        if (isTypeQualifier()) {
+                        if (isTypeQualifier() || scopeStack.peek(1) == Scope.CAST_AS) {
                             ExpressionNode en = opStack.peek();
                             ((GenericLexer.FloatingSequence) en.token).setHi(lastPos + 1);
                             break;
@@ -639,12 +639,12 @@ public class ExpressionParser {
                             }
                             if (thisWasCast && prevBranch != BRANCH_GEOHASH) {
                                 // validate type
-                                final short columnTypeTag = ColumnType.tagOf(node.token);
-                                if (((columnTypeTag < ColumnType.BOOLEAN ||
-                                        (columnTypeTag > ColumnType.LONG256 && columnTypeTag != ColumnType.UUID &&
-                                                columnTypeTag != ColumnType.IPv4 && columnTypeTag != ColumnType.VARCHAR))
+                                final short castAsTag = ColumnType.tagOf(node.token);
+                                if (((castAsTag <= ColumnType.UNDEFINED ||
+                                        (castAsTag > ColumnType.LONG256 && castAsTag != ColumnType.UUID &&
+                                                castAsTag != ColumnType.IPv4 && castAsTag != ColumnType.VARCHAR))
                                         && !asPoppedNull) ||
-                                        (columnTypeTag == ColumnType.GEOHASH && node.type == ExpressionNode.LITERAL)
+                                        (castAsTag == ColumnType.GEOHASH && node.type == ExpressionNode.LITERAL)
                                 ) {
                                     throw SqlException.$(node.position, "unsupported cast");
                                 }
