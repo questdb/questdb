@@ -36,18 +36,18 @@ public class FunctionFactoryDescriptor {
     private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
     private final long[] argTypes;
     private final FunctionFactory factory;
-    private final int openBraceIndex;
+    private final int openParenIndex;
     private final int sigArgCount;
 
     public FunctionFactoryDescriptor(FunctionFactory factory) throws SqlException {
         this.factory = factory;
 
         final String sig = factory.getSignature();
-        this.openBraceIndex = validateSignatureAndGetNameSeparator(sig);
+        this.openParenIndex = validateSignatureAndGetNameSeparator(sig);
         // validate data types
         int typeCount = 0;
         for (
-                int i = openBraceIndex + 1, n = sig.length() - 1;
+                int i = openParenIndex + 1, n = sig.length() - 1;
                 i < n; typeCount++
         ) {
             char cc = sig.charAt(i);
@@ -67,7 +67,7 @@ public class FunctionFactoryDescriptor {
 
         // second loop, less paranoid
         long[] types = new long[typeCount % 2 == 0 ? typeCount / 2 : typeCount / 2 + 1];
-        for (int i = openBraceIndex + 1, n = sig.length() - 1, typeIndex = 0; i < n; ) {
+        for (int i = openParenIndex + 1, n = sig.length() - 1, typeIndex = 0; i < n; ) {
             final char c = sig.charAt(i);
             int type = FunctionFactoryDescriptor.getArgType(c);
             final int arrayIndex = typeIndex / 2;
@@ -191,19 +191,19 @@ public class FunctionFactoryDescriptor {
     }
 
     public static String replaceSignatureName(String name, String signature) throws SqlException {
-        int openBraceIndex = validateSignatureAndGetNameSeparator(signature);
+        int openParenIndex = validateSignatureAndGetNameSeparator(signature);
         StringSink signatureBuilder = Misc.getThreadLocalSink();
         signatureBuilder.put(name);
-        signatureBuilder.put(signature, openBraceIndex, signature.length());
+        signatureBuilder.put(signature, openParenIndex, signature.length());
         return signatureBuilder.toString();
     }
 
     public static String replaceSignatureNameAndSwapArgs(String name, String signature) throws SqlException {
-        int openBraceIndex = validateSignatureAndGetNameSeparator(signature);
+        int openParenIndex = validateSignatureAndGetNameSeparator(signature);
         StringSink signatureBuilder = Misc.getThreadLocalSink();
         signatureBuilder.put(name);
         signatureBuilder.put('(');
-        for (int i = signature.length() - 2; i > openBraceIndex; i--) {
+        for (int i = signature.length() - 2; i > openParenIndex; i--) {
             char curr = signature.charAt(i);
             if (curr == '[') {
                 signatureBuilder.put("[]");
@@ -220,14 +220,14 @@ public class FunctionFactoryDescriptor {
     }
 
     public static StringSink translateSignature(CharSequence funcName, String signature, StringSink sink) {
-        int openBraceIndex;
+        int openParenIndex;
         try {
-            openBraceIndex = validateSignatureAndGetNameSeparator(signature);
+            openParenIndex = validateSignatureAndGetNameSeparator(signature);
         } catch (SqlException err) {
             throw new IllegalArgumentException("offending: '" + signature + "', reason: " + err.getMessage());
         }
         sink.put(funcName).put('(');
-        for (int i = openBraceIndex + 1, n = signature.length() - 1; i < n; i++) {
+        for (int i = openParenIndex + 1, n = signature.length() - 1; i < n; i++) {
             char c = signature.charAt(i);
             String type = typeNameMap.get(c | 32);
             if (type == null) {
@@ -258,12 +258,12 @@ public class FunctionFactoryDescriptor {
             throw SqlException.$(0, "NULL signature");
         }
 
-        int openBraceIndex = sig.indexOf('(');
-        if (openBraceIndex == -1) {
+        int openParenIndex = sig.indexOf('(');
+        if (openParenIndex == -1) {
             throw SqlException.$(0, "open brace expected");
         }
 
-        if (openBraceIndex == 0) {
+        if (openParenIndex == 0) {
             throw SqlException.$(0, "empty function name");
         }
 
@@ -276,17 +276,17 @@ public class FunctionFactoryDescriptor {
             throw SqlException.$(0, "name must not start with digit");
         }
 
-        for (int i = 0; i < openBraceIndex; i++) {
+        for (int i = 0; i < openParenIndex; i++) {
             char cc = sig.charAt(i);
             if (FunctionFactoryCache.invalidFunctionNameChars.contains(cc)) {
                 throw SqlException.position(0).put("invalid character: ").put(cc);
             }
         }
 
-        if (FunctionFactoryCache.invalidFunctionNames.keyIndex(sig, 0, openBraceIndex) < 0) {
+        if (FunctionFactoryCache.invalidFunctionNames.keyIndex(sig, 0, openParenIndex) < 0) {
             throw SqlException.position(0).put("invalid function name character: ").put(sig);
         }
-        return openBraceIndex;
+        return openParenIndex;
     }
 
     public int getArgTypeMask(int index) {
@@ -300,7 +300,7 @@ public class FunctionFactoryDescriptor {
     }
 
     public String getName() {
-        return factory.getSignature().substring(0, openBraceIndex);
+        return factory.getSignature().substring(0, openParenIndex);
     }
 
     public int getSigArgCount() {
