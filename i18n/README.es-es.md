@@ -32,10 +32,6 @@
   <a href="./i18n/README.vi-vn.md">Tiếng Việt</a>
 </p>
 
-<p align="center">
-  [English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md) | [Italiano](README.it-it.md) | [Українська](README.ua-ua.md) | Español | [Português](README.pt.md) | [日本語](README.ja-ja.md) | [Türkçe](README.tr-tr.md) | [हिंदी](README.hn-in.md) | [Tiếng Việt](README.vi-vn.md)
-</p>
-
 # QuestDB
 
 QuestDB es la base de datos de series temporales de código abierto de más rápido crecimiento, que ofrece **ingesta de datos a velocidades increíbles y alto rendimiento** junto con **consultas SQL dinámicas de baja latencia**. Toda la base de código de alto rendimiento se ha construido desde cero en Java, C++ y Rust, sin dependencias y sin colector de basura.
