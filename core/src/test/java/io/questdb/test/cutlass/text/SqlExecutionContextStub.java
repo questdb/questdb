@@ -146,6 +146,11 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isParallelGroupByEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isTimestampRequired() {
         return false;
     }
@@ -189,6 +194,10 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
 
     @Override
     public void setParallelFilterEnabled(boolean parallelFilterEnabled) {
+    }
+
+    @Override
+    public void setParallelGroupByEnabled(boolean parallelGroupByEnabled) {
     }
 
     @Override

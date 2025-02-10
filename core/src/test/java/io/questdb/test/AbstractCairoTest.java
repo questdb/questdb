@@ -528,6 +528,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         memoryUsage = -1;
         forEachNode(QuestDBTestNode::setUpGriffin);
         sqlExecutionContext.setParallelFilterEnabled(configuration.isSqlParallelFilterEnabled());
+        sqlExecutionContext.setParallelGroupByEnabled(configuration.isSqlParallelGroupByEnabled());
         // 30% chance to enable paranoia checking FD mode
         Files.PARANOIA_FD_MODE = new Rnd(System.nanoTime(), System.currentTimeMillis()).nextInt(100) > 70;
         engine.getMetrics().clear();

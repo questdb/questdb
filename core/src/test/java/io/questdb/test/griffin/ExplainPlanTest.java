@@ -3420,19 +3420,23 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByWithLimit12() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, false);
-        assertPlan(
-                "create table di (x int, y long)",
-                "select y, count(*) c from di order by c limit 42",
-                "Long top K lo: 42\n" +
-                        "  keys: [c asc]\n" +
-                        "    GroupBy vectorized: false\n" +
-                        "      keys: [y]\n" +
-                        "      values: [count(*)]\n" +
-                        "        PageFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: di\n"
-        );
+        sqlExecutionContext.setParallelGroupByEnabled(false);
+        try {
+            assertPlan(
+                    "create table di (x int, y long)",
+                    "select y, count(*) c from di order by c limit 42",
+                    "Long top K lo: 42\n" +
+                            "  keys: [c asc]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [y]\n" +
+                            "      values: [count(*)]\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: di\n"
+            );
+        } finally {
+            sqlExecutionContext.setParallelFilterEnabled(configuration.isSqlParallelGroupByEnabled());
+        }
     }
 
     @Test

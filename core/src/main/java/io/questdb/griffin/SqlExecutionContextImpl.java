@@ -69,6 +69,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private long now;
     private final MicrosecondClock nowClock = () -> now;
     private boolean parallelFilterEnabled;
+    private boolean parallelGroupByEnabled;
     private Rnd random;
     private long requestFd = -1;
     private SecurityContext securityContext;
@@ -86,6 +87,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         securityContext = DenyAllSecurityContext.INSTANCE;
         jitMode = cairoConfiguration.getSqlJitMode();
         parallelFilterEnabled = cairoConfiguration.isSqlParallelFilterEnabled();
+        parallelGroupByEnabled = cairoConfiguration.isSqlParallelGroupByEnabled();
         telemetry = cairoEngine.getTelemetry();
         telemetryFacade = telemetry.isEnabled() ? this::doStoreTelemetry : this::storeTelemetryNoop;
         this.containsSecret = false;
@@ -252,6 +254,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isParallelGroupByEnabled() {
+        return parallelGroupByEnabled;
+    }
+
+    @Override
     public boolean isTimestampRequired() {
         return timestampRequiredStack.notEmpty() && timestampRequiredStack.peek() == 1;
     }
@@ -306,6 +313,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setParallelFilterEnabled(boolean parallelFilterEnabled) {
         this.parallelFilterEnabled = parallelFilterEnabled;
+    }
+
+    @Override
+    public void setParallelGroupByEnabled(boolean parallelGroupByEnabled) {
+        this.parallelGroupByEnabled = parallelGroupByEnabled;
     }
 
     @Override
