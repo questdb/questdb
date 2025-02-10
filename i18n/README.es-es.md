@@ -18,7 +18,6 @@
 </p>
 
 <p align="center">
-  الإنجليزية |
   <a href="./i18n/README.zh-cn.md">简体中文</a> |
   <a href="./i18n/README.zh-hk.md">繁體中文</a> |
   <a href="./i18n/README.ar-dz.md">العربية</a> |
