@@ -12,18 +12,17 @@
 </p>
 
 <p align="center">
-  الإنجليزية |
-  <a href="./i18n/README.zh-cn.md">简体中文</a> |
-  <a href="./i18n/README.zh-hk.md">繁體中文</a> |
+  <a href="README.zh-cn.md">简体中文</a> |
+  <a href="README.zh-hk.md">繁體中文</a> |
   العربية |
-  <a href="./i18n/README.it-it.md">Italiano</a> |
-  <a href="./i18n/README.ua-ua.md">Українська</a> |
-  <a href="./i18n/README.es-es.md">Español</a> |
-  <a href="./i18n/README.pt.md">Português</a> |
-  <a href="./i18n/README.ja-ja.md">日本語</a> |
-  <a href="./i18n/README.tr-tr.md">Türkçe</a> |
-  <a href="./i18n/README.hn-in.md">हिंदी</a> |
-  <a href="./i18n/README.vi-vn.md">Tiếng Việt</a>
+  <a href="README.it-it.md">Italiano</a> |
+  <a href="README.ua-ua.md">Українська</a> |
+  <a href="README.es-es.md">Español</a> |
+  <a href="README.pt.md">Português</a> |
+  <a href="README.ja-ja.md">日本語</a> |
+  <a href="README.tr-tr.md">Türkçe</a> |
+  <a href="README.hn-in.md">हिंदी</a> |
+  <a href="README.vi-vn.md">Tiếng Việt</a>
 </p>
 
 ---
