@@ -2395,7 +2395,9 @@ public class SqlParser {
             }
         }
 
-        assert isGroupKeyword(tok);
+        if (!isGroupKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "expected `GROUP`");
+        }
 
         // parseGroupBy
         expectBy(lexer);

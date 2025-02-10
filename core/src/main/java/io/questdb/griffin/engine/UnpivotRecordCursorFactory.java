@@ -61,6 +61,7 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordMetadata baseMetadata;
     private final UnpivotRecordCursor cursor;
     private final int inColumnIndex;
+    private final boolean includeNulls;
     private final IntIntHashMap passthroughIndicesMap;
     private final IntList unpivotForIndices;
     private final ObjList<CharSequence> unpivotForNames;
@@ -79,6 +80,7 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
         this.unpivotForIndices = unpivotForIndices;
         this.passthroughIndicesMap = passthroughIndicesMap;
         this.unpivotForNames = unpivotForNames;
+        this.includeNulls = includeNulls;
         this.cursor = new UnpivotRecordCursor(includeNulls);
     }
 
@@ -105,11 +107,13 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Unpivot")
-                .attr("into").val(unpivotMetadata.getColumnName(valueColumnIndex))
-                .attr("for").val(unpivotMetadata.getColumnName(inColumnIndex))
-                .attr("in");
+        sink.type("Unpivot");
 
+        sink.attr("into").val(unpivotMetadata.getColumnName(valueColumnIndex));
+        sink.attr("for").val(unpivotMetadata.getColumnName(inColumnIndex));
+
+
+        sink.attr("in");
         sink.val('[');
 
         for (int i = 0, n = unpivotForIndices.size(); i < n; i++) {
@@ -121,6 +125,14 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         sink.val(']');
+        sink.attr("nulls");
+
+        if (includeNulls) {
+            sink.val("included");
+        } else {
+            sink.val("excluded");
+        }
+
         sink.child(base);
     }
 

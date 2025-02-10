@@ -55,6 +55,7 @@ public class UnpivotTest extends AbstractSqlParserTest {
                     "  into: sales\n" +
                     "  for: month\n" +
                     "  in: [Jan,Feb,Mar,Apr,May,Jun]\n" +
+                    "  nulls: excluded\n" +
                     "    PageFrame\n" +
                     "        Row forward scan\n" +
                     "        Frame forward scan on: monthly_sales\n");
@@ -102,6 +103,7 @@ public class UnpivotTest extends AbstractSqlParserTest {
                     "  into: sales\n" +
                     "  for: month\n" +
                     "  in: [Jan,Feb,Mar,Apr,May,Jun]\n" +
+                    "  nulls: excluded\n" +
                     "    PageFrame\n" +
                     "        Row forward scan\n" +
                     "        Frame forward scan on: monthly_sales\n");
@@ -149,6 +151,7 @@ public class UnpivotTest extends AbstractSqlParserTest {
                     "  into: sales\n" +
                     "  for: month\n" +
                     "  in: [Jan,Feb,Mar,Apr,May,Jun]\n" +
+                    "  nulls: included\n" +
                     "    PageFrame\n" +
                     "        Row forward scan\n" +
                     "        Frame forward scan on: monthly_sales\n");
@@ -209,6 +212,7 @@ public class UnpivotTest extends AbstractSqlParserTest {
                             "  into: population\n" +
                             "  for: year\n" +
                             "  in: [2000,2010,2020]\n" +
+                            "  nulls: excluded\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [country]\n" +
                             "      values: [sum(case([population,null,year])),sum(case([population,null,year])),sum(case([population,null,year]))]\n" +
