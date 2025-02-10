@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
@@ -61,6 +62,7 @@ import static io.questdb.cairo.ColumnType.*;
 @RunWith(Parameterized.class)
 abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
 
+    protected static final Log LOG = LogFactory.getLog(AbstractLineTcpReceiverTest.class);
     static final int UPPERCASE_TABLE_RANDOMIZE_FACTOR = 2;
     private static final int MAX_NUM_OF_SKIPPED_COLS = 2;
     private static final int NEW_COLUMN_RANDOMIZE_FACTOR = 2;
@@ -527,7 +529,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                 getLog().error().$(e).$();
                 setError(e.getMessage());
             } finally {
-                for (int i = 0; i < numOfThreads; i++) {
+                for (int i = 0; i < sockets.size(); i++) {
                     final Socket socket = sockets.get(i);
                     socket.close();
                 }
