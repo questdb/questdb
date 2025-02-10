@@ -2051,7 +2051,7 @@ public class O3Test extends AbstractO3Test {
                         " rnd_long256() l256," +
                         " rnd_varchar(1,30,1) varc," +
                         " rnd_varchar(1,1,1) varc2," +
-                        " rnd_double_array(3,1) arr," +
+                        " rnd_double_array(1,1) arr," +
                         " from long_sequence(1000000)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -2082,7 +2082,7 @@ public class O3Test extends AbstractO3Test {
                         " rnd_long256() l256," +
                         " rnd_varchar(1,30,1) varc," +
                         " rnd_varchar(1,1,1) varc2," +
-                        " rnd_double_array(3,1) arr," +
+                        " rnd_double_array(1,1) arr," +
                         " from long_sequence(1000000)" +
                         ")",
                 sqlExecutionContext
