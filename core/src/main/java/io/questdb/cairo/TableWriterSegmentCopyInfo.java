@@ -32,6 +32,7 @@ import io.questdb.std.QuietCloseable;
 
 public class TableWriterSegmentCopyInfo implements QuietCloseable {
     private final IntList seqTxnOrder = new IntList();
+    private boolean allDataInOrder;
     private boolean hasSegmentGap;
     private long maxTimestamp = Long.MIN_VALUE;
     private long maxTxnRowCount;
@@ -73,12 +74,17 @@ public class TableWriterSegmentCopyInfo implements QuietCloseable {
         minTimestamp = Long.MAX_VALUE;
         maxTimestamp = Long.MIN_VALUE;
         hasSegmentGap = false;
+        allDataInOrder = false;
     }
 
     @Override
     public void close() {
         segments = Misc.free(segments);
         txns = Misc.free(txns);
+    }
+
+    public boolean getAllTxnDataInOrder() {
+        return allDataInOrder;
     }
 
     public int getMappingOrder(long absoluteSeqTxn) {
@@ -150,6 +156,10 @@ public class TableWriterSegmentCopyInfo implements QuietCloseable {
 
     public boolean isLastSegmentUse(int segmentIndex) {
         return segments.get(segmentIndex * 4L + 3) > 0;
+    }
+
+    public void setAllTxnDataInOrder(boolean allInOrder) {
+        this.allDataInOrder = allInOrder;
     }
 
     public void setSegmentGap(boolean value) {

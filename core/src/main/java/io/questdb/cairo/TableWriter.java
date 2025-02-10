@@ -5338,10 +5338,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private DirectLongList getTempDirectMemoryList(long capacity) {
         if (tempDirectMemList == null) {
             tempDirectMemList = new DirectLongList(capacity, MemoryTag.NATIVE_TABLE_WRITER);
+            tempDirectMemList.setPos(capacity);
             return tempDirectMemList;
         }
         tempDirectMemList.clear();
         tempDirectMemList.setCapacity(capacity);
+        tempDirectMemList.setPos(capacity);
         return tempDirectMemList;
     }
 
@@ -6888,7 +6890,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         LOG.info().$("processing WAL transaction block [table=").$(tableToken.getDirName())
                 .$(", seqTxn=").$(startSeqTxn).$("..").$(startSeqTxn + blockTransactionCount - 1)
-                .$(", rowCount=").$(segmentCopyInfo.getTotalRows())
+                .$(", rows=").$(segmentCopyInfo.getTotalRows())
+                .$(", segments=").$(segmentCopyInfo.getSegmentCount())
                 .$(", minTimestamp=").$ts(segmentCopyInfo.getMinTimestamp())
                 .$(", maxTimestamp=").$ts(segmentCopyInfo.getMaxTimestamp())
                 .I$();
@@ -6901,23 +6904,93 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         try {
             segmentFileCache.mmapWalColumns(segmentCopyInfo, metadata, path);
-            rowCount = processWalCommitBlockSortWalSegmentTimestamps();
+            final long timestampAddr;
+            final boolean copiedToMemory;
+            final long o3Lo;
+
+            if (!isDeduplicationEnabled() && segmentCopyInfo.getAllTxnDataInOrder() && segmentCopyInfo.getSegmentCount() == 1) {
+                o3Lo = segmentCopyInfo.getRowLo(0);
+                if (denseSymbolMapWriters.size() > 0) {
+                    var columnSegmentAddresses = getTempDirectMemoryList(2L * metadata.getColumnCount());
+                    // Remap the symbols if there are any
+                    long segmentColAddresses = columnSegmentAddresses.getAddress();
+                    processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks(
+                            0,
+                            segmentCopyInfo.getTotalRows(),
+                            segmentColAddresses,
+                            1,
+                            o3Lo,
+                            true,
+                            false,
+                            cthMapSymbols
+                    );
+
+                    segmentFileCache.mmapWalColsEager();
+                    o3ColumnOverrides.clear();
+                    o3ColumnOverrides.addAll(segmentFileCache.getWalMappedColumns());
+
+                    // Take symbol map columns as o3MemColumns2 if remapping happened
+                    int tsColIndex = metadata.getTimestampIndex();
+                    for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                        int columnType = metadata.getColumnType(i);
+                        if (i != tsColIndex && columnType > 0) {
+                            if (ColumnType.isSymbol(columnType)) {
+                                // -1 is the indicator that column is remapped.
+                                // Otherwise, the symbol remapping did not happen because there were no new symbols
+                                if (Unsafe.getUnsafe().getLong(segmentColAddresses) == -1L) {
+                                    int primaryColumnIndex = getPrimaryColumnIndex(i);
+                                    MemoryCARW remappedColumn = o3MemColumns2.getQuick(primaryColumnIndex);
+                                    o3ColumnOverrides.setQuick(primaryColumnIndex, remappedColumn);
+                                }
+                            }
+                            segmentColAddresses += Long.BYTES;
+                            if (ColumnType.isVarSize(columnType)) {
+                                segmentColAddresses += Long.BYTES;
+                            }
+                        }
+                    }
+                    o3Columns = o3ColumnOverrides;
+                } else {
+                    segmentFileCache.mmapWalColsEager();
+                    o3Columns = segmentFileCache.getWalMappedColumns();
+                }
+
+                // all data comes from a single segment and is already sorted
+                // No symbols, nothing to remap
+                rowCount = segmentCopyInfo.getTotalRows();
+                MemoryCR tsColumn = o3Columns.get(getPrimaryColumnIndex(metadata.getTimestampIndex()));
+                timestampAddr = tsColumn.addressOf(0);
+                txWriter.setLagMinTimestamp(segmentCopyInfo.getMinTimestamp());
+                txWriter.setLagMaxTimestamp(segmentCopyInfo.getMaxTimestamp());
+                copiedToMemory = false;
+            } else {
+                rowCount = processWalCommitBlockSortWalSegmentTimestamps();
+                timestampAddr = o3TimestampMem.getAddress();
+                copiedToMemory = true;
+                o3Lo = 0;
+            }
+
+            if (rowCount > 0) {
+                try {
+                    lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
+                    processWalCommitFinishApply(
+                            0,
+                            timestampAddr,
+                            o3Lo,
+                            o3Lo + rowCount,
+                            pressureControl,
+                            copiedToMemory,
+                            partitionTimestampHi
+                    );
+                } finally {
+                    finishO3Append(0);
+                    o3Columns = o3MemColumns1;
+                }
+                return blockTransactionCount;
+            }
         } finally {
             segmentFileCache.closeWalFiles(segmentCopyInfo, metadata.getColumnCount());
         }
-
-        if (rowCount > 0) {
-            long walLagCount = 0;
-            try {
-                lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
-                processWalCommitFinishApply(walLagCount, o3TimestampMem.getAddress(), 0, rowCount, pressureControl, true, partitionTimestampHi);
-            } finally {
-                finishO3Append(0);
-                o3Columns = o3MemColumns1;
-            }
-            return blockTransactionCount;
-        }
-
         return -1;
     }
 
@@ -6952,8 +7025,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long timestampAddr = o3TimestampMem.getAddress();
 
             boolean needsDedup = isDeduplicationEnabled();
-            long minTs = Math.min(segmentCopyInfo.getMinTimestamp(), txWriter.getLagMinTimestamp());
-            long maxTs = Math.max(segmentCopyInfo.getMaxTimestamp(), txWriter.getLagMaxTimestamp());
+            long minTs = segmentCopyInfo.getMinTimestamp();
+            long maxTs = segmentCopyInfo.getMaxTimestamp();
 
             LOG.debug().$("sorting [table=").$(tableToken.getTableName())
                     .$(", rows=").$(segmentCopyInfo.getTotalRows())
@@ -6998,7 +7071,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             totalRows,
                             tsAddresses.getAddress(),
                             totalSegmentAddresses,
-                            indexFormat,
+                            0,
+                            true,
                             true,
                             cthMapSymbols
                     );
@@ -7052,6 +7126,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     totalSegmentAddresses,
                     indexFormat,
                     false,
+                    false,
                     cthMergeWalColumnManySegments
             );
 
@@ -7061,8 +7136,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             o3Columns = o3MemColumns1;
             activeColumns = o3MemColumns1;
 
-            txWriter.setLagMinTimestamp(Math.min(txWriter.getLagMinTimestamp(), segmentCopyInfo.getMinTimestamp()));
-            txWriter.setLagMaxTimestamp(Math.max(txWriter.getLagMaxTimestamp(), segmentCopyInfo.getMaxTimestamp()));
+            txWriter.setLagMinTimestamp(minTs);
+            txWriter.setLagMaxTimestamp(maxTs);
 
             return totalRows;
         } finally {
@@ -7150,8 +7225,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long totalRows,
             long columnAddressesBuffer,
             long totalSegmentAddresses,
-            long indexFormat,
-            boolean dedupSymbolsOnly,
+            long indexFormatOrSymbolRowsOffset,
+            boolean symbolColumnsOnly,
+            boolean dedupColumnOnly,
             ColumnTaskHandler taskHandler
     ) {
         final long timestampColumnIndex = metadata.getTimestampIndex();
@@ -7164,19 +7240,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         long totalSegmentAddressesBytes = totalSegmentAddresses * Long.BYTES;
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            if (columnIndex != timestampColumnIndex) {
-                int columnType = metadata.getColumnType(columnIndex);
-
-                // Allocate the column buffers the same way
-                // regadless if it'a symbol only pass or all column pass
-                // The buffer addresses will contain a hint that the mapping is not needed
+            int columnType = metadata.getColumnType(columnIndex);
+            if (columnIndex != timestampColumnIndex && columnType > 0) {
                 long mappedAddrBuffPrimary = columnAddressesBuffer;
                 columnAddressesBuffer += totalSegmentAddressesBytes;
                 if (ColumnType.isVarSize(columnType)) {
                     columnAddressesBuffer += totalSegmentAddressesBytes;
                 }
 
-                if (columnType > 0 && (!dedupSymbolsOnly || (ColumnType.isSymbol(columnType) && metadata.isDedupKey(columnIndex)))) {
+                // Allocate the column buffers the same way
+                // regadless if it'a symbol only pass or all column pass
+                // The buffer addresses will contain a hint that the mapping is not needed
+
+
+                if ((!symbolColumnsOnly || ColumnType.isSymbol(columnType)) && (!dedupColumnOnly || metadata.isDedupKey(columnIndex))) {
                     long cursor = pubSeq.next();
 
                     if (cursor > -1) {
@@ -7190,7 +7267,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     timestampAddr,
                                     mappedAddrBuffPrimary,
                                     totalRows,
-                                    indexFormat,
+                                    indexFormatOrSymbolRowsOffset,
                                     totalSegmentAddressesBytes,
                                     taskHandler
                             );
@@ -7206,7 +7283,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 timestampAddr,
                                 mappedAddrBuffPrimary,
                                 totalRows,
-                                indexFormat,
+                                indexFormatOrSymbolRowsOffset,
                                 totalSegmentAddressesBytes
                         );
                     }
@@ -7216,7 +7293,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         consumeColumnTasks(queue, queuedCount);
     }
 
-    // remap symbols column
+    // remap symbols column into o3MemColumns2
     private void processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks_mapSymbols(
             int columnIndex,
             int columnType,
@@ -7224,7 +7301,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long mergeIndex,
             long mappedAddrBuffPrimary,
             long totalRows,
-            long indexFormat,
+            long rowsOffset,
             long totalSegmentAddressesBytes
     ) {
         try {
@@ -7242,11 +7319,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 long txnCount = this.segmentCopyInfo.getTxnCount();
                 segmentFileCache.createAddressBuffersPrimary(columnIndex, metadata.getColumnCount(), segmentCopyInfo.getSegmentCount(), mappedAddrBuffPrimary);
                 var destinationColumn = o3MemColumns2.get(getPrimaryColumnIndex(columnIndex));
-                destinationColumn.jumpTo(totalRows << shl);
+                destinationColumn.jumpTo((rowsOffset + totalRows) << shl);
 
                 long rowCount = Vect.remapSymbolColumnFromManyAddresses(
                         mappedAddrBuffPrimary,
-                        destinationColumn.getAddress(),
+                        destinationColumn.getAddress() + (rowsOffset << shl),
                         segmentCopyInfo.getTxnInfoAddress(),
                         txnCount,
                         symbolMapMem.getAddress()
@@ -7266,7 +7343,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     columnType,
                     totalRows,
                     mergeIndex,
-                    indexFormat,
+                    rowsOffset,
                     totalSegmentAddressesBytes,
                     th
             );

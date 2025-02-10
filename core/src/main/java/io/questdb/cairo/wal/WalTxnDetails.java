@@ -188,9 +188,31 @@ public class WalTxnDetails implements QuietCloseable {
         long totalRowCount = 0;
         maxBlockRecordCount = Math.min(maxBlockRecordCount, pressureControl.getMaxBlockRowCount() - 1);
 
+        long lastWalSegment = getWalSegment(seqTxn);
+        boolean allInOrder = true;
+        long minTs = Long.MAX_VALUE;
+        long maxTs = Long.MIN_VALUE;
+
         for (long nextTxn = seqTxn; nextTxn < lastSeqTxn; nextTxn++) {
+            long currentWalSegment = getWalSegment(nextTxn);
+            if (allInOrder) {
+                if (currentWalSegment != lastWalSegment) {
+                    if (totalRowCount >= maxBlockRecordCount / 10) {
+                        // Big enough chunk of all in order data in same segment
+                        blockSize--;
+                        break;
+                    }
+                    allInOrder = false;
+                } else {
+                    allInOrder = getTxnInOrder(nextTxn) && maxTs <= getMinTimestamp(nextTxn);
+                    minTs = Math.min(minTs, getMinTimestamp(nextTxn));
+                    maxTs = Math.max(maxTs, getMaxTimestamp(nextTxn));
+                }
+            }
             long txnRowCount = getSegmentRowHi(nextTxn) - getSegmentRowLo(nextTxn);
             totalRowCount += txnRowCount;
+            lastWalSegment = currentWalSegment;
+
             if (getCommitToTimestamp(nextTxn) == FORCE_FULL_COMMIT || totalRowCount > maxBlockRecordCount) {
                 break;
             }
@@ -271,6 +293,10 @@ public class WalTxnDetails implements QuietCloseable {
         return Numbers.decodeHighInt(transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ID_WAL_SEG_ID_OFFSET)));
     }
 
+    public long getWalSegment(long seqTxn) {
+        return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ID_WAL_SEG_ID_OFFSET));
+    }
+
     @Nullable
     public SymbolMapDiffCursor getWalSymbolDiffCursor(long seqTxn) {
         long offset = transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_SYMBOL_DIFF_OFFSET));
@@ -305,6 +331,7 @@ public class WalTxnDetails implements QuietCloseable {
         boolean isLastSegmentUse = false;
         long roHi = 0;
         long prevRoHi = -1;
+        boolean allInOrder = true;
 
         for (int i = 0; i < blockTransactionCount; i++) {
             int relativeSeqTxn = (int) (sortedBySegmentTxnSlice.getSeqTxn(i) - startSeqTxn);
@@ -335,6 +362,8 @@ public class WalTxnDetails implements QuietCloseable {
             roHi = sortedBySegmentTxnSlice.getRoHi(i);
             long committedRowsCount = roHi - roLo;
             copyTasks.addTxn(roLo, relativeSeqTxn, committedRowsCount, copyTaskCount, minTimestamp, maxTimestamp);
+            allInOrder = allInOrder && minTimestamp >= copyTasks.getMaxTimestamp() && sortedBySegmentTxnSlice.isTxnDataInOrder(i);
+
             if (prevRoHi != -1 && prevRoHi != roLo) {
                 // In theory it's possible but in practice it should not happen
                 // This means that some of the segment rows are not committed
@@ -350,6 +379,7 @@ public class WalTxnDetails implements QuietCloseable {
         int walId = sortedBySegmentTxnSlice.getWalId(lastIndex);
 
         copyTasks.addSegment(walId, segmentId, segmentLo, roHi, isLastSegmentUse);
+        copyTasks.setAllTxnDataInOrder(allInOrder);
     }
 
     public void readObservableTxnMeta(
@@ -850,6 +880,10 @@ public class WalTxnDetails implements QuietCloseable {
 
         public boolean isLastSegmentUse(int txn) {
             return WalTxnDetails.this.isLastSegmentUsage(txnOrder.get(2L * txn + 1));
+        }
+
+        public boolean isTxnDataInOrder(int txn) {
+            return WalTxnDetails.this.getTxnInOrder(txnOrder.get(2L * txn + 1));
         }
 
         public WalTxnDetailsSlice of(long lo, int count) {
