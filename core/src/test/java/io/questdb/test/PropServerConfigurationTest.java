@@ -210,6 +210,7 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.getCairoConfiguration().isMatViewEnabled());
         Assert.assertEquals(10, configuration.getCairoConfiguration().getMatViewMaxRecompileAttempts());
         Assert.assertEquals(100_000, configuration.getCairoConfiguration().getMatViewInsertAsSelectBatchSize());
+        Assert.assertTrue(configuration.getCairoConfiguration().isMatViewParallelSqlEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().getDefaultSymbolCacheFlag());
         Assert.assertEquals(256, configuration.getCairoConfiguration().getDefaultSymbolCapacity());
         Assert.assertEquals(30, configuration.getCairoConfiguration().getFileOperationRetryCount());
@@ -484,6 +485,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(262144, configuration.getCairoConfiguration().getSystemWalDataAppendPageSize());
         Assert.assertTrue(configuration.getCairoConfiguration().isTableTypeConversionEnabled());
         Assert.assertEquals(10, configuration.getCairoConfiguration().getWalWriterPoolMaxSegments());
+        Assert.assertTrue(configuration.getCairoConfiguration().isWalApplyParallelSqlEnabled());
 
         Assert.assertEquals(20, configuration.getCairoConfiguration().getO3LastPartitionMaxSplits());
         Assert.assertEquals(50 * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getPartitionO3SplitMinSize());
@@ -1311,6 +1313,7 @@ public class PropServerConfigurationTest {
             Assert.assertTrue(configuration.getCairoConfiguration().isMatViewEnabled());
             Assert.assertEquals(100, configuration.getCairoConfiguration().getMatViewMaxRecompileAttempts());
             Assert.assertEquals(1000, configuration.getCairoConfiguration().getMatViewInsertAsSelectBatchSize());
+            Assert.assertFalse(configuration.getCairoConfiguration().isMatViewParallelSqlEnabled());
 
             // PG wire
             Assert.assertEquals(9, configuration.getPGWireConfiguration().getBinParamCountCapacity());
@@ -1350,6 +1353,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(23, configuration.getWalApplyPoolConfiguration().getNapThreshold());
             Assert.assertEquals(33, configuration.getWalApplyPoolConfiguration().getSleepThreshold());
             Assert.assertEquals(33033, configuration.getWalApplyPoolConfiguration().getYieldThreshold());
+            Assert.assertFalse(configuration.getCairoConfiguration().isWalApplyParallelSqlEnabled());
 
             Assert.assertTrue(configuration.getMatViewRefreshPoolConfiguration().isEnabled());
             Assert.assertTrue(configuration.getMatViewRefreshPoolConfiguration().haltOnError());

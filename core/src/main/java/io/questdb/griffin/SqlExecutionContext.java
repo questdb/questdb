@@ -181,6 +181,8 @@ public interface SqlExecutionContext extends Closeable {
 
     boolean isParallelGroupByEnabled();
 
+    boolean isParallelReadParquetEnabled();
+
     boolean isTimestampRequired();
 
     default boolean isUninterruptible() {
@@ -214,6 +216,8 @@ public interface SqlExecutionContext extends Closeable {
     void setParallelFilterEnabled(boolean parallelFilterEnabled);
 
     void setParallelGroupByEnabled(boolean parallelGroupByEnabled);
+
+    void setParallelReadParquetEnabled(boolean parallelReadParquetEnabled);
 
     void setRandom(Rnd rnd);
 

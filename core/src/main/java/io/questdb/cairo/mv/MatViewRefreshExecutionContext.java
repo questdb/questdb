@@ -45,6 +45,11 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
 
     public MatViewRefreshExecutionContext(CairoEngine engine, int workerCount, int sharedWorkerCount) {
         super(engine, workerCount, sharedWorkerCount);
+        if (!engine.getConfiguration().isMatViewParallelSqlEnabled()) {
+            setParallelFilterEnabled(false);
+            setParallelGroupByEnabled(false);
+            setParallelReadParquetEnabled(false);
+        }
         with(
                 new ReadOnlySecurityContext() {
                     @Override

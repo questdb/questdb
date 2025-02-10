@@ -36,8 +36,13 @@ import org.jetbrains.annotations.NotNull;
 class WalApplySqlExecutionContext extends SqlExecutionContextImpl {
     private TableToken tableToken;
 
-    WalApplySqlExecutionContext(CairoEngine cairoEngine, int workerCount, int sharedWorkerCount) {
-        super(cairoEngine, workerCount, sharedWorkerCount);
+    WalApplySqlExecutionContext(CairoEngine engine, int workerCount, int sharedWorkerCount) {
+        super(engine, workerCount, sharedWorkerCount);
+        if (!engine.getConfiguration().isMatViewParallelSqlEnabled()) {
+            setParallelFilterEnabled(false);
+            setParallelGroupByEnabled(false);
+            setParallelReadParquetEnabled(false);
+        }
     }
 
     @Override
