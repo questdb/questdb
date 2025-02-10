@@ -253,7 +253,7 @@ public class ExpressionParser {
             char thisChar;
             int prevBranch;
             int thisBranch = BRANCH_NONE;
-            boolean asPoppedNull = false;
+            boolean isCastingNull = false;
             OUT:
             while ((tok = SqlUtil.fetchNext(lexer)) != null) {
                 thisChar = tok.charAt(0);
@@ -643,7 +643,7 @@ public class ExpressionParser {
                                 if (((castAsTag <= ColumnType.UNDEFINED ||
                                         (castAsTag > ColumnType.LONG256 && castAsTag != ColumnType.UUID &&
                                                 castAsTag != ColumnType.IPv4 && castAsTag != ColumnType.VARCHAR))
-                                        && !asPoppedNull) ||
+                                        && !isCastingNull) ||
                                         (castAsTag == ColumnType.GEOHASH && node.type == ExpressionNode.LITERAL)
                                 ) {
                                     throw SqlException.$(node.position, "unsupported cast");
@@ -731,18 +731,15 @@ public class ExpressionParser {
                                 int nodeCount = 0;
                                 while ((node = opStack.pop()) != null && node.token.charAt(0) != '(') {
                                     nodeCount++;
-                                    asPoppedNull = SqlKeywords.isNullKeyword(node.token);
+                                    isCastingNull = SqlKeywords.isNullKeyword(node.token);
                                     argStackDepth = onNode(listener, node, argStackDepth, false);
                                 }
-
                                 if (nodeCount != 1) {
-                                    asPoppedNull = false;
+                                    isCastingNull = false;
                                 }
-
                                 if (node != null) {
                                     opStack.push(node);
                                 }
-
                                 paramCount++;
                                 scopeStack.update(1, Scope.CAST_AS);
                             } else {
