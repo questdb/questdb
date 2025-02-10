@@ -5338,12 +5338,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private DirectLongList getTempDirectMemoryList(long capacity) {
         if (tempDirectMemList == null) {
             tempDirectMemList = new DirectLongList(capacity, MemoryTag.NATIVE_TABLE_WRITER);
-            tempDirectMemList.setPos(capacity);
             return tempDirectMemList;
         }
         tempDirectMemList.clear();
         tempDirectMemList.setCapacity(capacity);
-        tempDirectMemList.setPos(capacity);
         return tempDirectMemList;
     }
 
@@ -7144,6 +7142,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
         }
+        columnSegmentAddresses.resetCapacity();
         return o3ColumnOverrides;
     }
 
