@@ -83,6 +83,15 @@ public class CopyTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyCancelExtras() throws Exception {
+        assertException(
+                "copy 'foobar' cancel aw beans;",
+                21,
+                "unexpected token [aw]"
+        );
+    }
+
+    @Test
     public void testCopyCancelThrowsExceptionOnNoActiveImport() throws Exception {
         assertMemoryLeak(() -> {
             try {
@@ -92,15 +101,6 @@ public class CopyTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getMessage(), "copy cancel ID format is invalid: 'foobar'");
             }
         });
-    }
-
-    @Test
-    public void testCopyCancelExtras() throws Exception {
-        assertException(
-                "copy 'foobar' cancel aw beans;",
-                21,
-                "unexpected token [aw]"
-        );
     }
 
     @Test
@@ -433,7 +433,7 @@ public class CopyTest extends AbstractCairoTest {
     public void testParallelCopyIntoExistingTableWithDefaultWorkDir() throws Exception {
         String inputWorkRootTmp = inputWorkRoot;
         try (Path path = new Path()) {
-            path.of(configuration.getRoot()).concat(PropServerConfiguration.TMP_DIRECTORY).$();
+            path.of(configuration.getDbRoot()).concat(PropServerConfiguration.TMP_DIRECTORY).$();
             inputWorkRoot = path.toString();
         }
 
@@ -506,7 +506,7 @@ public class CopyTest extends AbstractCairoTest {
     public void testParallelCopyIntoNewTableWithDefaultWorkDir() throws Exception {
         String inputWorkRootTmp = inputWorkRoot;
         try (Path path = new Path()) {
-            path.of(configuration.getRoot()).concat(PropServerConfiguration.TMP_DIRECTORY).$();
+            path.of(configuration.getDbRoot()).concat(PropServerConfiguration.TMP_DIRECTORY).$();
             inputWorkRoot = path.toString();
         }
 

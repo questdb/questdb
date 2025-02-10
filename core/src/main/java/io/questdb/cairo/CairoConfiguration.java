@@ -170,6 +170,9 @@ public interface CairoConfiguration {
     CharSequence getDbDirectory(); // env['cairo.root'], defaults to db
 
     @NotNull
+    String getDbRoot(); // some folder with suffix env['cairo.root'] e.g. /.../db
+
+    @NotNull
     DateLocale getDefaultDateLocale();
 
     int getDefaultSeqPartTxnCount();
@@ -234,6 +237,12 @@ public interface CairoConfiguration {
     long getInsertModelBatchSize();
 
     int getInsertModelPoolCapacity();
+
+    /**
+     * Installation root, i.e. the directory that usually contains the "conf", "db", etc directories.
+     */
+    @NotNull
+    String getInstallRoot();
 
     int getLatestByQueueCapacity();
 
@@ -379,9 +388,6 @@ public interface CairoConfiguration {
     int getRndFunctionMemoryMaxPages();
 
     int getRndFunctionMemoryPageSize();
-
-    @NotNull
-    String getRoot(); // some folder with suffix env['cairo.root'] e.g. /.../db
 
     @NotNull
     default RostiAllocFacade getRostiAllocFacade() {

@@ -76,7 +76,7 @@ public class WalReader implements Closeable {
 
         ff = configuration.getFilesFacade();
         path = new Path();
-        path.of(configuration.getRoot()).concat(tableToken.getDirName()).concat(walName);
+        path.of(configuration.getDbRoot()).concat(tableToken.getDirName()).concat(walName);
         rootLen = path.size();
 
         try {

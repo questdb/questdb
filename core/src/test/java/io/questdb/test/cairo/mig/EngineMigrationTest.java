@@ -174,22 +174,22 @@ public class EngineMigrationTest extends AbstractCairoTest {
             FilesFacade ff = config.getFilesFacade();
 
             // Make abc _txn too short
-            Path abcTxnPath = Path.getThreadLocal(config.getRoot()).concat(tokenAbc).concat(TableUtils.TXN_FILE_NAME);
+            Path abcTxnPath = Path.getThreadLocal(config.getDbRoot()).concat(tokenAbc).concat(TableUtils.TXN_FILE_NAME);
             long fd = TableUtils.openRW(ff, abcTxnPath.$(), LOG, config.getWriterFileOpenOpts());
             Assert.assertTrue(ff.truncate(fd, 50));
             ff.close(fd);
 
             // Mess, run migration and check
-            TestUtils.messTxnUnallocated(ff, Path.getThreadLocal(config.getRoot()), new Rnd(), tokenDef);
+            TestUtils.messTxnUnallocated(ff, Path.getThreadLocal(config.getDbRoot()), new Rnd(), tokenDef);
             EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, true);
             checkTxnFile(ff, config, tokenDef, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE);
 
             // Remove _txn file for table abc
-            abcTxnPath = Path.getThreadLocal(config.getRoot()).concat(tokenAbc).concat(TableUtils.TXN_FILE_NAME);
+            abcTxnPath = Path.getThreadLocal(config.getDbRoot()).concat(tokenAbc).concat(TableUtils.TXN_FILE_NAME);
             Assert.assertTrue(ff.removeQuiet(abcTxnPath.$()));
 
             // Mess, run migration and check
-            TestUtils.messTxnUnallocated(ff, Path.getThreadLocal(config.getRoot()), new Rnd(), tokenDef);
+            TestUtils.messTxnUnallocated(ff, Path.getThreadLocal(config.getDbRoot()), new Rnd(), tokenDef);
             EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, true);
             checkTxnFile(ff, config, tokenDef, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE);
         });
@@ -208,7 +208,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
 
             TestUtils.messTxnUnallocated(
                     config.getFilesFacade(),
-                    Path.getThreadLocal(config.getRoot()),
+                    Path.getThreadLocal(config.getDbRoot()),
                     new Rnd(123, 123),
                     token
             );
@@ -218,7 +218,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
 
             // Check txn file is upgraded
             try (TxReader txReader = new TxReader(config.getFilesFacade())) {
-                Path p = Path.getThreadLocal(config.getRoot());
+                Path p = Path.getThreadLocal(config.getDbRoot());
                 txReader.ofRO(p.concat(token).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
                 txReader.unsafeLoadAll();
 
@@ -240,7 +240,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
 
             CairoConfiguration config = engine.getConfiguration();
             try (TxWriter txWriter = new TxWriter(config.getFilesFacade(), config)) {
-                Path p = Path.getThreadLocal(config.getRoot());
+                Path p = Path.getThreadLocal(config.getDbRoot());
                 txWriter.ofRW(p.concat(token).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
 
                 txWriter.setLagRowCount(100);
@@ -259,7 +259,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
 
             TestUtils.messTxnUnallocated(
                     config.getFilesFacade(),
-                    Path.getThreadLocal(config.getRoot()),
+                    Path.getThreadLocal(config.getDbRoot()),
                     new Rnd(),
                     token
             );
@@ -399,7 +399,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
     private static void checkTxnFile(FilesFacade ff, CairoConfiguration config, TableToken tokenDef, int rowCount, int lagTxnCount, long maxValue, long minValue) {
         // Check txn file is upgraded
         try (TxReader txReader = new TxReader(ff)) {
-            Path p = Path.getThreadLocal(config.getRoot());
+            Path p = Path.getThreadLocal(config.getDbRoot());
             txReader.ofRO(p.concat(tokenDef).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
             txReader.unsafeLoadAll();
 
@@ -1765,21 +1765,21 @@ public class EngineMigrationTest extends AbstractCairoTest {
                 engine.verifyTableName("t_col_top_ooo_day_wal")
         );
 
-        Path from = Path.getThreadLocal(configuration.getRoot()).concat("t_col_top_день");
+        Path from = Path.getThreadLocal(configuration.getDbRoot()).concat("t_col_top_день");
         String copyTableWithMissingPartitions = "t_col_top_день_missing_parts";
-        Path to = Path.getThreadLocal2(configuration.getRoot()).concat(copyTableWithMissingPartitions);
+        Path to = Path.getThreadLocal2(configuration.getDbRoot()).concat(copyTableWithMissingPartitions);
 
         TestUtils.copyDirectory(from, to, configuration.getMkDirMode());
         FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
 
         // Remove first partition
-        to.of(configuration.getRoot()).concat(copyTableWithMissingPartitions);
+        to.of(configuration.getDbRoot()).concat(copyTableWithMissingPartitions);
         if (!ff.rmdir(to.concat("1970-01-01").put(Files.SEPARATOR))) {
             throw CairoException.critical(ff.errno()).put("cannot remove ").put(to);
         }
 
         // Rename last partition from 1970-01-04 to 1970-01-04.4
-        from.of(configuration.getRoot()).concat(copyTableWithMissingPartitions).concat("1970-01-04");
+        from.of(configuration.getDbRoot()).concat(copyTableWithMissingPartitions).concat("1970-01-04");
         to.trimTo(0).put(from).put(".4");
 
         if (ff.rename(from.put(Files.SEPARATOR).$(), to.put(Files.SEPARATOR).$()) != Files.FILES_RENAME_OK) {
@@ -1788,7 +1788,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
 
         // Remove table name file
         ff.remove(
-                to.of(configuration.getRoot())
+                to.of(configuration.getDbRoot())
                         .concat(copyTableWithMissingPartitions)
                         .concat(TableUtils.TABLE_NAME_FILE)
                         .$()

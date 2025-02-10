@@ -177,6 +177,6 @@ public class ShowTableStorageTest extends AbstractCairoTest {
     private long getDirSize(@NotNull CharSequence tableName) {
         final TableToken token = sqlExecutionContext.getTableToken(tableName);
         return Files.getDirSize(
-                Path.getThreadLocal(configuration.getRoot()).concat(token.getDirName()));
+                Path.getThreadLocal(configuration.getDbRoot()).concat(token.getDirName()));
     }
 }

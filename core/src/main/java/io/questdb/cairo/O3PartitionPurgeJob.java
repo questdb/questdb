@@ -29,7 +29,14 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
-import io.questdb.std.*;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.Vect;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
@@ -394,7 +401,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 configuration.getFilesFacade(),
                 fileNameSinks[workerId],
                 partitionList.get(workerId),
-                configuration.getRoot(),
+                configuration.getDbRoot(),
                 task.getTableToken(),
                 txnScoreboards.get(workerId),
                 txnReaders.get(workerId),

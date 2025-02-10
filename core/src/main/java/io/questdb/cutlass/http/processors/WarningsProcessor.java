@@ -60,7 +60,7 @@ public class WarningsProcessor implements HttpRequestProcessor {
             sink.putAscii('[');
 
             final FilesFacade ff = configuration.getFilesFacade();
-            final String rootDir = configuration.getRoot();
+            final String rootDir = configuration.getDbRoot();
             try (Path path = new Path()) {
                 final long fsStatus = ff.getFileSystemStatus(path.of(rootDir).$());
                 if (fsStatus >= 0 && !(fsStatus == 0 && Os.type == Os.DARWIN && Os.arch == Os.ARCH_AARCH64)) {

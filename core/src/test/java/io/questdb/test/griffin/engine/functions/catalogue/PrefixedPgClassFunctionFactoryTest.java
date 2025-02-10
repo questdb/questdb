@@ -152,7 +152,7 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractCairoTest {
                     Assert.assertFalse(cursor.hasNext());
 
                     try (Path path = new Path()) {
-                        path.of(configuration.getRoot());
+                        path.of(configuration.getDbRoot());
                         path.concat("test").$();
                         Assert.assertEquals(0, TestFilesFacadeImpl.INSTANCE.mkdirs(path, 0));
                     }
@@ -314,7 +314,7 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractCairoTest {
 
                     try (Path path = new Path()) {
                         CharSequence dirName = "test" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
-                        path.of(configuration.getRoot()).concat(dirName).$();
+                        path.of(configuration.getDbRoot()).concat(dirName).$();
                         Assert.assertEquals(0, TestFilesFacadeImpl.INSTANCE.mkdirs(path, 0));
                     }
 

@@ -75,6 +75,11 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     }
 
     @Override
+    public @NotNull String getDbRoot() {
+        return root;
+    }
+
+    @Override
     public Map<String, String> getEnv() {
         return overrides.getEnv();
     }
@@ -119,11 +124,6 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     public int getPartitionPurgeListCapacity() {
         // Bump it to high number so that test doesn't fail with memory leak if LongList re-allocates
         return 512;
-    }
-
-    @Override
-    public @NotNull String getRoot() {
-        return root;
     }
 
     @Override

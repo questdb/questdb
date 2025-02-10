@@ -95,6 +95,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     private final FilesFacade filesFacade;
     private final FactoryProviderFactory fpf;
     private final HttpServerConfigurationWrapper httpServerConfig;
+    private final String installRoot;
     private final LineTcpReceiverConfigurationWrapper lineTcpConfig;
     private final boolean loadAdditionalConfigurations;
     private final Log log;
@@ -105,12 +106,11 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     private final PGWireConfigurationWrapper pgWireConfig;
     private final Properties properties;
     private final Object reloadLock = new Object();
-    private final String root;
     private final AtomicReference<PropServerConfiguration> serverConfig;
     private long version;
 
     public DynamicPropServerConfiguration(
-            String root,
+            String installRoot,
             Properties properties,
             @Nullable Map<String, String> env,
             Log log,
@@ -120,7 +120,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             FactoryProviderFactory fpf,
             boolean loadAdditionalConfigurations
     ) throws ServerConfigurationException, JsonException {
-        this.root = root;
+        this.installRoot = installRoot;
         this.properties = properties;
         this.env = env;
         this.log = log;
@@ -130,7 +130,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
         this.fpf = fpf;
         this.loadAdditionalConfigurations = loadAdditionalConfigurations;
         final PropServerConfiguration serverConfig = new PropServerConfiguration(
-                root,
+                installRoot,
                 properties,
                 dynamicProps,
                 env,
@@ -156,7 +156,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     }
 
     public DynamicPropServerConfiguration(
-            String root,
+            String installRoot,
             Properties properties,
             @Nullable Map<String, String> env,
             Log log,
@@ -166,7 +166,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             FactoryProviderFactory fpf
     ) throws ServerConfigurationException, JsonException {
         this(
-                root,
+                installRoot,
                 properties,
                 env,
                 log,
@@ -179,14 +179,14 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     }
 
     public DynamicPropServerConfiguration(
-            String root,
+            String installRoot,
             Properties properties,
             @Nullable Map<String, String> env,
             Log log,
             BuildInformation buildInformation
     ) throws ServerConfigurationException, JsonException {
         this(
-                root,
+                installRoot,
                 properties,
                 env,
                 log,
@@ -381,7 +381,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
         PropServerConfiguration newConfig;
         try {
             newConfig = new PropServerConfiguration(
-                    root,
+                    installRoot,
                     properties,
                     dynamicProps,
                     env,

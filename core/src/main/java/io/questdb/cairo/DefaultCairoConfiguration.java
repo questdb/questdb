@@ -55,6 +55,7 @@ import io.questdb.std.datetime.millitime.DateFormatUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.io.File;
 import java.util.function.LongSupplier;
 
 public class DefaultCairoConfiguration implements CairoConfiguration {
@@ -64,24 +65,26 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     private final CharSequence confRoot;
     private final long databaseIdHi;
     private final long databaseIdLo;
+    private final String dbRoot;
     private final LongSupplier importIDSupplier = () -> getRandom().nextPositiveLong();
+    private final String installRoot;
     private final CharSequence legacyCheckpointRoot;
-    private final String root;
     private final DefaultTelemetryConfiguration telemetryConfiguration = new DefaultTelemetryConfiguration();
     private final TextConfiguration textConfiguration;
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
     private final boolean writerMixedIOEnabled;
 
-    public DefaultCairoConfiguration(CharSequence root) {
-        this.root = Chars.toString(root);
-        this.confRoot = PropServerConfiguration.rootSubdir(root, PropServerConfiguration.CONFIG_DIRECTORY);
+    public DefaultCairoConfiguration(CharSequence installRoot) {
+        this.installRoot = Chars.toString(installRoot);
+        this.dbRoot = new File(this.installRoot, "db").getAbsolutePath();
+        this.confRoot = PropServerConfiguration.rootSubdir(installRoot, PropServerConfiguration.CONFIG_DIRECTORY);
         this.textConfiguration = new DefaultTextConfiguration(Chars.toString(confRoot));
-        this.checkpointRoot = PropServerConfiguration.rootSubdir(root, TableUtils.CHECKPOINT_DIRECTORY);
-        this.legacyCheckpointRoot = PropServerConfiguration.rootSubdir(root, TableUtils.LEGACY_CHECKPOINT_DIRECTORY);
+        this.checkpointRoot = PropServerConfiguration.rootSubdir(installRoot, TableUtils.CHECKPOINT_DIRECTORY);
+        this.legacyCheckpointRoot = PropServerConfiguration.rootSubdir(installRoot, TableUtils.LEGACY_CHECKPOINT_DIRECTORY);
         Rnd rnd = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
         this.databaseIdLo = rnd.nextLong();
         this.databaseIdHi = rnd.nextLong();
-        this.writerMixedIOEnabled = getFilesFacade().allowMixedIO(root);
+        this.writerMixedIOEnabled = getFilesFacade().allowMixedIO(installRoot);
     }
 
     @Override
@@ -269,6 +272,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public @NotNull String getDbRoot() {
+        return dbRoot;
+    }
+
+    @Override
     public @NotNull DateLocale getDefaultDateLocale() {
         return DateFormatUtils.EN_LOCALE;
     }
@@ -401,6 +409,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getInsertModelPoolCapacity() {
         return 8;
+    }
+
+    @Override
+    public @NotNull String getInstallRoot() {
+        return installRoot;
     }
 
     @Override
@@ -642,11 +655,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getRndFunctionMemoryPageSize() {
         return 8192;
-    }
-
-    @Override
-    public @NotNull String getRoot() {
-        return root;
     }
 
     @Override
