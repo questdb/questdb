@@ -2358,9 +2358,6 @@ public class SqlParser {
 
             model.addPivotColumn(col);
 
-            if (tok != null) {
-
-            }
             if (isForKeyword(tok)) {
                 break;
             } else if (Chars.equals(tok, ",")) {
@@ -2387,37 +2384,56 @@ public class SqlParser {
 
             model.addPivotFor(expr);
 
-            tok = optTok(lexer);
-
-            if (tok == null) {
-                throw SqlException.$(lexer.lastTokenPosition(), "expected `GROUP`");
-            }
+            tok = tok(lexer, "'GROUP' or ','");
 
             if (isGroupKeyword(tok)) {
                 break;
             } else if (Chars.equals(tok, ",")) {
-                tok = optTok(lexer);
+                tok = tok(lexer, "'FOR-IN'");
             } else {
                 lexer.unparseLast();
             }
         }
 
-        if (tok == null || !isGroupKeyword(tok)) {
-            throw SqlException.$(lexer.lastTokenPosition(), "expected `GROUP`");
+        assert isGroupKeyword(tok);
+
+        // parseGroupBy
+        expectBy(lexer);
+        do {
+            tokIncludingLocalBrace(lexer, "literal");
+            lexer.unparseLast();
+            ExpressionNode n = expr(lexer, model, sqlParserCallback, model.getDecls());
+            if (n == null || (n.type != ExpressionNode.LITERAL && n.type != ExpressionNode.CONSTANT && n.type != ExpressionNode.FUNCTION && n.type != ExpressionNode.OPERATION)) {
+                throw SqlException.$(n == null ? lexer.lastTokenPosition() : n.position, "literal expected");
+            }
+
+            model.addGroupBy(n);
+
+            tok = SqlUtil.fetchNext(lexer);
+        } while (tok != null && !Chars.equals(tok, ')') && Chars.equals(tok, ','));
+
+        if (tok == null) {
+            throw SqlException.$(lexer.lastTokenPosition(), "missing ')'");
         }
 
-        tok = parseGroupBy(model, lexer, sqlParserCallback);
-
-        if (tok != null && isOrderKeyword(tok)) {
+        if (isOrderKeyword(tok)) {
             tok = parseOrderBy(model, lexer, sqlParserCallback);
         }
 
-        if (tok != null && isLimitKeyword(tok)) {
+        if (tok == null) {
+            throw SqlException.$(lexer.lastTokenPosition(), "missing ')'");
+        }
+
+        if (isLimitKeyword(tok)) {
             tok = parseLimit(lexer, model, sqlParserCallback);
         }
 
-        if (tok != null && Chars.equals(tok, ")")) {
-            tok = optTok(lexer);
+        if (tok == null) {
+            throw SqlException.$(lexer.lastTokenPosition(), "missing ')'");
+        }
+
+        if (Chars.equals(tok, ")")) {
+            tok = SqlUtil.fetchNext(lexer);
         }
 
         return tok;
@@ -2541,7 +2557,7 @@ public class SqlParser {
 
                 if (tok != null && windowNullsDesc > 0) {
                     CharSequence next = optTok(lexer);
-                    if (next != null && isNullsWord(next)) {
+                    if (next != null && isNullsKeyword(next)) {
                         expectTok(lexer, "over");
                     } else {
                         windowNullsDesc = 0;
@@ -3034,7 +3050,7 @@ public class SqlParser {
         //      FOR month IN (jan, feb, mar, apr, may, jun)
         lexer.unparseLast();
 
-        CharSequence tok = null;
+        CharSequence tok;
         expectTok(lexer, "unpivot");
 
         tok = optTok(lexer);
@@ -3042,6 +3058,16 @@ public class SqlParser {
         // this corrects some issue where UNPIVOT is returned twice by the lexer
         if (tok != null && isUnpivotKeyword(tok)) {
             tok = optTok(lexer);
+        }
+
+        if (tok != null && (isIncludeKeyword(tok) || isExcludeKeyword(tok))) {
+
+            if (isIncludeKeyword(tok)) {
+                model.setUnpivotIncludeNulls(true);
+            }
+
+            expectTok(lexer, "nulls");
+            tok = SqlUtil.fetchNext(lexer);
         }
 
         if (tok == null || !Chars.equals(tok, "(")) {
@@ -3077,12 +3103,13 @@ public class SqlParser {
 
             model.addUnpivotFor(expr);
 
-            tok = optTok(lexer);
+            tok = SqlUtil.fetchNext(lexer);
 
-            if (tok != ")") {
+            if (tok == null || tok != ")") {
                 throw SqlException.$(lexer.lastTokenPosition(), "expected `)`");
             }
         }
+
         return tok;
     }
 

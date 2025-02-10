@@ -6120,6 +6120,7 @@ public class SqlOptimiser implements Mutable {
                         && model.getJoinModels().size() == 1
                         && model.getWhereClause() == null
                         && model.getLatestBy().size() == 0
+                        && model.getUnpivotFor() == null
         ) {
             model = model.getNestedModel();
         }

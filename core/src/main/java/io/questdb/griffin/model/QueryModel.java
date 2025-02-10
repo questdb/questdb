@@ -213,6 +213,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private QueryModel unionModel;
     private @Nullable ObjList<QueryColumn> unpivotColumns = null;
     private @Nullable ObjList<ExpressionNode> unpivotFor = null;
+    private boolean unpivotIncludeNulls = false;
     private QueryModel updateTableModel;
     private TableToken updateTableToken;
     private ExpressionNode whereClause;
@@ -504,6 +505,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         pivotFor = null;
         unpivotColumns = null;
         unpivotFor = null;
+        unpivotIncludeNulls = false;
         allowPropagationOfOrderByAdvice = true;
         decls.clear();
     }
@@ -726,7 +728,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && Objects.equals(pivotColumns, that.pivotColumns)
                 && Objects.equals(pivotFor, that.pivotFor)
                 && Objects.equals(unpivotColumns, that.unpivotColumns)
-                && Objects.equals(unpivotFor, that.unpivotFor);
+                && Objects.equals(unpivotFor, that.unpivotFor)
+                && Objects.equals(unpivotIncludeNulls, that.unpivotIncludeNulls);
     }
 
     public QueryColumn findBottomUpColumnByAst(ExpressionNode node) {
@@ -1042,6 +1045,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return unpivotFor;
     }
 
+    public boolean getUnpivotIncludeNulls() {
+        return unpivotIncludeNulls;
+    }
+
     public ObjList<ExpressionNode> getUpdateExpressions() {
         return updateSetColumns;
     }
@@ -1107,7 +1114,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 isUpdateModel, modelType, updateTableModel,
                 updateTableToken, artificialStar, fillFrom, fillStride, fillTo, fillValues, decls,
                 allowPropagationOfOrderByAdvice,
-                pivotColumns, pivotFor, unpivotColumns, unpivotFor
+                pivotColumns, pivotFor, unpivotColumns, unpivotFor, unpivotIncludeNulls
         );
     }
 
@@ -1522,6 +1529,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setUnionModel(QueryModel unionModel) {
         this.unionModel = unionModel;
+    }
+
+    public void setUnpivotIncludeNulls(boolean b) {
+        unpivotIncludeNulls = b;
     }
 
     public void setUpdateTableToken(TableToken tableName) {
@@ -2060,6 +2071,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
         if (unpivotColumns != null && unpivotColumns.size() > 0) {
             sink.putAscii(" unpivot ");
+            if (unpivotIncludeNulls) {
+                sink.putAscii(" include nulls ");
+            }
             unpivotColumns.toSink(sink);
             sink.putAscii(" for ");
 

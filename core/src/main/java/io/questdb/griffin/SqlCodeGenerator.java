@@ -5887,7 +5887,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             int valueColumnType = -1;
 
             IntIntHashMap passthroughIndicesMap = new IntIntHashMap();
-            
+
             // map from unpivot metadata to base metadata
             IntList unpivotForIndices = new IntList(); // list of base metadata for column positions
             ObjList<CharSequence> unpivotForNames = new ObjList<>(); // list of base metadata for column names
@@ -5945,7 +5945,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             int valueColumnIndex = unpivotMetadata.getColumnCount() - 1;
 
-            return new UnpivotRecordCursorFactory(base, unpivotMetadata, inColumnIndex, valueColumnIndex, unpivotForIndices, unpivotForNames, passthroughIndicesMap);
+            return new UnpivotRecordCursorFactory(base, unpivotMetadata, inColumnIndex, valueColumnIndex, unpivotForIndices, unpivotForNames, passthroughIndicesMap, model.getUnpivotIncludeNulls());
         }
         return base;
     }

@@ -25,7 +25,9 @@
 package io.questdb.griffin.engine;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -36,7 +38,10 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
+import io.questdb.std.Long128;
 import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -45,34 +50,36 @@ import org.jetbrains.annotations.Nullable;
 
 /**
  * UNPIVOTs data i.e rotate columns into rows.
- *
+ * <p>
  * FROM monthly_sales UNPIVOT (
- *     sales
- *     FOR month IN (jan, feb, mar, apr, may, jun)
- *  );
+ * sales
+ * FOR month IN (jan, feb, mar, apr, may, jun)
+ * );
  */
 public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
     private final RecordMetadata baseMetadata;
     private final UnpivotRecordCursor cursor;
-    private final RecordMetadata unpivotMetadata;
     private final int inColumnIndex;
-    private final int valueColumnIndex;
-    private final IntList unpivotForIndices;
     private final IntIntHashMap passthroughIndicesMap;
+    private final IntList unpivotForIndices;
     private final ObjList<CharSequence> unpivotForNames;
+    private final RecordMetadata unpivotMetadata;
+    private final int valueColumnIndex;
+    private final int valueColumnType;
 
-    public UnpivotRecordCursorFactory(RecordCursorFactory base, RecordMetadata unpivotMetadata, int inColumnIndex, int valueColumnIndex, IntList unpivotForIndices, ObjList<CharSequence> unpivotForNames, IntIntHashMap passthroughIndicesMap) {
+    public UnpivotRecordCursorFactory(RecordCursorFactory base, RecordMetadata unpivotMetadata, int inColumnIndex, int valueColumnIndex, IntList unpivotForIndices, ObjList<CharSequence> unpivotForNames, IntIntHashMap passthroughIndicesMap, boolean includeNulls) {
         super(unpivotMetadata);
         this.unpivotMetadata = unpivotMetadata;
         this.baseMetadata = base.getMetadata();
         this.base = base;
         this.inColumnIndex = inColumnIndex;
         this.valueColumnIndex = valueColumnIndex;
+        this.valueColumnType = baseMetadata.getColumnType(valueColumnIndex);
         this.unpivotForIndices = unpivotForIndices;
         this.passthroughIndicesMap = passthroughIndicesMap;
         this.unpivotForNames = unpivotForNames;
-        this.cursor = new UnpivotRecordCursor();
+        this.cursor = new UnpivotRecordCursor(includeNulls);
     }
 
     @Override
@@ -117,85 +124,57 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
         sink.child(base);
     }
 
-    public class UnpivotRecordCursor implements RecordCursor {
-        private RecordCursor baseCursor;
-        private Record baseRecord = null;
-        private final UnpivotRecord unpivotRecord;
-        private int columnPosition = -1;
 
-        public UnpivotRecordCursor() {
-            unpivotRecord = new UnpivotRecord();
-        }
-
-        public void of(SqlExecutionContext executionContext) throws SqlException {
-            this.baseCursor = base.getCursor(executionContext);
-            this.toTop();
-        }
+    private class UnpivotExcludeNullsRecord extends UnpivotRecord {
 
         @Override
-        public void close() {
-            baseCursor.close();
-        }
-
-        @Override
-        public Record getRecord() {
-            return unpivotRecord;
-        }
-
-        @Override
-        public Record getRecordB() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public boolean hasNext() throws DataUnavailableException {
-
-            // if we have no record, we grab one and set column position to 0
-            if (baseRecord == null) {
-                // columnPosition == -1, baseRecord == null is a pairing we assert
-                assert columnPosition == -1;
-
-                if (!baseCursor.hasNext()) {
+        boolean mustSkipUnpivotValueColumn(int col) {
+            int trueColumnIndex = unpivotForIndices.getQuick(cursor.columnPosition);
+            switch (valueColumnType) {
+                case ColumnType.INT:
+                    return baseRecord.getInt(trueColumnIndex) == Numbers.INT_NULL;
+                case ColumnType.LONG:
+                    return baseRecord.getLong(trueColumnIndex) == Numbers.LONG_NULL;
+                case ColumnType.FLOAT:
+                    return Numbers.isNull(baseRecord.getFloat(trueColumnIndex));
+                case ColumnType.DOUBLE:
+                    return Numbers.isNull(baseRecord.getDouble(trueColumnIndex));
+                case ColumnType.IPv4:
+                    return baseRecord.getIPv4(trueColumnIndex) == Numbers.IPv4_NULL;
+                case ColumnType.STRING:
+                    return baseRecord.getStrA(trueColumnIndex) == null;
+                case ColumnType.SYMBOL:
+                    return baseRecord.getSymA(trueColumnIndex) == null;
+                case ColumnType.VARCHAR:
+                    return baseRecord.getVarcharA(trueColumnIndex) == null;
+                case ColumnType.DATE:
+                    return baseRecord.getDate(trueColumnIndex) == Numbers.LONG_NULL;
+                case ColumnType.TIMESTAMP:
+                    return baseRecord.getTimestamp(trueColumnIndex) == Numbers.LONG_NULL;
+                case ColumnType.UUID:
+                    return Long128.isNull(baseRecord.getLong128Lo(trueColumnIndex), baseRecord.getLong128Hi(trueColumnIndex));
+                case ColumnType.BINARY:
+                    return baseRecord.getBin(trueColumnIndex) == null;
+                case ColumnType.LONG256:
+                    return Long256Impl.isNull(baseRecord.getLong256A(trueColumnIndex));
+                case ColumnType.GEOBYTE:
+                    return baseRecord.getGeoByte(trueColumnIndex) == GeoHashes.INT_NULL;
+                case ColumnType.GEOSHORT:
+                    return baseRecord.getGeoShort(trueColumnIndex) == GeoHashes.INT_NULL;
+                case ColumnType.GEOINT:
+                    return baseRecord.getGeoInt(trueColumnIndex) == GeoHashes.INT_NULL;
+                case ColumnType.GEOLONG:
+                    return baseRecord.getGeoLong(trueColumnIndex) == GeoHashes.INT_NULL;
+                default:
                     return false;
-                }
-                // pull the base record
-                baseRecord = baseCursor.getRecord();
-
-                // make it available to our cursor
-                unpivotRecord.of(baseRecord);
-
-                // bump our -1 position to 0, so we are looking at the first column
-                columnPosition++;
-                return true;
-            }
-
-            // on each subsequent call, we shift the column position to the next column we need to unpivot
-            if (columnPosition + 1 < unpivotForIndices.size()) {
-                columnPosition++;
-                return true;
-            } else {
-                // when we have no columns left, we reset the state and call hasNext() again
-                baseRecord = null;
-                columnPosition = -1;
-                return hasNext();
             }
         }
+    }
 
+    private class UnpivotIncludeNullsRecord extends UnpivotRecord {
         @Override
-        public void recordAt(Record record, long atRowId) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public long size() throws DataUnavailableException {
-            return -1;
-        }
-
-        @Override
-        public void toTop() {
-            columnPosition = -1;
-            baseRecord = null;
-            baseCursor.toTop();
+        boolean mustSkipUnpivotValueColumn(int col) {
+            return false;
         }
     }
 
@@ -208,12 +187,8 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
                 the name of the unpivoted column. We look up the name from our names list.
             3. Otherwise, column is a passthrough column. We look up its value in the base record and return it.
      */
-    private class UnpivotRecord implements Record {
+    private abstract class UnpivotRecord implements Record {
         Record baseRecord;
-
-        public void of(Record baseRecord) {
-            this.baseRecord = baseRecord;
-        }
 
         @Override
         public BinarySequence getBin(int col) {
@@ -380,7 +355,6 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
             return baseRecord.getShort(passthroughIndicesMap.get(col));
         }
 
-
         @Override
         public @Nullable CharSequence getStrA(int col) {
             if (col == valueColumnIndex) {
@@ -461,6 +435,113 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
                 return baseRecord.getVarcharSize(unpivotForIndices.getQuick(cursor.columnPosition));
             }
             return baseRecord.getVarcharSize(passthroughIndicesMap.get(col));
+        }
+
+        public void of(Record baseRecord) {
+            this.baseRecord = baseRecord;
+        }
+
+        abstract boolean mustSkipUnpivotValueColumn(int col);
+    }
+
+    public class UnpivotRecordCursor implements RecordCursor {
+        private final UnpivotRecord unpivotRecord;
+        private RecordCursor baseCursor;
+        private Record baseRecord = null;
+        private int columnPosition = -1;
+
+        public UnpivotRecordCursor(boolean includeNulls) {
+            if (includeNulls) {
+                unpivotRecord = new UnpivotIncludeNullsRecord();
+            } else {
+                unpivotRecord = new UnpivotExcludeNullsRecord();
+            }
+        }
+
+        @Override
+        public void close() {
+            baseCursor.close();
+        }
+
+        @Override
+        public Record getRecord() {
+            return unpivotRecord;
+        }
+
+        @Override
+        public Record getRecordB() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean hasNext() throws DataUnavailableException {
+            return getNextRecord();
+        }
+
+        public void of(SqlExecutionContext executionContext) throws SqlException {
+            this.baseCursor = base.getCursor(executionContext);
+            this.toTop();
+        }
+
+        @Override
+        public void recordAt(Record record, long atRowId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long size() throws DataUnavailableException {
+            return -1;
+        }
+
+        @Override
+        public void toTop() {
+            columnPosition = -1;
+            baseRecord = null;
+            baseCursor.toTop();
+        }
+
+        private boolean getNextColumn() {
+            // loop over the columns, checking for nulls
+            while (columnPosition + 1 < unpivotForIndices.size()) {
+                columnPosition++;
+
+                // if we have a non-null column
+                if (!unpivotRecord.mustSkipUnpivotValueColumn(columnPosition)) {
+                    // then we should return to signal we have a valid record
+                    return true;
+                }
+            }
+
+            // otherwise, null out the record, so the outer loop knows to keep iterating
+            baseRecord = null;
+            columnPosition = -1;
+
+            return false;
+        }
+
+        private boolean getNextRecord() {
+            while (true) {
+                // if there is no current record
+                if (baseRecord == null) {
+
+                    // whilst we still have records to read
+                    if (!baseCursor.hasNext()) {
+                        return false;
+                    }
+
+                    // pull the base record out
+                    baseRecord = baseCursor.getRecord();
+
+                    // make it available to our cursor
+                    unpivotRecord.of(baseRecord);
+                }
+
+                // check if there is a valid column
+                if (getNextColumn()) {
+                    // if so, we have found our next output record, so return true
+                    return true;
+                }
+            }
         }
     }
 }
