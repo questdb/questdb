@@ -62,7 +62,7 @@ public class ArrayBuffers implements QuietCloseable {
     /**
      * Validates the buffers and updates the array view.
      */
-    public void updateView(@NotNull ArrayViewImpl view) {
+    public void updateView(@NotNull DirectFlyweightArrayView view) {
         if (shape.size() == 0) {
             view.ofNull();
         } else {
@@ -74,8 +74,8 @@ public class ArrayBuffers implements QuietCloseable {
                     (int) strides.size(),
                     values.ptr(),
                     values.size(),
-                    0,
-                    (short) 0);
+                    0
+            );
         }
     }
 }

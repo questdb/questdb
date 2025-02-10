@@ -24,8 +24,13 @@
 
 package io.questdb.std;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
-import io.questdb.std.str.*;
+import io.questdb.cairo.arr.ArraySink;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.Utf8s;
 
 import java.util.Collections;
 import java.util.List;
@@ -44,18 +49,6 @@ public class Rnd {
 
     public Rnd() {
         reset();
-    }
-
-    public static void main(String[] args) {
-        Rnd rnd = new Rnd();
-        Utf8StringSink utf8sink = new Utf8StringSink();
-        rnd.nextUtf8Str(512, utf8sink);
-
-        StringSink utf16sink = new StringSink();
-        if (!Utf8s.utf8ToUtf16(utf8sink, utf16sink)) {
-            throw new RuntimeException();
-        }
-        System.out.println(utf16sink);
     }
 
     public long getSeed0() {
@@ -117,6 +110,31 @@ public class Rnd {
 
     public double nextDouble() {
         return (((long) (nextIntForDouble(26)) << 27) + nextIntForDouble(27)) * DOUBLE_UNIT;
+    }
+
+    public void nextDoubleArray(int dimCount, ArraySink sink, int nanRate, int maxDimLen) {
+
+        sink.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, dimCount));
+        sink.setOffset(0);
+
+        int size = 1;
+        for (int i = 0; i < dimCount; i++) {
+            int n = nextInt(maxDimLen - 1) + 1;
+            sink.setDimLen(i, n);
+            size *= n;
+        }
+
+        sink.prepareFlatArray();
+
+        for (int i = 0; i < size; i++) {
+            double val;
+            if (nanRate> 0 && nextInt(nanRate) == 1) {
+                val = Double.NaN;
+            } else {
+                val = nextDouble();
+            }
+            sink.putDouble(i, val);
+        }
     }
 
     public float nextFloat() {

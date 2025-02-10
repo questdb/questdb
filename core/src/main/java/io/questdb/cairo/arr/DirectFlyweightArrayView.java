@@ -26,21 +26,19 @@ package io.questdb.cairo.arr;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.std.CRC16XModem;
 import io.questdb.std.DirectIntSlice;
 
 /**
  * A view over an immutable N-dimensional array.
  * This is a flyweight object.
  */
-public class ArrayViewImpl implements ArrayView {
+public class DirectFlyweightArrayView implements ArrayView {
     private final DirectIntSlice shape = new DirectIntSlice();
     private final DirectIntSlice strides = new DirectIntSlice();
     private final ArraySlice values = new ArraySlice();
-    int valuesOffset = 0;
-    private volatile short crc;
     // Encoded array type, contains element type class, type precision, and dimensionality
     private int type = ColumnType.UNDEFINED;
+    private int valuesOffset = 0;
 
     @Override
     public void appendWithDefaultStrides(MemoryA mem) {
@@ -53,34 +51,6 @@ public class ArrayViewImpl implements ArrayView {
 
     public byte getByte(DirectIntSlice coordinates) {
         return values.getByte(flatIndex(coordinates));
-    }
-
-    public short getCrc() {
-        if (isNull()) {
-            return 0;
-        }
-
-        // Compute lazily.
-        if (crc == 0) {
-            // IMPORTANT!!
-            // Keep this logic in sync with the "intrusive"
-            // CRC logic in `ArrayTypeDriver.writeValues`.
-
-            // Add the dimension information first.
-            short checksum = CRC16XModem.updateInt(CRC16XModem.init(), shape.length());
-            for (int dimIndex = 0, nDims = shape.length(); dimIndex < nDims; ++dimIndex) {
-                final int dim = shape.get(dimIndex);
-                checksum = CRC16XModem.updateInt(checksum, dim);
-            }
-
-            // Add the values next.
-            if (!hasDefaultStrides()) {
-                throw new UnsupportedOperationException("nyi");
-            }
-            checksum = CRC16XModem.updateBytes(checksum, values.ptr(), values.size());
-            crc = CRC16XModem.finalize(checksum);
-        }
-        return crc;
     }
 
     @Override
@@ -189,7 +159,6 @@ public class ArrayViewImpl implements ArrayView {
      * @param shapeLength   number of elements
      * @param stridesLength number of elements
      * @param valuesSize    number of bytes
-     * @param crc           the pre-computed CRC16/XModem checksum, or 0 if unavailable.
      */
     public void of(
             int type,
@@ -199,8 +168,7 @@ public class ArrayViewImpl implements ArrayView {
             int stridesLength,
             long valuesPtr,
             int valuesSize,
-            int valuesOffset,
-            short crc
+            int valuesOffset
     ) {
         boolean complete = false;
         try {
@@ -246,7 +214,6 @@ public class ArrayViewImpl implements ArrayView {
         this.strides.reset();
         this.values.reset();
         this.valuesOffset = 0;
-        this.crc = 0;
     }
 
     private static void validateValuesSize(int type, int valuesOffset, int valuesLength, int valuesSize) {

@@ -24,6 +24,7 @@
 
 package io.questdb.test.std;
 
+import io.questdb.cairo.arr.DirectArrayView;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
@@ -46,5 +47,19 @@ public class RndTest extends AbstractTest {
             utf16Sink.clear();
             Assert.assertTrue("generation failed for " + i + " chars", Utf8s.utf8ToUtf16(utf8Sink, utf16Sink));
         }
+    }
+
+    @Test
+    public void testGenerateArray() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Rnd rnd = new Rnd();
+            try (DirectArrayView arrayView = new DirectArrayView()) {
+                for (int i = 0; i < 1000; i++) {
+                    arrayView.clear();
+                    rnd.nextDoubleArray(2, arrayView, 0, 8);
+                    Assert.assertTrue(arrayView.getSize() > 0);
+                }
+            }
+        });
     }
 }

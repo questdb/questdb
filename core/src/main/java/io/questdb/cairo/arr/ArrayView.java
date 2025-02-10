@@ -59,7 +59,7 @@ public interface ArrayView extends ArrayShape {
     long getLongAtFlatIndex(int flatIndex);
 
     /**
-     * Returns the total number of items in this array.
+     * Size of array in bytes, excluding shape prefix.
      */
     int getSize();
 

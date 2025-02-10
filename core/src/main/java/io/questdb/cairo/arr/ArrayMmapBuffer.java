@@ -36,15 +36,15 @@ import static io.questdb.cairo.arr.ArrayTypeDriver.bytesToSkipForAlignment;
 
 public class ArrayMmapBuffer implements QuietCloseable {
     private final DirectIntList strides = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY_DBG3);
-    private final ArrayViewImpl view = new ArrayViewImpl();
-    private @Nullable ArrayViewImpl viewRes = null;  // set to `view` when has value, or `null` otherwise.
+    private final DirectFlyweightArrayView view = new DirectFlyweightArrayView();
+    private @Nullable DirectFlyweightArrayView viewRes = null;  // set to `view` when has value, or `null` otherwise.
 
     @Override
     public void close() {
         Misc.free(strides);
     }
 
-    public ArrayViewImpl getView() {
+    public DirectFlyweightArrayView getView() {
         return viewRes;
     }
 
@@ -96,8 +96,8 @@ public class ArrayMmapBuffer implements QuietCloseable {
                 (int) strides.size(),
                 valuesPtr,
                 valuesSize,
-                0, // No values to skip in the values vec.
-                crc);
+                0 // No values to skip in the values vec.
+        );
         viewRes = view;
         return this;
     }

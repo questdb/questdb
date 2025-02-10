@@ -189,8 +189,10 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            // todo: include nanRate in plan
-            sink.val("rnd_double_array").val('(').val(arrayView.dimensionCount).val(')');
+            sink.val("rnd_double_array").val('(')
+                    .val(arrayView.dimensionCount).val(',')
+                    .val(arrayView.nanRate).val(')')
+                    .val(')');
         }
     }
 }
