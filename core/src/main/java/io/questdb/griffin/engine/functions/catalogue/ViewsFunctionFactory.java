@@ -39,6 +39,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -78,6 +79,8 @@ public class ViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_TABLE_DIR_NAME = COLUMN_VIEW_SQL + 1;
         private static final int COLUMN_INVALIDATION_REASON = COLUMN_TABLE_DIR_NAME + 1;
         private static final int COLUMN_INVALID = COLUMN_INVALIDATION_REASON + 1;
+        private static final int COLUMN_LAST_REFRESH_BASE_TABLE_TXN = COLUMN_INVALID + 1;
+        private static final int COLUMN_LAST_APPLIED_BASE_TABLE_TXN = COLUMN_LAST_REFRESH_BASE_TABLE_TXN + 1;
         private static final RecordMetadata METADATA;
         private final ViewsListCursor cursor = new ViewsListCursor();
 
@@ -134,7 +137,9 @@ public class ViewsFunctionFactory implements FunctionFactory {
                                 viewState.getViewDefinition(),
                                 viewState.getLastRefreshTimestamp(),
                                 viewState.getInvalidationReason(),
-                                viewState.isInvalid()
+                                viewState.isInvalid(),
+                                viewState.getBaseTableSeqTracker(),
+                                viewState.getMatViewSeqTracker()
                         );
                         viewIndex++;
                         return true;
@@ -166,6 +171,8 @@ public class ViewsFunctionFactory implements FunctionFactory {
                 private String invalidationReason;
                 private long lastRefreshTimestamp;
                 private MatViewDefinition viewDefinition;
+                private SeqTxnTracker baseTableSeqTracker;
+                private SeqTxnTracker matViewSeqTracker;
 
                 @Override
                 public boolean getBool(int col) {
@@ -174,10 +181,16 @@ public class ViewsFunctionFactory implements FunctionFactory {
 
                 @Override
                 public long getLong(int col) {
-                    if (col == COLUMN_LAST_REFRESH_TIMESTAMP) {
-                        return lastRefreshTimestamp;
+                    switch (col) {
+                        case COLUMN_LAST_REFRESH_TIMESTAMP:
+                            return lastRefreshTimestamp;
+                        case COLUMN_LAST_REFRESH_BASE_TABLE_TXN:
+                            return matViewSeqTracker == null ? -1 : matViewSeqTracker.getLastRefreshBaseTxn();
+                        case COLUMN_LAST_APPLIED_BASE_TABLE_TXN:
+                            return baseTableSeqTracker == null ? -1 : baseTableSeqTracker.getWriterTxn();
+                        default:
+                            return 0;
                     }
-                    return 0;
                 }
 
                 @Override
@@ -207,12 +220,16 @@ public class ViewsFunctionFactory implements FunctionFactory {
                         MatViewDefinition viewDefinition,
                         long lastRefreshTimestamp,
                         String lastError,
-                        boolean invalid
+                        boolean invalid,
+                        SeqTxnTracker baseTableSeqTracker,
+                        SeqTxnTracker matViewSeqTracker
                 ) {
                     this.viewDefinition = viewDefinition;
                     this.lastRefreshTimestamp = lastRefreshTimestamp;
                     this.invalidationReason = lastError;
                     this.invalid = invalid;
+                    this.baseTableSeqTracker = baseTableSeqTracker;
+                    this.matViewSeqTracker = matViewSeqTracker;
                 }
             }
         }
@@ -226,6 +243,8 @@ public class ViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("view_table_dir_name", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("invalidation_reason", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("invalid", ColumnType.BOOLEAN));
+            metadata.add(new TableColumnMetadata("last_refresh_base_table_txn", ColumnType.LONG));
+            metadata.add(new TableColumnMetadata("last_applied_base_table_txn", ColumnType.LONG));
             METADATA = metadata;
         }
     }

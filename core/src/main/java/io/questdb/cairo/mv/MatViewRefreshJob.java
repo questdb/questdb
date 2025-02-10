@@ -353,8 +353,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 return false;
             }
 
-            final SeqTxnTracker viewSeqTracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
-            rebuilt = rebuildView(state, baseTableToken, viewToken, viewSeqTracker, refreshTriggeredTimestamp);
+            rebuilt = rebuildView(state, baseTableToken, viewToken, refreshTriggeredTimestamp);
         } catch (Throwable th) {
             LOG.error().$("error rebuilding materialized view [view=").$(viewToken).$(", error=").$(th).I$();
             refreshFailState(state, microsecondClock.getTicks(), th.getMessage());
@@ -376,11 +375,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             @NotNull MatViewRefreshState state,
             @NotNull TableToken baseTableToken,
             @NotNull TableToken viewToken,
-            @NotNull SeqTxnTracker viewTxnTracker,
             long refreshTriggeredTimestamp
     ) {
         assert state.isLocked();
 
+        final SeqTxnTracker viewTxnTracker = state.getMatViewSeqTracker();
         final MatViewDefinition viewDef = state.getViewDefinition();
         if (viewDef == null) {
             // The view must have been deleted.
@@ -446,27 +445,21 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
         for (int v = 0, n = childViewSink.size(); v < n; v++) {
             final TableToken viewToken = childViewSink.get(v);
-            final SeqTxnTracker viewSeqTracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
-            final long appliedToViewTxn = viewSeqTracker.getLastRefreshBaseTxn();
-            final long lastBaseQueryableTxn = baseSeqTracker.getWriterTxn();
+            final MatViewRefreshState state = viewGraph.getViewRefreshState(viewToken);
+            if (state != null && !state.isPendingInvalidation() && !state.isInvalid() && !state.isDropped()) {
+                if (!state.tryLock()) {
+                    LOG.debug().$("skipping materialized view refresh, locked by another refresh run [view=").$(viewToken).I$();
+                    continue;
+                }
 
-            if (appliedToViewTxn < 0 || appliedToViewTxn < lastBaseQueryableTxn) {
-                final MatViewRefreshState state = viewGraph.getViewRefreshState(viewToken);
-                if (state != null && !state.isPendingInvalidation() && !state.isInvalid() && !state.isDropped()) {
-                    if (!state.tryLock()) {
-                        LOG.debug().$("skipping materialized view refresh, locked by another refresh run [view=").$(viewToken).I$();
-                        continue;
-                    }
-
-                    try {
-                        refreshed = refreshView(state, baseTableToken, viewToken, viewSeqTracker, appliedToViewTxn, lastBaseQueryableTxn, refreshTriggeredTimestamp);
-                    } catch (Throwable th) {
-                        refreshFailState(state, microsecondClock.getTicks(), th.getMessage());
-                    } finally {
-                        state.unlock();
-                        // Try closing the factory if there was a concurrent drop mat view.
-                        state.tryCloseIfDropped();
-                    }
+                try {
+                    refreshed = refreshView(state, baseTableToken, viewToken, refreshTriggeredTimestamp);
+                } catch (Throwable th) {
+                    refreshFailState(state, microsecondClock.getTicks(), th.getMessage());
+                } finally {
+                    state.unlock();
+                    // Try closing the factory if there was a concurrent drop mat view.
+                    state.tryCloseIfDropped();
                 }
             }
         }
@@ -560,14 +553,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 return false;
             }
 
-            final SeqTxnTracker baseSeqTracker = engine.getTableSequencerAPI().getTxnTracker(baseTableToken);
-            final long lastBaseQueryableTxn = baseSeqTracker.getWriterTxn();
-            final SeqTxnTracker viewSeqTracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
-            final long appliedToParentTxn = viewSeqTracker.getLastRefreshBaseTxn();
-            if (appliedToParentTxn < 0 || appliedToParentTxn < lastBaseQueryableTxn) {
-                return refreshView(state, baseTableToken, viewToken, viewSeqTracker, appliedToParentTxn, lastBaseQueryableTxn, refreshTriggeredTimestamp);
-            }
-            return false;
+            return refreshView(state, baseTableToken, viewToken, refreshTriggeredTimestamp);
         } catch (Throwable th) {
             LOG.error().$("error refreshing materialized view [view=").$(viewToken).$(", error=").$(th).I$();
             refreshFailState(state, microsecondClock.getTicks(), th.getMessage());
@@ -583,12 +569,22 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             @NotNull MatViewRefreshState state,
             @NotNull TableToken baseTableToken,
             @NotNull TableToken viewToken,
-            @NotNull SeqTxnTracker viewTxnTracker,
-            long fromBaseTxn,
-            long toBaseTxn,
             long refreshTriggeredTimestamp
     ) {
         assert state.isLocked();
+
+        final SeqTxnTracker baseSeqTracker = state.getBaseTableSeqTracker();
+        final long lastBaseQueryableTxn = baseSeqTracker.getWriterTxn();
+
+        final SeqTxnTracker viewTxnTracker = state.getMatViewSeqTracker();
+        final long appliedToParentTxn = viewTxnTracker.getLastRefreshBaseTxn();
+
+        if (appliedToParentTxn >= 0 && appliedToParentTxn >= lastBaseQueryableTxn) {
+            return false;
+        }
+
+        long fromBaseTxn = appliedToParentTxn;
+        long toBaseTxn = lastBaseQueryableTxn;
 
         final MatViewDefinition viewDef = state.getViewDefinition();
         if (viewDef == null) {
