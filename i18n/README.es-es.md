@@ -18,6 +18,21 @@
 </p>
 
 <p align="center">
+  الإنجليزية |
+  <a href="./i18n/README.zh-cn.md">简体中文</a> |
+  <a href="./i18n/README.zh-hk.md">繁體中文</a> |
+  <a href="./i18n/README.ar-dz.md">العربية</a> |
+  <a href="./i18n/README.it-it.md">Italiano</a> |
+  <a href="./i18n/README.ua-ua.md">Українська</a> |
+  Español |
+  <a href="./i18n/README.pt.md">Português</a> |
+  <a href="./i18n/README.ja-ja.md">日本語</a> |
+  <a href="./i18n/README.tr-tr.md">Türkçe</a> |
+  <a href="./i18n/README.hn-in.md">हिंदी</a> |
+  <a href="./i18n/README.vi-vn.md">Tiếng Việt</a>
+</p>
+
+<p align="center">
   [English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md) | [Italiano](README.it-it.md) | [Українська](README.ua-ua.md) | Español | [Português](README.pt.md) | [日本語](README.ja-ja.md) | [Türkçe](README.tr-tr.md) | [हिंदी](README.hn-in.md) | [Tiếng Việt](README.vi-vn.md)
 </p>
 
