@@ -118,7 +118,6 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     public static final int CRC16_SHIFT = 48;
     public static final ArrayTypeDriver INSTANCE = new ArrayTypeDriver();
     public static final long OFFSET_MAX = (1L << 48) - 1L;
-    private static final long U32_MASK = 0xFFFFFFFFL;
     private static final ArrayValueAppender VALUE_APPENDER_DOUBLE = ArrayTypeDriver::appendDoubleFromArrayToSink;
     private static final ArrayValueAppender VALUE_APPENDER_LONG = ArrayTypeDriver::appendLongFromArrayToSink;
 
@@ -143,10 +142,14 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
      * Appends a JSON representation of the provided array to the provided character sink.
      */
     public static void arrayToJson(
-            @NotNull ArrayView arrayView,
+            @Nullable ArrayView arrayView,
             @NotNull CharSink<?> sink
     ) {
-        arrayToText(arrayView, 0, 0, sink, resolveAppender(arrayView), '[', ']', "null");
+        if (arrayView == null) {
+            sink.put("null");
+        } else {
+            arrayToText(arrayView, 0, 0, sink, resolveAppender(arrayView), '[', ']', "null");
+        }
     }
 
     /**
@@ -294,7 +297,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     @Override
     public long getDataVectorOffset(long auxMemAddr, long row) {
         final long auxEntry = auxMemAddr + ARRAY_AUX_WIDTH_BYTES * row;
-        return readDataOffset(auxEntry) + readDataSize(auxEntry);
+        return readDataOffset(auxEntry);
     }
 
     @Override
@@ -538,10 +541,6 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
 
     private static long readDataOffset(long auxEntryAddress) {
         return Unsafe.getUnsafe().getLong(auxEntryAddress) & OFFSET_MAX;
-    }
-
-    private static int readDataSize(long auxEntryAddress) {
-        return (int) (Unsafe.getUnsafe().getLong(auxEntryAddress + Long.BYTES) & U32_MASK);
     }
 
     private static int readInt(FilesFacade ff, long fd, long offset) {
