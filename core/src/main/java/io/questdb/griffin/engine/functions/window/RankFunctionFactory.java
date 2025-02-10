@@ -342,7 +342,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         public void initRecordComparator(SqlCodeGenerator sqlGenerator,
                                          RecordMetadata metadata,
                                          ArrayColumnTypes chainTypes,
-                                         IntList OrderIndices,
+                                         IntList orderIndices,
                                          ObjList<ExpressionNode> orderBy,
                                          IntList orderByDirection) throws SqlException {
             if (chainTypes.getColumnCount() == 0) {
@@ -361,10 +361,10 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                 singleRecordSinkA = new SingleRecordSink((long) configuration.getSqlWindowStorePageSize() * configuration.getSqlWindowStoreMaxPages() / 2, MemoryTag.NATIVE_RECORD_CHAIN);
                 singleRecordSinkB = new SingleRecordSink((long) configuration.getSqlWindowStorePageSize() * configuration.getSqlWindowStoreMaxPages() / 2, MemoryTag.NATIVE_RECORD_CHAIN);
             } else {
-                if (OrderIndices == null) {
-                    OrderIndices = sqlGenerator.toOrderIndices(metadata, orderBy, orderByDirection);
+                if (orderIndices == null) {
+                    orderIndices = sqlGenerator.toOrderIndices(metadata, orderBy, orderByDirection);
                 }
-                this.recordComparator = sqlGenerator.getRecordComparatorCompiler().compile(chainTypes, OrderIndices);
+                this.recordComparator = sqlGenerator.getRecordComparatorCompiler().compile(chainTypes, orderIndices);
             }
         }
 

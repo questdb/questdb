@@ -153,9 +153,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
-            if (partitionByRecord != null) {
-                Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext);
-            }
+            Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext);
         }
 
         @Override
