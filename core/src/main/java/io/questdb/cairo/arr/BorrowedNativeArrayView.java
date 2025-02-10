@@ -33,7 +33,7 @@ import io.questdb.std.DirectIntSlice;
  * A view over an immutable N-dimensional array.
  * This is a flyweight object.
  */
-public class ArrayViewImpl implements ArrayView {
+public class BorrowedNativeArrayView implements ArrayView {
     private final DirectIntSlice shape = new DirectIntSlice();
     private final DirectIntSlice strides = new DirectIntSlice();
     private final ArraySlice values = new ArraySlice();
