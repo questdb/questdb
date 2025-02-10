@@ -67,7 +67,7 @@ public class ServerMainWorkStealingTest extends AbstractBootstrapTest {
                 PropertyKey.SHARED_WORKER_NAP_THRESHOLD + "=2",
                 PropertyKey.SHARED_WORKER_SLEEP_THRESHOLD + "=3",
                 PropertyKey.CIRCUIT_BREAKER_THROTTLE + "=5",
-                PropertyKey.QUERY_TIMEOUT_SEC + "=150"
+                PropertyKey.QUERY_TIMEOUT + "=150"
         ));
         dbPath.parent().$();
     }

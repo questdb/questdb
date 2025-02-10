@@ -47,7 +47,7 @@ public class TableWriterPressureControlImpl implements TableWriterPressureContro
     // positive int: holds max parallelism
     // negative int: holds backoff counter
     private int memoryPressureRegulationValue = Integer.MAX_VALUE;
-    private long walBackoffUntilEpochMs = -1;
+    private long walBackoffUntilEpochMs = Long.MIN_VALUE;
 
     public TableWriterPressureControlImpl(int backOffWaiMs, MillisecondClock millisecondClock) {
         this.backOffWaiMs = backOffWaiMs;
@@ -85,7 +85,7 @@ public class TableWriterPressureControlImpl implements TableWriterPressureContro
     @Override
     public boolean onEnoughMemory() {
         maxRecordedInflightPartitions = 1;
-        walBackoffUntilEpochMs = -1;
+        walBackoffUntilEpochMs = Long.MIN_VALUE;
         maxBlockRowCount = Math.max(maxBlockRowCount, maxBlockRowCount * TXN_COUNT_SCALE_UP_FACTOR);
 
         if (memoryPressureRegulationValue == Integer.MAX_VALUE) {
@@ -122,7 +122,7 @@ public class TableWriterPressureControlImpl implements TableWriterPressureContro
             // There was no parallelism and no multi transaction block
             if (memoryPressureRegulationValue <= -5) {
                 // Maximum backoff already tried => fail
-                walBackoffUntilEpochMs = -1;
+                walBackoffUntilEpochMs = Long.MIN_VALUE;
                 return;
             }
             if (memoryPressureRegulationValue > 0) {
@@ -137,7 +137,7 @@ public class TableWriterPressureControlImpl implements TableWriterPressureContro
             return;
         }
         // There was some parallelism, halve max parallelism
-        walBackoffUntilEpochMs = -1;
+        walBackoffUntilEpochMs = Long.MIN_VALUE;
         memoryPressureRegulationValue = maxRecordedInflightPartitions / PARTITION_COUNT_SCALE_DOWN_FACTOR;
         maxRecordedInflightPartitions = 1;
     }
