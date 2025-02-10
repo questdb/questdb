@@ -705,4 +705,6 @@ public interface CairoConfiguration {
     }
 
     boolean useFastAsOfJoin();
+
+    int getWriteBackOffTimeoutOnMemPressureMs();
 }

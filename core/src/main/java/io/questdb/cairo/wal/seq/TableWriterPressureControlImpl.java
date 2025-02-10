@@ -26,7 +26,7 @@ package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.wal.TableWriterPressureControl;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.millitime.MillisecondClockImpl;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 
 // Implements TableWriterPressureControl interface and regulates number of transactions and partitions
 // TableWriter uses when applying wal transactions.
@@ -38,14 +38,21 @@ public class TableWriterPressureControlImpl implements TableWriterPressureContro
     private static final int PARTITION_COUNT_SCALE_UP_FACTOR = 4;
     private static final int TXN_COUNT_SCALE_DOWN_FACTOR = 4;
     private static final int TXN_COUNT_SCALE_UP_FACTOR = 1000;
+    private final int backOffWaiMs;
+    private final MillisecondClock millisecondClock;
     private long inflightBlockRowCount;
     private long inflightTxnCount;
-    private int maxRecordedInflightPartitions = 1;
     private long maxBlockRowCount = Integer.MAX_VALUE;
+    private int maxRecordedInflightPartitions = 1;
     // positive int: holds max parallelism
     // negative int: holds backoff counter
     private int memoryPressureRegulationValue = Integer.MAX_VALUE;
     private long walBackoffUntilEpochMs = -1;
+
+    public TableWriterPressureControlImpl(int backOffWaiMs, MillisecondClock millisecondClock) {
+        this.backOffWaiMs = backOffWaiMs;
+        this.millisecondClock = millisecondClock;
+    }
 
     public long getMaxBlockRowCount() {
         return Math.max(1, maxBlockRowCount);
@@ -125,7 +132,7 @@ public class TableWriterPressureControlImpl implements TableWriterPressureContro
                 // Increase backoff counter
                 memoryPressureRegulationValue--;
             }
-            int delayMillis = MEM_PRESSURE_RND.nextInt(4_000);
+            int delayMillis = 1 + MEM_PRESSURE_RND.nextInt(backOffWaiMs - 1);
             walBackoffUntilEpochMs = getTicks() + delayMillis;
             return;
         }
@@ -136,13 +143,13 @@ public class TableWriterPressureControlImpl implements TableWriterPressureContro
     }
 
     @Override
-    public void updateInflightPartitions(int count) {
-        maxRecordedInflightPartitions = Math.max(maxRecordedInflightPartitions, count);
+    public void setMaxBlockRowCount(int count) {
+        maxBlockRowCount = count;
     }
 
     @Override
-    public void setMaxBlockRowCount(int count) {
-        maxBlockRowCount = count;
+    public void updateInflightPartitions(int count) {
+        maxRecordedInflightPartitions = Math.max(maxRecordedInflightPartitions, count);
     }
 
     @Override
@@ -151,7 +158,7 @@ public class TableWriterPressureControlImpl implements TableWriterPressureContro
         inflightTxnCount = txnCount;
     }
 
-    private static long getTicks() {
-        return MillisecondClockImpl.INSTANCE.getTicks();
+    private long getTicks() {
+        return millisecondClock.getTicks();
     }
 }

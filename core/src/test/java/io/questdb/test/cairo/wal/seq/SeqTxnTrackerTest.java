@@ -29,7 +29,10 @@ import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Test;
 
 import java.util.concurrent.CyclicBarrier;
@@ -46,7 +49,7 @@ public class SeqTxnTrackerTest {
         TestUtils.assertMemoryLeak(() -> {
             final int threads = 4;
 
-            final SeqTxnTracker tracker = new SeqTxnTracker();
+            final SeqTxnTracker tracker = createSeqTracker();
             assertFalse(tracker.isInitialised());
 
             final CyclicBarrier startBarrier = new CyclicBarrier(threads);
@@ -87,7 +90,7 @@ public class SeqTxnTrackerTest {
         TestUtils.assertMemoryLeak(() -> {
             final int threads = 4;
 
-            final SeqTxnTracker tracker = new SeqTxnTracker();
+            final SeqTxnTracker tracker = createSeqTracker();
             tracker.initTxns(1, 1, false);
             assertTrue(tracker.isInitialised());
 
@@ -129,7 +132,7 @@ public class SeqTxnTrackerTest {
         TestUtils.assertMemoryLeak(() -> {
             final int threads = 4;
 
-            final SeqTxnTracker tracker = new SeqTxnTracker();
+            final SeqTxnTracker tracker = createSeqTracker();
             tracker.initTxns(1, 1, false);
             assertTrue(tracker.isInitialised());
 
@@ -167,7 +170,7 @@ public class SeqTxnTrackerTest {
 
     @Test
     public void testMemoryPressureLevels() {
-        final var pressureControl = new TableWriterPressureControlImpl();
+        final var pressureControl = createPressureControl();
         assertEquals("initial memory pressure level", 0, pressureControl.getMemoryPressureLevel());
         pressureControl.updateInflightPartitions(2);
         pressureControl.onOutOfMemory();
@@ -178,7 +181,7 @@ public class SeqTxnTrackerTest {
 
     @Test
     public void testMemoryPressureRegulationEasesOffOnSuccess() {
-        final var pressureControl = new TableWriterPressureControlImpl();
+        final var pressureControl = createPressureControl();
         int expectedParallelism = 16;
         pressureControl.updateInflightPartitions(expectedParallelism);
         pressureControl.onOutOfMemory();
@@ -200,7 +203,7 @@ public class SeqTxnTrackerTest {
 
     @Test
     public void testMemoryPressureRegulationGivesUpEventually() {
-        final var pressureControl = new TableWriterPressureControlImpl();
+        final var pressureControl = createPressureControl();
         int maxFailuresToGiveUp = 10;
 
         for (int i = 0; i < maxFailuresToGiveUp; i++) {
@@ -214,15 +217,30 @@ public class SeqTxnTrackerTest {
 
     @Test
     public void testMemoryPressureRegulationIntroducesBackoff() {
-        final var pressureControl = new TableWriterPressureControlImpl();
+        var fixedClock = new MillisecondClock() {
+            private long time = 0;
+
+            public void advanceTimeBy(long millis) {
+                time += millis;
+            }
+
+            @Override
+            public long getTicks() {
+                return time;
+            }
+        };
+        final var pressureControl = new TableWriterPressureControlImpl(4000, fixedClock);
 
         pressureControl.onOutOfMemory();
         assertFalse(pressureControl.isReadyToProcess());
+
+        fixedClock.advanceTimeBy(4000);
+        assertTrue(pressureControl.isReadyToProcess());
     }
 
     @Test
     public void testMemoryPressureRegulationReducesParallelism() {
-        final var tracker = new TableWriterPressureControlImpl();
+        final var tracker = createPressureControl();
         int expectedParallelism = 16;
         tracker.updateInflightPartitions(expectedParallelism);
         while (true) {
@@ -234,5 +252,15 @@ public class SeqTxnTrackerTest {
             tracker.updateInflightPartitions(expectedParallelism);
             assertEquals(expectedParallelism, tracker.getMemoryPressureRegulationValue());
         }
+    }
+
+    @NotNull
+    private static TableWriterPressureControlImpl createPressureControl() {
+        return new TableWriterPressureControlImpl(4000, MillisecondClockImpl.INSTANCE);
+    }
+
+    @NotNull
+    private static SeqTxnTracker createSeqTracker() {
+        return new SeqTxnTracker(4000, MillisecondClockImpl.INSTANCE);
     }
 }

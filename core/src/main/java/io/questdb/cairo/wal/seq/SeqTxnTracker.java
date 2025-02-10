@@ -27,6 +27,7 @@ package io.questdb.cairo.wal.seq;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.wal.TableWriterPressureControl;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import org.jetbrains.annotations.TestOnly;
 
 public class SeqTxnTracker {
@@ -37,7 +38,11 @@ public class SeqTxnTracker {
     private volatile long dirtyWriterTxn;
     private volatile String errorMessage = "";
     private volatile ErrorTag errorTag = ErrorTag.NONE;
-    private final TableWriterPressureControlImpl pressureControl = new TableWriterPressureControlImpl();
+    private final TableWriterPressureControlImpl pressureControl;
+
+    public SeqTxnTracker(int backOffOnMemPressureMs, MillisecondClock millisecondClock) {
+        this.pressureControl = new TableWriterPressureControlImpl(backOffOnMemPressureMs, millisecondClock);
+    }
 
     @SuppressWarnings("FieldMayBeFinal")
     private volatile long seqTxn = UNINITIALIZED_TXN;
