@@ -1,140 +1,215 @@
 <div align="center">
-  <a href="https://questdb.io/" target="blank"><img alt="QuestDB Logo" src="https://questdb.io/img/questdb-logo-themed.svg" width="305px"/></a>
+  <a href="https://questdb.io/" target="blank">
+    <img alt="Logo QuestDB" src="https://questdb.io/img/questdb-logo-themed.svg" width="305px"/>
+  </a>
 </div>
 <p>&nbsp;</p>
 
 <p align="center">
   <a href="https://slack.questdb.io">
-    <img src="https://slack.questdb.io/badge.svg" alt="QuestDB community Slack channel"/>
+    <img src="https://slack.questdb.io/badge.svg" alt="Kênh Slack cộng đồng QuestDB"/>
   </a>
   <a href="#contribute">
-    <img src="https://img.shields.io/github/contributors/questdb/questdb" alt="QuestDB open source contributors"/>
+    <img src="https://img.shields.io/github/contributors/questdb/questdb" alt="Các đóng góp viên QuestDB"/>
   </a>
   <a href="https://search.maven.org/search?q=g:org.questdb">
-    <img src="https://img.shields.io/maven-central/v/org.questdb/questdb" alt="QuestDB on Apache Maven"/>
+    <img src="https://img.shields.io/maven-central/v/org.questdb/questdb" alt="QuestDB trên Apache Maven"/>
   </a>
 </p>
 
-[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md) | [Italiano](README.it-it.md) | [Українська](README.ua-ua.md) | [Español](README.es-es.md) | [Português](README.pt.md) | [日本語](README.ja-ja.md) | [Türkçe](README.tr-tr.md) | [हिंदी](README.hn-in.md) | Tiếng Việt
+<p align="center">
+  <a href="https://github.com/questdb/questdb">English</a> |
+  <a href="README.zh-cn.md">简体中文</a> |
+  <a href="README.zh-hk.md">繁體中文</a> |
+  <a href="README.ar-dz.md">العربية</a> |
+  <a href="README.it-it.md">Italiano</a> |
+  <a href="README.ua-ua.md">Українська</a> |
+  <a href="README.es-es.md">Español</a> |
+  <a href="README.pt.md">Português</a> |
+  <a href="README.ja-ja.md">日本語</a> |
+  <a href="README.tr-tr.md">Türkçe</a> |
+  <a href="README.hn-in.md">हिंदी</a> |
+  Tiếng Việt
+</p>
 
 # QuestDB
 
-QuestDB là một cơ sở dữ liệu chuỗi thời gian mã nguồn mở, được thiết kế để xử lý lưu lượng dữ liệu lớn và truy vấn SQL nhanh chóng với tính đơn giản trong vận hành.
+QuestDB là cơ sở dữ liệu chuỗi thời gian mã nguồn mở phát triển nhanh nhất, cung cấp **khả năng tiếp nhận dữ liệu với tốc độ cực nhanh và throughput cao** cùng với **truy vấn SQL linh hoạt, có độ trễ thấp**. Toàn bộ codebase hiệu năng cao của QuestDB được xây dựng từ đầu bằng Java, C++ và Rust, không phụ thuộc vào thư viện bên ngoài nào và hoàn toàn không sử dụng bộ thu gom rác.
 
-QuestDB rất phù hợp cho dữ liệu thị trường tài chính, dữ liệu cảm biến IoT, quảng cáo công nghệ và bảng điều khiển thời gian thực. Nó nổi bật với các tập dữ liệu có [độ phức tạp cao](https://questdb.io/glossary/high-cardinality/) và có thể thay thế InfluxDB thông qua việc hỗ trợ giao thức InfluxDB Line.
+Chúng tôi đạt được hiệu suất cao thông qua:
+- Mô hình lưu trữ theo cột (column-oriented storage)
+- Thực thi vector song song
+- Sử dụng các chỉ thị SIMD
+- Các kỹ thuật giảm độ trễ (low-latency)
 
-QuestDB triển khai ANSI SQL với các phần mở rộng SQL chuỗi thời gian. Các phần mở rộng SQL này giúp đơn giản hóa việc lọc và giảm mẫu dữ liệu, hoặc tương quan dữ liệu từ nhiều nguồn bằng cách sử dụng các liên kết quan hệ và chuỗi thời gian.
+Bên cạnh đó, QuestDB còn tối ưu hóa việc sử dụng phần cứng, giúp cấu hình nhanh và vận hành hiệu quả.
 
-Chúng tôi đạt được hiệu suất cao bằng cách áp dụng mô hình lưu trữ hướng cột, thực thi vector song song, các chỉ thị SIMD và các kỹ thuật thấp độ trễ. Toàn bộ mã nguồn được xây dựng từ đầu bằng Java, C++ và [Rust](https://questdb.io/blog/leveraging-rust-in-our-high-performance-java-database/) mà không có phụ thuộc và không có thu gom rác.
+QuestDB triển khai ANSI SQL kèm theo các phần mở rộng (extensions) dành riêng cho dữ liệu chuỗi thời gian.  
+Nhờ đó, việc phân tích, lọc và downsample dữ liệu, cũng như liên kết dữ liệu từ nhiều nguồn qua các phép join (cả quan hệ và theo thời gian) trở nên rất đơn giản.
 
-QuestDB hỗ trợ việc nhập dữ liệu theo luồng không cần xác định cấu trúc bằng cách sử dụng giao thức InfluxDB Line và một REST API cho việc nhập và xuất dữ liệu hàng loạt. Bảng điều khiển SQL Web của QuestDB là một trình chỉnh sửa SQL tương tác giúp dễ dàng nhập dữ liệu CSV. Cuối cùng, QuestDB cũng bao gồm Giao thức Dây Postgres cho các truy vấn chương trình.
+> Bạn đã sẵn sàng chưa? Hãy chuyển đến [Bắt đầu ngay](#bắt-đầu-ngay).
 
-Các công cụ phổ biến tích hợp với QuestDB bao gồm [Apache Kafka](https://questdb.io/docs/third-party-tools/kafka/questdb-kafka/), [Grafana](https://questdb.io/docs/third-party-tools/grafana/),
-[Superset](https://questdb.io/docs/third-party-tools/superset/), [Telegraf](https://questdb.io/docs/third-party-tools/telegraf/) và [Apache Flink](https://questdb.io/docs/third-party-tools/flink/).
+<p>&nbsp;</p>
 
 <div align="center">
-  <a href="https://demo.questdb.io">
-    <img alt="QuestDB Web Console showing a SQL statement and query result" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="600" />
+  <a href="https://demo.questdb.io/">
+    <img alt="QuestDB Web Console hiển thị một câu lệnh SQL và kết quả truy vấn" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="900" />
   </a>
+  <p><em>QuestDB Web Console – nhấn để chạy demo</em></p>
 </div>
+
+<p>&nbsp;</p>
+
+## Lợi ích của QuestDB
+
+QuestDB đặc biệt phù hợp với:
+- Dữ liệu thị trường tài chính
+- Dữ liệu cảm biến IoT có độ phức tạp cao (high cardinality)
+- Bảng điều khiển (dashboard) thời gian thực
+
+Các tính năng nổi bật:
+- SQL với các phần mở rộng dành riêng cho dữ liệu chuỗi thời gian, được tối ưu hóa bằng SIMD
+- Khả năng tiếp nhận dữ liệu nhanh qua giao thức InfluxDB Line
+- Hiệu suất mạnh mẽ, hiệu quả ngay cả trên phần cứng hạn chế
+- Định dạng lưu trữ theo cột (có thể là bản gốc hoặc [Apache Parquet](https://questdb.io/glossary/apache-parquet/)), được phân vùng và sắp xếp theo thời gian
+- Web Console trực quan, phản hồi nhanh để quản lý truy vấn và dữ liệu, với xử lý lỗi tích hợp
+- Hiệu suất xuất sắc ngay cả với dữ liệu có [độ phức tạp cao](https://questdb.io/glossary/high-cardinality/) – xem [benchmark](#questdb-performance-vs-other-oss-databases)
+
+### Tại sao nên sử dụng cơ sở dữ liệu chuỗi thời gian?
+
+Ngoài hiệu suất và tính hiệu quả, việc sử dụng cơ sở dữ liệu chuyên dụng cho chuỗi thời gian giúp bạn không cần lo lắng về:
+- Dữ liệu không theo thứ tự
+- Dữ liệu trùng lặp
+- Quy tắc “chỉ có đúng 1” (exactly one)
+- Dữ liệu streaming (với độ trễ thấp)
+- Số lượng lớn yêu cầu đồng thời
+- Dữ liệu có tính biến động hoặc “burst”
+- Thêm cột mới – bạn có thể thay đổi sơ đồ trong quá trình tiếp nhận dữ liệu
 
 ## Thử QuestDB
 
-Chúng tôi cung cấp một [bản demo trực tuyến](https://demo.questdb.io/) được cung cấp với phiên bản QuestDB mới nhất và các tập dữ liệu mẫu:
+Chúng tôi cung cấp một [demo trực tuyến](https://demo.questdb.io/) được cấu hình với phiên bản QuestDB mới nhất và các tập dữ liệu mẫu:
+- **Trips:** 10 năm dữ liệu chuyến taxi tại NYC với 1,6 tỷ hàng
+- **Trades:** Dữ liệu thị trường tiền điện tử trực tiếp với hơn 30 triệu hàng mỗi tháng
+- **Pos:** Dữ liệu vị trí địa lý của 250.000 tàu duy nhất theo thời gian
 
-- Trips: 10 năm dữ liệu chuyến taxi NYC với 1,6 tỷ hàng
-- Trades: dữ liệu thị trường tiền điện tử trực tiếp với hơn 30 triệu hàng mỗi tháng
-- Pos: vị trí địa lý của 250.000 tàu duy nhất theo thời gian
+Bạn có thể sử dụng các truy vấn mẫu hoặc tự viết truy vấn của riêng bạn!
 
-> Kiểm tra các [bảng điều khiển dữ liệu thị trường thời gian thực tương tác](https://questdb.io/dashboards/crypto/) và [Bảng điều khiển Phân tích dữ liệu Taxi NYC](https://questdb.io/dashboards/taxi/) được cung cấp bởi QuestDB và Grafana.
+_Note: Demo công khai thực hiện truy vấn trên hơn 1,6 tỷ hàng và chạy trên một phiên bản `r6a.12xlarge` với 48 vCPU và 348GB RAM._
 
-| Truy vấn                                                                         | Thời gian thực thi                                                                                                                                                                                      |
-|-------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `SELECT sum(double) FROM trips`                                               | [0.15 giây](<https://demo.questdb.io/?query=SELECT%20sum(trip_distance)%20FROM%20trips;&executeQuery=true>)                                                                                         |
-| `SELECT sum(double), avg(double) FROM trips`                                  | [0.5 giây](<https://demo.questdb.io/?query=SELECT%20sum(fare_amount),%20avg(fare_amount)%20FROM%20trips;&executeQuery=true>)                                                                        |
-| `SELECT avg(double) FROM trips WHERE time in '2019'`                          | [0.02 giây](<https://demo.questdb.io/?query=SELECT%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019%27;&executeQuery=true>)                                             |
-| `SELECT time, avg(double) FROM trips WHERE time in '2019-01-01' SAMPLE BY 1h` | [0.01 giây](<https://demo.questdb.io/?query=SELECT%20pickup_datetime,%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019-01-01%27%20SAMPLE%20BY%201h;&executeQuery=true>) |
-| `SELECT * FROM trades LATEST ON timestamp PARTITION BY symbol`                | [0.00025 giây](https://demo.questdb.io/?query=SELECT%20*%20FROM%20trades%20LATEST%20ON%20timestamp%20PARTITION%20BY%20symbol;&executeQuery=true)                                                    |
+| Truy vấn                                                                         | Thời gian thực thi                                                                                                                                                                                   |
+|----------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `SELECT sum(double) FROM trips`                                                  | [0.15 giây](https://demo.questdb.io/?query=SELECT%20sum(trip_distance)%20FROM%20trips;&executeQuery=true)                                                                                          |
+| `SELECT sum(double), avg(double) FROM trips`                                     | [0.5 giây](https://demo.questdb.io/?query=SELECT%20sum(fare_amount),%20avg(fare_amount)%20FROM%20trips;&executeQuery=true)                                                                              |
+| `SELECT avg(double) FROM trips WHERE time in '2019'`                             | [0.02 giây](https://demo.questdb.io/?query=SELECT%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019%27;&executeQuery=true)                                             |
+| `SELECT time, avg(double) FROM trips WHERE time in '2019-01-01' SAMPLE BY 1h`    | [0.01 giây](https://demo.questdb.io/?query=SELECT%20pickup_datetime,%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019-01-01%27%20SAMPLE%20BY%201h;&executeQuery=true) |
+| `SELECT * FROM trades LATEST ON timestamp PARTITION BY symbol`                   | [0.00025 giây](https://demo.questdb.io/?query=SELECT%20*%20FROM%20trades%20LATEST%20ON%20timestamp%20PARTITION%20BY%20symbol;&executeQuery=true)                                                |
 
-Bản demo của chúng tôi đang chạy trên phiên bản `c5.metal` và sử dụng 24 lõi trong tổng số 96 lõi.
+## QuestDB Performance vs. Other OSS Databases
 
-## Bắt đầu
+QuestDB cho thấy hiệu suất vượt trội trong các bài benchmark so với các cơ sở dữ liệu mã nguồn mở khác.
+
+Để tìm hiểu sâu hơn về nội bộ và hiệu suất, hãy xem các bài blog sau:
+- [QuestDB vs InfluxDB](https://questdb.io/blog/2024/02/26/questdb-versus-influxdb/)
+- [QuestDB vs TimescaleDB](https://questdb.io/blog/timescaledb-vs-questdb-comparison/)
+- [QuestDB vs MongoDB](https://questdb.io/blog/mongodb-time-series-benchmark-review/)
+
+Như mọi khi, chúng tôi khuyến khích bạn tự chạy benchmark của riêng mình.
+
+<div align="center">
+  <img alt="Biểu đồ so sánh tốc độ ingest của QuestDB, InfluxDB và TimescaleDB" src="https://user-images.githubusercontent.com/91843271/197382161-e5f3f5b0-18bf-439a-94e4-83ab4bf91d7c.png" width="600"/>
+</div>
+
+## Bắt đầu ngay
 
 ### Cài đặt QuestDB
 
-Để chạy QuestDB, bạn có thể sử dụng [Docker](https://www.docker.com/) để bắt đầu nhanh chóng:
+Để chạy QuestDB nhanh chóng, bạn có thể sử dụng [Docker](https://www.docker.com/):
 
 ```bash
 docker run -p 9000:9000 -p 9009:9009 -p 8812:8812 questdb/questdb
 ```
 
-người dùng macOS có thể sử dụng Homebrew:
+Người dùng macOS có thể sử dụng Homebrew:
 
 ```bash
 brew install questdb
 brew services start questdb
 
-questdb start // To start questdb
-questdb stop  // To stop questdb
+questdb start   # Khởi chạy QuestDB
+questdb stop    # Dừng QuestDB
 ```
 
-[Trang tải xuống QuestDB](https://questdb.io/get-questdb/) cung cấp các bản tải xuống trực tiếp cho các tệp nhị phân và có thông tin chi tiết về các phương pháp cài đặt và triển khai khác.
+Ngoài ra, để bắt đầu trải nghiệm đầy đủ, hãy xem [Quick Start Guide](https://questdb.io/docs/quick-start/).
 
-### QuestDB Cloud
+### Khách hàng chính thức cho Ingest
 
-QuestDB Cloud là phiên bản được quản lý hoàn toàn của QuestDB, với các tính năng bổ sung như kiểm soát truy cập dựa trên vai trò,
-Sao lưu theo chuẩn Cloud-native, Nén dữ liệu, giám sát và chụp ảnh theo chuẩn Cloud-native.
-[Bắt đầu với $200 tín dụng](https://cloud.questdb.com).
+QuestDB cung cấp các client chính thức để nhập dữ liệu thông qua giao thức InfluxDB Line:
+
+- [Python](https://questdb.io/docs/clients/ingest-python/)
+- [.NET](https://questdb.io/docs/clients/ingest-dotnet/)
+- [C/C++](https://questdb.io/docs/clients/ingest-c-and-cpp/)
+- [Go](https://questdb.io/docs/clients/ingest-go/)
+- [Java](https://questdb.io/docs/clients/java_ilp/)
+- [NodeJS](https://questdb.io/docs/clients/ingest-node/)
+- [Rust](https://questdb.io/docs/clients/ingest-rust/)
 
 ### Kết nối với QuestDB
 
-Bạn có thể tương tác với QuestDB bằng cách sử dụng các giao diện sau:
+Bạn có thể tương tác với QuestDB và dữ liệu của mình thông qua các giao diện sau:
 
-- [Web Console](https://questdb.io/docs/web-console/) để sử dụng trình chỉnh sửa SQL tương tác và nhập CSV trên cổng `9000`
-- [Giao thức dòng InfluxDB](https://questdb.io/docs/reference/api/ilp/overview/) để nhập dữ liệu theo luồng trên cổng `9000`
-- [Giao thức dây PostgreSQL](https://questdb.io/docs/reference/api/postgres/) để truy vấn theo chương trình và chèn giao dịch trên cổng `8812`
-- [REST API](https://questdb.io/docs/reference/api/rest/) để nhập CSV và sử dụng cURL trên cổng `9000`
+- [Web Console](https://questdb.io/docs/web-console/) – trình soạn thảo SQL tương tác và nhập CSV, chạy trên cổng `9000`
+- [InfluxDB Line Protocol](https://questdb.io/docs/reference/api/ilp/overview/) – cho ingest dữ liệu theo luồng trên cổng `9000`
+- [PostgreSQL Wire Protocol](https://questdb.io/docs/reference/api/postgres/) – cho truy vấn lập trình trên cổng `8812`
+- [REST API](https://questdb.io/docs/reference/api/rest/) – cho nhập CSV và sử dụng với cURL trên cổng `9000`
 
-### Chèn dữ liệu
+### Công cụ của bên thứ ba
 
-Dưới đây là các khách hàng chính thức của QuestDB để nhập dữ liệu qua Giao thức Dòng InfluxDB:
+QuestDB tích hợp với nhiều công cụ phổ biến:
 
-- [.NET](https://github.com/questdb/net-questdb-client)
-- [C/C++](https://github.com/questdb/c-questdb-client)
-- [Go](https://pkg.go.dev/github.com/questdb/go-questdb-client)
-- [Java](https://questdb.io/docs/reference/clients/java_ilp/)
-- [NodeJS](https://questdb.github.io/nodejs-questdb-client)
-- [Python](https://py-questdb-client.readthedocs.io/en/latest/)
-- [Rust](https://docs.rs/crate/questdb-rs/latest)
+- [Apache Kafka](https://questdb.io/docs/third-party-tools/kafka/)
+- [Grafana](https://questdb.io/docs/third-party-tools/grafana/)
+- [Superset](https://questdb.io/docs/third-party-tools/superset/)
+- [Telegraf](https://questdb.io/docs/third-party-tools/telegraf/)
+- [Apache Flink](https://questdb.io/docs/third-party-tools/flink/)
+- [qStudio](https://questdb.io/docs/third-party-tools/qstudio/)
+- [MindsDB](https://questdb.io/docs/third-party-tools/mindsdb/)
 
-### Hướng dẫn nhanh từ đầu đến cuối
+### End-to-End Scaffold
 
-Muốn đi qua mọi thứ, từ nhập dữ liệu theo luồng đến trực quan hóa với Grafana? Hãy kiểm tra
-kho lưu trữ [quickstart](https://github.com/questdb/questdb-quickstart) đa đường dẫn của chúng tôi.
+Nếu bạn muốn có một trải nghiệm trọn vẹn – từ ingest dữ liệu theo luồng đến trực quan hóa với Grafana – hãy xem [Quickstart Repository](https://github.com/questdb/questdb-quickstart).
 
-## So sánh QuestDB với các hệ thống cơ sở dữ liệu chuỗi thời gian mã nguồn mở khác
+### Cấu hình QuestDB cho môi trường sản xuất
 
-Xem [bài đăng so sánh](https://questdb.io/blog/2024/02/26/questdb-versus-influxdb/)
-giữa QuestDB và InfluxDB về chức năng, tính chín muối và hiệu suất.
+Tham khảo [Capacity Planning Guide](https://questdb.io/docs/deployment/capacity-planning/) để tối ưu hóa QuestDB cho các tải trọng sản xuất.
 
-<div align="center">
-    <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src=".github/readme-benchmark.png" width="600"/>
-  </a>
-</div>
+### QuestDB Enterprise
 
-## Tài liệu
+Đối với hoạt động an toàn quy mô lớn hoặc trong các tổ chức lớn, QuestDB Enterprise cung cấp các tính năng bổ sung như:
 
-### 📚 Đọc tài liệu
+- Ingest dữ liệu đa chủ
+- Replica đọc
+- Tích hợp với cold storage
+- Kiểm soát truy cập dựa trên vai trò (RBAC)
+- Mã hóa TLS
+- Truy vấn tệp Parquet một cách tự nhiên qua object storage
+- Hỗ trợ SLA, giám sát nâng cao và nhiều hơn nữa
 
-- [Tài liệu QuestDB:](https://questdb.io/docs/introduction/) hiểu cách chạy và cấu hình QuestDB.
-- [Hướng dẫn:](https://questdb.io/tutorial/) tìm hiểu những gì có thể làm được với QuestDB từng bước một.
-- [Lộ trình sản phẩm:](https://github.com/orgs/questdb/projects/1/views/5) xem kế hoạch của chúng tôi cho các phiên bản sắp tới.
+Truy cập [Enterprise page](https://questdb.io/enterprise/) để biết thêm chi tiết và thông tin liên hệ.
 
-### ❓ Nhận hỗ trợ
+## Tài nguyên bổ sung
 
-- [Cộng đồng Slack:](https://slack.questdb.io) tham gia thảo luận kỹ thuật, đặt câu hỏi và gặp gỡ người dùng khác!
-- [Vấn đề GitHub:](https://github.com/questdb/questdb/issues) báo cáo lỗi hoặc vấn đề với QuestDB.
-- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) tìm kiếm các giải pháp sửa lỗi thông thường.
+### 📚 Đọc Tài liệu
+
+- [Tài liệu QuestDB:](https://questdb.io/docs/introduction/) – tìm hiểu cách cài đặt và cấu hình QuestDB.
+- [Tutorials:](https://questdb.io/tutorial/) – khám phá từng bước những gì bạn có thể làm với QuestDB.
+- [Product Roadmap:](https://github.com/orgs/questdb/projects/1/views/5) – xem kế hoạch cho các phiên bản sắp tới.
+
+### ❓ Nhận Hỗ trợ
+
+- [Community Slack:](https://slack.questdb.io) – tham gia các cuộc thảo luận kỹ thuật, đặt câu hỏi và gặp gỡ các người dùng khác!
+- [GitHub Issues:](https://github.com/questdb/questdb/issues) – báo cáo lỗi hoặc vấn đề với QuestDB.
+- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) – tìm các giải pháp cho các vấn đề thường gặp.
 
 ### 🚢 Triển khai QuestDB
 
@@ -146,17 +221,21 @@ giữa QuestDB và InfluxDB về chức năng, tính chín muối và hiệu su�
 
 ## Đóng góp
 
-Chúng tôi hoan nghênh mọi đóng góp cho dự án, bao gồm mã nguồn, tài liệu, báo cáo lỗi, yêu cầu tính năng hoặc phản hồi. Để bắt đầu đóng góp:
+Chúng tôi luôn hoan nghênh mọi đóng góp cho dự án, cho dù đó là mã nguồn, tài liệu, báo cáo lỗi, yêu cầu tính năng hay phản hồi.
 
-- Xem qua các vấn đề trên GitHub được gắn nhãn "[Vấn đề đầu tiên tốt](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)".
-- Đối với Hacktoberfest, xem các [vấn đề được gắn nhãn](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3Ahacktoberfest) tương ứng.
-- Đọc [hướng dẫn đóng góp](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md).
-- Để biết chi tiết về việc xây dựng QuestDB, xem [hướng dẫn xây dựng](https://github.com/questdb/questdb/blob/master/core/README.md).
-- [Tạo một bản sao](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo) của QuestDB và gửi yêu cầu kéo với các thay đổi đề xuất của bạn.
+### Làm thế nào để đóng góp?
 
-✨ Như một dấu hiệu của lòng biết ơn, chúng tôi cũng gửi **quà tặng QuestDB** cho các đóng góp viên của chúng tôi. [Nhận quà của bạn](https://questdb.io/community).
+- Xem qua các issue trên GitHub được gắn nhãn "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)".
+- Đọc [Contribution Guide](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md).
+- Để biết chi tiết về việc xây dựng QuestDB, xem [Build Instructions](https://github.com/questdb/questdb/blob/master/core/README.md).
+- [Tạo một fork](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo) của QuestDB và gửi pull request với các thay đổi của bạn.
+- Nếu gặp khó khăn, hãy tham gia [public Slack](https://slack.questdb.io/) của chúng tôi để nhận được sự hỗ trợ.
 
-Một lời cảm ơn lớn gửi đến những người tuyệt vời sau đây đã đóng góp cho QuestDB: ([khóa biểu tượng](https://allcontributors.org/docs/en/emoji-key)):
+✨ Như một dấu hiệu của lòng biết ơn, chúng tôi cũng gửi **QuestDB swag** cho các đóng góp viên.  
+[Hãy nhận swag của bạn ở đây](https://questdb.io/community).
+
+Một lời cảm ơn lớn gửi đến những người tuyệt vời đã đóng góp cho QuestDB:  
+([emoji key](https://allcontributors.org/docs/en/emoji-key)).
 
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
 <!-- prettier-ignore-start -->
@@ -311,6 +390,6 @@ Một lời cảm ơn lớn gửi đến những người tuyệt vời sau đâ
 
 <!-- ALL-CONTRIBUTORS-LIST:END -->
 
-Dự án này tuân thủ theo
-[tất cả những người đóng góp](https://github.com/all-contributors/all-contributors)
-quy định. Mọi đóng góp đều được hoan nghênh!
+
+Dự án này tuân thủ theo thông số [all‑contributors](https://github.com/all-contributors/all-contributors).  
+Mọi hình thức đóng góp đều được hoan nghênh!

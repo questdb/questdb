@@ -1,70 +1,131 @@
 <div align="center">
-  <a href="https://questdb.io/" target="blank"><img alt="QuestDB Logo" src="https://questdb.io/img/questdb-logo-themed.svg" width="305px"/></a>
+  <a href="https://questdb.io/" target="blank">
+    <img alt="QuestDB Logosu" src="https://questdb.io/img/questdb-logo-themed.svg" width="305px"/>
+  </a>
 </div>
 <p>&nbsp;</p>
 
 <p align="center">
   <a href="https://slack.questdb.io">
-    <img src="https://slack.questdb.io/badge.svg" alt="QuestDB community Slack channel"/>
+    <img src="https://slack.questdb.io/badge.svg" alt="QuestDB topluluk Slack kanalı"/>
   </a>
   <a href="#contribute">
-    <img src="https://img.shields.io/github/contributors/questdb/questdb" alt="QuestDB open source contributors"/>
+    <img src="https://img.shields.io/github/contributors/questdb/questdb" alt="QuestDB açık kaynak katkıda bulunanlar"/>
   </a>
   <a href="https://search.maven.org/search?q=g:org.questdb">
-    <img src="https://img.shields.io/maven-central/v/org.questdb/questdb" alt="QuestDB on Apache Maven"/>
+    <img src="https://img.shields.io/maven-central/v/org.questdb/questdb" alt="QuestDB Apache Maven'da"/>
   </a>
 </p>
 
-[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md) | [Italiano](README.it-it.md) | [Українська](README.ua-ua.md) | [Español](README.es-es.md) | [Português](README.pt.md) | [日本語](README.ja-ja.md) |
-Türkçe | [हिंदी](README.hn-in.md) | [Tiếng Việt](README.vi-vn.md)
+<p align="center">
+  <a href="https://github.com/questdb/questdb">English</a> |
+  <a href="README.zh-cn.md">简体中文</a> |
+  <a href="README.zh-hk.md">繁體中文</a> |
+  <a href="README.ar-dz.md">العربية</a> |
+  <a href="README.it-it.md">Italiano</a> |
+  <a href="README.ua-ua.md">Українська</a> |
+  <a href="README.es-es.md">Español</a> |
+  <a href="README.pt.md">Português</a> |
+  <a href="README.ja-ja.md">日本語</a> |
+  Türkçe |
+  <a href="README.hn-in.md">हिंदी</a> |
+  <a href="README.vi-vn.md">Tiếng Việt</a>
+</p>
 
 # QuestDB
 
-QuestDB yüksek aktarım verimliliği gösteren, hızlı ve basit SQL sorguları sunan açık kaynak kodlu
-bir [time-series database](https://questdb.io/glossary/time-series-database/) 'dir.
-Bu database InfluxDB line protokolünü, PostgreSQL wire protokolünü ve toplu import-export işlemleri için
-bir REST API kullanarak schema-agnostic veri aktarımını destekler.
+QuestDB, yüksek aktarım verimliliği ile veri alımını ve dinamik, düşük gecikmeli SQL sorgularını sunan en hızlı büyüyen açık kaynaklı zaman serisi veritabanıdır.  
+Bu yüksek performanslı kod tabanı, Java, C++ ve Rust dillerinde sıfırdan inşa edilmiş olup, hiçbir dış bağımlılığı yoktur ve çöp toplama (garbage collection) gerçekleşmez.
 
-QuestDB finansal piyasa verileri, uygulama metrikleri, sensör verileri, real-time analizler,
-kontrol panelleri ve altyapı izleme araçları için iyi bir şekilde donanımlandırılmıştır.
+Yüksek performansı şu yöntemlerle sağlıyoruz:
+- Sütun tabanlı depolama modeli,
+- Paralel vektör yürütme,
+- SIMD talimatları,
+- Düşük gecikmeli (low-latency) teknikler.
 
-QuestDB, ANSI SQL'i yerel time-series SQL uzantılarıyla uygular. Bu SQL uzantıları,
-ilişkisel ve time-series olan join'leri kullanarak birden çok kaynaktan gelen
-verileri ilişkilendirmeyi basitleştirir.
-Column-oriented bir depolama modeli, parallelized vektör yürütme,
-SIMD talimatları ve düşük gecikmeli teknikler benimseyerek yüksek performans elde ediyoruz.
-Tüm kod temeli sıfırdan Java ve C++ ile hiçbir bağımlılık kullanmadan
-ve garbage collection olmadan oluşturulmuştur.
+Ayrıca, QuestDB donanımı verimli kullanır; kurulumu hızlıdır ve operasyonel verimlilik sağlar.
+
+QuestDB, yerel zaman serisi SQL uzantılarıyla ANSI SQL’i uygular.  
+Bu SQL uzantıları, birden fazla kaynaktan gelen verilerin ilişkisel ve zaman serisi join'leri kullanılarak kolayca analiz, filtreleme ve downsampling yapılmasını sağlar.
+
+> Hazır mısınız? [Başlayın](#başlayın) bölümüne geçin.
+
+<p>&nbsp;</p>
 
 <div align="center">
-  <a href="https://demo.questdb.io">
-    <img alt="QuestDB Web Console showing a SQL statement and query result" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="600" />
+  <a href="https://demo.questdb.io/">
+    <img alt="QuestDB Web Konsolu, SQL ifadesi ve sorgu sonucunu gösteriyor" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="900" />
   </a>
+  <p><em>QuestDB Web Konsolu – Demo başlatmak için tıklayın</em></p>
 </div>
 
-## QuestDB' yi Dene
+<p>&nbsp;</p>
 
-QuestDB'nin son sürümünü [canlı demo](https://demo.questdb.io/) ve örnek veri setleri ile birlikte sunuyoruz:
+## QuestDB'nin Avantajları
 
-- Trips: 1.6 milyar satır ile NYC taksi'nin 10 yıllık yolculukları
-- Trades: Her ay 30M+ satır ile canlı kripto piyasa verisi
-- Pos: 250 bin tane benzersiz geminin coğrafi konumu
+QuestDB şu alanlarda öne çıkar:
+- Finansal piyasa verileri,
+- Yüksek kardinaliteli IoT sensör verileri,
+- Gerçek zamanlı panolar (dashboard).
 
-| Sorgu                                                                         | Çalışma Süresi                                                                                                                                                                                      |
-|-------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `SELECT sum(double) FROM trips`                                               | [0.15 secs](<https://demo.questdb.io/?query=SELECT%20sum(trip_distance)%20FROM%20trips;&executeQuery=true>)                                                                                         |
-| `SELECT sum(double), avg(double) FROM trips`                                  | [0.5 secs](<https://demo.questdb.io/?query=SELECT%20sum(fare_amount),%20avg(fare_amount)%20FROM%20trips;&executeQuery=true>)                                                                        |
-| `SELECT avg(double) FROM trips WHERE time in '2019'`                          | [0.02 secs](<https://demo.questdb.io/?query=SELECT%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019%27;&executeQuery=true>)                                             |
-| `SELECT time, avg(double) FROM trips WHERE time in '2019-01-01' SAMPLE BY 1h` | [0.01 secs](<https://demo.questdb.io/?query=SELECT%20pickup_datetime,%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019-01-01%27%20SAMPLE%20BY%201h;&executeQuery=true>) |
-| `SELECT * FROM trades LATEST ON timestamp PARTITION BY symbol`                | [0.00025 secs](https://demo.questdb.io/?query=SELECT%20*%20FROM%20trades%20LATEST%20ON%20timestamp%20PARTITION%20BY%20symbol;&executeQuery=true)                                                    |
+Başlıca özellikler:
+- Güçlü, SIMD ile optimize edilmiş zaman serisi uzantılarıyla SQL,
+- InfluxDB Line Protocol kullanılarak yüksek hızlı veri alımı,
+- Sınırlı donanım üzerinde bile güçlü ve verimli performans,
+- Zaman bazlı bölümlendirilmiş ve sıralanmış (native veya [Apache Parquet](https://questdb.io/glossary/apache-parquet/)) sütun tabanlı depolama formatı,
+- Hata yönetimi özelliklerine sahip, sezgisel ve hızlı Web Konsol,
+- [Yüksek kardinalite](https://questdb.io/glossary/high-cardinality/) durumlarında bile üstün performans – [benchmarks'a bakın](#questdb-performance-vs-other-oss-databases).
 
-Demomuz `c5.metal` bulut sunucusu örneği üzerinde çalışıyor ve 96 çekirdekten sadece 24' ünü kullanıyor.
+### Neden Zaman Serisi Veritabanı Kullanmalıyız?
 
-## Başlarken
+Performans ve verimliliğin yanı sıra, zaman serisi veritabanı kullanmanın avantajları:
+- Verilerin sıralı olmaması sorunu,
+- Yinelenen verilerle uğraşmamak,
+- "Tam olarak bir" (exactly one) semantiği konusundaki endişelerin olmaması,
+- Düşük gecikmeli streaming veri,
+- Çok sayıda eş zamanlı isteğe rağmen performansın korunması,
+- Ani veri artışlarından (bursty data) etkilenmeme,
+- Veri akışı sırasında şema değişikliklerine izin verilmesi.
 
-### QuestDB'yi Yükle
+## QuestDB'yi Deneyin – Demo ve Panolar
 
-QuestDB'yi hızlıca çalıştırmak için Docker kullanılabilir:
+En son QuestDB sürümü ve örnek veri setleriyle donatılmış [canlı demo](https://demo.questdb.io/) sunuyoruz:
+- **Trips:** NYC taksi yolculuklarına ait 10 yıllık, 1.6 milyar satırlık veri
+- **Trades:** Her ay 30 milyon satırdan fazla canlı kripto para piyasası verisi
+- **Pos:** Zaman içinde 250 bin benzersiz geminin coğrafi konumları
+
+Örnek sorguları çalıştırabilir veya kendi sorgularınızı yazabilirsiniz!
+
+_Not: Canlı demo, 1.6 milyardan fazla satır üzerinde sorgu yapar ve 48 vCPU ile 348GB RAM'e sahip `r6a.12xlarge` örneği kullanır._
+
+| Sorgu                                                                         | Çalışma Süresi                                                                                                                                                                                 |
+|-------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `SELECT sum(double) FROM trips`                                               | [0.15 secs](https://demo.questdb.io/?query=SELECT%20sum(trip_distance)%20FROM%20trips;&executeQuery=true)                                                                                        |
+| `SELECT sum(double), avg(double) FROM trips`                                  | [0.5 secs](https://demo.questdb.io/?query=SELECT%20sum(fare_amount),%20avg(fare_amount)%20FROM%20trips;&executeQuery=true)                                                                          |
+| `SELECT avg(double) FROM trips WHERE time in '2019'`                          | [0.02 secs](https://demo.questdb.io/?query=SELECT%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019%27;&executeQuery=true)                                         |
+| `SELECT time, avg(double) FROM trips WHERE time in '2019-01-01' SAMPLE BY 1h` | [0.01 secs](https://demo.questdb.io/?query=SELECT%20pickup_datetime,%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019-01-01%27%20SAMPLE%20BY%201h;&executeQuery=true) |
+| `SELECT * FROM trades LATEST ON timestamp PARTITION BY symbol`                | [0.00025 secs](https://demo.questdb.io/?query=SELECT%20*%20FROM%20trades%20LATEST%20ON%20timestamp%20PARTITION%20BY%20symbol;&executeQuery=true)                                            |
+
+## QuestDB Performance vs. Other OSS Databases
+
+QuestDB, diğer açık kaynaklı veritabanları ile yapılan benchmark'larda üstün performans sergilemektedir.
+
+Detaylı bilgi ve performans makaleleri:
+- [QuestDB vs InfluxDB](https://questdb.io/blog/2024/02/26/questdb-versus-influxdb/)
+- [QuestDB vs TimescaleDB](https://questdb.io/blog/timescaledb-vs-questdb-comparison/)
+- [QuestDB vs MongoDB](https://questdb.io/blog/mongodb-time-series-benchmark-review/)
+
+Her zaman olduğu gibi, kendi benchmark'larınızı çalıştırmanızı öneririz.
+
+<div align="center">
+  <img alt="QuestDB, InfluxDB ve TimescaleDB’nin veri alım hızlarını karşılaştıran grafik" src="https://user-images.githubusercontent.com/91843271/197382161-e5f3f5b0-18bf-439a-94e4-83ab4bf91d7c.png" width="600"/>
+</div>
+
+## Başlayın
+
+### QuestDB'yi Kurun
+
+QuestDB'yi hızlıca çalıştırmak için [Docker](https://www.docker.com/) kullanılabilir:
 
 ```bash
 docker run -p 9000:9000 -p 9009:9009 -p 8812:8812 questdb/questdb
@@ -76,101 +137,106 @@ macOS kullanıcıları Homebrew kullanabilir:
 brew install questdb
 brew services start questdb
 
-questdb start // To start questdb
-questdb stop  // To stop questdb
+questdb start   # QuestDB'yi başlatır
+questdb stop    # QuestDB'yi durdurur
 ```
 
-[QuestDB download sayfası](https://questdb.io/get-questdb/) binary dosyalar için
-direkt indirme sağlar. Ayrıca diğer kurulum ve dağıtım yöntemleri için detayları barındırır.
+Üstelik, tam bir onboarding deneyimi için [Quick Start Guide](https://questdb.io/docs/quick-start/) sayfamızı inceleyin.
 
-### QuestDB'ye Bağlan
+### Resmi Ingest Client'lar
 
-Aşağıdaki arayüzleri kullanarak QuestDB ile etkileşime geçebilirsiniz:
+QuestDB, InfluxDB Line Protocol kullanarak veri alımı yapmak için resmi client'lar sunar:
 
-- [Web Console](https://questdb.io/docs/develop/web-console/) `9000` portunda
-  etkileşimli SQl editörü
-- [InfluxDB line protocol](https://questdb.io/docs/reference/api/influxdb/) `9009`
-  portunda yüksek verimli veri aktarımı
-- [REST API](https://questdb.io/docs/reference/api/rest/) `9000` portunda
-- [PostgreSQL wire protocol](https://questdb.io/docs/reference/api/postgres/) `8812`
-  portunda
+- [Python](https://questdb.io/docs/clients/ingest-python/)
+- [.NET](https://questdb.io/docs/clients/ingest-dotnet/)
+- [C/C++](https://questdb.io/docs/clients/ingest-c-and-cpp/)
+- [Go](https://questdb.io/docs/clients/ingest-go/)
+- [Java](https://questdb.io/docs/clients/java_ilp/)
+- [NodeJS](https://questdb.io/docs/clients/ingest-node/)
+- [Rust](https://questdb.io/docs/clients/ingest-rust/)
 
-### Veri ekleyin
+### QuestDB'ye Bağlanın
 
-Aşağıda popüler programlama diller için resmi
-questdb istemcilerimizi bulabilirsiniz:
+Aşağıdaki arayüzleri kullanarak QuestDB ve verilerinizle etkileşime geçebilirsiniz:
 
-- [.NET](https://github.com/questdb/net-questdb-client)
-- [C/C++](https://github.com/questdb/c-questdb-client)
-- [Go](https://pkg.go.dev/github.com/questdb/go-questdb-client)
-- [Java](https://questdb.io/docs/reference/clients/java_ilp/)
-- [NodeJS](https://questdb.github.io/nodejs-questdb-client)
-- [Python](https://py-questdb-client.readthedocs.io/en/latest/)
-- [Rust](https://docs.rs/crate/questdb-rs/latest)
+- Port `9000` üzerinde çalışan [Web Console](https://questdb.io/docs/web-console/) – İnteraktif SQL editörü ve CSV içe aktarma
+- Port `9000` üzerinde streaming veri alımı için [InfluxDB Line Protocol](https://questdb.io/docs/reference/api/ilp/overview/)
+- Port `8812` üzerinde programatik sorgular için [PostgreSQL Wire Protocol](https://questdb.io/docs/reference/api/postgres/)
+- Port `9000` üzerinde CSV içe aktarma ve cURL kullanımı için [REST API](https://questdb.io/docs/reference/api/rest/)
 
-## QuestDB'nin diğer açık kaynak kodlu TSDB'ler ile karşılaştırması
+### Üçüncü Taraf Araçlar
 
-[Bu makale](https://questdb.io/blog/2021/07/05/comparing-questdb-timescaledb-influxdb/)
-QuestDB'yi işlevsellik, olgunluk ve performansı kapsamında diğer açık kaynak kodlu time series veri tabanları
-ile karşılaştırmaktadır.
+QuestDB, aşağıdaki popüler araçlarla entegre çalışır:
 
-32 çekirdekli CPU ve 64 GB RAM ile 6-16 thread `yalnızca cpu` kullanılarak yüksek kardinaliteli
-[Time Series Benchmark Suite](https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/)
-sonuçları:
+- [Apache Kafka](https://questdb.io/docs/third-party-tools/kafka/)
+- [Grafana](https://questdb.io/docs/third-party-tools/grafana/)
+- [Superset](https://questdb.io/docs/third-party-tools/superset/)
+- [Telegraf](https://questdb.io/docs/third-party-tools/telegraf/)
+- [Apache Flink](https://questdb.io/docs/third-party-tools/flink/)
+- [qStudio](https://questdb.io/docs/third-party-tools/qstudio/)
+- [MindsDB](https://questdb.io/docs/third-party-tools/mindsdb/)
 
-<div align="center">
-    <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src="https://user-images.githubusercontent.com/91843271/197382161-e5f3f5b0-18bf-439a-94e4-83ab4bf91d7c.png" width="600"/>
-  </a>
-</div>
+### End-to-End Scaffold
 
-## Kaynaklar
+Veri akışından Grafana ile görselleştirmeye kadar tüm süreci deneyimlemek için lütfen [Quickstart Repository](https://github.com/questdb/questdb-quickstart)'ımıza göz atın.
 
-### 📚 Dokümanları okuyun
+### Üretim Ortamı İçin QuestDB'yi Yapılandırın
 
-- [QuestDB dokümantasyon:](https://questdb.io/docs/introduction/) QuestDB'nin
-  nasıl çalıştıracağını ve yapılandırılacağını anlayın.
-- [Tutorials:](https://questdb.io/tutorial/) QuestDB ile nelerin
-  mümkün olduğunu adım adım öğrenin.
-- [Ürün roadmap:](https://github.com/questdb/questdb/projects) Yeni gelecek sürümler
-  için planımıza göz atın.
+QuestDB'yi üretim ortamı için optimize etmek amacıyla, [Capacity Planning](https://questdb.io/docs/deployment/capacity-planning/) kılavuzumuzu inceleyin.
 
-### ❓ Destek alın
+### QuestDB Enterprise
 
-- [Slack Topluluğu:](https://slack.questdb.io) tekniksel tartışmalara katılın
-  sorular sorun ve diğer kullanıcılar ile tanışın!
-- [GitHub issues:](https://github.com/questdb/questdb/issues) QuestDB ile ilgili
-  bug ve sorunları rapor edin.
-- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) yaygın sorun
-  giderme çözümlerini arayın.
+Daha büyük ölçekli operasyonlar veya büyük kuruluşlar için, QuestDB Enterprise ek özellikler sunar:
 
-### 🚢 QuestDB'yi hazır edin
+- Çoklu birincil veri alımı
+- Okuma replikaları
+- Soğuk depolama entegrasyonu
+- Rol tabanlı erişim kontrolü
+- TLS şifrelemesi
+- Object storage üzerinden Parquet dosyalarına yerel sorgulama
+- SLA desteği, gelişmiş izleme ve daha fazlası
+
+Detaylar ve iletişim için [Enterprise sayfasını](https://questdb.io/enterprise/) ziyaret edin.
+
+## Ek Kaynaklar
+
+### 📚 Dokümantasyonu Okuyun
+
+- [QuestDB Dokümantasyonu:](https://questdb.io/docs/introduction/) QuestDB'yi nasıl çalıştıracağınızı ve yapılandıracağınızı öğrenin.
+- [Tutorials:](https://questdb.io/tutorial/) QuestDB ile neler yapabileceğinizi adım adım keşfedin.
+- [Ürün Roadmap'i:](https://github.com/questdb/questdb/projects) Yaklaşan sürümler için planlarımızı görün.
+
+### ❓ Destek Alın
+
+- [Community Slack:](https://slack.questdb.io) Teknik tartışmalara katılın, soru sorun ve diğer kullanıcılarla tanışın!
+- [GitHub Issues:](https://github.com/questdb/questdb/issues) QuestDB ile ilgili hataları veya sorunları rapor edin.
+- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) Yaygın hata giderme çözümlerini bulun.
+
+### 🚢 QuestDB'yi Dağıtın
 
 - [AWS AMI](https://questdb.io/docs/guides/aws-official-ami)
 - [Google Cloud Platform](https://questdb.io/docs/guides/google-cloud-platform)
-- [Official Docker image](https://questdb.io/docs/get-started/docker)
-- [DigitalOcean droplets](https://questdb.io/docs/guides/digitalocean)
-- [Kubernetes Helm charts](https://questdb.io/docs/guides/kubernetes)
+- [Resmi Docker İmajı](https://questdb.io/docs/get-started/docker)
+- [DigitalOcean Droplets](https://questdb.io/docs/guides/digitalocean)
+- [Kubernetes Helm Charts](https://questdb.io/docs/guides/kubernetes)
 
-## Katkıda bulunun
+## Katkıda Bulunun
 
-Kaynak kod eklemeleri, dokümantasyon, bug raporlamaları, yeni özellik istekleri ya da
-geri bildirimler olsun her zaman katkıda bulunmanızdan mutluluk duyarız. Katkıda bulunmaya
-başlamak için:
+Projeye katkıda bulunmak (ister kod, ister dokümantasyon, ister hata raporları, ister yeni özellik istekleri ya da geri bildirim) her zaman memnuniyetle karşılanır.
 
-- "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)"
-  etiketli GitHub sorunlarına göz atın.
-- [Katkıda bulunma rehberini](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md) okuyun.
-- QuestDb'yi build etmenin detaylarına ulaşmak için
-  [build talimatlarına](https://github.com/questdb/questdb/blob/master/core/README.md) bakın.
-- [Projeyi fork edin](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo) ve önerilen
-  değişikliklerle
-  birlikte bir pull request gönderin.
+### Katkıda Bulunmaya Başlamak İçin:
 
-✨ Minnettarlığımızın bir göstergesi olarak, katkıda bulunanlara QuestDB özel ürünlerini
-hediye olarak gönderiyoruz. [Hediyenizi burdan alın.](https://questdb.io/community)
+- GitHub'da "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)" etiketiyle işaretlenmiş sorunlara göz atın.
+- [Katkıda Bulunma Kılavuzunu](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md) okuyun.
+- QuestDB'nin derlenmesi, paketlenmesi ve kurulumu ile ilgili detaylar için [Build Instructions](https://github.com/questdb/questdb/blob/master/core/README.md)'a bakın.
+- QuestDB'nin [fork'unu oluşturun](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo) ve önerdiğiniz değişikliklerle bir pull request gönderin.
+- Yardıma ihtiyacınız olursa, lütfen [public Slack](https://slack.questdb.io/) kanalına katılın.
 
-QuestDB'ye katkıda bulunan aşağıdaki harika insanlara
-çok büyük teşekkürler: ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
+✨ Minnettarlığımızın bir göstergesi olarak, katkıda bulunanlara **QuestDB swag** gönderiyoruz.  
+[Swag'inizi buradan talep edin](https://questdb.io/community).
+
+QuestDB'ye katkıda bulunan aşağıdaki harika kişilere çok teşekkür ederiz:  
+([emoji key](https://allcontributors.org/docs/en/emoji-key)).
 
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
 <!-- prettier-ignore-start -->
@@ -325,5 +391,5 @@ QuestDB'ye katkıda bulunan aşağıdaki harika insanlara
 
 <!-- ALL-CONTRIBUTORS-LIST:END -->
 
-Bu proje, [tüm katkıda bulunanların](https://github.com/all-contributors/all-contributors)
-belirtilmesine uygundur. Her türlü katkıya açığız!
+Bu proje, [all‑contributors](https://github.com/all-contributors/all-contributors) spesifikasyonunu takip eder.  
+Her türlü katkı memnuniyetle karşılanır!
