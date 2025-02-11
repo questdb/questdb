@@ -128,7 +128,7 @@ public class Rnd {
 
         for (int i = 0; i < size; i++) {
             double val;
-            if (nanRate> 0 && nextInt(nanRate) == 1) {
+            if (nanRate > 0 && nextInt(nanRate) == 1) {
                 val = Double.NaN;
             } else {
                 val = nextDouble();
@@ -186,6 +186,31 @@ public class Rnd {
         s0 = l0;
         l1 ^= l1 << 23;
         return (s1 = l1 ^ l0 ^ (l1 >> 17) ^ (l0 >> 26)) + l0;
+    }
+
+    public void nextLongArray(int dimCount, ArraySink sink, int nanRate, int maxDimLen) {
+
+        sink.setType(ColumnType.encodeArrayType(ColumnType.LONG, dimCount));
+        sink.setOffset(0);
+
+        int size = 1;
+        for (int i = 0; i < dimCount; i++) {
+            int n = nextInt(maxDimLen - 1) + 1;
+            sink.setDimLen(i, n);
+            size *= n;
+        }
+
+        sink.prepareFlatArray();
+
+        for (int i = 0; i < size; i++) {
+            long val;
+            if (nanRate > 0 && nextInt(nanRate) == 1) {
+                val = Numbers.LONG_NULL;
+            } else {
+                val = nextLong();
+            }
+            sink.putLong(i, val);
+        }
     }
 
     public int nextPositiveInt() {

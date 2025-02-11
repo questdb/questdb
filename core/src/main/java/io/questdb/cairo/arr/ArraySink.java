@@ -29,9 +29,11 @@ public interface ArraySink {
 
     void putDouble(int flatIndex, double value);
 
-    void setType(int type);
+    void putLong(int flatIndex, long value);
 
     void setDimLen(int dimension, int length);
 
     void setOffset(int offset);
+
+    void setType(int type);
 }

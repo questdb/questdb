@@ -25,8 +25,9 @@
 package io.questdb.griffin.engine.functions.rnd;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.arr.HeapLongArray;
+import io.questdb.cairo.arr.DirectArrayView;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -37,6 +38,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
@@ -63,11 +65,19 @@ public class RndLongArrayFunctionFactory implements FunctionFactory {
 
     public static class RndLongArrayFunction extends ArrayFunction {
         private static final int MAX_DIM_LEN = 16;
-        private final HeapLongArray array;
+        private final int nDims;
+        private DirectArrayView array;
         private Rnd rnd;
 
         public RndLongArrayFunction(int nDims) {
-            this.array = new HeapLongArray(nDims);
+            this.nDims = nDims;
+            this.array = new DirectArrayView();
+            this.array.setType(ColumnType.encodeArrayType(ColumnType.LONG, nDims));
+        }
+
+        @Override
+        public void close() {
+            this.array = Misc.free(array);
         }
 
         @Override
@@ -93,13 +103,7 @@ public class RndLongArrayFunctionFactory implements FunctionFactory {
         }
 
         private void regenerate() {
-            for (int n = array.getDimCount(), i = 0; i < n; i++) {
-                array.setDimLen(i, (rnd.nextPositiveInt() % (MAX_DIM_LEN - 1)) + 1);
-            }
-            array.applyShape();
-            for (int n = array.getFlatElemCount(), i = 0; i < n; i++) {
-                array.setLongAtFlatIndex(i, rnd.nextLong());
-            }
+            rnd.nextLongArray(nDims, array, 0, MAX_DIM_LEN);
         }
     }
 }

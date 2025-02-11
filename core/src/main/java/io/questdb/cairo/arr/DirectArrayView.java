@@ -154,6 +154,14 @@ public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietClos
     }
 
     @Override
+    public void putLong(int flatIndex, long value) {
+        assert mem != 0;
+        assert offset + flatIndex * 8L < size;
+        assert flatIndex > -1;
+        Unsafe.getUnsafe().putLong(mem + offset + flatIndex * 8L, value);
+    }
+
+    @Override
     public void setDimLen(int dimension, int length) {
         shape[dimension] = length;
     }

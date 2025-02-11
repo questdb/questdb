@@ -25,8 +25,9 @@
 package io.questdb.griffin.engine.functions.rnd;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.arr.HeapDoubleArray;
+import io.questdb.cairo.arr.DirectArrayView;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -37,6 +38,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
@@ -67,13 +69,22 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
 
     public static class RndDoubleArrayFunction extends ArrayFunction {
         private static final int MAX_DIM_LEN = 16;
-        private final HeapDoubleArray array;
+        private final int nDims;
         private final int nanRate;
+        private DirectArrayView array;
         private Rnd rnd;
 
         public RndDoubleArrayFunction(int nDims, int nanRate) {
             this.nanRate = nanRate + 1;
-            this.array = new HeapDoubleArray(nDims);
+            this.nDims = nDims;
+            this.array = new DirectArrayView();
+            this.array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims));
+        }
+
+        @Override
+        public void close() {
+            this.array = Misc.free(array);
+            super.close();
         }
 
         @Override
@@ -102,19 +113,7 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
         }
 
         private void regenerate() {
-            for (int n = array.getDimCount(), i = 0; i < n; i++) {
-                array.setDimLen(i, (rnd.nextPositiveInt() % (MAX_DIM_LEN - 1)) + 1);
-            }
-            array.applyShape();
-            for (int n = array.getFlatElemCount(), i = 0; i < n; i++) {
-                double val;
-                if ((rnd.nextInt() % nanRate) == 1) {
-                    val = Double.NaN;
-                } else {
-                    val = rnd.nextDouble();
-                }
-                array.setDoubleAtFlatIndex(i, val);
-            }
+            rnd.nextDoubleArray(nDims, array, nanRate, MAX_DIM_LEN);
         }
     }
 }
