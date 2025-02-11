@@ -39,6 +39,9 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
+import static io.questdb.cairo.ColumnType.commonWideningType;
+import static io.questdb.cairo.ColumnType.decodeArrayElementType;
+
 public class ConstructArrayFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
@@ -122,22 +125,27 @@ public class ConstructArrayFunctionFactory implements FunctionFactory {
         public FunctionArrayFunction(ObjList<Function> args, IntList argPositions) throws SqlException {
             int outerDimLen = args.size();
             Function arg0 = args.getQuick(0);
-            if (ColumnType.isArray(arg0.getType())) {
+            short type0 = (short) arg0.getType();
+            short commonElemType = type0;
+            if (ColumnType.isArray(type0)) {
+                commonElemType = decodeArrayElementType(type0);
                 FunctionArray array0 = (FunctionArray) arg0.getArray(null);
                 final int nestedNDims = array0.getDimCount();
                 final int nestedElemCount = array0.getFlatElemCount();
                 for (int n = args.size(), i = 1; i < n; i++) {
                     Function argI = args.getQuick(i);
-                    if (!ColumnType.isArray(argI.getType())) {
+                    int typeI = argI.getType();
+                    if (!ColumnType.isArray(typeI)) {
                         throw SqlException.$(argPositions.getQuick(i), "not an array");
                     }
+                    commonElemType = commonWideningType(commonElemType, decodeArrayElementType(typeI));
                     ArrayView arrayI = argI.getArray(null);
                     if (arrayI.getDimCount() != nestedNDims) {
                         throw SqlException.$(argPositions.getQuick(i), "mismatched array shape");
                     }
                     assert arrayI.getFlatElemCount() == nestedElemCount : "flat element counts don't match";
                 }
-                this.array = new FunctionArray(ColumnType.LONG, nestedNDims + 1);
+                this.array = new FunctionArray(commonElemType, nestedNDims + 1);
                 array.setDimLen(0, outerDimLen);
                 for (int i = 0; i < nestedNDims; i++) {
                     array.setDimLen(i + 1, array0.getDimLen(i));
@@ -151,7 +159,14 @@ public class ConstructArrayFunctionFactory implements FunctionFactory {
                     }
                 }
             } else {
-                this.array = new FunctionArray(ColumnType.LONG, 1);
+                for (int i = 1; i < outerDimLen; i++) {
+                    short typeI = (short) args.getQuick(i).getType();
+                    if (ColumnType.isArray(typeI)) {
+                        throw SqlException.$(argPositions.getQuick(i), "array out of place");
+                    }
+                    commonElemType = commonWideningType(commonElemType, typeI);
+                }
+                this.array = new FunctionArray(commonElemType, 1);
                 array.setDimLen(0, outerDimLen);
                 array.applyShape();
                 for (int i = 0; i < outerDimLen; i++) {
