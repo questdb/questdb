@@ -153,8 +153,8 @@ steps:
         Get-ChildItem -Path . -Filter "hs_*.log" -File | ForEach-Object {
             Move-Item -Path $_.FullName -Destination "$(ARCHIVED_CRASH_LOG)"
         }
+      workingDirectory: $(Build.SourcesDirectory)\core\
     displayName: "Tests failed -- rename crash dump -- windows"
-    workingDirectory: $(Build.SourcesDirectory)\core\
     condition: and(failed(), eq(variables['os'], 'Windows'))
   - task: PublishBuildArtifacts@1
     displayName: "Tests failed -- Upload crash logs"
