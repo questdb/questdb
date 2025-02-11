@@ -44,6 +44,7 @@ import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.LongHashSet;
+import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjIntHashMap;
@@ -815,26 +816,34 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             long end = start + fuzzer.partitionCount * Timestamps.DAY_MICROS;
             ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameDedup, rnd, start, end);
 
-            transactions = uniqueInserts(transactions);
-            WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
-            sharedWorkerPool.start(LOG);
-
             try {
-                fuzzer.applyNonWal(transactions, tableNameNoWal, rnd);
+                transactions = uniqueInserts(transactions);
+                WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
+                sharedWorkerPool.start(LOG);
 
-                ObjList<FuzzTransaction> transactionsWithDups = duplicateInserts(transactions, rnd);
-                execute("alter table " + tableNameDedup + " dedup upsert keys(ts)", sqlExecutionContext);
-                applyWal(transactionsWithDups, tableNameDedup, 1 + rnd.nextInt(4), rnd);
+                try {
+                    fuzzer.applyNonWal(transactions, tableNameNoWal, rnd);
 
-                String limit = "";
-                TestUtils.assertSqlCursors(engine, sqlExecutionContext, tableNameNoWal + limit, tableNameDedup + limit, LOG);
-                fuzzer.assertRandomIndexes(tableNameNoWal, tableNameDedup, rnd);
-                // assert table count() values
-                fuzzer.assertCounts(tableNameDedup, timestampColumnName);
-                fuzzer.assertCounts(tableNameNoWal, timestampColumnName);
-                fuzzer.assertStringColDensity(tableNameDedup);
+                    ObjList<FuzzTransaction> transactionsWithDups = duplicateInserts(transactions, rnd);
+                    try {
+                        execute("alter table " + tableNameDedup + " dedup upsert keys(ts)", sqlExecutionContext);
+                        applyWal(transactionsWithDups, tableNameDedup, 1 + rnd.nextInt(4), rnd);
+
+                        String limit = "";
+                        TestUtils.assertSqlCursors(engine, sqlExecutionContext, tableNameNoWal + limit, tableNameDedup + limit, LOG);
+                        fuzzer.assertRandomIndexes(tableNameNoWal, tableNameDedup, rnd);
+                        // assert table count() values
+                        fuzzer.assertCounts(tableNameDedup, timestampColumnName);
+                        fuzzer.assertCounts(tableNameNoWal, timestampColumnName);
+                        fuzzer.assertStringColDensity(tableNameDedup);
+                    } finally {
+                        Misc.freeObjListAndClear(transactionsWithDups);
+                    }
+                } finally {
+                    sharedWorkerPool.halt();
+                }
             } finally {
-                sharedWorkerPool.halt();
+                Misc.freeObjListAndClear(transactions);
             }
         });
     }
@@ -1004,6 +1013,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                     if (operation instanceof FuzzInsertOperation) {
                         if (uniqueTimestamps.add(((FuzzInsertOperation) operation).getTimestamp())) {
                             unique.operationList.add(operation);
+                        } else {
+                            Misc.free(operation);
                         }
                     } else {
                         if (operation instanceof FuzzDropCreateTableOperation) {

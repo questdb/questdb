@@ -327,8 +327,6 @@ void MULTI_VERSION_NAME (merge_copy_array_column)(
         const auto relocated_var_offset = dst_var_offset & OFFSET_MAX;
         if (size > 0) {
             __MEMCPY(dst_var + dst_var_offset, src_var[bit] + src_var_offset, size);
-            // 2d array
-            printf("offset: %ld, i: %ld, %dx%d\n", dst_var_offset, l, reinterpret_cast<int32_t*>(dst_var + dst_var_offset) [0], reinterpret_cast<int32_t*>(dst_var + dst_var_offset) [1]);
             dst_var_offset += size;
         }
         dst_fix[l * 2] = relocated_var_offset;
