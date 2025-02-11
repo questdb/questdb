@@ -55,36 +55,8 @@ public class DebugUtils {
         return true;
     }
 
-    public static boolean isSparseVarCol(long colRowCount, long iAddr, long dAddr, int colType) {
-        if (colType == ColumnType.STRING || colType == ColumnType.BINARY) {
-            for (int row = 0; row < colRowCount; row++) {
-                long offset = Unsafe.getUnsafe().getLong(iAddr + (long) row * Long.BYTES);
-                long iLen = Unsafe.getUnsafe().getLong(iAddr + (long) (row + 1) * Long.BYTES) - offset;
-                long dLen = ColumnType.isString(colType) ? Unsafe.getUnsafe().getInt(dAddr + offset) : Unsafe.getUnsafe().getLong(dAddr + offset);
-                int lenLen = ColumnType.isString(colType) ? 4 : 8;
-                long dataLen = ColumnType.isString(colType) ? dLen * 2 : dLen;
-                long dStorageLen = dLen > 0 ? dataLen + lenLen : lenLen;
-                if (iLen != dStorageLen) {
-                    // Swiss cheese hole in var col file
-                    return true;
-                }
-            }
-            return false;
-        } else if (colType == ColumnType.VARCHAR) {
-            ColumnTypeDriver driver = ColumnType.getDriver(colType);
-            long lastSizeInDataVector = 0;
-            for (int row = 0; row < colRowCount; row++) {
-                long offset = driver.getDataVectorOffset(iAddr, row);
-                if (offset != lastSizeInDataVector) {
-                    // Swiss cheese hole in var col file
-                    return true;
-                }
-                lastSizeInDataVector = driver.getDataVectorSizeAt(iAddr, row);
-            }
-            return false;
-        } else {
-            throw new AssertionError("Not a var col");
-        }
+    public static boolean isSparseVarCol(long colRowCount, long auxMemAddr, long dataMemAddr, int colType) {
+        return ColumnType.getDriver(colType).isSparseDataVector(auxMemAddr, dataMemAddr, colRowCount);
     }
 
     // Useful debugging method

@@ -892,7 +892,7 @@ public class FuzzRunner {
                             long rowCount = reader.getPartitionRowCount(partitionIndex) - colTop;
                             long dColAddress = dCol == null ? 0 : dCol.getPageAddress(0);
                             if (DebugUtils.isSparseVarCol(rowCount, iCol.getPageAddress(0), dColAddress, columnType)) {
-                                Assert.fail("var column " + reader.getMetadata().getColumnName(i)
+                                Assert.fail("var column " + reader.getMetadata().getColumnName(i) + ", columnType " + ColumnType.nameOf(columnType)
                                         + " is not dense, .i file record size is different from .d file record size");
                             }
                         }
@@ -936,39 +936,43 @@ public class FuzzRunner {
 
         ObjList<FuzzTransaction> transactions;
         transactions = generateTransactions(tableNameNoWal, rnd);
-        String timestampColumnName;
-        try (TableMetadata meta = engine.getTableMetadata(nonWalTt)) {
-            timestampColumnName = meta.getColumnName(meta.getTimestampIndex());
+        try {
+            String timestampColumnName;
+            try (TableMetadata meta = engine.getTableMetadata(nonWalTt)) {
+                timestampColumnName = meta.getColumnName(meta.getTimestampIndex());
+            }
+
+            long startMicro = System.nanoTime() / 1000;
+            applyNonWal(transactions, tableNameNoWal, rnd);
+            long endNonWalMicro = System.nanoTime() / 1000;
+            long nonWalTotal = endNonWalMicro - startMicro;
+
+            applyWal(transactions, tableNameWal, 1, rnd);
+
+            long endWalMicro = System.nanoTime() / 1000;
+            long walTotal = endWalMicro - endNonWalMicro;
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                String limit = "";
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + limit, tableNameWal + limit, LOG);
+                assertRandomIndexes(tableNameNoWal, tableNameWal, rnd);
+
+                startMicro = System.nanoTime() / 1000;
+                applyWalParallel(transactions, tableNameWal2, rnd);
+                endWalMicro = System.nanoTime() / 1000;
+                long totalWalParallel = endWalMicro - startMicro;
+
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal2, LOG);
+                assertRandomIndexes(tableNameNoWal, tableNameWal2, rnd);
+                LOG.infoW().$("=== non-wal(ms): ").$(nonWalTotal / 1000).$(" === wal(ms): ").$(walTotal / 1000).$(" === wal_parallel(ms): ").$(totalWalParallel / 1000).$();
+            }
+
+            assertCounts(tableNameWal, timestampColumnName);
+            assertCounts(tableNameNoWal, timestampColumnName);
+            assertStringColDensity(tableNameWal);
+        } finally {
+            Misc.freeObjListAndClear(transactions);
         }
-
-        long startMicro = System.nanoTime() / 1000;
-        applyNonWal(transactions, tableNameNoWal, rnd);
-        long endNonWalMicro = System.nanoTime() / 1000;
-        long nonWalTotal = endNonWalMicro - startMicro;
-
-        applyWal(transactions, tableNameWal, 1, rnd);
-
-        long endWalMicro = System.nanoTime() / 1000;
-        long walTotal = endWalMicro - endNonWalMicro;
-
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            String limit = "";
-            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + limit, tableNameWal + limit, LOG);
-            assertRandomIndexes(tableNameNoWal, tableNameWal, rnd);
-
-            startMicro = System.nanoTime() / 1000;
-            applyWalParallel(transactions, tableNameWal2, rnd);
-            endWalMicro = System.nanoTime() / 1000;
-            long totalWalParallel = endWalMicro - startMicro;
-
-            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal2, LOG);
-            assertRandomIndexes(tableNameNoWal, tableNameWal2, rnd);
-            LOG.infoW().$("=== non-wal(ms): ").$(nonWalTotal / 1000).$(" === wal(ms): ").$(walTotal / 1000).$(" === wal_parallel(ms): ").$(totalWalParallel / 1000).$();
-        }
-
-        assertCounts(tableNameWal, timestampColumnName);
-        assertCounts(tableNameNoWal, timestampColumnName);
-        assertStringColDensity(tableNameWal);
     }
 
     protected void runFuzz(Rnd rnd, String tableNameBase, int tableCount, boolean randomiseProbs, boolean randomiseCounts) throws Exception {

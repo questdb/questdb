@@ -24,7 +24,13 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.api.*;
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.cairo.vm.api.MemoryCR;
+import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.cairo.vm.api.MemoryOM;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
@@ -172,6 +178,24 @@ public class StringTypeDriver implements ColumnTypeDriver {
     @Override
     public long getMinAuxVectorSize() {
         return Long.BYTES;
+    }
+
+    @Override
+    public boolean isSparseDataVector(long auxMemAddr, long dataMemAddr, long rowCount) {
+        for (int row = 0; row < rowCount; row++) {
+            long offset = Unsafe.getUnsafe().getLong(auxMemAddr + (long) row * Long.BYTES);
+            long iLen = Unsafe.getUnsafe().getLong(auxMemAddr + (long) (row + 1) * Long.BYTES) - offset;
+            long dLen = Unsafe.getUnsafe().getInt(dataMemAddr + offset);
+            int lenLen = 4;
+            long dataLen = dLen * 2;
+            long dStorageLen = dLen > 0 ? dataLen + lenLen : lenLen;
+            if (iLen != dStorageLen) {
+                // Swiss cheese hole in var col file
+                return true;
+            }
+        }
+        return false;
+
     }
 
     @Override

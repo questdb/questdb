@@ -115,7 +115,6 @@ import org.jetbrains.annotations.Nullable;
 public class ArrayTypeDriver implements ColumnTypeDriver {
     // ensure that writeArrayEntry appends correct amount of bytes, for the width
     public static final int ARRAY_AUX_WIDTH_BYTES = 4 * Integer.BYTES;
-    public static final int CRC16_SHIFT = 48;
     public static final ArrayTypeDriver INSTANCE = new ArrayTypeDriver();
     public static final long OFFSET_MAX = (1L << 48) - 1L;
     private static final ArrayValueAppender VALUE_APPENDER_DOUBLE = ArrayTypeDriver::appendDoubleFromArrayToSink;
@@ -330,6 +329,20 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     @Override
     public long getMinAuxVectorSize() {
         return 0;
+    }
+
+    @Override
+    public boolean isSparseDataVector(long auxMemAddr, long dataMemAddr, long rowCount) {
+        long lastSizeInDataVector = 0;
+        for (int row = 0; row < rowCount; row++) {
+            long offset = getDataVectorOffset(auxMemAddr, row);
+            if (offset != lastSizeInDataVector) {
+                // Swiss cheese hole in var col file
+                return true;
+            }
+            lastSizeInDataVector = getDataVectorSizeAt(auxMemAddr, row);
+        }
+        return false;
     }
 
     @Override

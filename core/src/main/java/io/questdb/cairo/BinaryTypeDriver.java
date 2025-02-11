@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 public class BinaryTypeDriver extends StringTypeDriver {
@@ -37,6 +38,22 @@ public class BinaryTypeDriver extends StringTypeDriver {
 
     public long getDataVectorMinEntrySize() {
         return Long.BYTES;
+    }
+
+    @Override
+    public boolean isSparseDataVector(long auxMemAddr, long dataMemAddr, long rowCount) {
+        for (int row = 0; row < rowCount; row++) {
+            long offset = Unsafe.getUnsafe().getLong(auxMemAddr + (long) row * Long.BYTES);
+            long iLen = Unsafe.getUnsafe().getLong(auxMemAddr + (long) (row + 1) * Long.BYTES) - offset;
+            long dLen = Unsafe.getUnsafe().getLong(dataMemAddr + offset);
+            int lenLen = 8;
+            long dStorageLen = dLen > 0 ? dLen + lenLen : lenLen;
+            if (iLen != dStorageLen) {
+                // Swiss cheese hole in var col file
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override

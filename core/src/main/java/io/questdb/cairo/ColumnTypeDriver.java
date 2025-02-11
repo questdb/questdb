@@ -125,6 +125,8 @@ public interface ColumnTypeDriver {
 
     long getMinAuxVectorSize();
 
+    boolean isSparseDataVector(long auxMemAddr, long dataMemAddr, long rowCount);
+
     void o3ColumnMerge(
             long timestampMergeIndexAddr,
             long timestampMergeIndexCount,

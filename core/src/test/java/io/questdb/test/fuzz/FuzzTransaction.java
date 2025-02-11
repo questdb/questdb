@@ -24,9 +24,11 @@
 
 package io.questdb.test.fuzz;
 
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
 
-public class FuzzTransaction {
+public class FuzzTransaction implements QuietCloseable {
     public ObjList<FuzzTransactionOperation> operationList = new ObjList<>();
     public boolean reopenTable;
     public boolean rollback;
@@ -34,4 +36,8 @@ public class FuzzTransaction {
     public boolean waitAllDone;
     public int waitBarrierVersion;
 
+    @Override
+    public void close() {
+        Misc.freeObjListAndClear(operationList);
+    }
 }

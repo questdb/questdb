@@ -26,8 +26,12 @@ package io.questdb.test.fuzz;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rnd;
 
-public interface FuzzTransactionOperation {
+public interface FuzzTransactionOperation extends QuietCloseable {
     boolean apply(Rnd rnd, CairoEngine engine, TableWriterAPI tableWriter, int virtualTimestampIndex);
+
+    default void close() {
+    }
 }
