@@ -32,7 +32,6 @@ import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.Long256;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
@@ -41,7 +40,6 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8Sequence;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -211,18 +209,24 @@ public class MetaFileWriter implements Closeable, Mutable {
         }
 
         @Override
+        public void putBin(long offset, BinarySequence value) {
+            assert !isCommitted;
+            if (value != null) {
+                final long len = value.length();
+                long addr = memory.appendAddressFor(payloadOffset + offset, len + Long.BYTES);
+                Unsafe.getUnsafe().putLong(addr, len);
+                value.copyTo(addr + Long.BYTES, 0, len);
+            } else {
+                memory.putNullBin();
+            }
+        }
+
+        @Override
         public long putBin(BinarySequence value) {
             assert !isCommitted;
             return memory.putBin(value);
         }
 
-        @Override
-        public long putBin(long from, long len) {
-            assert !isCommitted;
-            return memory.putBin(from, len);
-        }
-
-        // random access API
         @Override
         public void putBool(long offset, boolean value) {
             assert !isCommitted;
@@ -308,62 +312,6 @@ public class MetaFileWriter implements Closeable, Mutable {
         }
 
         @Override
-        public void putLong128(long lo, long hi) {
-            assert !isCommitted;
-            memory.putLong128(lo, hi);
-        }
-
-        // append API
-
-        @Override
-        public void putLong256(long offset, Long256 value) {
-            assert !isCommitted;
-            memory.putLong256(payloadOffset + offset, value);
-        }
-
-        @Override
-        public void putLong256(long offset, long l0, long l1, long l2, long l3) {
-            assert !isCommitted;
-            memory.putLong256(payloadOffset + offset, l0, l1, l2, l3);
-        }
-
-        @Override
-        public void putLong256(long l0, long l1, long l2, long l3) {
-            assert !isCommitted;
-            memory.putLong256(l0, l1, l2, l3);
-        }
-
-        @Override
-        public void putLong256(Long256 value) {
-            assert !isCommitted;
-            memory.putLong256(value);
-        }
-
-        @Override
-        public void putLong256(@Nullable CharSequence hexString) {
-            assert !isCommitted;
-            memory.putLong256(hexString);
-        }
-
-        @Override
-        public void putLong256(@NotNull CharSequence hexString, int start, int end) {
-            assert !isCommitted;
-            memory.putLong256(hexString, start, end);
-        }
-
-        @Override
-        public void putLong256Utf8(@Nullable Utf8Sequence hexString) {
-            assert !isCommitted;
-            memory.putLong256Utf8(hexString);
-        }
-
-        @Override
-        public void putRawBytes(long from, long len) {
-            assert !isCommitted;
-            memory.putBlockOfBytes(from, len);
-        }
-
-        @Override
         public void putShort(long offset, short value) {
             assert !isCommitted;
             memory.putShort(payloadOffset + offset, value);
@@ -382,27 +330,9 @@ public class MetaFileWriter implements Closeable, Mutable {
         }
 
         @Override
-        public void putStr(long offset, CharSequence value, int pos, int len) {
-            assert !isCommitted;
-            memory.putStr(payloadOffset + offset, value, pos, len);
-        }
-
-        @Override
         public long putStr(CharSequence value) {
             assert !isCommitted;
             return memory.putStr(value);
-        }
-
-        @Override
-        public long putStr(char value) {
-            assert !isCommitted;
-            return memory.putStr(value);
-        }
-
-        @Override
-        public long putStr(CharSequence value, int pos, int len) {
-            assert !isCommitted;
-            return memory.putStr(value, pos, len);
         }
 
         @Override

@@ -25,9 +25,6 @@
 package io.questdb.cairo.meta;
 
 import io.questdb.std.BinarySequence;
-import io.questdb.std.Long256;
-import io.questdb.std.Long256Acceptor;
-import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 
 
@@ -43,8 +40,6 @@ public interface ReadableBlock {
 
     BinarySequence getBin(long offset);
 
-    long getBinLen(long offset);
-
     boolean getBool(long offset);
 
     byte getByte(long offset);
@@ -55,23 +50,13 @@ public interface ReadableBlock {
 
     float getFloat(long offset);
 
-    int getIPv4(long offset);
-
     int getInt(long offset);
 
     long getLong(long offset);
 
-    void getLong256(long offset, CharSink<?> sink);
-
-    void getLong256(long offset, Long256Acceptor sink);
-
-    Long256 getLong256(long offset);
-
     short getShort(long offset);
 
     CharSequence getStr(long offset);
-
-    int getStrLen(long offset);
 
     Utf8Sequence getVarchar(long offset);
 

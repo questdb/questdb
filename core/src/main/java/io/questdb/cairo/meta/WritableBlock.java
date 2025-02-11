@@ -24,7 +24,7 @@
 
 package io.questdb.cairo.meta;
 
-import io.questdb.std.Long256;
+import io.questdb.std.BinarySequence;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
 
@@ -36,9 +36,12 @@ import org.jetbrains.annotations.Nullable;
  * For an extendable block with append API, see {@link AppendableBlock}.
  */
 public interface WritableBlock {
+
     boolean commit(short type, byte version, byte flags);
 
     int length();
+
+    void putBin(long offset, BinarySequence value);
 
     void putBool(long offset, boolean value);
 
@@ -54,15 +57,9 @@ public interface WritableBlock {
 
     void putLong(long offset, long value);
 
-    void putLong256(long offset, Long256 value);
-
-    void putLong256(long offset, long l0, long l1, long l2, long l3);
-
     void putShort(long offset, short value);
 
     void putStr(long offset, CharSequence value);
-
-    void putStr(long offset, CharSequence value, int pos, int len);
 
     void putVarchar(long offset, @Nullable Utf8Sequence value);
 }

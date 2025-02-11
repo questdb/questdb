@@ -33,8 +33,6 @@ import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.Long256;
-import io.questdb.std.Long256Acceptor;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
@@ -43,7 +41,6 @@ import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
@@ -226,11 +223,6 @@ public class MetaFileReader implements Closeable, Mutable {
             }
 
             @Override
-            public long getBinLen(long offset) {
-                return memory.getBinLen(payloadOffset + offset);
-            }
-
-            @Override
             public boolean getBool(long offset) {
                 return memory.getBool(payloadOffset + offset);
             }
@@ -256,11 +248,6 @@ public class MetaFileReader implements Closeable, Mutable {
             }
 
             @Override
-            public int getIPv4(long offset) {
-                return memory.getIPv4(payloadOffset + offset);
-            }
-
-            @Override
             public int getInt(long offset) {
                 return memory.getInt(payloadOffset + offset);
             }
@@ -268,21 +255,6 @@ public class MetaFileReader implements Closeable, Mutable {
             @Override
             public long getLong(long offset) {
                 return memory.getLong(payloadOffset + offset);
-            }
-
-            @Override
-            public void getLong256(long offset, CharSink<?> sink) {
-                memory.getLong256(payloadOffset + offset, sink);
-            }
-
-            @Override
-            public void getLong256(long offset, Long256Acceptor sink) {
-                memory.getLong256(payloadOffset + offset, sink);
-            }
-
-            @Override
-            public Long256 getLong256(long offset) {
-                return memory.getLong256A(payloadOffset + offset);
             }
 
             @Override
@@ -296,15 +268,9 @@ public class MetaFileReader implements Closeable, Mutable {
             }
 
             @Override
-            public int getStrLen(long offset) {
-                return memory.getStrLen(payloadOffset + offset);
-            }
-
-            @Override
             public Utf8Sequence getVarchar(long offset) {
                 return VarcharTypeDriver.getPlainValue(memory, payloadOffset + offset, 1);
             }
-
 
             @Override
             public long length() {

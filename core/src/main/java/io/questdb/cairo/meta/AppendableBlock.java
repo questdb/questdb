@@ -25,9 +25,7 @@
 package io.questdb.cairo.meta;
 
 import io.questdb.std.BinarySequence;
-import io.questdb.std.Long256;
 import io.questdb.std.str.Utf8Sequence;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -43,8 +41,6 @@ public interface AppendableBlock {
 
     long putBin(BinarySequence value);
 
-    long putBin(long from, long len);
-
     void putBool(boolean value);
 
     void putByte(byte value);
@@ -59,27 +55,9 @@ public interface AppendableBlock {
 
     void putLong(long value);
 
-    void putLong128(long lo, long hi);
-
-    void putLong256(long l0, long l1, long l2, long l3);
-
-    void putLong256(Long256 value);
-
-    void putLong256(@Nullable CharSequence hexString);
-
-    void putLong256(@NotNull CharSequence hexString, int start, int end);
-
-    void putLong256Utf8(@Nullable Utf8Sequence hexString);
-
-    void putRawBytes(long from, long len);
-
     void putShort(short value);
 
     long putStr(CharSequence value);
-
-    long putStr(char value);
-
-    long putStr(CharSequence value, int pos, int len);
 
     long putVarchar(@Nullable Utf8Sequence value);
 
