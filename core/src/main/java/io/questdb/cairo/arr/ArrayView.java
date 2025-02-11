@@ -31,18 +31,6 @@ public interface ArrayView extends ArrayShape {
 
     void appendWithDefaultStrides(MemoryA mem);
 
-    default double getDouble1D(int x) {
-        return getDoubleAtFlatIndex(getValuesOffset() + x);
-    }
-
-    default double getDouble2D(int x, int y) {
-        return getDoubleAtFlatIndex(getValuesOffset() + x * getStride(0) + y);
-    }
-
-    default double getDouble3D(int x, int y, int z) {
-        return getDoubleAtFlatIndex(getValuesOffset() + x * getStride(0) + y * getStride(1) + z);
-    }
-
     /**
      * Provides raw access to the underlying flat (one-dimensional) array of {@code double} values.
      *
