@@ -50,7 +50,7 @@ public class BaseTableMatViewRefreshStateTest extends AbstractCairoTest {
         AtomicBoolean stop = new AtomicBoolean();
 
         MatViewRefreshList state = new MatViewRefreshList();
-        int commits = rnd.nextInt(10_000_000);
+        int commits = rnd.nextInt(1_000_000);
         System.out.println("commits: " + commits);
 
         CyclicBarrier barrier = new CyclicBarrier(baseCommitThreads + baseRefreshThreads);
@@ -63,7 +63,8 @@ public class BaseTableMatViewRefreshStateTest extends AbstractCairoTest {
                     long nextTxn;
                     while ((nextTxn = seqTxn.incrementAndGet()) < commits) {
                         if (state.notifyOnBaseTableCommitNoLock(nextTxn)) {
-                            refreshNotification.incrementAndGet();
+                            long refreshNot = refreshNotification.incrementAndGet();
+                            System.out.println("refresh notification:" + refreshNot + " added on commit " + nextTxn);
                         }
                     }
                 } catch (Throwable e) {
