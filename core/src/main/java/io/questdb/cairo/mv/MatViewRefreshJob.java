@@ -387,7 +387,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     ) {
         assert state.isLocked();
 
-        final SeqTxnTracker viewTxnTracker = state.getMatViewSeqTracker();
         final MatViewDefinition viewDef = state.getViewDefinition();
         if (viewDef == null) {
             // The view must have been deleted.
@@ -417,7 +416,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     insertAsSelect(state, viewDef, commitWriter, toBaseTxn, refreshTriggeredTimestamp);
                     resetInvalidState(state);
                     writeLastRefreshBaseTableTxn(state, toBaseTxn);
-                    viewTxnTracker.setLastRefreshBaseTxn(toBaseTxn);
                     return true;
                 } catch (CairoException ex) {
                     if (ex.isTableDropped() || ex.tableDoesNotExist()) {
@@ -542,12 +540,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     ) {
         assert state.isLocked();
 
-        final SeqTxnTracker baseSeqTracker = state.getBaseTableSeqTracker();
+        final SeqTxnTracker baseSeqTracker = engine.getTableSequencerAPI().getTxnTracker(baseTableToken);
         final long lastBaseQueryableTxn = baseSeqTracker.getWriterTxn();
 
-        final SeqTxnTracker viewTxnTracker = state.getMatViewSeqTracker();
-        final long appliedToParentTxn = viewTxnTracker.getLastRefreshBaseTxn();
-
+        final long appliedToParentTxn = state.getLastRefreshBaseTxn();
         if (appliedToParentTxn >= 0 && appliedToParentTxn >= lastBaseQueryableTxn) {
             return false;
         }
@@ -573,11 +569,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             fromBaseTxn = readLastRefreshBaseTableTxn(state);
             if (fromBaseTxn >= toBaseTxn) {
                 // Already refreshed
-                viewTxnTracker.setLastRefreshBaseTxn(fromBaseTxn);
                 return false;
             }
         }
 
+        SeqTxnTracker viewTxnTracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
         if (viewTxnTracker.shouldBackOffDueToMemoryPressure(microsecondClock.getTicks())) {
             // rely on another pass of refresh job to re-try
             return false;
@@ -595,7 +591,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         boolean changed = insertAsSelect(state, viewDef, commitWriter, toBaseTxn, refreshTriggeredTimestamp);
                         if (changed) {
                             writeLastRefreshBaseTableTxn(state, toBaseTxn);
-                            viewTxnTracker.setLastRefreshBaseTxn(toBaseTxn);
                         }
                         return changed;
                     } catch (CairoException ex) {

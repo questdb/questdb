@@ -32,7 +32,6 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.mv.MatViewRefreshState;
-import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.log.Log;
@@ -395,8 +394,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             final TableToken viewToken = childViewSink.get(v);
             final MatViewRefreshState state = engine.getMatViewGraph().getViewRefreshState(viewToken);
             if (state != null && !state.isPendingInvalidation() && !state.isInvalid() && !state.isDropped()) {
-                final SeqTxnTracker viewSeqTracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
-                final long appliedToViewTxn = Math.max(0, viewSeqTracker.getLastRefreshBaseTxn());
+                final long appliedToViewTxn = Math.max(0, state.getLastRefreshBaseTxn());
                 safeToPurgeTxn = Math.min(safeToPurgeTxn, appliedToViewTxn);
             }
         }

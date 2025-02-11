@@ -25,13 +25,13 @@
 package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MatViewDefinition;
-import io.questdb.cairo.mv.MatViewGraph;
 import io.questdb.cairo.mv.MatViewRefreshState;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
@@ -39,7 +39,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -86,8 +85,7 @@ public class ViewsFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            MatViewGraph matViewGraph = executionContext.getCairoEngine().getMatViewGraph();
-            cursor.toTop(matViewGraph);
+            cursor.toTop(executionContext.getCairoEngine());
             return cursor;
         }
 
@@ -109,7 +107,7 @@ public class ViewsFunctionFactory implements FunctionFactory {
         private static class ViewsListCursor implements NoRandomAccessRecordCursor {
             private final ViewsListRecord record = new ViewsListRecord();
             private final ObjList<TableToken> viewTokens = new ObjList<>();
-            private MatViewGraph matViewGraph;
+            private CairoEngine engine;
             private int viewIndex = 0;
 
             @Override
@@ -131,15 +129,19 @@ public class ViewsFunctionFactory implements FunctionFactory {
                 int n = viewTokens.size();
                 while (viewIndex < n) {
                     final TableToken viewToken = viewTokens.get(viewIndex);
-                    final MatViewRefreshState viewState = matViewGraph.getViewRefreshState(viewToken);
+                    final MatViewRefreshState viewState = engine.getMatViewGraph().getViewRefreshState(viewToken);
                     if (viewState != null && !viewState.isDropped()) {
+                        TableToken baseTableToken = engine.getTableTokenIfExists(viewState.getViewDefinition().getBaseTableName());
+                        final long lastAppliedBaseTxn = baseTableToken == null ?
+                                -1 : engine.getTableSequencerAPI().getTxnTracker(baseTableToken).getWriterTxn();
+
                         record.of(
                                 viewState.getViewDefinition(),
                                 viewState.getLastRefreshTimestamp(),
+                                viewState.getLastRefreshBaseTxn(),
+                                lastAppliedBaseTxn,
                                 viewState.getInvalidationReason(),
-                                viewState.isInvalid(),
-                                viewState.getBaseTableSeqTracker(),
-                                viewState.getMatViewSeqTracker()
+                                viewState.isInvalid()
                         );
                         viewIndex++;
                         return true;
@@ -157,12 +159,12 @@ public class ViewsFunctionFactory implements FunctionFactory {
             @Override
             public void toTop() {
                 viewTokens.clear();
-                matViewGraph.getViews(viewTokens);
+                engine.getMatViewGraph().getViews(viewTokens);
                 viewIndex = 0;
             }
 
-            public void toTop(MatViewGraph matViewGraph) {
-                this.matViewGraph = matViewGraph;
+            public void toTop(CairoEngine engine) {
+                this.engine = engine;
                 toTop();
             }
 
@@ -170,9 +172,9 @@ public class ViewsFunctionFactory implements FunctionFactory {
                 private boolean invalid;
                 private String invalidationReason;
                 private long lastRefreshTimestamp;
+                private long lastAppliedBaseTxn;
+                private long lastRefreshTxn;
                 private MatViewDefinition viewDefinition;
-                private SeqTxnTracker baseTableSeqTracker;
-                private SeqTxnTracker matViewSeqTracker;
 
                 @Override
                 public boolean getBool(int col) {
@@ -185,9 +187,9 @@ public class ViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_LAST_REFRESH_TIMESTAMP:
                             return lastRefreshTimestamp;
                         case COLUMN_LAST_REFRESH_BASE_TABLE_TXN:
-                            return matViewSeqTracker == null ? -1 : matViewSeqTracker.getLastRefreshBaseTxn();
+                            return lastRefreshTxn;
                         case COLUMN_LAST_APPLIED_BASE_TABLE_TXN:
-                            return baseTableSeqTracker == null ? -1 : baseTableSeqTracker.getWriterTxn();
+                            return lastAppliedBaseTxn;
                         default:
                             return 0;
                     }
@@ -219,17 +221,17 @@ public class ViewsFunctionFactory implements FunctionFactory {
                 public void of(
                         MatViewDefinition viewDefinition,
                         long lastRefreshTimestamp,
+                        long lastRefreshTxn,
+                        long lastAppliedBaseTxn,
                         String lastError,
-                        boolean invalid,
-                        SeqTxnTracker baseTableSeqTracker,
-                        SeqTxnTracker matViewSeqTracker
+                        boolean invalid
                 ) {
                     this.viewDefinition = viewDefinition;
                     this.lastRefreshTimestamp = lastRefreshTimestamp;
+                    this.lastRefreshTxn = lastRefreshTxn;
+                    this.lastAppliedBaseTxn = lastAppliedBaseTxn;
                     this.invalidationReason = lastError;
                     this.invalid = invalid;
-                    this.baseTableSeqTracker = baseTableSeqTracker;
-                    this.matViewSeqTracker = matViewSeqTracker;
                 }
             }
         }
