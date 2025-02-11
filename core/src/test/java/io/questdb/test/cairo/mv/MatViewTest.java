@@ -81,7 +81,7 @@ public class MatViewTest extends AbstractCairoTest {
                                     "('gbpusd', 1.423, '2024-01-02T00:01');"
                     );
                     execute("alter table base_price detach partition list '" + partition + "';");
-                    drainWalQueue();
+                    drainWalAndMatViewRefreshQueues();
                     // rename to .attachable
                     try (Path path = new Path(); Path other = new Path()) {
                         TableToken tableToken = engine.verifyTableName("base_price");
@@ -152,10 +152,9 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('jpyusd', 103.21, '2024-09-10T12:02')" +
                             ",('gbpusd', 1.321, '2024-09-10T13:02')"
             );
-            drainWalQueue();
 
             currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
-            refreshMatView();
+            drainWalAndMatViewRefreshQueues();
 
             assertSql(
                     "name\tbaseTableName\tlastRefreshTimestamp\tviewSql\tviewTableDirName\tinvalidationReason\tinvalid\tbaseTableTxn\tappliedBaseTableTxn\n" +
@@ -166,7 +165,7 @@ public class MatViewTest extends AbstractCairoTest {
             execute("rename table base_price to base_price2");
             execute("refresh materialized view 'price_1h';");
             currentMicros = parseFloorPartialTimestamp("2024-10-24T18");
-            refreshMatView();
+            drainWalAndMatViewRefreshQueues();
 
             assertSql(
                     "name\tbaseTableName\tlastRefreshTimestamp\tviewSql\tviewTableDirName\tinvalidationReason\tinvalid\tbaseTableTxn\tappliedBaseTableTxn\n" +
@@ -183,7 +182,7 @@ public class MatViewTest extends AbstractCairoTest {
             );
             execute("refresh materialized view 'price_1h';");
             currentMicros = parseFloorPartialTimestamp("2024-10-24T19");
-            refreshMatView();
+            drainWalAndMatViewRefreshQueues();
 
             assertSql(
                     "name\tbaseTableName\tlastRefreshTimestamp\tviewSql\tviewTableDirName\tinvalidationReason\tinvalid\tbaseTableTxn\tappliedBaseTableTxn\n" +
@@ -207,9 +206,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             execute("insert into base_price select concat('sym', x), x, x::timestamp from long_sequence(30);");
 
-            drainWalQueue();
-
-            refreshMatView();
+            drainWalAndMatViewRefreshQueues();
 
             assertSql(
                     "sym\tprice\tts\n" +
@@ -306,10 +303,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('jpyusd', 103.21, '2024-09-10T12:02')" +
                             ",('gbpusd', 1.321, '2024-09-10T13:02')"
             );
-
-            drainWalQueue();
-
-            refreshMatView();
+            drainWalAndMatViewRefreshQueues();
 
             assertSql(
                     "sym\tprice\tts\n" +
@@ -320,11 +314,11 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             dropMatView();
-            refreshMatView();
+            drainWalAndMatViewRefreshQueues();
 
             createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
             TableToken matViewToken2 = engine.verifyTableName("price_1h");
-            refreshMatView();
+            drainWalAndMatViewRefreshQueues();
 
             assertSql(
                     "sym\tprice\tts\n" +
@@ -357,10 +351,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('jpyusd', 103.21, '2024-09-10T12:02')" +
                             ",('gbpusd', 1.321, '2024-09-10T13:02')"
             );
-
-            drainWalQueue();
-
-            refreshMatView();
+            drainWalAndMatViewRefreshQueues();
 
             assertSql(
                     "sym\tprice\tts\n" +
@@ -373,7 +364,7 @@ public class MatViewTest extends AbstractCairoTest {
             // mat view should be deleted
             execute("drop all;");
 
-            refreshMatView();
+            drainWalAndMatViewRefreshQueues();
 
             assertSql(
                     "count\n" +
@@ -706,12 +697,16 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             execute("insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01');");
-            drainWalQueue();
+            drainWalAndMatViewRefreshQueues();
             execute("truncate table base_price;");
-            drainWalQueue();
+            drainWalAndMatViewRefreshQueues();
 
-            final String viewSql = "select sym, last(price) as price, ts from base_price sample by 1h";
-            createMatView(viewSql);
+            final String view1Sql = "select sym, last(price) as price, ts from base_price sample by 1h";
+            execute("create materialized view price_1h as (" + view1Sql + ") partition by DAY");
+            drainWalAndMatViewRefreshQueues();
+            final String view2Sql = "select sym, last(price) as price, ts from base_price sample by 1d";
+            execute("create materialized view price_1d as (" + view2Sql + ") partition by month");
+            drainWalAndMatViewRefreshQueues();
 
             execute(
                     "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
@@ -719,15 +714,20 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('jpyusd', 103.21, '2024-09-10T12:02')" +
                             ",('gbpusd', 1.321, '2024-09-10T13:02');"
             );
-            drainWalQueue();
-            refreshMatView();
+            drainWalAndMatViewRefreshQueues();
 
-            final String expected = "sym\tprice\tts\n" +
+            final String expected1 = "sym\tprice\tts\n" +
                     "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
                     "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
                     "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n";
-            assertSql(expected, "price_1h order by sym");
-            assertSql(expected, viewSql + " order by sym");
+            assertSql(expected1, "price_1h order by sym");
+            assertSql(expected1, view1Sql + " order by sym");
+
+            final String expected2 = "sym\tprice\tts\n" +
+                    "gbpusd\t1.321\t2024-09-10T00:00:00.000000Z\n" +
+                    "jpyusd\t103.21\t2024-09-10T00:00:00.000000Z\n";
+            assertSql(expected2, "price_1d order by sym");
+            assertSql(expected2, view2Sql + " order by sym");
         });
     }
 
@@ -748,9 +748,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('jpyusd', 103.21, '2024-09-10T12:02')" +
                             ",('gbpusd', 1.321, '2024-09-10T13:02')"
             );
-            drainWalQueue();
-
-            refreshMatView();
+            drainWalAndMatViewRefreshQueues();
 
             assertSql(
                     "name\tbaseTableName\tinvalid\tinvalidationReason\n" +
@@ -777,10 +775,9 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('jpyusd', 103.21, '2024-09-10T12:02')" +
                             ",('gbpusd', 1.321, '2024-09-10T13:02')"
             );
-            drainWalQueue();
 
             currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.842574Z");
-            refreshMatView();
+            drainWalAndMatViewRefreshQueues();
 
             assertSql(
                     "name\tbaseTableName\tlastRefreshTimestamp\tviewSql\tviewTableDirName\tinvalidationReason\tinvalid\tbaseTableTxn\tappliedBaseTableTxn\n" +
@@ -795,8 +792,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertSql(expected, "price_1h order by sym");
 
             execute("alter table base_price drop column extra_col");
-            drainWalQueue();
-            refreshMatView();
+            drainWalAndMatViewRefreshQueues();
 
             assertSql(
                     "name\tbaseTableName\tlastRefreshTimestamp\tviewSql\tviewTableDirName\tinvalidationReason\tinvalid\tbaseTableTxn\tappliedBaseTableTxn\n" +
@@ -805,7 +801,7 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             execute("refresh materialized view price_1h");
-            refreshMatView();
+            drainWalAndMatViewRefreshQueues();
 
             assertSql(
                     "name\tbaseTableName\tlastRefreshTimestamp\tviewSql\tviewTableDirName\tinvalidationReason\tinvalid\tbaseTableTxn\tappliedBaseTableTxn\n" +
@@ -836,7 +832,7 @@ public class MatViewTest extends AbstractCairoTest {
                     ",('gbpusd', 1.327, '2024-10-28T00:00')" +
                     ",('gbpusd', 1.328, '2024-10-28T01:00')"
             );
-            drainWalQueue();
+            drainWalAndMatViewRefreshQueues();
             String exp = "sym\tfirst\tlast\tts\tberlin\n" +
                     "gbpusd\t1.32\t1.321\t2024-10-25T22:00:00.000000Z\t2024-10-26T00:00:00.000000Z\n" +
                     "gbpusd\t1.325\t1.326\t2024-10-27T00:00:00.000000Z\t2024-10-27T02:00:00.000000Z\n" +
@@ -1075,7 +1071,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             String viewSql = "select sym, last(price) as price, ts from base_price where sleep(120000) sample by 1h";
             createMatView(viewSql);
-            refreshMatView();
+            drainWalAndMatViewRefreshQueues();
 
             execute(
                     "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
@@ -1144,9 +1140,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('jpyusd', 103.21, '2024-09-10T12:02')" +
                             ",('gbpusd', 1.321, '2024-09-10T13:02')"
             );
-            drainWalQueue();
-
-            refreshMatView();
+            drainWalAndMatViewRefreshQueues();
 
             assertSql(
                     "sym\tprice\tts\n" +
@@ -1160,8 +1154,7 @@ public class MatViewTest extends AbstractCairoTest {
                     "insert into base_price values('gbpusd', 1.319, '2024-09-10T12:05')" +
                             ",('gbpusd', 1.325, '2024-09-10T13:03')"
             );
-            drainWalQueue();
-            refreshMatView();
+            drainWalAndMatViewRefreshQueues();
 
             String expected = "sym\tprice\tts\n" +
                     "gbpusd\t1.319\t2024-09-10T12:00:00.000000Z\n" +
@@ -1190,8 +1183,7 @@ public class MatViewTest extends AbstractCairoTest {
                     "select 'gbpusd', 1.320 + x / 1000.0, timestamp_sequence('2024-09-10T12:02', 1000000*60*5) " +
                     "from long_sequence(24 * 20 * 5)"
             );
-            drainWalQueue();
-            refreshMatView();
+            drainWalAndMatViewRefreshQueues();
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 TestUtils.assertEquals(
@@ -1222,8 +1214,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('gbpusd', 1.313, '2024-09-13T13:03')" +
                             ",('gbpusd', 1.314, '2024-09-14T13:03')"
             );
-            drainWalQueue();
-            refreshMatView();
+            drainWalAndMatViewRefreshQueues();
 
             assertSql(
                     "sym\tprice\tts\n" +
@@ -1281,6 +1272,15 @@ public class MatViewTest extends AbstractCairoTest {
         return "create table " + tableName + " as (" + copySql(src, from, count) + ") timestamp(k) partition by DAY WAL";
     }
 
+    private void drainWalAndMatViewRefreshQueues() {
+        drainWalQueue();
+        try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
+            while (refreshJob.run(0)) {
+            }
+            drainWalQueue();
+        }
+    }
+
     private void dropMatView() throws SqlException {
         execute("drop materialized view price_1h;");
     }
@@ -1296,14 +1296,6 @@ public class MatViewTest extends AbstractCairoTest {
 
     private String outSelect(String out, String in) {
         return out + " from (" + in + ")";
-    }
-
-    private void refreshMatView() {
-        drainWalQueue();
-        try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
-            refreshJob.run(0);
-            drainWalQueue();
-        }
     }
 
     private void testAlignToCalendarTimezoneOffset(final String timezone) throws SqlException {
@@ -1352,10 +1344,10 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('jpyusd', 103.21, '2024-09-10T12:02')" +
                             ",('gbpusd', 1.321, '2024-09-10T13:02')"
             );
-            drainWalQueue();
+            drainWalAndMatViewRefreshQueues();
 
             currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
-            refreshMatView();
+            drainWalAndMatViewRefreshQueues();
 
             assertSql(
                     "name\tbaseTableName\tinvalid\n" +
@@ -1364,8 +1356,7 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             execute(operationSql);
-            drainWalQueue();
-            refreshMatView();
+            drainWalAndMatViewRefreshQueues();
 
             assertSql(
                     "name\tbaseTableName\tinvalid\tinvalidationReason\n" +
@@ -1384,13 +1375,12 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             createMatView(viewSql);
+
             execute("insert into base_price " +
                     "select 'gbpusd', 1.320 + x / 1000.0, timestamp_sequence('2024-09-10T12:02', 1000000*60*5) " +
                     "from long_sequence(24 * 20 * 5)"
             );
-            drainWalQueue();
-
-            refreshMatView();
+            drainWalAndMatViewRefreshQueues();
 
             assertSql(
                     "sequencerTxn\tminTimestamp\tmaxTimestamp\n" +
@@ -1401,8 +1391,7 @@ public class MatViewTest extends AbstractCairoTest {
             execute("insert into base_price values('gbpusd', 1.319, '2024-09-10T12:05')" +
                     ",('gbpusd', 1.325, '2024-09-10T13:03')"
             );
-            drainWalQueue();
-            refreshMatView();
+            drainWalAndMatViewRefreshQueues();
 
             assertSql(
                     "sequencerTxn\tminTimestamp\tmaxTimestamp\n" +
@@ -1432,11 +1421,11 @@ public class MatViewTest extends AbstractCairoTest {
 
         // create full tmp table in one go
         execute(createTableSql("tmp", columns, index, startTs, step, N));
-        drainWalQueue();
+        drainWalAndMatViewRefreshQueues();
         execute(createTableSql("x", "tmp", 1, initSize));
-        drainWalQueue();
+        drainWalAndMatViewRefreshQueues();
         createMatView(viewName, viewQuery);
-        drainWalQueue();
+        drainWalAndMatViewRefreshQueues();
 
         try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
             refreshJob.run(0);

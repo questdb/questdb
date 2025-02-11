@@ -37,13 +37,15 @@ public class MatViewRefreshList {
     private final ObjList<TableToken> matViews = new ObjList<>();
 
     public boolean notifyOnBaseTableCommitNoLock(long seqTxn) {
-        boolean retry;
         long lastNotified;
+        boolean refreshPending;
+        boolean retry;
         do {
             lastNotified = lastCommittedBaseTableTxn.get();
-            retry = (Math.abs(lastNotified) < seqTxn) && !lastCommittedBaseTableTxn.compareAndSet(lastNotified, seqTxn);
+            refreshPending = Math.abs(lastNotified) < seqTxn;
+            retry = refreshPending && !lastCommittedBaseTableTxn.compareAndSet(lastNotified, seqTxn);
         } while (retry);
-        return lastNotified <= 0;
+        return refreshPending;
     }
 
     public boolean notifyOnBaseTableRefreshedNoLock(long seqTxn) {

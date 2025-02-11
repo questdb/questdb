@@ -63,8 +63,7 @@ public class BaseTableMatViewRefreshStateTest extends AbstractCairoTest {
                     long nextTxn;
                     while ((nextTxn = seqTxn.incrementAndGet()) < commits) {
                         if (state.notifyOnBaseTableCommitNoLock(nextTxn)) {
-                            long refreshNot = refreshNotification.incrementAndGet();
-                            System.out.println("refresh notification:" + refreshNot + " added on commit " + nextTxn);
+                            refreshNotification.incrementAndGet();
                         }
                     }
                 } catch (Throwable e) {

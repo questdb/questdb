@@ -48,13 +48,13 @@ public class MatViewGraphImpl implements MatViewGraph {
     private final Function<CharSequence, MatViewRefreshList> createRefreshList;
     // TODO(puzpuzpuz): this map is grow-only, i.e. keys are never removed
     private final ConcurrentHashMap<MatViewRefreshList> dependentViewsByTableName = new ConcurrentHashMap<>();
+    private final CairoEngine engine;
     private final Telemetry<TelemetryMatViewTask> matViewTelemetry;
     private final MatViewTelemetryFacade matViewTelemetryFacade;
     private final MicrosecondClock microsecondClock;
     private final ConcurrentHashMap<MatViewRefreshState> refreshStateByTableDirName = new ConcurrentHashMap<>();
     private final ConcurrentQueue<MatViewRefreshTask> refreshTaskQueue = new ConcurrentQueue<>(MatViewRefreshTask::new);
     private final ThreadLocal<MatViewRefreshTask> taskHolder = new ThreadLocal<>(MatViewRefreshTask::new);
-    private final CairoEngine engine;
 
     public MatViewGraphImpl(CairoEngine engine) {
         this.engine = engine;
