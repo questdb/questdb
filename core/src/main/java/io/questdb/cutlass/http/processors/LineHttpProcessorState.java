@@ -84,7 +84,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         this.maxResponseErrorMessageLength = (int) ((maxResponseContentLength - 100) / 1.5);
         this.recvBufPos = this.buffer = Unsafe.malloc(recvBufSize, MemoryTag.NATIVE_HTTP_CONN);
         this.recvBufEnd = this.recvBufPos + recvBufSize;
-        this.parser = new LineTcpParser();
+        this.parser = new LineTcpParser(configuration.getCairoConfiguration());
         this.parser.of(buffer);
         this.appender = new LineWalAppender(
                 configuration.autoCreateNewColumns(),

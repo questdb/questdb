@@ -54,7 +54,7 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
         assertType(LineTcpParser.ENTITY_TYPE_TAG, "aFFF");
         assertType(LineTcpParser.ENTITY_TYPE_TAG, "e");
 
-        assertTypeComplete(LineTcpParser.ENTITY_TYPE_TAG, "\"errt\"");
+        assertType(LineTcpParser.ENTITY_TYPE_TAG, LineTcpParser.ENTITY_UNIT_NONE, "\"errt\"", "\"errt\"", LineTcpParser.ParseResult.MEASUREMENT_COMPLETE);
         assertError(LineTcpParser.ENTITY_TYPE_SYMBOL, "errt");
 
         assertType(LineTcpParser.ENTITY_TYPE_BOOLEAN, "t");
@@ -133,7 +133,7 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
             LineTcpParser.ParseResult expectedParseResult
     ) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (LineTcpParser lineTcpParser = new LineTcpParser()) {
+            try (LineTcpParser lineTcpParser = new LineTcpParser(configuration)) {
                 sink.clear();
                 sink.put(type == LineTcpParser.ENTITY_TYPE_TAG ? "t,v=" : "t v=").put(value).put('\n'); // SYMBOLS are in tag set, not field set
                 byte[] bytes = sink.toString().getBytes(Files.UTF_8);
@@ -182,9 +182,5 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
                 }
             }
         });
-    }
-
-    private static void assertTypeComplete(byte type, String value) throws Exception {
-        assertType(type, LineTcpParser.ENTITY_UNIT_NONE, value, value, LineTcpParser.ParseResult.MEASUREMENT_COMPLETE);
     }
 }

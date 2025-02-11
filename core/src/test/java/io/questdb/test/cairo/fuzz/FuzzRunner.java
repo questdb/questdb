@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.fuzz;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
@@ -445,6 +446,7 @@ public class FuzzRunner {
     }
 
     public ObjList<FuzzTransaction> generateSet(
+            CairoConfiguration cairoConfiguration,
             Rnd rnd,
             TableRecordMetadata sequencerMetadata,
             TableMetadata tableMetadata,
@@ -453,6 +455,7 @@ public class FuzzRunner {
             String tableName
     ) {
         return FuzzTransactionGenerator.generateSet(
+                cairoConfiguration,
                 initialRowCount,
                 sequencerMetadata,
                 tableMetadata,
@@ -482,18 +485,18 @@ public class FuzzRunner {
         );
     }
 
-    public ObjList<FuzzTransaction> generateTransactions(String tableName, Rnd rnd) throws NumericException {
+    public ObjList<FuzzTransaction> generateTransactions(CairoConfiguration cairoConfiguration, String tableName, Rnd rnd) throws NumericException {
         long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T17");
         long end = start + partitionCount * Timestamps.DAY_MICROS;
-        return generateTransactions(tableName, rnd, start, end);
+        return generateTransactions(cairoConfiguration, tableName, rnd, start, end);
     }
 
-    public ObjList<FuzzTransaction> generateTransactions(String tableName, Rnd rnd, long start, long end) {
+    public ObjList<FuzzTransaction> generateTransactions(CairoConfiguration cairoConfiguration, String tableName, Rnd rnd, long start, long end) {
         TableToken tableToken = engine.verifyTableName(tableName);
         try (TableRecordMetadata sequencerMetadata = engine.getLegacyMetadata(tableToken);
              TableMetadata tableMetadata = engine.getTableMetadata(tableToken)
         ) {
-            return generateSet(rnd, sequencerMetadata, tableMetadata, start, end, tableName);
+            return generateSet(cairoConfiguration, rnd, sequencerMetadata, tableMetadata, start, end, tableName);
         }
     }
 
@@ -518,11 +521,42 @@ public class FuzzRunner {
         }
     }
 
-    public void setFuzzCounts(boolean isO3, int fuzzRowCount, int transactionCount, int strLen, int symbolStrLenMax, int symbolCountMax, int initialRowCount, int partitionCount) {
-        setFuzzCounts(isO3, fuzzRowCount, transactionCount, strLen, symbolStrLenMax, symbolCountMax, initialRowCount, partitionCount, -1, 1);
+    public void setFuzzCounts(
+            boolean isO3,
+            int fuzzRowCount,
+            int transactionCount,
+            int strLen,
+            int symbolStrLenMax,
+            int symbolCountMax,
+            int initialRowCount,
+            int partitionCount
+    ) {
+        setFuzzCounts(
+                isO3,
+                fuzzRowCount,
+                transactionCount,
+                strLen,
+                symbolStrLenMax,
+                symbolCountMax,
+                initialRowCount,
+                partitionCount,
+                -1,
+                1
+        );
     }
 
-    public void setFuzzCounts(boolean isO3, int fuzzRowCount, int transactionCount, int strLen, int symbolStrLenMax, int symbolCountMax, int initialRowCount, int partitionCount, int parallelWalCount, int ioFailureCount) {
+    public void setFuzzCounts(
+            boolean isO3,
+            int fuzzRowCount,
+            int transactionCount,
+            int strLen,
+            int symbolStrLenMax,
+            int symbolCountMax,
+            int initialRowCount,
+            int partitionCount,
+            int parallelWalCount,
+            int ioFailureCount
+    ) {
         this.isO3 = isO3;
         this.fuzzRowCount = fuzzRowCount;
         this.transactionCount = transactionCount;
@@ -636,13 +670,13 @@ public class FuzzRunner {
     }
 
     @NotNull
-    private ObjList<FuzzTransaction> createTransactions(Rnd rnd, String tableNameBase) throws SqlException, NumericException {
+    private ObjList<FuzzTransaction> createTransactions(CairoConfiguration cairoConfiguration, Rnd rnd, String tableNameBase) throws SqlException, NumericException {
         String tableNameNoWal = tableNameBase + "_nonwal";
 
         createInitialTable(tableNameNoWal, false, initialRowCount);
         createInitialTable(tableNameBase, true, initialRowCount);
 
-        ObjList<FuzzTransaction> transactions = generateTransactions(tableNameNoWal, rnd);
+        ObjList<FuzzTransaction> transactions = generateTransactions(cairoConfiguration, tableNameNoWal, rnd);
         applyNonWal(transactions, tableNameNoWal, rnd);
 
         // Release TW to reduce memory pressure
@@ -935,7 +969,7 @@ public class FuzzRunner {
         TableToken nonWalTt = createInitialTable(tableNameNoWal, false, initialRowCount);
 
         ObjList<FuzzTransaction> transactions;
-        transactions = generateTransactions(tableNameNoWal, rnd);
+        transactions = generateTransactions(engine.getConfiguration(), tableNameNoWal, rnd);
         try {
             String timestampColumnName;
             try (TableMetadata meta = engine.getTableMetadata(nonWalTt)) {
@@ -977,56 +1011,62 @@ public class FuzzRunner {
 
     protected void runFuzz(Rnd rnd, String tableNameBase, int tableCount, boolean randomiseProbs, boolean randomiseCounts) throws Exception {
         ObjList<ObjList<FuzzTransaction>> fuzzTransactions = new ObjList<>();
-        for (int i = 0; i < tableCount; i++) {
-            String tableNameWal = tableNameBase + "_" + i;
-            if (randomiseProbs) {
-                setFuzzProbabilities(
-                        0.5 * rnd.nextDouble(),
-                        rnd.nextDouble(),
-                        rnd.nextDouble(),
-                        0.5 * rnd.nextDouble(),
-                        rnd.nextDouble(),
-                        rnd.nextDouble(),
-                        rnd.nextDouble(),
-                        rnd.nextDouble(),
-                        rnd.nextDouble(),
-                        0.01,
-                        0.0,
-                        0.1 * rnd.nextDouble(),
-                        rnd.nextDouble(),
-                        0.0
-                );
-            }
-            if (randomiseCounts) {
-                setFuzzCounts(
-                        rnd.nextBoolean(),
-                        rnd.nextInt(2_000_000),
-                        rnd.nextInt(1000),
-                        randomiseStringLengths(rnd, 1000),
-                        rnd.nextInt(1000),
-                        rnd.nextInt(1000),
-                        rnd.nextInt(1_000_000),
-                        5 + rnd.nextInt(10)
-                );
-            }
-
-            ObjList<FuzzTransaction> transactions = createTransactions(rnd, tableNameWal);
-            fuzzTransactions.add(transactions);
-        }
-        // Can help to reduce memory consumption.
-        engine.releaseInactive();
-
-        applyManyWalParallel(fuzzTransactions, rnd, tableNameBase, true, true);
-        checkNoSuspendedTables(new ObjHashSet<>());
-
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+        try {
             for (int i = 0; i < tableCount; i++) {
-                String tableNameNoWal = tableNameBase + "_" + i + "_nonwal";
-                String tableNameWal = getWalParallelApplyTableName(tableNameBase, i);
-                LOG.infoW().$("comparing tables ").$(tableNameNoWal).$(" and ").$(tableNameWal).$();
-                String limit = "";
-                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + limit, tableNameWal + limit, LOG);
-                assertRandomIndexes(tableNameNoWal, tableNameWal, rnd);
+                String tableNameWal = tableNameBase + "_" + i;
+                if (randomiseProbs) {
+                    setFuzzProbabilities(
+                            0.5 * rnd.nextDouble(),
+                            rnd.nextDouble(),
+                            rnd.nextDouble(),
+                            0.5 * rnd.nextDouble(),
+                            rnd.nextDouble(),
+                            rnd.nextDouble(),
+                            rnd.nextDouble(),
+                            rnd.nextDouble(),
+                            rnd.nextDouble(),
+                            0.01,
+                            0.0,
+                            0.1 * rnd.nextDouble(),
+                            rnd.nextDouble(),
+                            0.0
+                    );
+                }
+                if (randomiseCounts) {
+                    setFuzzCounts(
+                            rnd.nextBoolean(),
+                            rnd.nextInt(2_000_000),
+                            rnd.nextInt(1000),
+                            randomiseStringLengths(rnd, 1000),
+                            rnd.nextInt(1000),
+                            rnd.nextInt(1000),
+                            rnd.nextInt(1_000_000),
+                            5 + rnd.nextInt(10)
+                    );
+                }
+
+                ObjList<FuzzTransaction> transactions = createTransactions(engine.getConfiguration(), rnd, tableNameWal);
+                fuzzTransactions.add(transactions);
+            }
+            // Can help to reduce memory consumption.
+            engine.releaseInactive();
+
+            applyManyWalParallel(fuzzTransactions, rnd, tableNameBase, true, true);
+            checkNoSuspendedTables(new ObjHashSet<>());
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                for (int i = 0; i < tableCount; i++) {
+                    String tableNameNoWal = tableNameBase + "_" + i + "_nonwal";
+                    String tableNameWal = getWalParallelApplyTableName(tableNameBase, i);
+                    LOG.infoW().$("comparing tables ").$(tableNameNoWal).$(" and ").$(tableNameWal).$();
+                    String limit = "";
+                    TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + limit, tableNameWal + limit, LOG);
+                    assertRandomIndexes(tableNameNoWal, tableNameWal, rnd);
+                }
+            }
+        } finally {
+            for (int i = 0, n = fuzzTransactions.size(); i < n; i++) {
+                Misc.freeObjListAndClear(fuzzTransactions.get(i));
             }
         }
     }

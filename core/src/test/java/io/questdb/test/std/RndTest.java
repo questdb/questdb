@@ -24,6 +24,7 @@
 
 package io.questdb.test.std;
 
+import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.arr.DirectArrayView;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
@@ -40,7 +41,7 @@ public class RndTest extends AbstractTest {
     public void testGenerateArray() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
-            try (DirectArrayView arrayView = new DirectArrayView()) {
+            try (DirectArrayView arrayView = new DirectArrayView(new DefaultCairoConfiguration(root))) {
                 for (int i = 0; i < 1000; i++) {
                     arrayView.clear();
                     rnd.nextDoubleArray(2, arrayView, 0, 8);

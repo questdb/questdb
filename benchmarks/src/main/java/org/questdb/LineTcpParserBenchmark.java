@@ -24,6 +24,8 @@
 
 package org.questdb;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpParser;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
@@ -63,7 +65,8 @@ public class LineTcpParserBenchmark {
     @Setup
     public void setup() {
         this.input = new DirectUtf8Sink(BUFFER_SIZE);
-        this.parser = new LineTcpParser();
+        CairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(".");
+        this.parser = new LineTcpParser(cairoConfiguration);
 
         Rnd rnd = new Rnd();
         long lineLenEstimate = 0;

@@ -114,7 +114,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected int partitionByDefault = PartitionBy.DAY;
     protected boolean useLegacyStringDefault = true;
 
-    protected final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration() {
+    protected final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration(configuration) {
         @Override
         public boolean getAutoCreateNewColumns() {
             return autoCreateNewColumns;

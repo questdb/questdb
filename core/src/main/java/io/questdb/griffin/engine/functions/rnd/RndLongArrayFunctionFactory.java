@@ -60,7 +60,7 @@ public class RndLongArrayFunctionFactory implements FunctionFactory {
         if (dimensionCount <= 0) {
             return NullConstant.NULL;
         }
-        return new RndLongArrayFunction(dimensionCount);
+        return new RndLongArrayFunction(configuration, dimensionCount);
     }
 
     public static class RndLongArrayFunction extends ArrayFunction {
@@ -69,9 +69,9 @@ public class RndLongArrayFunctionFactory implements FunctionFactory {
         private DirectArrayView array;
         private Rnd rnd;
 
-        public RndLongArrayFunction(int nDims) {
+        public RndLongArrayFunction(CairoConfiguration configuration, int nDims) {
             this.nDims = nDims;
-            this.array = new DirectArrayView();
+            this.array = new DirectArrayView(configuration);
             this.array.setType(ColumnType.encodeArrayType(ColumnType.LONG, nDims));
         }
 

@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.DirectArrayView;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode;
@@ -71,8 +72,12 @@ public class ArrayParser implements QuietCloseable {
     // determined. If so, the size of the element must match that; otherwise we're
     // parsing a jagged array, which is not allowed. If the size hasn't yet been
     // determined, we set it to the size of the current element.
-    private final DirectArrayView array = new DirectArrayView();
+    private final DirectArrayView array;
     private final DirectUtf8String input = new DirectUtf8String();
+
+    public ArrayParser(CairoConfiguration configuration) {
+        array = new DirectArrayView(configuration);
+    }
 
     /**
      * Address where the input string starts. Used to calculate the current position.

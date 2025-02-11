@@ -64,7 +64,7 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
         if (nanRate < 0) {
             throw SqlException.$(argPositions.getQuick(0), "invalid NaN rate [nanRate=").put(nanRate).put(']');
         }
-        return new RndDoubleArrayFunction(dimensionCount, nanRate);
+        return new RndDoubleArrayFunction(configuration, dimensionCount, nanRate);
     }
 
     public static class RndDoubleArrayFunction extends ArrayFunction {
@@ -74,10 +74,10 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
         private DirectArrayView array;
         private Rnd rnd;
 
-        public RndDoubleArrayFunction(int nDims, int nanRate) {
+        public RndDoubleArrayFunction(CairoConfiguration configuration, int nDims, int nanRate) {
             this.nanRate = nanRate + 1;
             this.nDims = nDims;
-            this.array = new DirectArrayView();
+            this.array = new DirectArrayView(configuration);
             this.array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims));
         }
 

@@ -27,6 +27,7 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cutlass.line.LineTcpTimestampAdapter;
@@ -54,6 +55,11 @@ public class DefaultLineTcpReceiverConfiguration extends DefaultIODispatcherConf
             return 0;
         }
     };
+    private final CairoConfiguration cairoConfiguration;
+
+    public DefaultLineTcpReceiverConfiguration(CairoConfiguration cairoConfiguration) {
+        this.cairoConfiguration = cairoConfiguration;
+    }
 
     @Override
     public String getAuthDB() {
@@ -68,6 +74,11 @@ public class DefaultLineTcpReceiverConfiguration extends DefaultIODispatcherConf
     @Override
     public boolean getAutoCreateNewTables() {
         return true;
+    }
+
+    @Override
+    public CairoConfiguration getCairoConfiguration() {
+        return cairoConfiguration;
     }
 
     @Override

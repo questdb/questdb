@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.arr;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.vm.api.MemoryA;
@@ -48,6 +49,11 @@ public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietClos
     private long size = 0;
     private int[] strides;
     private int type = ColumnType.UNDEFINED;
+    private final CairoConfiguration configuration;
+
+    public DirectArrayView(CairoConfiguration configuration) {
+        this.configuration = configuration;
+    }
 
     @Override
     public void appendWithDefaultStrides(MemoryA fromMem) {
@@ -58,9 +64,17 @@ public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietClos
     public void applyShape() {
         assert strides.length == shape.length;
 
+        int maxArrayElementCount = configuration.maxArrayElementCount();
         int flatElemCount = 1;
         for (int i = 0, n = shape.length; i < n; i++) {
             flatElemCount *= shape[i];
+            if (flatElemCount > maxArrayElementCount) {
+                throw CairoException.nonCritical()
+                        .put("array is too large [elementCount=").put(flatElemCount)
+                        .put(", dimensionsLeft=").put(n - i - 1)
+                        .put(", max=").put(maxArrayElementCount)
+                        .put(']');
+            }
             assert flatElemCount > 0;
         }
         long size = (long) flatElemCount << ColumnType.pow2SizeOf(ColumnType.decodeArrayElementType(type));

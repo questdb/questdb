@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
+import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cutlass.line.LineException;
 import io.questdb.cutlass.line.tcp.LineTcpParser;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult;
@@ -39,7 +40,7 @@ import org.junit.Test;
 
 
 public class LineTcpParser2Test extends LineUdpLexerTest {
-    private final LineTcpParser lineTcpParser = new LineTcpParser();
+    private final LineTcpParser lineTcpParser = new LineTcpParser(new DefaultCairoConfiguration(""));
     private boolean onErrorLine;
     private long startOfLineAddr;
 

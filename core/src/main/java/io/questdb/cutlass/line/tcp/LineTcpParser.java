@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.arr.DirectArrayView;
 import io.questdb.cutlass.line.tcp.ArrayParser.ParseException;
 import io.questdb.griffin.SqlKeywords;
@@ -83,6 +84,7 @@ public class LineTcpParser implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(LineTcpParser.class);
 
     private static final boolean[] controlBytes;
+    private final CairoConfiguration cairoConfiguration;
     private final DirectUtf8String charSeq = new DirectUtf8String();
     private final ObjList<ProtoEntity> entityCache = new ObjList<>();
     private final DirectUtf8String measurementName = new DirectUtf8String();
@@ -102,7 +104,8 @@ public class LineTcpParser implements QuietCloseable {
     private long timestamp;
     private byte timestampUnit;
 
-    public LineTcpParser() {
+    public LineTcpParser(CairoConfiguration configuration) {
+        this.cairoConfiguration = configuration;
     }
 
     @Override
@@ -569,7 +572,7 @@ public class LineTcpParser implements QuietCloseable {
     private ProtoEntity popEntity() {
         ProtoEntity currentEntity;
         if (entityCache.size() <= nEntities) {
-            currentEntity = new ProtoEntity();
+            currentEntity = new ProtoEntity(cairoConfiguration);
             entityCache.add(currentEntity);
         } else {
             currentEntity = entityCache.get(nEntities);
@@ -671,7 +674,7 @@ public class LineTcpParser implements QuietCloseable {
     }
 
     public class ProtoEntity implements QuietCloseable {
-        private final ArrayParser arrayParser = new ArrayParser();
+        private final ArrayParser arrayParser;
         private final DirectUtf8String name = new DirectUtf8String();
         private final DirectUtf8String value = new DirectUtf8String();
         private boolean booleanValue;
@@ -679,6 +682,10 @@ public class LineTcpParser implements QuietCloseable {
         private long longValue;
         private byte type = ENTITY_TYPE_NONE;
         private byte unit = ENTITY_UNIT_NONE;
+
+        public ProtoEntity(CairoConfiguration configuration) {
+            arrayParser = new ArrayParser(configuration);
+        }
 
         @Override
         public void close() {

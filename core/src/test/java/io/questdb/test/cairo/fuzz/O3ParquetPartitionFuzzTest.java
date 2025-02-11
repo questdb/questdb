@@ -138,6 +138,7 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
             final long fileSize = Files.length(parquet.$());
             final long checksumBefore = calcChecksum(parquet.toString(), fileSize);
             ObjList<FuzzTransaction> transactions = FuzzTransactionGenerator.generateSet(
+                    engine.getConfiguration(),
                     nTotalRows,
                     sequencerMetadata,
                     xw.getMetadata(),

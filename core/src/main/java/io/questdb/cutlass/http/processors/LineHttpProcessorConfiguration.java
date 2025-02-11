@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http.processors;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cutlass.line.LineTcpTimestampAdapter;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 
@@ -32,6 +33,8 @@ public interface LineHttpProcessorConfiguration {
     boolean autoCreateNewColumns();
 
     boolean autoCreateNewTables();
+
+    CairoConfiguration getCairoConfiguration();
 
     short getDefaultColumnTypeForFloat();
 

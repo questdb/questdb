@@ -41,7 +41,7 @@ public class ArrayTest extends AbstractCairoTest {
 
     @Test
     public void testArrayToJsonDouble() {
-        try (DirectArrayView array = new DirectArrayView();
+        try (DirectArrayView array = new DirectArrayView(configuration);
              DirectUtf8Sink sink = new DirectUtf8Sink(20)
         ) {
             array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 2));
@@ -60,7 +60,7 @@ public class ArrayTest extends AbstractCairoTest {
 
     @Test
     public void testArrayToJsonLong() {
-        try (DirectArrayView array = new DirectArrayView();
+        try (DirectArrayView array = new DirectArrayView(configuration);
              DirectUtf8Sink sink = new DirectUtf8Sink(20)
         ) {
             array.setType(ColumnType.encodeArrayType(ColumnType.LONG, 2));
@@ -80,7 +80,7 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testArrayToJsonUsingParser() {
         DirectUtf8String str = new DirectUtf8String();
-        try (ArrayParser parser = new ArrayParser();
+        try (ArrayParser parser = new ArrayParser(configuration);
              DirectUtf8Sink sink = new DirectUtf8Sink(20)
         ) {
             String arrayExpr = "[[1,2],[3,4]]";
