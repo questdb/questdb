@@ -499,9 +499,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             if (matViewToken == null) {
                 try {
                     engine.verifyTableToken(baseTableToken);
-                } catch (CairoException ce) {
+                } catch (CairoException | TableReferenceOutOfDateException e) {
                     LOG.info().$("base table is dropped or renamed [table=").$(baseTableToken)
-                            .$(", error=").$(ce.getFlyweightMessage())
+                            .$(", error=").$(e.getFlyweightMessage())
                             .I$();
                     invalidateDependentViews(baseTableToken, matViewGraph, "base table is dropped or renamed");
                     continue;
