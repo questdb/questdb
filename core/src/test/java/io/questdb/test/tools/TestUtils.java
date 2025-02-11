@@ -1070,6 +1070,7 @@ public final class TestUtils {
                 return;
             }
             Files.mkdirs(path.of(root).slash(), 509);
+            Files.mkdirs(path.of(root).concat("db").slash(), 509);
         }
     }
 

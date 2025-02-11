@@ -76,13 +76,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     public DefaultCairoConfiguration(CharSequence installRoot) {
         this.installRoot = Chars.toString(installRoot);
-
-        // TODO: This is wrong, the `dbRoot` should be set to:
-        //       this.dbRoot = new File(this.installRoot, "db").getAbsolutePath();
-        //       This is a legacy bug would require fixing hundreds of test cases
-        //       which historically conflated the two directories.
-        //       The installRoot was introduced as part of PR #5375 and this change was left out for expediency.
-        this.dbRoot = this.installRoot;
+        this.dbRoot = new File(this.installRoot, "db").getAbsolutePath();
 
         this.confRoot = PropServerConfiguration.rootSubdir(installRoot, PropServerConfiguration.CONFIG_DIRECTORY);
         this.textConfiguration = new DefaultTextConfiguration(Chars.toString(confRoot));
