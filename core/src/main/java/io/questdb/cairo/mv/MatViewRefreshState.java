@@ -29,7 +29,6 @@ import io.questdb.cairo.meta.MetaFileReader;
 import io.questdb.cairo.meta.MetaFileWriter;
 import io.questdb.cairo.meta.ReadableBlock;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
@@ -53,27 +52,21 @@ public class MatViewRefreshState implements QuietCloseable {
     private final AtomicBoolean latch = new AtomicBoolean(false);
     private final MatViewTelemetryFacade telemetryFacade;
     private final MatViewDefinition viewDefinition;
-    private final SeqTxnTracker baseTableSeqTracker;
-    private final SeqTxnTracker matViewSeqTracker;
     private RecordCursorFactory cursorFactory;
     private volatile boolean dropped;
     private volatile boolean invalid;
     private volatile String invalidationReason;
     private volatile long lastRefreshTimestamp = Numbers.LONG_NULL;
+    private volatile long lastRefreshBaseTxn = -1;
     private volatile boolean pendingInvalidation;
     private long recordRowCopierMetadataVersion;
     private RecordToRowCopier recordToRowCopier;
-    private long lastRefreshBaseTxn;
 
     public MatViewRefreshState(
             MatViewDefinition viewDefinition,
             boolean invalid,
-            MatViewTelemetryFacade telemetryFacade,
-            SeqTxnTracker baseTableSeqTracker,
-            SeqTxnTracker matViewSeqTracker
+            MatViewTelemetryFacade telemetryFacade
     ) {
-        this.baseTableSeqTracker = baseTableSeqTracker;
-        this.matViewSeqTracker = matViewSeqTracker;
         this.viewDefinition = viewDefinition;
         this.telemetryFacade = telemetryFacade;
         this.invalid = invalid;
@@ -113,6 +106,10 @@ public class MatViewRefreshState implements QuietCloseable {
         writer.commit();
     }
 
+    public long getLastRefreshBaseTxn() {
+        return lastRefreshBaseTxn;
+    }
+
     public long readLastRefreshBaseTableTxn(@NotNull MetaFileReader metaFileReader, @NotNull Path dbRoot) {
         dbRoot
                 .concat(getViewDefinition().getMatViewToken())
@@ -145,10 +142,6 @@ public class MatViewRefreshState implements QuietCloseable {
         cursorFactory = Misc.free(cursorFactory);
     }
 
-    public SeqTxnTracker getBaseTableSeqTracker() {
-        return baseTableSeqTracker;
-    }
-
     @Nullable
     public String getInvalidationReason() {
         return invalidationReason;
@@ -156,10 +149,6 @@ public class MatViewRefreshState implements QuietCloseable {
 
     public long getLastRefreshTimestamp() {
         return lastRefreshTimestamp;
-    }
-
-    public SeqTxnTracker getMatViewSeqTracker() {
-        return matViewSeqTracker;
     }
 
     public long getRecordRowCopierMetadataVersion() {

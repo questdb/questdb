@@ -169,7 +169,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             assertSql(
                     "name\tbaseTableName\tlastRefreshTimestamp\tviewSql\tviewTableDirName\tinvalidationReason\tinvalid\tbaseTableTxn\tappliedBaseTableTxn\n" +
-                            "price_1h\tbase_price\t2024-10-24T18:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\ttable does not exist [table=base_price]\ttrue\t1\t2\n",
+                            "price_1h\tbase_price\t2024-10-24T18:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\ttable does not exist [table=base_price]\ttrue\t1\t-1\n",
                     "views"
             );
 
@@ -186,7 +186,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             assertSql(
                     "name\tbaseTableName\tlastRefreshTimestamp\tviewSql\tviewTableDirName\tinvalidationReason\tinvalid\tbaseTableTxn\tappliedBaseTableTxn\n" +
-                            "price_1h\tbase_price\t2024-10-24T19:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\tbase table is not a WAL table\ttrue\t1\t2\n",
+                            "price_1h\tbase_price\t2024-10-24T19:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\tbase table is not a WAL table\ttrue\t1\t-1\n",
                     "views"
             );
         });

@@ -42,7 +42,6 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
     private volatile long dirtyWriterTxn;
     private volatile String errorMessage = "";
     private volatile ErrorTag errorTag = ErrorTag.NONE;
-    private volatile long lastRefreshBaseTxn = -1;
     private int maxRecordedInFlightPartitions = 1;
     // positive int: holds max parallelism
     // negative int: holds backoff counter
@@ -66,10 +65,6 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
 
     public long getLagTxnCount() {
         return Math.max(0, this.dirtyWriterTxn - this.writerTxn);
-    }
-
-    public long getLastRefreshBaseTxn() {
-        return lastRefreshBaseTxn;
     }
 
     public int getMaxO3MergeParallelism() {
@@ -203,10 +198,6 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
         LOG.info().$("Memory pressure is high [table=").$(tableName).$(", maxParallelism=").$(memoryPressureRegulationValue).I$();
 
         return true;
-    }
-
-    public void setLastRefreshBaseTxn(long txn) {
-        lastRefreshBaseTxn = txn;
     }
 
     public void setSuspended(ErrorTag errorTag, String errorMessage) {

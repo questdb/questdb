@@ -28,7 +28,6 @@ import io.questdb.Telemetry;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.ConcurrentQueue;
@@ -48,7 +47,6 @@ public class MatViewGraphImpl implements MatViewGraph {
     private final Function<CharSequence, MatViewRefreshList> createRefreshList;
     // TODO(puzpuzpuz): this map is grow-only, i.e. keys are never removed
     private final ConcurrentHashMap<MatViewRefreshList> dependentViewsByTableName = new ConcurrentHashMap<>();
-    private final CairoEngine engine;
     private final Telemetry<TelemetryMatViewTask> matViewTelemetry;
     private final MatViewTelemetryFacade matViewTelemetryFacade;
     private final MicrosecondClock microsecondClock;
@@ -57,7 +55,6 @@ public class MatViewGraphImpl implements MatViewGraph {
     private final ThreadLocal<MatViewRefreshTask> taskHolder = new ThreadLocal<>(MatViewRefreshTask::new);
 
     public MatViewGraphImpl(CairoEngine engine) {
-        this.engine = engine;
         this.createRefreshList = name -> new MatViewRefreshList();
         this.matViewTelemetry = engine.getTelemetryMatView();
         this.matViewTelemetryFacade = matViewTelemetry.isEnabled() ? this::storeMatViewTelemetry : this::storeMatViewTelemetryNoop;
@@ -67,18 +64,10 @@ public class MatViewGraphImpl implements MatViewGraph {
     @Override
     public MatViewRefreshState addView(MatViewDefinition viewDefinition, boolean isInvalid) {
         final TableToken matViewToken = viewDefinition.getMatViewToken();
-
-        final TableToken baseTableToken = engine.getTableTokenIfExists(viewDefinition.getBaseTableName());
-        assert baseTableToken != null : "base table token must exist";
-        final SeqTxnTracker baseTableTxnTracker = engine.getTableSequencerAPI().getTxnTracker(baseTableToken);
-        final SeqTxnTracker matViewTxnTracker = engine.getTableSequencerAPI().getTxnTracker(matViewToken);
-
         final MatViewRefreshState state = new MatViewRefreshState(
                 viewDefinition,
                 isInvalid,
-                matViewTelemetryFacade,
-                baseTableTxnTracker,
-                matViewTxnTracker
+                matViewTelemetryFacade
         );
 
         final MatViewRefreshState prevState = refreshStateByTableDirName.putIfAbsent(matViewToken.getDirName(), state);
