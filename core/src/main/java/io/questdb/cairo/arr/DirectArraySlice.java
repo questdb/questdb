@@ -38,11 +38,7 @@ public class DirectArraySlice implements DirectSequence {
     private int size = 0;
 
     public boolean getBoolean(int elemIndex) {
-        assert elemIndex >= 0;
-        final int byteIndex = elemIndex / 8;
-        final int bitIndex = elemIndex % 8;
-        final byte bits = getByte(byteIndex);
-        return ((bits & (1 << bitIndex)) != 0);
+        return getByte(elemIndex) != 0;
     }
 
     public byte getByte(int elemIndex) {
