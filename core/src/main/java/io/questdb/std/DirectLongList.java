@@ -188,6 +188,11 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
         Vect.memset(address, pos - address, (int) v);
     }
 
+    public void zero(long v, long capacity) {
+        assert address + capacity * Long.BYTES <= limit && capacity <= getCapacity();
+        Vect.memset(address, capacity * Long.BYTES, (int) v);
+    }
+
     // desired capacity in bytes (not count of LONG values)
     private void setCapacityBytes(long capacity) {
         if (this.capacity != capacity) {

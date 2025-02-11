@@ -1551,7 +1551,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final long dstDataFd = columnFdAndDataSize.get(3L * i + 1);
                 ff.close(dstDataFd);
             }
-            columnFdAndDataSize.clear();
             columnFdAndDataSize.resetCapacity();
             parquetDecoder.close();
             ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
@@ -5338,10 +5337,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private DirectLongList getTempDirectMemoryList(long capacity) {
         if (tempDirectMemList == null) {
             tempDirectMemList = new DirectLongList(capacity, MemoryTag.NATIVE_TABLE_WRITER);
+            tempDirectMemList.zero(0, capacity);
             return tempDirectMemList;
         }
         tempDirectMemList.clear();
         tempDirectMemList.setCapacity(capacity);
+        tempDirectMemList.zero(0, capacity);
         return tempDirectMemList;
     }
 
@@ -6907,6 +6908,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final long o3LoHi;
 
             if (!isDeduplicationEnabled() && segmentCopyInfo.getAllTxnDataInOrder() && segmentCopyInfo.getSegmentCount() == 1) {
+                LOG.info().$("all data in order, single segment, processing optmised [table=").$(tableToken.getDirName()).I$();
                 // all data comes from a single segment and is already sorted
                 if (denseSymbolMapWriters.size() > 0) {
                     segmentFileCache.mmapWalColsEager();
@@ -6950,6 +6952,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return blockTransactionCount;
         } finally {
             segmentFileCache.closeWalFiles(segmentCopyInfo, metadata.getColumnCount());
+            if (tempDirectMemList != null) {
+                tempDirectMemList.resetCapacity();
+            }
         }
     }
 
@@ -6963,11 +6968,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long totalColumnAddressSize = totalSegmentAddresses * walColumnCountPerSegment;
 
         var tsAddresses = getTempDirectMemoryList(totalColumnAddressSize);
+        tsAddresses.setPos(totalColumnAddressSize);
+
         try {
-
-            tsAddresses.setPos(totalColumnAddressSize);
-            tsAddresses.zero(0);
-
             segmentFileCache.createAddressBuffersPrimary(timestampIndex, metadata.getColumnCount(), segmentCopyInfo.getSegmentCount(), tsAddresses.getAddress());
 
             long totalRows = segmentCopyInfo.getTotalRows();
@@ -7106,6 +7109,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private ObjList<MemoryCR> processWalCommitBlock_remapSymbols() {
         var columnSegmentAddresses = getTempDirectMemoryList(2L * metadata.getColumnCount());
+        columnSegmentAddresses.setPos(2L * metadata.getColumnCount());
+
         // Remap the symbols if there are any
         long segmentColAddresses = columnSegmentAddresses.getAddress();
         processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks(
@@ -7122,7 +7127,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         o3ColumnOverrides.clear();
         o3ColumnOverrides.addAll(segmentFileCache.getWalMappedColumns());
 
-        // Take symbol map columns as o3MemColumns2 if remapping happened
+        // Take symbol columns from o3MemColumns2 if remapping happened
         int tsColIndex = metadata.getTimestampIndex();
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             int columnType = metadata.getColumnType(i);
@@ -7133,7 +7138,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (Unsafe.getUnsafe().getLong(segmentColAddresses) == -1L) {
                         int primaryColumnIndex = getPrimaryColumnIndex(i);
                         MemoryCARW remappedColumn = o3MemColumns2.getQuick(primaryColumnIndex);
+                        assert remappedColumn.size() >= (segmentCopyInfo.getTotalRows() << ColumnType.pow2SizeOf(columnType));
                         o3ColumnOverrides.setQuick(primaryColumnIndex, remappedColumn);
+
+                        LOG.info().$("using remapped column buffer [table=").$(tableToken)
+                                .$("name=").$(metadata.getColumnName(i)).$(", index=").$(i).I$();
                     }
                 }
                 segmentColAddresses += Long.BYTES;
@@ -7322,6 +7331,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 var destinationColumn = o3MemColumns2.get(getPrimaryColumnIndex(columnIndex));
                 destinationColumn.jumpTo((rowsOffset + totalRows) << shl);
 
+                LOG.info().$("remapping WAL symbols [table=").$(tableToken.getTableName())
+                        .$(", column=").$(metadata.getColumnName(columnIndex))
+                        .$(", rows=").$(totalRows)
+                        .$(", txnCount=").$(txnCount)
+                        .$(", offset=").$(rowsOffset)
+                        .I$();
+
                 long rowCount = Vect.remapSymbolColumnFromManyAddresses(
                         mappedAddrBuffPrimary,
                         destinationColumn.getAddress() + (rowsOffset << shl),
@@ -7336,6 +7352,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 // Save the hint that this symbol is already re-mapped and results are in o3MemColumns2
                 Unsafe.getUnsafe().putLong(mappedAddrBuffPrimary, -1L);
+            } else {
+                // Save the hint that symbol column is not re-mapped
+                Unsafe.getUnsafe().putLong(mappedAddrBuffPrimary, 0);
+                LOG.info().$("no new symbols, no remapping needed [table=").$(tableToken.getTableName())
+                        .$(", column=").$(metadata.getColumnName(columnIndex))
+                        .$(", rows=").$(totalRows)
+                        .I$();
             }
         } catch (Throwable th) {
             handleColumnTaskException(

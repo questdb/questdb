@@ -829,34 +829,4 @@ jlong merge_shuffle_symbol_column_by_reverse_index(
     return revrese_index_row_count - dups;
 }
 
-
-jlong remap_symbol_column_from_many_addresses(
-        const int32_t **src,
-        int32_t *dst,
-        const txn_info *segment_txns,
-        uint64_t txn_count,
-        const int32_t *symbol_map
-) {
-    int64_t out_index = 0;
-    jlong rows_processed = 0;
-    for (uint64_t txn_index = 0; txn_index < txn_count; txn_index++) {
-        auto segment_addr = src[segment_txns[txn_index].seg_info_index];
-        uint64_t hi = segment_txns[txn_index].segment_row_offset + segment_txns[txn_index].row_count;
-        int32_t clean_symbol_count = symbol_map[2 * txn_index];
-        int32_t map_offset = symbol_map[2 * txn_index + 1];
-
-        for (uint64_t seg_row = segment_txns[txn_index].segment_row_offset; seg_row < hi; seg_row++, out_index++) {
-            int32_t value = segment_addr[seg_row];
-            if (value >= clean_symbol_count) {
-                auto value2 = symbol_map[map_offset + value - clean_symbol_count];
-                dst[out_index] = value2;
-            } else {
-                dst[out_index] = value;
-            }
-            rows_processed++;
-        }
-    }
-    return rows_processed;
-}
-
 #endif //QUESTDB_OOO_RADIX_H

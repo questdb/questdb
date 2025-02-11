@@ -48,7 +48,7 @@ import static io.questdb.PropertyKey.*;
 public class LineOkHttpFuzzTest extends AbstractTest {
     @Test
     public void testChunkedDataIlpUploadNoKeepAlive() throws Exception {
-        Rnd rnd = generateRandom(LOG, 1715122094200L, 1739271477410L);
+        Rnd rnd = generateRandom(LOG);
         int fragmentation = 1 + rnd.nextInt(5);
         LOG.info().$("=== fragmentation=").$(fragmentation).$();
         try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
@@ -94,7 +94,7 @@ public class LineOkHttpFuzzTest extends AbstractTest {
         try (final ServerMain serverMain = ServerMain.create(root)) {
             serverMain.start();
 
-            Rnd rnd = generateRandom();
+            Rnd rnd = generateRandom(LOG);
 
             int totalCount = 0;
             try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
@@ -135,7 +135,7 @@ public class LineOkHttpFuzzTest extends AbstractTest {
 
     @Test
     public void testFuzzChunkedDataIlpUpload() throws SqlException {
-        Rnd rnd = generateRandom();
+        Rnd rnd = generateRandom(LOG);
         int fragmentation = 1 + rnd.nextInt(5);
         LOG.info().$("=== fragmentation=").$(fragmentation).$();
 
@@ -238,7 +238,7 @@ public class LineOkHttpFuzzTest extends AbstractTest {
     public void testValidRequestAfterInvalidWithKeepAlive() throws Exception {
         try (final ServerMain serverMain = ServerMain.create(root)) {
             serverMain.start();
-            Rnd rnd = generateRandom();
+            Rnd rnd = generateRandom(LOG);
 
             int totalCount = 0;
             try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {

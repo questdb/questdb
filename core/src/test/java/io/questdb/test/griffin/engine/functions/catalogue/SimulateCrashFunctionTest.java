@@ -27,7 +27,6 @@ package io.questdb.test.griffin.engine.functions.catalogue;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
-import io.questdb.std.Os;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -66,14 +65,6 @@ public class SimulateCrashFunctionTest extends AbstractCairoTest {
     @Test
     public void testCrashEnabled() throws Exception {
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
-
-        // for CI debugging, remove
-        assertSql(
-                "simulate_crash\n" +
-                        "false\n",
-                "select simulate_crash('C')"
-        );
-
         // select simulate_crash('C'), This is total crash, don't simulate it
 
         assertMemoryLeak(() -> {

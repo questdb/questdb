@@ -1256,7 +1256,26 @@ Java_io_questdb_std_Vect_remapSymbolColumnFromManyAddresses(
     auto txn_count = __JLONG_REINTERPRET_CAST__(int64_t, txnCount);
     auto symbol_map = reinterpret_cast<const int32_t *>(symbolMap);
 
-    return remap_symbol_column_from_many_addresses(src, dst, txn_info_addr, txn_count, symbol_map);
+    int64_t outIndex = 0;
+    jlong rowsProcessed = 0;
+    for (int64_t txnIndex = 0; txnIndex < txn_count; txnIndex++) {
+        auto segmentAddr = src[txn_info_addr[txnIndex].seg_info_index];
+        uint64_t hi = txn_info_addr[txnIndex].segment_row_offset + txn_info_addr[txnIndex].row_count;
+        int32_t cleanSymbolCount = symbol_map[2 * txnIndex];
+        int32_t mapOffset = symbol_map[2 * txnIndex + 1];
+
+        for (uint64_t segRow = txn_info_addr[txnIndex].segment_row_offset; segRow < hi; segRow++, outIndex++) {
+            int32_t value = segmentAddr[segRow];
+            if (value >= cleanSymbolCount) {
+                auto value2 = symbol_map[mapOffset + value - cleanSymbolCount];
+                dst[outIndex] = value2;
+            } else {
+                dst[outIndex] = value;
+            }
+            rowsProcessed++;
+        }
+    }
+    return rowsProcessed;
 }
 
 JNIEXPORT void JNICALL
