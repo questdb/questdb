@@ -100,11 +100,11 @@ public class HeapLongArray implements ArrayView {
         return ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims);
     }
 
-    public void setDimLen(int dim, int len) {
-        shape[dim] = len;
+    public void putLong(int flatIndex, long value) {
+        values[flatIndex] = value;
     }
 
-    public void setLongAtFlatIndex(int flatIndex, long value) {
-        values[flatIndex] = value;
+    public void setDimLen(int dim, int len) {
+        shape[dim] = len;
     }
 }

@@ -25,10 +25,8 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.arr.ArrayMeta;
 import io.questdb.cairo.arr.ArrayTypeDriver;
-import io.questdb.cairo.arr.BorrowedDirectArrayView;
-import io.questdb.cairo.arr.DirectArrayBuffers;
+import io.questdb.cairo.arr.DirectArrayView;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cutlass.line.tcp.ArrayParser;
 import io.questdb.std.str.DirectUtf8Sink;
@@ -43,57 +41,39 @@ public class ArrayTest extends AbstractCairoTest {
 
     @Test
     public void testArrayToJsonDouble() {
-        BorrowedDirectArrayView array = new BorrowedDirectArrayView();
-        try (DirectArrayBuffers bufs = new DirectArrayBuffers();
+        try (DirectArrayView array = new DirectArrayView();
              DirectUtf8Sink sink = new DirectUtf8Sink(20)
         ) {
-            bufs.shape.add(2);
-            bufs.shape.add(2);
-            bufs.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, (int) bufs.shape.size());
-            ArrayMeta.determineDefaultStrides(bufs.shape.asSlice(), bufs.strides);
-            bufs.values.putDouble(1.0);
-            bufs.values.putDouble(2.0);
-            bufs.values.putDouble(3.0);
-            bufs.values.putDouble(4.0);
-            bufs.updateView(array);
+            array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 2));
+            array.setDimLen(0, 2);
+            array.setDimLen(1, 2);
+            array.applyShape();
+            array.putDouble(0, 1.0);
+            array.putDouble(1, 2.0);
+            array.putDouble(2, 3.0);
+            array.putDouble(3, 4.0);
             sink.clear();
             ArrayTypeDriver.arrayToJson(array, sink);
             assertEquals("[[1.0,2.0],[3.0,4.0]]", sink.toString());
-
-            // transpose the array
-            bufs.strides.reverse();
-            bufs.updateView(array);
-            sink.clear();
-            ArrayTypeDriver.arrayToJson(array, sink);
-            assertEquals("[[1.0,3.0],[2.0,4.0]]", sink.toString());
         }
     }
 
     @Test
     public void testArrayToJsonLong() {
-        BorrowedDirectArrayView array = new BorrowedDirectArrayView();
-        try (DirectArrayBuffers bufs = new DirectArrayBuffers();
+        try (DirectArrayView array = new DirectArrayView();
              DirectUtf8Sink sink = new DirectUtf8Sink(20)
         ) {
-            bufs.shape.add(2);
-            bufs.shape.add(2);
-            bufs.type = ColumnType.encodeArrayType(ColumnType.LONG, (int) bufs.shape.size());
-            ArrayMeta.determineDefaultStrides(bufs.shape.asSlice(), bufs.strides);
-            bufs.values.putLong(1);
-            bufs.values.putLong(2);
-            bufs.values.putLong(3);
-            bufs.values.putLong(4);
-            bufs.updateView(array);
+            array.setType(ColumnType.encodeArrayType(ColumnType.LONG, 2));
+            array.setDimLen(0, 2);
+            array.setDimLen(1, 2);
+            array.applyShape();
+            array.putLong(0, 1);
+            array.putLong(1, 2);
+            array.putLong(2, 3);
+            array.putLong(3, 4);
             sink.clear();
             ArrayTypeDriver.arrayToJson(array, sink);
             assertEquals("[[1,2],[3,4]]", sink.toString());
-
-            // transpose the array
-            bufs.strides.reverse();
-            bufs.updateView(array);
-            sink.clear();
-            ArrayTypeDriver.arrayToJson(array, sink);
-            assertEquals("[[1,3],[2,4]]", sink.toString());
         }
     }
 
@@ -108,7 +88,7 @@ public class ArrayTest extends AbstractCairoTest {
             sink.put("[6i").put(arrayExpr.substring(1));
             parser.parse(str.of(sink.lo(), sink.hi()));
             sink.clear();
-            ArrayTypeDriver.arrayToJson(parser.getView(), sink);
+            ArrayTypeDriver.arrayToJson(parser.getArray(), sink);
             assertEquals(arrayExpr, sink.toString());
         } catch (ArrayParser.ParseException e) {
             throw new RuntimeException(e);

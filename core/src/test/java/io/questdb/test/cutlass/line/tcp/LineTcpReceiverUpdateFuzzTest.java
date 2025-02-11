@@ -200,6 +200,7 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
                     updateSqlQueue.add(updateSql);
                 }
             } catch (Exception e) {
+                LOG.error().$(e).$();
                 Assert.fail("Update failed [e=" + e + ", updateSql=" + updateSql + "]");
                 failureCounter.incrementAndGet();
             } finally {

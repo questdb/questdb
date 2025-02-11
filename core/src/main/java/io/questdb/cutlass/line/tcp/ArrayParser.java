@@ -25,11 +25,8 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.arr.ArrayMeta;
-import io.questdb.cairo.arr.BorrowedDirectArrayView;
-import io.questdb.cairo.arr.DirectArrayBuffers;
+import io.questdb.cairo.arr.DirectArrayView;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode;
-import io.questdb.std.DirectIntList;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -74,9 +71,8 @@ public class ArrayParser implements QuietCloseable {
     // determined. If so, the size of the element must match that; otherwise we're
     // parsing a jagged array, which is not allowed. If the size hasn't yet been
     // determined, we set it to the size of the current element.
-    private final DirectArrayBuffers bufs = new DirectArrayBuffers();
+    private final DirectArrayView array = new DirectArrayView();
     private final DirectUtf8String input = new DirectUtf8String();
-    private final BorrowedDirectArrayView view = new BorrowedDirectArrayView();
 
     /**
      * Address where the input string starts. Used to calculate the current position.
@@ -85,17 +81,17 @@ public class ArrayParser implements QuietCloseable {
 
     @Override
     public void close() {
-        Misc.free(bufs);
+        Misc.free(array);
     }
 
     /**
      * Obtains the parsed result.
      * <p>Throws an exception if {@link #parse(DirectUtf8String)} didn't succeed.</p>
      */
-    public @NotNull BorrowedDirectArrayView getView() {
-        if (view.getType() == ColumnType.UNDEFINED)
+    public @NotNull DirectArrayView getArray() {
+        if (array.getType() == ColumnType.UNDEFINED)
             throw new IllegalStateException("Parsing error");
-        return view;
+        return array;
     }
 
     /**
@@ -105,7 +101,7 @@ public class ArrayParser implements QuietCloseable {
         reset();
 
         if (Utf8s.equalsAscii("[]", value)) {
-            view.ofNull();
+            array.ofNull();
             return;
         }
 
@@ -115,7 +111,6 @@ public class ArrayParser implements QuietCloseable {
         parseOpenBrace();
         parseDataType();
         parseElements();
-        setArray();
     }
 
     /**
@@ -126,7 +121,7 @@ public class ArrayParser implements QuietCloseable {
         return (int) (input.lo() - inputStartAddr);
     }
 
-    private void checkAndIncrementLevelCount(DirectIntList levelCounts, DirectIntList shape, int level) throws ParseException {
+    private void checkAndIncrementLevelCount(IntList levelCounts, IntList shape, int level) throws ParseException {
         int countSoFarAtCurrLevel = levelCounts.get(level);
         int dimLen = shape.get(level);
         if (countSoFarAtCurrLevel == dimLen) {
@@ -190,7 +185,7 @@ public class ArrayParser implements QuietCloseable {
             throw ParseException.invalidType(position());
         }
 
-        bufs.type = arrayType;
+        array.setType(arrayType);
         input.advance();
     }
 
@@ -204,12 +199,13 @@ public class ArrayParser implements QuietCloseable {
      * </pre>
      */
     private void parseElements() throws ParseException {
-        final short elemType = ColumnType.decodeArrayElementType(bufs.type);
-        final DirectIntList shape = bufs.shape;
-        final DirectIntList levelCounts = bufs.currCoords;
+        final short elemType = ColumnType.decodeArrayElementType(array.getType());
+        final IntList shape = new IntList();
+        final IntList levelCounts = new IntList();
 
         final int nDims;
         int level = 0;
+        int flatElemCount = 0;
         while (true) {
             if (input.size() == 0) {
                 throw ParseException.prematureEnd(position());
@@ -291,16 +287,20 @@ public class ArrayParser implements QuietCloseable {
                                 ? ParseException.prematureEnd(position())
                                 : ParseException.unexpectedToken(position());
                     }
-                    parseLeaf(elemType, tokenLimit);
+                    parseLeaf(elemType, tokenLimit, flatElemCount++);
                     commaWelcome = true;
                     input.advance(tokenLimit);
                 }
             }
         }
-        bufs.type = ColumnType.encodeArrayType(elemType, nDims);
+        array.setType(ColumnType.encodeArrayType(elemType, nDims));
+        for (int n = shape.size(), i = 0; i < n; i++) {
+            array.setDimLen(i, shape.getQuick(i));
+        }
+        array.applyShape();
     }
 
-    private void parseLeaf(int elemType, int tokenLimit) throws ParseException {
+    private void parseLeaf(int elemType, int tokenLimit, int flatIndex) throws ParseException {
         try {
             switch (elemType) {
                 case ColumnType.BOOLEAN:
@@ -308,25 +308,25 @@ public class ArrayParser implements QuietCloseable {
                     if (n != (n & 1)) {
                         throw ParseException.unexpectedToken(position());
                     }
-                    bufs.values.putByte((byte) n);
+                    array.putByte(flatIndex, (byte) n);
                     break;
                 case ColumnType.BYTE:
-                    bufs.values.putByte(Numbers.parseByte(input, 0, tokenLimit));
+                    array.putByte(flatIndex, Numbers.parseByte(input, 0, tokenLimit));
                     break;
                 case ColumnType.SHORT:
-                    bufs.values.putShort(Numbers.parseShort(input, 0, tokenLimit));
+                    array.putShort(flatIndex, Numbers.parseShort(input, 0, tokenLimit));
                     break;
                 case ColumnType.INT:
-                    bufs.values.putInt(Numbers.parseInt(input, 0, tokenLimit));
+                    array.putInt(flatIndex, Numbers.parseInt(input, 0, tokenLimit));
                     break;
                 case ColumnType.LONG:
-                    bufs.values.putLong(Numbers.parseLong(input, 0, tokenLimit));
+                    array.putLong(flatIndex, Numbers.parseLong(input, 0, tokenLimit));
                     break;
                 case ColumnType.FLOAT:
-                    bufs.values.putFloat(Numbers.parseFloat(input.ptr(), tokenLimit));
+                    array.putFloat(flatIndex, Numbers.parseFloat(input.ptr(), tokenLimit));
                     break;
                 case ColumnType.DOUBLE:
-                    bufs.values.putDouble(Numbers.parseDouble(input.ptr(), tokenLimit));
+                    array.putDouble(flatIndex, Numbers.parseDouble(input.ptr(), tokenLimit));
                     break;
                 default:
                     throw new AssertionError("Unexpected floating-point element size");
@@ -375,14 +375,8 @@ public class ArrayParser implements QuietCloseable {
     }
 
     private void reset() {
-        view.reset();
-        bufs.reset();
+        array.clear();
         inputStartAddr = 0;
-    }
-
-    private void setArray() {
-        ArrayMeta.determineDefaultStrides(bufs.shape.asSlice(), bufs.strides);
-        bufs.updateView(view);
     }
 
     public static class ParseException extends Exception {

@@ -25,15 +25,21 @@
 package io.questdb.cairo.arr;
 
 public interface ArraySink {
-    void prepareFlatArray();
+    void applyShape();
+
+    void putByte(int flatIndex, byte value);
 
     void putDouble(int flatIndex, double value);
 
+    void putFloat(int flatIndex, float value);
+
+    void putInt(int flatIndex, int value);
+
     void putLong(int flatIndex, long value);
 
-    void setDimLen(int dimension, int length);
+    void putShort(int flatIndex, short value);
 
-    void setOffset(int offset);
+    void setDimLen(int dimension, int length);
 
     void setType(int type);
 }
