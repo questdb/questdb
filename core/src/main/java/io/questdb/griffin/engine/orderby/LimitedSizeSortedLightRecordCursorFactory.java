@@ -51,8 +51,14 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
     private final Function loFunction;
     private final ListColumnFilter sortColumnFilter;
     private final int timestampIndex;
+    // factory does not own the chain, just keeps the reference to enable updating of the limits
+    private LimitedSizeLongTreeChain chain = null;
     // initialization delayed to getCursor() because lo/hi need to be evaluated
     private DelegatingRecordCursor cursor; // LimitedSizeSortedLightRecordCursor or SortedLightRecordCursor
+    private boolean isFirstN;
+    private long limit;
+    private long skipFirst;
+    private long skipLast;
 
     public LimitedSizeSortedLightRecordCursorFactory(
             CairoConfiguration configuration,
@@ -128,13 +134,33 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
      * Similar to LimitRecordCursorFactory.LimitRecordCursor, but doesn't check the underlying count.
      */
     public void initializeLimitedSizeCursor(SqlExecutionContext executionContext, RecordCursor baseCursor) throws SqlException {
+        computeLimits(baseCursor, executionContext);
+        this.chain = new LimitedSizeLongTreeChain(
+                configuration.getSqlSortKeyPageSize(),
+                configuration.getSqlSortKeyMaxPages(),
+                configuration.getSqlSortLightValuePageSize(),
+                configuration.getSqlSortLightValueMaxPages()
+        );
+
+        if (timestampIndex == -1 || !isFirstN) {
+            this.cursor = new LimitedSizeSortedLightRecordCursor(chain, comparator);
+        } else {
+            this.cursor = new LimitedSizePartiallySortedLightRecordCursor(chain, comparator, timestampIndex);
+        }
+        chain.updateLimits(isFirstN, limit);
+        ((DynamicLimitCursor) cursor).updateLimits(limit, skipFirst, skipLast);
+    }
+
+    private void computeLimits(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
         loFunction.init(baseCursor, executionContext);
         if (hiFunction != null) {
             hiFunction.init(baseCursor, executionContext);
         }
 
-        long skipFirst = 0, skipLast = 0, limit;
-        boolean isFirstN = false;
+        this.skipFirst = 0;
+        this.skipLast = 0;
+        this.limit = 0;
+        this.isFirstN = false;
 
         long lo = loFunction.getLong(null);
         if (lo < 0 && hiFunction == null) {
@@ -143,57 +169,42 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
             // if we have 12 records we need to skip 12-5 = 7
             // if we have 4 records = return all of them
             // set limit to return remaining rows
-            limit = -lo;
+            this.limit = -lo;
         } else if (lo > -1 && hiFunction == null) {
             // first N rows
-            isFirstN = true;
-            limit = lo;
+            this.isFirstN = true;
+            this.limit = lo;
         } else {
             // at this stage we also have 'hi'
             long hi = hiFunction.getLong(null);
             if (lo < 0) {
                 // right, here we are looking for something like -10,-5 five rows away from tail
                 if (lo < hi) {
-                    limit = -lo;
-                    skipLast = Math.max(-hi, 0);
+                    this.limit = -lo;
+                    this.skipLast = Math.max(-hi, 0);
                     //}
                 } else {
                     // this is invalid bottom range, for example -3, -10
-                    limit = 0;//produce empty result
+                    this.limit = 0;//produce empty result
                 }
             } else { //lo >= 0
                 if (hi < 0) {
                     //if lo>=0 but hi<0 then we fall back to standard algorithm because we can't estimate result size
                     // (it's from lo up to end-hi so probably whole result anyway )
-                    limit = -1;
-                    skipFirst = lo;
-                    skipLast = -hi;
+                    this.limit = -1;
+                    this.skipFirst = lo;
+                    this.skipLast = -hi;
                 } else { //both lo and hi are positive
                     if (hi <= lo) {
-                        limit = 0;//produce empty result
+                        this.limit = 0;//produce empty result
                     } else {
-                        isFirstN = true;
-                        limit = hi;
+                        this.isFirstN = true;
+                        this.limit = hi;
                         //but we've to skip to lo
-                        skipFirst = lo;
+                        this.skipFirst = lo;
                     }
                 }
             }
-        }
-
-        LimitedSizeLongTreeChain chain = new LimitedSizeLongTreeChain(
-                configuration.getSqlSortKeyPageSize(),
-                configuration.getSqlSortKeyMaxPages(),
-                configuration.getSqlSortLightValuePageSize(),
-                configuration.getSqlSortLightValueMaxPages(),
-                isFirstN,
-                limit
-        );
-
-        if (timestampIndex == -1 || !isFirstN) {
-            this.cursor = new LimitedSizeSortedLightRecordCursor(chain, comparator, limit, skipFirst, skipLast);
-        } else {
-            this.cursor = new LimitedSizePartiallySortedLightRecordCursor(chain, comparator, limit, skipFirst, skipLast, timestampIndex);
         }
     }
 
@@ -239,6 +250,11 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
 
     private void initialize(SqlExecutionContext executionContext, RecordCursor baseCursor) throws SqlException {
         if (isInitialized()) {
+            if (chain != null && cursor instanceof DynamicLimitCursor) {
+                computeLimits(baseCursor, executionContext);
+                chain.updateLimits(isFirstN, limit);
+                ((DynamicLimitCursor) cursor).updateLimits(limit, skipFirst, skipLast);
+            }
             return;
         }
 

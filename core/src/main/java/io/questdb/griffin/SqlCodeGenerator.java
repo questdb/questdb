@@ -405,6 +405,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final ObjList<VectorAggregateFunction> tempVaf = new ObjList<>();
     private final IntList tempVecConstructorArgIndexes = new IntList();
     private final ObjList<VectorAggregateFunctionConstructor> tempVecConstructors = new ObjList<>();
+    private final boolean validateSampleByFillType;
     private final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
     private final WhereClauseParser whereClauseParser = new WhereClauseParser();
     // a bitset of string/symbol columns forced to be serialised as varchar
@@ -413,7 +414,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final BitSet writeSymbolAsString = new BitSet();
     private boolean enableJitNullChecks = true;
     private boolean fullFatJoins = false;
-    private boolean validateSampleByFillType;
 
     public SqlCodeGenerator(
             CairoEngine engine,
@@ -6241,6 +6241,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final int type = func.getType();
         if (limitTypes.excludes(type)) {
             throw SqlException.$(limit.position, "invalid type: ").put(ColumnType.nameOf(type));
+        }
+
+        if (type == ColumnType.UNDEFINED) {
+            func.assignType(ColumnType.INT, executionContext.getBindVariableService());
         }
         return func;
     }
