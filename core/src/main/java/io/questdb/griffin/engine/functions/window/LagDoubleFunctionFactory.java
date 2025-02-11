@@ -367,6 +367,7 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
         private double value;
         private final String name;
         private final boolean ignoreNulls;
+        // keep it to call the partition function's close in the window function's close
         private final VirtualRecord partitionByRecord;
 
         public LeadLagValueCurrentRow(VirtualRecord partitionByRecord, Function arg, String name, boolean ignoreNulls) {
