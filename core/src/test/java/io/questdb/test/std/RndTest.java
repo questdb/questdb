@@ -37,19 +37,6 @@ import org.junit.Test;
 public class RndTest extends AbstractTest {
 
     @Test
-    public void testGeneratesDecodableUtf8() {
-        final Rnd rnd = TestUtils.generateRandom(LOG);
-        Utf8StringSink utf8Sink = new Utf8StringSink();
-        StringSink utf16Sink = new StringSink();
-        for (int i = 0; i < 100; i++) {
-            utf8Sink.clear();
-            rnd.nextUtf8Str(rnd.nextInt(i + 1) + 1, utf8Sink);
-            utf16Sink.clear();
-            Assert.assertTrue("generation failed for " + i + " chars", Utf8s.utf8ToUtf16(utf8Sink, utf16Sink));
-        }
-    }
-
-    @Test
     public void testGenerateArray() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
@@ -61,5 +48,18 @@ public class RndTest extends AbstractTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testGeneratesDecodableUtf8() {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        Utf8StringSink utf8Sink = new Utf8StringSink();
+        StringSink utf16Sink = new StringSink();
+        for (int i = 0; i < 100; i++) {
+            utf8Sink.clear();
+            rnd.nextUtf8Str(rnd.nextInt(i + 1) + 1, utf8Sink);
+            utf16Sink.clear();
+            Assert.assertTrue("generation failed for " + i + " chars", Utf8s.utf8ToUtf16(utf8Sink, utf16Sink));
+        }
     }
 }
