@@ -28,9 +28,10 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.bytes.DirectSequence;
 
 /**
- * A flyweight to an immutable byte sequence containing flattened ArrayView values.
- * <p><strong>IMPORTANT</strong>: The values are accessed by element index,
- * not by address offset.</p>
+ * Immutable view over the backing native memory of an array. Does not own the memory.
+ * <p>
+ * It can access an array of any element type. This means that there isn't one definite
+ * length of the array it represents -- it depends on the assumed element type.
  */
 public class DirectArraySlice implements DirectSequence {
     private long ptr = 0;
@@ -117,7 +118,8 @@ public class DirectArraySlice implements DirectSequence {
     }
 
     /**
-     * Buffer size, as byte count.
+     * Buffer size, as byte count. Do not confuse with <i>length</i>, which is
+     * the number of elements.
      */
     @Override
     public int size() {

@@ -29,7 +29,7 @@ import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.DirectIntSlice;
 
 /**
- * An immutable view over a native-memory array. This is a flyweight object.
+ * An immutable view over a native-memory array. Does not own the backing native memory.
  */
 public class BorrowedDirectArrayView implements ArrayView {
     private final DirectIntSlice shape = new DirectIntSlice();
@@ -110,8 +110,10 @@ public class BorrowedDirectArrayView implements ArrayView {
 
     /**
      * Buffer holding the flattened array values.
-     * <p>Data is stored in row-major format.</p>
-     * <p>For example, for the 4x3x2 nd array:
+     * <p>
+     * Data is stored in row-major order.
+     * <p>
+     * For example, for the 4x3x2 nd array:
      * <pre>
      * {
      *     {{1, 2}, {3, 4}, {5, 6}},
@@ -120,20 +122,20 @@ public class BorrowedDirectArrayView implements ArrayView {
      *     {{9, 0}, {1, 2}, {3, 4}}
      * }
      * </pre>
-     * <p>The buffer would contain a flat vector of elements
-     * with the numbers <code>[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4]</code>.</p>
-     * <p><strong>IMPORTANT</strong>: The number of elements</p>
+     * The buffer would contain a flat vector of elements with the numbers
+     * <code>[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4]</code>.
      */
     public DirectArraySlice getValues() {
         return values;
     }
 
     /**
-     * Number of values to skip reading before
-     * applying the strides logic to access the dense array.
-     * <p>This is exposed (rather than being a part of the Values object)
+     * Number of values to skip before applying the strides logic to access
+     * the dense array.
+     * <p>
+     * This is exposed (rather than being a part of the Values object)
      * because of densely packed datatypes, such as boolean bit arrays,
-     * where this might mean slicing across the byte boundary.</p>
+     * where this might mean slicing across the byte boundary.
      */
     public int getValuesOffset() {
         return valuesOffset;
@@ -145,7 +147,8 @@ public class BorrowedDirectArrayView implements ArrayView {
 
     /**
      * The array is a typeless zero-dimensional array.
-     * <p>This maps to the <code>NULL</code> value in an array column.</p>
+     * <p>
+     * This maps to the <code>NULL</code> value in an array column.
      */
     public boolean isNull() {
         return type == ColumnType.NULL;

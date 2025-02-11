@@ -34,6 +34,9 @@ import io.questdb.std.Unsafe;
 
 import java.util.Arrays;
 
+/**
+ * Mutable array that owns its backing native memory.
+ */
 public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietCloseable {
     private static final int MEM_TAG = MemoryTag.NATIVE_ND_ARRAY;
     private int capacity;
