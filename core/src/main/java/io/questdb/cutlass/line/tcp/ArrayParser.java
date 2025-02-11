@@ -25,9 +25,9 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.arr.ArrayBuffers;
 import io.questdb.cairo.arr.ArrayMeta;
 import io.questdb.cairo.arr.BorrowedDirectArrayView;
+import io.questdb.cairo.arr.DirectArrayBuffers;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.IntList;
@@ -74,7 +74,7 @@ public class ArrayParser implements QuietCloseable {
     // determined. If so, the size of the element must match that; otherwise we're
     // parsing a jagged array, which is not allowed. If the size hasn't yet been
     // determined, we set it to the size of the current element.
-    private final ArrayBuffers bufs = new ArrayBuffers();
+    private final DirectArrayBuffers bufs = new DirectArrayBuffers();
     private final DirectUtf8String input = new DirectUtf8String();
     private final BorrowedDirectArrayView view = new BorrowedDirectArrayView();
 

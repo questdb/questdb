@@ -25,10 +25,10 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.arr.ArrayBuffers;
 import io.questdb.cairo.arr.ArrayMeta;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.BorrowedDirectArrayView;
+import io.questdb.cairo.arr.DirectArrayBuffers;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cutlass.line.tcp.ArrayParser;
 import io.questdb.std.str.DirectUtf8Sink;
@@ -44,7 +44,7 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testArrayToJsonDouble() {
         BorrowedDirectArrayView array = new BorrowedDirectArrayView();
-        try (ArrayBuffers bufs = new ArrayBuffers();
+        try (DirectArrayBuffers bufs = new DirectArrayBuffers();
              DirectUtf8Sink sink = new DirectUtf8Sink(20)
         ) {
             bufs.shape.add(2);
@@ -72,7 +72,7 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testArrayToJsonLong() {
         BorrowedDirectArrayView array = new BorrowedDirectArrayView();
-        try (ArrayBuffers bufs = new ArrayBuffers();
+        try (DirectArrayBuffers bufs = new DirectArrayBuffers();
              DirectUtf8Sink sink = new DirectUtf8Sink(20)
         ) {
             bufs.shape.add(2);
