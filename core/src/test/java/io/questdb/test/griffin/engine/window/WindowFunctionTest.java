@@ -3992,11 +3992,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWindowStopPropagateOrderByFunction() {
-
-    }
-
-    @Test
     public void testWindowBufferExceedsLimit() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 4096);
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES, 10);
