@@ -48,10 +48,10 @@ import static io.questdb.PropertyKey.*;
 public class LineOkHttpFuzzTest extends AbstractTest {
     @Test
     public void testChunkedDataIlpUploadNoKeepAlive() throws Exception {
-        Rnd rnd = generateRandom();
+        Rnd rnd = generateRandom(LOG, 1715122094200L, 1739271477410L);
         int fragmentation = 1 + rnd.nextInt(5);
         LOG.info().$("=== fragmentation=").$(fragmentation).$();
-        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
             put(DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), String.valueOf(fragmentation));
             put(HTTP_SERVER_KEEP_ALIVE.getEnvVarName(), "false");
         }})) {
@@ -139,7 +139,7 @@ public class LineOkHttpFuzzTest extends AbstractTest {
         int fragmentation = 1 + rnd.nextInt(5);
         LOG.info().$("=== fragmentation=").$(fragmentation).$();
 
-        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
             put(DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), String.valueOf(fragmentation));
         }})) {
             serverMain.start();
@@ -177,7 +177,7 @@ public class LineOkHttpFuzzTest extends AbstractTest {
 
     @Test
     public void testMultipartDataIlpUpload() throws Exception {
-        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
             put(DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), "5");
         }})) {
             serverMain.start();
@@ -211,7 +211,7 @@ public class LineOkHttpFuzzTest extends AbstractTest {
 
     @Test
     public void testMultipartFileIlpUpload() throws Exception {
-        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
             put(DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), "5");
         }})) {
             serverMain.start();

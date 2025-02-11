@@ -1350,7 +1350,7 @@ public class VectFuzzTest {
         TestUtils.assertMemoryLeak(() -> {
             int segmentCount = 1 + rnd.nextInt(200);
             int rowsPerCommit = 1 + rnd.nextInt(10000);
-            int commits = Math.min(rnd.nextInt(1000), 1_000_000 / rowsPerCommit / segmentCount);
+            int commits = Math.min(rnd.nextInt(1000), Math.max(1, 1_000_000 / rowsPerCommit / segmentCount));
             long increment = Math.min((long) (Timestamps.DAY_MICROS * rnd.nextDouble()), (1L << 50) / rowsPerCommit / segmentCount);
 
             testSortManySegments(
@@ -1623,7 +1623,7 @@ public class VectFuzzTest {
         long rowsPerSegment = rowsPerCommit * commits;
         long totalRows = rowsPerSegment * segmentCount + lagRows;
 
-        Assume.assumeTrue(totalRows < 2E6);
+        Assume.assumeTrue(totalRows < 2E6 && totalRows > 0);
 
         try (DirectLongList segmentAddresses = new DirectLongList(4, MemoryTag.NATIVE_DEFAULT)) {
             long allocationSize = totalRows * 3L * Long.BYTES + Long.BYTES;
