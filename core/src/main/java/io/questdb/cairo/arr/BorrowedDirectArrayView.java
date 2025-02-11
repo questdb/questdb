@@ -31,19 +31,11 @@ import io.questdb.std.DirectIntSlice;
 /**
  * An immutable view over a native-memory array. This is a flyweight object.
  */
-<<<<<<<< HEAD:core/src/main/java/io/questdb/cairo/arr/DirectFlyweightArrayView.java
-public class DirectFlyweightArrayView implements ArrayView {
-    private final DirectIntSlice shape = new DirectIntSlice();
-    private final DirectIntSlice strides = new DirectIntSlice();
-    private final ArraySlice values = new ArraySlice();
-========
 public class BorrowedDirectArrayView implements ArrayView {
     private final DirectIntSlice shape = new DirectIntSlice();
     private final DirectIntSlice strides = new DirectIntSlice();
     private final DirectArraySlice values = new DirectArraySlice();
-    int valuesOffset = 0;
     private volatile short crc;
->>>>>>>> 8b4d9a429107c8b6e33ef55a972975ab271d45ab:core/src/main/java/io/questdb/cairo/arr/BorrowedDirectArrayView.java
     // Encoded array type, contains element type class, type precision, and dimensionality
     private int type = ColumnType.UNDEFINED;
     private int valuesOffset = 0;

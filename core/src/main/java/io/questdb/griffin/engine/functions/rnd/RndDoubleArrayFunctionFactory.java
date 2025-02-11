@@ -96,8 +96,8 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val("rnd_double_array").val('(')
-                    .val(array.dimensionCount).val(',')
-                    .val(array.nanRate).val(')')
+                    .val(array.getDimCount()).val(',')
+                    .val(nanRate).val(')')
                     .val(')');
         }
 

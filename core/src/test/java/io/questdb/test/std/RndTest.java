@@ -57,7 +57,7 @@ public class RndTest extends AbstractTest {
                 for (int i = 0; i < 1000; i++) {
                     arrayView.clear();
                     rnd.nextDoubleArray(2, arrayView, 0, 8);
-                    Assert.assertTrue(arrayView.getSize() > 0);
+                    Assert.assertTrue(arrayView.getFlatElemCount() > 0);
                 }
             }
         });

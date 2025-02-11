@@ -55,6 +55,11 @@ public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietClos
     }
 
     @Override
+    public int getFlatElemCount() {
+        return size >> ColumnType.pow2SizeOf(ColumnType.decodeArrayElementType(type));
+    }
+
+    @Override
     public void appendWithDefaultStrides(MemoryA mem) {
         mem.putBlockOfBytes(this.mem, size);
     }
@@ -99,11 +104,6 @@ public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietClos
     @Override
     public long getLongAtFlatIndex(int flatIndex) {
         return Unsafe.getUnsafe().getLong(mem + offset + flatIndex * 8L);
-    }
-
-    @Override
-    public int getSize() {
-        return size;
     }
 
     @Override
