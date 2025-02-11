@@ -697,6 +697,41 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertAfterTruncate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL;"
+            );
+
+            execute("insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01');");
+            drainWalQueue();
+            execute("truncate table base_price;");
+            drainWalQueue();
+
+            final String viewSql = "select sym, last(price) as price, ts from base_price sample by 1h";
+            createMatView(viewSql);
+
+            execute(
+                    "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02');"
+            );
+            drainWalQueue();
+            refreshMatView();
+
+            final String expected = "sym\tprice\tts\n" +
+                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n";
+            assertSql(expected, "price_1h order by sym");
+            assertSql(expected, viewSql + " order by sym");
+        });
+    }
+
+    @Test
     public void testQueryError() throws Exception {
         assertMemoryLeak(() -> {
             execute(
