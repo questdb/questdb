@@ -197,7 +197,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testArrayFunction() throws SqlException {
+    public void testArrayFunctionWithLiterals() throws SqlException {
         functions.add(new ConstructArrayFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         FunctionParser functionParser = createFunctionParser();
