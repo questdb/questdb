@@ -210,12 +210,15 @@ public class MatViewGraphImpl implements MatViewGraph {
     public void notifyTxnApplied(MatViewRefreshTask task, long seqTxn) {
         final MatViewRefreshList list = dependentViewsByTableName.get(task.baseTableToken.getTableName());
         if (list != null) {
-            if (list.notifyOnBaseTableCommitNoLock(seqTxn)) {
+            // Always notify refresh job in case of mat view invalidation or rebuild.
+            // For incremental refresh we check if we haven't already notified on the given txn.
+            final boolean shouldNotify = task.operation != MatViewRefreshTask.REFRESH || list.notifyOnBaseTableCommitNoLock(seqTxn);
+            if (shouldNotify) {
                 task.refreshTriggeredTimestamp = microsecondClock.getTicks();
                 refreshTaskQueue.enqueue(task);
-                LOG.debug().$("refresh notified [table=").$(task.baseTableToken.getTableName()).I$();
+                LOG.debug().$("refresh job notified [table=").$(task.baseTableToken.getTableName()).I$();
             } else {
-                LOG.debug().$("no need to notify to refresh [table=").$(task.baseTableToken.getTableName()).I$();
+                LOG.debug().$("no need to notify to refresh job [table=").$(task.baseTableToken.getTableName()).I$();
             }
         }
     }

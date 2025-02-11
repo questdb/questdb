@@ -31,25 +31,36 @@ import io.questdb.std.SimpleReadWriteLock;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReadWriteLock;
 
+/**
+ * Refresh list serves two purposes. First, it holds the list of mat view tokens for the given
+ * base table (or base mat view). The list is protected with a R/W mutex, so it can be read
+ * concurrently. Second, it tracks the last base table txn for which a notification message
+ * was sent to one of {@link MatViewRefreshJob}s. The goal here is to avoid sending excessive
+ * incremental refresh messages to the underlying queue.
+ */
 public class MatViewRefreshList {
-    private final AtomicLong lastCommittedBaseTableTxn = new AtomicLong(0);
+    private final AtomicLong lastNotifiedBaseTableTxn = new AtomicLong(0);
     private final ReadWriteLock lock = new SimpleReadWriteLock();
     private final ObjList<TableToken> matViews = new ObjList<>();
 
+    // Called by WAL apply job once it applied transaction(s) to the base table
+    // and wants to send refresh job an incremental refresh message.
     public boolean notifyOnBaseTableCommitNoLock(long seqTxn) {
-        boolean refreshPending;
+        long lastNotified;
         boolean retry;
         do {
-            long lastNotified = lastCommittedBaseTableTxn.get();
-            refreshPending = Math.abs(lastNotified) < seqTxn;
-            retry = refreshPending && !lastCommittedBaseTableTxn.compareAndSet(lastNotified, seqTxn);
+            lastNotified = lastNotifiedBaseTableTxn.get();
+            retry = Math.abs(lastNotified) < seqTxn && !lastNotifiedBaseTableTxn.compareAndSet(lastNotified, seqTxn);
         } while (retry);
-        return refreshPending;
+        // The job is allowed to send a notification once incremental refresh finishes.
+        return lastNotified <= 0;
     }
 
+    // Called by refresh job once it incrementally refreshed dependent mat views.
     public boolean notifyOnBaseTableRefreshedNoLock(long seqTxn) {
-        lastCommittedBaseTableTxn.compareAndSet(seqTxn, -seqTxn);
-        return lastCommittedBaseTableTxn.get() != -seqTxn;
+        // Flip the sign bit in the last notified base table txn number.
+        lastNotifiedBaseTableTxn.compareAndSet(seqTxn, -seqTxn);
+        return lastNotifiedBaseTableTxn.get() != -seqTxn;
     }
 
     ObjList<TableToken> lockForRead() {
