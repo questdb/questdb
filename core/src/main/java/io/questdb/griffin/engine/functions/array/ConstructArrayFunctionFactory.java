@@ -91,7 +91,7 @@ public class ConstructArrayFunctionFactory implements FunctionFactory {
                 for (int i = 0; i < outerDimLen; i++) {
                     ArrayView arrayI = args.getQuick(i).getArray(null);
                     for (int j = 0; j < nestedElemCount; j++) {
-                        array.setLongAtFlatIndex(flatIndex++, arrayI.getLongAtFlatIndex(j));
+                        array.putLong(flatIndex++, arrayI.getLongAtFlatIndex(j));
                     }
                 }
             } else {
@@ -99,7 +99,7 @@ public class ConstructArrayFunctionFactory implements FunctionFactory {
                 array.setDimLen(0, outerDimLen);
                 array.applyShape();
                 for (int i = 0; i < outerDimLen; i++) {
-                    array.setLongAtFlatIndex(i, args.getQuick(i).getInt(null));
+                    array.putLong(i, args.getQuick(i).getInt(null));
                 }
             }
             this.type = array.getType();

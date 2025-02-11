@@ -115,7 +115,6 @@ public class Rnd {
     public void nextDoubleArray(int dimCount, ArraySink sink, int nanRate, int maxDimLen) {
 
         sink.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, dimCount));
-        sink.setOffset(0);
 
         int size = 1;
         for (int i = 0; i < dimCount; i++) {
@@ -124,7 +123,7 @@ public class Rnd {
             size *= n;
         }
 
-        sink.prepareFlatArray();
+        sink.applyShape();
 
         for (int i = 0; i < size; i++) {
             double val;
@@ -191,7 +190,6 @@ public class Rnd {
     public void nextLongArray(int dimCount, ArraySink sink, int nanRate, int maxDimLen) {
 
         sink.setType(ColumnType.encodeArrayType(ColumnType.LONG, dimCount));
-        sink.setOffset(0);
 
         int size = 1;
         for (int i = 0; i < dimCount; i++) {
@@ -200,7 +198,7 @@ public class Rnd {
             size *= n;
         }
 
-        sink.prepareFlatArray();
+        sink.applyShape();
 
         for (int i = 0; i < size; i++) {
             long val;
