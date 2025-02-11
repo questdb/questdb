@@ -147,11 +147,12 @@ steps:
     workingDirectory: $(Build.SourcesDirectory)/core/
     condition: and(failed(), not(eq(variables['os'], 'Windows')))
   - task: PowerShell@2
-    targetType: "inline"
-    script: |
-      Get-ChildItem -Path . -Filter "hs_*.log" -File | ForEach-Object {
-          Move-Item -Path $_.FullName -Destination "$(ARCHIVED_CRASH_LOG)"
-      }
+    inputs:
+      targetType: "inline"
+      script: |
+        Get-ChildItem -Path . -Filter "hs_*.log" -File | ForEach-Object {
+            Move-Item -Path $_.FullName -Destination "$(ARCHIVED_CRASH_LOG)"
+        }
     displayName: "Tests failed -- rename crash dump -- windows"
     workingDirectory: $(Build.SourcesDirectory)\core\
     condition: and(failed(), eq(variables['os'], 'Windows'))
