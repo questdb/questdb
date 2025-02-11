@@ -25,23 +25,27 @@
 package io.questdb.cairo.arr;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.api.MemoryA;
 
-public class HeapLongArray implements ArrayView {
+public class FunctionArray implements ArrayView {
+
     private final int[] shape;
     private final int[] strides;
-    private long[] values;
+    private Function[] functions;
+    private Record record;
+    private int type;
 
-    public HeapLongArray(int nDims) {
+    public FunctionArray(short elementType, int nDims) {
         this.shape = new int[nDims];
         this.strides = new int[nDims];
+        this.type = ColumnType.encodeArrayType(elementType, nDims);
     }
 
     @Override
     public void appendWithDefaultStrides(MemoryA mem) {
-        for (double value : values) {
-            mem.putDouble(value);
-        }
+        throw new UnsupportedOperationException();
     }
 
     public void applyShape() {
@@ -54,8 +58,8 @@ public class HeapLongArray implements ArrayView {
             strides[i] = stride;
             stride *= dimLen;
         }
-        if (values == null || values.length < stride) {
-            values = new long[stride];
+        if (functions == null || functions.length < stride) {
+            functions = new Function[stride];
         }
     }
 
@@ -65,27 +69,27 @@ public class HeapLongArray implements ArrayView {
     }
 
     @Override
-    public int getDimLen(int dim) {
-        return shape[dim];
+    public int getDimLen(int dimension) {
+        return shape[dimension];
     }
 
     @Override
     public double getDoubleAtFlatIndex(int flatIndex) {
-        throw new UnsupportedOperationException();
+        return functions[flatIndex].getDouble(record);
     }
 
     @Override
     public int getFlatElemCount() {
-        int count = 1;
-        for (int dimLen : shape) {
-            count *= dimLen;
-        }
-        return count;
+        return functions.length;
+    }
+
+    public Function getFunctionAtFlatIndex(int flatIndex) {
+        return functions[flatIndex];
     }
 
     @Override
     public long getLongAtFlatIndex(int flatIndex) {
-        return values[flatIndex];
+        return functions[flatIndex].getLong(record);
     }
 
     @Override
@@ -95,14 +99,22 @@ public class HeapLongArray implements ArrayView {
 
     @Override
     public int getType() {
-        return ColumnType.encodeArrayType(ColumnType.DOUBLE, shape.length);
+        return type;
     }
 
-    public void putLong(int flatIndex, long value) {
-        values[flatIndex] = value;
+    public void putFunction(int flatIndex, Function f) {
+        functions[flatIndex] = f;
     }
 
     public void setDimLen(int dim, int len) {
         shape[dim] = len;
+    }
+
+    public void setRecord(Record rec) {
+        this.record = rec;
+    }
+
+    public void setType(int type) {
+        this.type = type;
     }
 }
