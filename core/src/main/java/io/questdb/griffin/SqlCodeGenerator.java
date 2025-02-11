@@ -295,7 +295,7 @@ import org.jetbrains.annotations.TestOnly;
 import java.io.Closeable;
 import java.util.ArrayDeque;
 
-import static io.questdb.cairo.ColumnType.getGeoHashBits;
+import static io.questdb.cairo.ColumnType.*;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
@@ -454,9 +454,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     @TestOnly
     public static int[][] expectedUnionCastMatrix() {
         final int[][] expected = new int[ColumnType.NULL + 1][ColumnType.NULL + 1];
-        for (int typeA = 0; typeA <= ColumnType.NULL; typeA++) {
-            for (int typeB = 0; typeB <= ColumnType.NULL; typeB++) {
-                final int outType = (isGeoType(typeA) || isGeoType(typeB)) ? -1 : castToType(typeA, typeB);
+        for (short typeA = 0; typeA <= ColumnType.NULL; typeA++) {
+            for (short typeB = 0; typeB <= ColumnType.NULL; typeB++) {
+                final short outType = (isGeoType(typeA) || isGeoType(typeB)) ? -1 : commonWideningType(typeA, typeB);
                 expected[typeA][typeB] = outType;
             }
         }
@@ -470,9 +470,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final boolean aIsArray = tagA == ColumnType.ARRAY;
         final boolean bIsArray = tagB == ColumnType.ARRAY;
         if (aIsArray && bIsArray) {
-            if (
-                    ColumnType.decodeArrayElementType(typeA) == ColumnType.decodeArrayElementType(typeB)
-                            && ColumnType.decodeArrayDimensionality(typeA) == ColumnType.decodeArrayDimensionality(typeB)
+            if (decodeArrayElementType(typeA) == decodeArrayElementType(typeB) &&
+                    decodeArrayDimensionality(typeA) == decodeArrayDimensionality(typeB)
             ) {
                 return typeA;
             }
@@ -609,32 +608,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return true;
     }
 
-    private static int castToType(int typeA, int typeB) {
-        return (typeA == typeB && typeA != ColumnType.SYMBOL) ? typeA
-                : (isStringyType(typeA) && isStringyType(typeB)) ? ColumnType.STRING
-                : (isStringyType(typeA) && isParseableType(typeB)) ? typeA
-                : (isStringyType(typeB) && isParseableType(typeA)) ? typeB
-
-                // NULL casts to any other nullable type, except for symbols which can't cross symbol tables.
-                : ((typeA == ColumnType.NULL) && ColumnType.isCastableFromNull(typeB) && (typeB != ColumnType.SYMBOL)) ? typeB
-                : ((typeB == ColumnType.NULL) && ColumnType.isCastableFromNull(typeA) && (typeA != ColumnType.SYMBOL)) ? typeA
-
-                // cast long and timestamp to timestamp in unions instead of longs.
-                : ((typeA == ColumnType.TIMESTAMP) && (typeB == ColumnType.LONG)) ? ColumnType.TIMESTAMP
-                : ((typeA == ColumnType.LONG) && (typeB == ColumnType.TIMESTAMP)) ? ColumnType.TIMESTAMP
-
-                // Varchars take priority over strings, but strings over most types.
-                : (typeA == ColumnType.VARCHAR || typeB == ColumnType.VARCHAR) ? ColumnType.VARCHAR
-                : ((typeA == ColumnType.STRING) || (typeB == ColumnType.STRING)) ? ColumnType.STRING
-
-                // cast booleans vs anything other than varchars to strings.
-                : ((typeA == ColumnType.BOOLEAN) || (typeB == ColumnType.BOOLEAN)) ? ColumnType.STRING
-
-                : (ColumnType.isToSameOrWider(typeB, typeA) && typeA != ColumnType.SYMBOL && typeA != ColumnType.CHAR) ? typeA
-                : (ColumnType.isToSameOrWider(typeA, typeB) && typeB != ColumnType.SYMBOL && typeB != ColumnType.CHAR) ? typeB
-                : ColumnType.STRING;
-    }
-
     private static void coerceRuntimeConstantType(Function func, short type, SqlExecutionContext context, CharSequence message, int pos) throws SqlException {
         if (ColumnType.isUndefined(func.getType())) {
             func.assignType(type, context.getBindVariableService());
@@ -720,20 +693,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
-    private static boolean isGeoType(int colType) {
-        return colType >= ColumnType.GEOBYTE && colType <= ColumnType.GEOLONG;
-    }
-
-    private static boolean isParseableType(int colType) {
-        return colType == ColumnType.TIMESTAMP || colType == ColumnType.LONG256;
-    }
-
     private static boolean isSingleColumnFunction(ExpressionNode ast, CharSequence name) {
         return ast.type == FUNCTION && ast.paramCount == 1 && Chars.equalsIgnoreCase(ast.token, name) && ast.rhs.type == LITERAL;
-    }
-
-    private static boolean isStringyType(int colType) {
-        return colType == ColumnType.VARCHAR || colType == ColumnType.STRING;
     }
 
     private static RecordMetadata widenSetMetadata(RecordMetadata typesA, RecordMetadata typesB) {

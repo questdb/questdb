@@ -138,6 +138,32 @@ public final class ColumnType {
     private ColumnType() {
     }
 
+    public static short commonWideningType(short typeA, short typeB) {
+        return (typeA == typeB && typeA != SYMBOL) ? typeA
+                : (isStringyType(typeA) && isStringyType(typeB)) ? STRING
+                : (isStringyType(typeA) && isParseableType(typeB)) ? typeA
+                : (isStringyType(typeB) && isParseableType(typeA)) ? typeB
+
+                // NULL casts to any other nullable type, except for symbols which can't cross symbol tables.
+                : ((typeA == NULL) && isCastableFromNull(typeB) && (typeB != SYMBOL)) ? typeB
+                : ((typeB == NULL) && isCastableFromNull(typeA) && (typeA != SYMBOL)) ? typeA
+
+                // cast long and timestamp to timestamp in unions instead of longs.
+                : ((typeA == TIMESTAMP) && (typeB == LONG)) ? TIMESTAMP
+                : ((typeA == LONG) && (typeB == TIMESTAMP)) ? TIMESTAMP
+
+                // Varchars take priority over strings, but strings over most types.
+                : (typeA == VARCHAR || typeB == VARCHAR) ? VARCHAR
+                : ((typeA == STRING) || (typeB == STRING)) ? STRING
+
+                // cast booleans vs anything other than varchars to strings.
+                : ((typeA == BOOLEAN) || (typeB == BOOLEAN)) ? STRING
+
+                : (isToSameOrWider(typeB, typeA) && typeA != SYMBOL && typeA != CHAR) ? typeA
+                : (isToSameOrWider(typeA, typeB) && typeB != SYMBOL && typeB != CHAR) ? typeB
+                : STRING;
+    }
+
     public static int decodeArrayDimensionality(int encodedType) {
         assert ColumnType.tagOf(encodedType) == ColumnType.ARRAY;
         return ((encodedType >> ARRAY_NDIMS_FIELD_POS) & ARRAY_NDIMS_FIELD_MASK) + 1;
@@ -312,6 +338,10 @@ public final class ColumnType {
         return (columnType & TYPE_FLAG_GEO_HASH) != 0;
     }
 
+    public static boolean isGeoType(int colType) {
+        return colType >= GEOBYTE && colType <= GEOLONG;
+    }
+
     public static boolean isInt(int columnType) {
         return columnType == ColumnType.INT;
     }
@@ -324,12 +354,20 @@ public final class ColumnType {
         return columnType == NULL;
     }
 
+    public static boolean isParseableType(int colType) {
+        return colType == TIMESTAMP || colType == LONG256;
+    }
+
     public static boolean isPersisted(int columnType) {
         return nonPersistedTypes.excludes(columnType);
     }
 
     public static boolean isString(int columnType) {
         return columnType == STRING;
+    }
+
+    public static boolean isStringyType(int colType) {
+        return colType == VARCHAR || colType == STRING;
     }
 
     public static boolean isSupportedArrayElementType(short typeTag) {
