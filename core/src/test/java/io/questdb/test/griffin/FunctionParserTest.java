@@ -243,6 +243,63 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testArrayFunctionWithRecord() throws SqlException {
+        functions.add(new ConstructArrayFunctionFactory());
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        final Record record = new Record() {
+            @Override
+            public long getLong(int col) {
+                return col + 1;
+            }
+        };
+
+        metadata.add(new TableColumnMetadata("a", ColumnType.LONG));
+        metadata.add(new TableColumnMetadata("b", ColumnType.LONG));
+        metadata.add(new TableColumnMetadata("c", ColumnType.LONG));
+        metadata.add(new TableColumnMetadata("d", ColumnType.LONG));
+        FunctionParser functionParser = createFunctionParser();
+        try (Function f = parseFunction("ARRAY[a]", metadata, functionParser)) {
+            ArrayView array = f.getArray(record);
+            assertEquals(1, array.getDimCount());
+            assertEquals(1, array.getFlatElemCount());
+            assertEquals(1, array.getLongAtFlatIndex(0));
+        }
+        try (Function f = parseFunction("ARRAY[a, b]", metadata, functionParser)) {
+            ArrayView array = f.getArray(record);
+            assertEquals(2, array.getFlatElemCount());
+            assertEquals(1, array.getDimCount());
+            assertEquals(1, array.getLongAtFlatIndex(0));
+            assertEquals(2, array.getLongAtFlatIndex(1));
+        }
+        try (Function f = parseFunction("ARRAY[[a]]", metadata, functionParser)) {
+            ArrayView array = f.getArray(record);
+            assertEquals(2, array.getDimCount());
+            assertEquals(1, array.getDimLen(0));
+            assertEquals(1, array.getDimLen(1));
+            assertEquals(1, array.getFlatElemCount());
+            assertEquals(1, array.getLongAtFlatIndex(0));
+        }
+        try (Function f = parseFunction("ARRAY[[a], [b]]", metadata, functionParser)) {
+            ArrayView array = f.getArray(record);
+            assertEquals(2, array.getDimLen(0));
+            assertEquals(1, array.getDimLen(1));
+            assertEquals(2, array.getFlatElemCount());
+            assertEquals(1, array.getLongAtFlatIndex(0));
+            assertEquals(2, array.getLongAtFlatIndex(1));
+        }
+        try (Function f = parseFunction("ARRAY[[a, b], [c, d]]", metadata, functionParser)) {
+            ArrayView array = f.getArray(record);
+            assertEquals(2, array.getDimLen(0));
+            assertEquals(2, array.getDimLen(1));
+            assertEquals(4, array.getFlatElemCount());
+            assertEquals(1, array.getLongAtFlatIndex(0));
+            assertEquals(2, array.getLongAtFlatIndex(1));
+            assertEquals(3, array.getLongAtFlatIndex(2));
+            assertEquals(4, array.getLongAtFlatIndex(3));
+        }
+    }
+
+    @Test
     public void testBooleanConstants() throws SqlException {
         functions.add(new NotFunctionFactory());
         functions.add(new OrFunctionFactory());

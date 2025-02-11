@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.array;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.FunctionArray;
 import io.questdb.cairo.arr.HeapLongArray;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.BindVariableService;
@@ -52,7 +53,7 @@ public class ConstructArrayFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return new ConstructArrayFunction(args, argPositions);
+        return new FunctionArrayFunction(args, argPositions);
     }
 
     @Override
@@ -60,10 +61,10 @@ public class ConstructArrayFunctionFactory implements FunctionFactory {
         return ColumnType.ARRAY;
     }
 
-    private static class ConstructArrayFunction extends ArrayFunction {
+    private static class ConstantArrayFunction extends ArrayFunction {
         private final HeapLongArray array;
 
-        public ConstructArrayFunction(ObjList<Function> args, IntList argPositions) throws SqlException {
+        public ConstantArrayFunction(ObjList<Function> args, IntList argPositions) throws SqlException {
             int outerDimLen = args.size();
             Function arg0 = args.getQuick(0);
             if (ColumnType.isArray(arg0.getType())) {
@@ -99,7 +100,7 @@ public class ConstructArrayFunctionFactory implements FunctionFactory {
                 array.setDimLen(0, outerDimLen);
                 array.applyShape();
                 for (int i = 0; i < outerDimLen; i++) {
-                    array.putLong(i, args.getQuick(i).getInt(null));
+                    array.putLong(i, args.getQuick(i).getLong(null));
                 }
             }
             this.type = array.getType();
@@ -111,6 +112,58 @@ public class ConstructArrayFunctionFactory implements FunctionFactory {
 
         @Override
         public ArrayView getArray(Record rec) {
+            return array;
+        }
+    }
+
+    private static class FunctionArrayFunction extends ArrayFunction {
+        private final FunctionArray array;
+
+        public FunctionArrayFunction(ObjList<Function> args, IntList argPositions) throws SqlException {
+            int outerDimLen = args.size();
+            Function arg0 = args.getQuick(0);
+            if (ColumnType.isArray(arg0.getType())) {
+                FunctionArray array0 = (FunctionArray) arg0.getArray(null);
+                final int nestedNDims = array0.getDimCount();
+                final int nestedElemCount = array0.getFlatElemCount();
+                for (int n = args.size(), i = 1; i < n; i++) {
+                    Function argI = args.getQuick(i);
+                    if (!ColumnType.isArray(argI.getType())) {
+                        throw SqlException.$(argPositions.getQuick(i), "not an array");
+                    }
+                    ArrayView arrayI = argI.getArray(null);
+                    if (arrayI.getDimCount() != nestedNDims) {
+                        throw SqlException.$(argPositions.getQuick(i), "mismatched array shape");
+                    }
+                    assert arrayI.getFlatElemCount() == nestedElemCount : "flat element counts don't match";
+                }
+                this.array = new FunctionArray(ColumnType.LONG, nestedNDims + 1);
+                array.setDimLen(0, outerDimLen);
+                for (int i = 0; i < nestedNDims; i++) {
+                    array.setDimLen(i + 1, array0.getDimLen(i));
+                }
+                array.applyShape();
+                int flatIndex = 0;
+                for (int i = 0; i < outerDimLen; i++) {
+                    FunctionArray arrayI = (FunctionArray) args.getQuick(i).getArray(null);
+                    for (int j = 0; j < nestedElemCount; j++) {
+                        array.putFunction(flatIndex++, arrayI.getFunctionAtFlatIndex(j));
+                    }
+                }
+            } else {
+                this.array = new FunctionArray(ColumnType.LONG, 1);
+                array.setDimLen(0, outerDimLen);
+                array.applyShape();
+                for (int i = 0; i < outerDimLen; i++) {
+                    array.putFunction(i, args.getQuick(i));
+                }
+            }
+            this.type = array.getType();
+        }
+
+        @Override
+        public ArrayView getArray(Record rec) {
+            array.setRecord(rec);
             return array;
         }
     }
