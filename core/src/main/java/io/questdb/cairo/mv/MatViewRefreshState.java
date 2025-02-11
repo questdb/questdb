@@ -63,6 +63,7 @@ public class MatViewRefreshState implements QuietCloseable {
     private volatile boolean pendingInvalidation;
     private long recordRowCopierMetadataVersion;
     private RecordToRowCopier recordToRowCopier;
+    private long lastRefreshBaseTxn;
 
     public MatViewRefreshState(
             MatViewDefinition viewDefinition,
@@ -78,6 +79,28 @@ public class MatViewRefreshState implements QuietCloseable {
         this.invalid = invalid;
     }
 
+    public static void readFrom(@NotNull MetaFileReader reader, @NotNull MatViewRefreshState refreshState) {
+        MetaFileReader.BlockCursor cursor = reader.getCursor();
+        if (cursor.hasNext()) {
+            final ReadableBlock mem = cursor.next();
+            refreshState.invalid = mem.getBool(0);
+            refreshState.lastRefreshBaseTxn = mem.getLong(Byte.BYTES);
+            refreshState.invalidationReason = Chars.toString(mem.getStr(Long.BYTES + Byte.BYTES));
+        }
+    }
+
+    public static void writeTo(@NotNull AppendableBlock mem, @Nullable MatViewRefreshState refreshState) {
+        if (refreshState == null) {
+            mem.putBool(false);
+            mem.putLong(Numbers.LONG_NULL);
+            mem.putStr(null);
+            return;
+        }
+        mem.putBool(refreshState.isInvalid());
+        mem.putLong(refreshState.lastRefreshBaseTxn);
+        mem.putStr(refreshState.getInvalidationReason());
+    }
+
     // refreshState can be null, in this case "default" record will be written
     public static void commitTo(@NotNull MetaFileWriter writer, @Nullable MatViewRefreshState refreshState) {
         final AppendableBlock mem = writer.append();
@@ -90,24 +113,24 @@ public class MatViewRefreshState implements QuietCloseable {
         writer.commit();
     }
 
-    public static boolean readFrom(@NotNull MetaFileReader reader, @NotNull MatViewRefreshState refreshState) {
-        if (reader.getCursor().hasNext()) {
-            final ReadableBlock mem = reader.getCursor().next();
-            refreshState.invalid = mem.getBool(0);
-            refreshState.invalidationReason = Chars.toString(mem.getStr(Byte.BYTES));
-            return true;
-        }
-        return false;
+    public long readLastRefreshBaseTableTxn(@NotNull MetaFileReader metaFileReader, @NotNull Path dbRoot) {
+        dbRoot
+                .concat(getViewDefinition().getMatViewToken())
+                .concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
+        metaFileReader.of(dbRoot.$());
+        MatViewRefreshState.readFrom(metaFileReader, this);
+        return lastRefreshBaseTxn;
     }
 
-    public static void writeTo(@NotNull AppendableBlock mem, @Nullable MatViewRefreshState refreshState) {
-        if (refreshState == null) {
-            mem.putBool(false);
-            mem.putStr(null);
-            return;
+    public void writeLastRefreshBaseTableTxn(@NotNull MetaFileWriter metaFileWriter, @NotNull Path dbRoot, long txn) {
+        if (txn != lastRefreshBaseTxn) {
+            lastRefreshBaseTxn = txn;
+            dbRoot
+                    .concat(getViewDefinition().getMatViewToken())
+                    .concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
+            metaFileWriter.of(dbRoot.$());
+            MatViewRefreshState.commitTo(metaFileWriter, this);
         }
-        mem.putBool(refreshState.isInvalid());
-        mem.putStr(refreshState.getInvalidationReason());
     }
 
     public RecordCursorFactory acquireRecordFactory() {

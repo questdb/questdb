@@ -206,11 +206,6 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     }
 
     @Override
-    public long getLastRefreshBaseTxn() {
-        return txnMem.getLong(HEADER_BASE_TABLE_TXN);
-    }
-
-    @Override
     public boolean isDropped() {
         long lastTxn = maxTxn.get();
         if (lastTxn > 0) {
@@ -252,11 +247,6 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         // Open part can leave prev txn append position when part is the same
         setAppendPosition();
         return maxStructureVersion;
-    }
-
-    @Override
-    public void setLastRefreshBaseTxn(long baseTxn) {
-        txnMem.putLong(HEADER_BASE_TABLE_TXN, baseTxn);
     }
 
     private void createPartsDir(int mkDirMode) {

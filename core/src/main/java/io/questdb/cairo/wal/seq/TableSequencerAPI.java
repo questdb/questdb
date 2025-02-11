@@ -190,16 +190,6 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public long getLastRefreshBaseTxn(TableToken tableToken) {
-        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {
-            try {
-                return tableSequencer.getLastRefreshBaseTxn();
-            } finally {
-                tableSequencer.unlockRead();
-            }
-        }
-    }
-
     public @NotNull TableMetadataChangeLog getMetadataChangeLog(final TableToken tableToken, long structureVersionLo) {
         try (TableSequencerImpl tableSequencer = getOrOpenSequencer(tableToken, this.openSequencerInstanceLambda)) {
             if (tableSequencer.metadataMatches(structureVersionLo)) {
@@ -433,16 +423,6 @@ public class TableSequencerAPI implements QuietCloseable {
         try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             try {
                 sequencer.setDistressed();
-            } finally {
-                sequencer.unlockWrite();
-            }
-        }
-    }
-
-    public void setLastRefreshBaseTxn(TableToken tableToken, long baseTxn) {
-        try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
-            try {
-                sequencer.setLastRefreshBaseTxn(baseTxn);
             } finally {
                 sequencer.unlockWrite();
             }
