@@ -152,7 +152,7 @@ public class Table2IlpTest {
                 () -> new SqlExecutionContextImpl(engine, workerPool.getWorkerCount(), workerPool.getWorkerCount())
         );
 
-        receiver = new LineTcpReceiver(new DefaultLineTcpReceiverConfiguration() {
+        receiver = new LineTcpReceiver(new DefaultLineTcpReceiverConfiguration(configuration) {
             @Override
             public int getBindPort() {
                 return ILP_PORT;
