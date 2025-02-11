@@ -88,16 +88,16 @@ final class PgNonNullBinaryArrayView implements ArrayView, Mutable {
     }
 
     @Override
+    public int getFlatElemCount() {
+        return size;
+    }
+
+    @Override
     public long getLongAtFlatIndex(int flatIndex) {
         final long addr = lo + Integer.BYTES + ((long) flatIndex * (Long.BYTES + Integer.BYTES));
         assert addr < hi;
         long networkOrderVal = Unsafe.getUnsafe().getLong(addr);
         return Numbers.bswap(networkOrderVal);
-    }
-
-    @Override
-    public int getSize() {
-        return size;
     }
 
     @Override

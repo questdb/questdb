@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.arr;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.vm.api.MemoryA;
 
 public interface ArrayView extends ArrayShape {
@@ -43,28 +44,31 @@ public interface ArrayView extends ArrayShape {
     }
 
     /**
-     * Raw access into flat array with row major layout.
+     * Provides raw access to the underlying flat (one-dimensional) array of {@code double} values.
      *
-     * @param flatIndex flat index into the flat array
-     * @return double value from the array
+     * @param flatIndex index into the flat array
+     * @return double value at that index
      */
     double getDoubleAtFlatIndex(int flatIndex);
 
     /**
-     * Raw access into flat array with row major layout.
+     * Returns the total number of data points (leaf values) in this array.
+     */
+    int getFlatElemCount();
+
+    /**
+     * Provides raw access to the underlying flat (one-dimensional) array of {@code long} values.
      *
-     * @param flatIndex flat index into the flat array
-     * @return long value from the array
+     * @param flatIndex index into the flat array
+     * @return long value at that index
      */
     long getLongAtFlatIndex(int flatIndex);
 
-    /**
-     * Size of array in bytes, excluding shape prefix.
-     */
-    int getSize();
-
     int getStride(int dimension);
 
+    /**
+     * Returns the encoded array type, as specified in {@link ColumnType#encodeArrayType(short, int)}.
+     */
     int getType();
 
     default int getValuesOffset() {

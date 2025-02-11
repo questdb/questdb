@@ -68,6 +68,8 @@ public class ExpressionParser {
     private static final Log LOG = LogFactory.getLog(ExpressionParser.class);
     private static final LowerCaseAsciiCharSequenceObjHashMap<CharSequence> allFunctions = new LowerCaseAsciiCharSequenceObjHashMap<>();
     private static final LowerCaseAsciiCharSequenceIntHashMap caseKeywords = new LowerCaseAsciiCharSequenceIntHashMap();
+    // columnTypes that an expression can be cast into, in addition to the range BOOLEAN..LONG256
+    private static final IntHashSet moreCastTargetTypes = new IntHashSet();
     private static final IntHashSet nonLiteralBranches = new IntHashSet(); // branches that can't be followed by constants
     private final OperatorRegistry activeRegistry;
     private final IntStack argStackDepthStack = new IntStack();
@@ -130,6 +132,12 @@ public class ExpressionParser {
         // however, '/dd' does not exist, tok is just the potential geohash chars constant, with leading '#'
         final int len = tok.length();
         return len <= 1 || tok.charAt(1) != '#';
+    }
+
+    private static boolean isCastTargetType(int typeTag, boolean isFromNull) {
+        return typeTag >= ColumnType.BOOLEAN && typeTag <= ColumnType.LONG256 ||
+                isFromNull && (typeTag == ColumnType.BINARY || typeTag == ColumnType.INTERVAL) ||
+                moreCastTargetTypes.contains(typeTag);
     }
 
     private static SqlException missingArgs(int position) {
@@ -253,7 +261,7 @@ public class ExpressionParser {
             char thisChar;
             int prevBranch;
             int thisBranch = BRANCH_NONE;
-            boolean asPoppedNull = false;
+            boolean isCastingNull = false;
             OUT:
             while ((tok = SqlUtil.fetchNext(lexer)) != null) {
                 thisChar = tok.charAt(0);
@@ -640,10 +648,7 @@ public class ExpressionParser {
                             if (thisWasCast && prevBranch != BRANCH_GEOHASH) {
                                 // validate type
                                 final short castAsTag = ColumnType.tagOf(node.token);
-                                if (((castAsTag <= ColumnType.UNDEFINED ||
-                                        (castAsTag > ColumnType.LONG256 && castAsTag != ColumnType.UUID &&
-                                                castAsTag != ColumnType.IPv4 && castAsTag != ColumnType.VARCHAR))
-                                        && !asPoppedNull) ||
+                                if ((!isCastTargetType(castAsTag, isCastingNull)) ||
                                         (castAsTag == ColumnType.GEOHASH && node.type == ExpressionNode.LITERAL)
                                 ) {
                                     throw SqlException.$(node.position, "unsupported cast");
@@ -731,18 +736,13 @@ public class ExpressionParser {
                                 int nodeCount = 0;
                                 while ((node = opStack.pop()) != null && node.token.charAt(0) != '(') {
                                     nodeCount++;
-                                    asPoppedNull = SqlKeywords.isNullKeyword(node.token);
+                                    isCastingNull = nodeCount == 1 && SqlKeywords.isNullKeyword(node.token);
                                     argStackDepth = onNode(listener, node, argStackDepth, false);
                                 }
-
-                                if (nodeCount != 1) {
-                                    asPoppedNull = false;
-                                }
-
                                 if (node != null) {
+                                    // push back '('
                                     opStack.push(node);
                                 }
-
                                 paramCount++;
                                 scopeStack.update(1, Scope.CAST_AS);
                             } else {
@@ -955,22 +955,21 @@ public class ExpressionParser {
 
                                     // validate type
                                     final short columnType = ColumnType.tagOf(prevNode.token);
-                                    if ((columnType < ColumnType.BOOLEAN || (columnType > ColumnType.LONG256 && columnType != ColumnType.UUID)) && (columnType != ColumnType.IPv4)) {
+                                    if (!isCastTargetType(columnType, isCastingNull)) {
                                         throw SqlException.$(prevNode.position, "impossible type cast, invalid type");
-                                    } else {
-                                        ExpressionNode stringLiteral = SqlUtil.nextConstant(expressionNodePool, GenericLexer.immutableOf(tok), lastPos);
-                                        onNode(listener, stringLiteral, 0, false);
-
-                                        prevNode.type = ExpressionNode.CONSTANT;
-                                        onNode(listener, prevNode, 0, false);
-
-                                        ExpressionNode cast = expressionNodePool.next().of(ExpressionNode.FUNCTION, "cast", 0, prevNode.position);
-                                        cast.paramCount = 2;
-
-                                        onNode(listener, cast, argStackDepth + 2, false);
-                                        argStackDepth++;
-                                        break;
                                     }
+                                    ExpressionNode stringLiteral = SqlUtil.nextConstant(expressionNodePool, GenericLexer.immutableOf(tok), lastPos);
+                                    onNode(listener, stringLiteral, 0, false);
+
+                                    prevNode.type = ExpressionNode.CONSTANT;
+                                    onNode(listener, prevNode, 0, false);
+
+                                    ExpressionNode cast = expressionNodePool.next().of(ExpressionNode.FUNCTION, "cast", 0, prevNode.position);
+                                    cast.paramCount = 2;
+
+                                    onNode(listener, cast, argStackDepth + 2, false);
+                                    argStackDepth++;
+                                    break;
                                 }
 
                                 // there is one case for valid dangling expression - when we create an alias for column (`'value' 'x'` equivalent to `'value' as 'x'`)
@@ -1521,6 +1520,11 @@ public class ExpressionParser {
         caseKeywords.put("when", IDX_WHEN);
         caseKeywords.put("then", IDX_THEN);
         caseKeywords.put("else", IDX_ELSE);
+
+        moreCastTargetTypes.add(ColumnType.UUID);
+        moreCastTargetTypes.add(ColumnType.IPv4);
+        moreCastTargetTypes.add(ColumnType.VARCHAR);
+        moreCastTargetTypes.add(ColumnType.ARRAY);
 
         allFunctions.put("<>", "<>all");
         allFunctions.put("!=", "<>all");

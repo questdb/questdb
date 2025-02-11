@@ -29,13 +29,21 @@ import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.DirectIntSlice;
 
 /**
- * A view over an immutable N-dimensional array.
- * This is a flyweight object.
+ * An immutable view over a native-memory array. This is a flyweight object.
  */
+<<<<<<<< HEAD:core/src/main/java/io/questdb/cairo/arr/DirectFlyweightArrayView.java
 public class DirectFlyweightArrayView implements ArrayView {
     private final DirectIntSlice shape = new DirectIntSlice();
     private final DirectIntSlice strides = new DirectIntSlice();
     private final ArraySlice values = new ArraySlice();
+========
+public class BorrowedDirectArrayView implements ArrayView {
+    private final DirectIntSlice shape = new DirectIntSlice();
+    private final DirectIntSlice strides = new DirectIntSlice();
+    private final DirectArraySlice values = new DirectArraySlice();
+    int valuesOffset = 0;
+    private volatile short crc;
+>>>>>>>> 8b4d9a429107c8b6e33ef55a972975ab271d45ab:core/src/main/java/io/questdb/cairo/arr/BorrowedDirectArrayView.java
     // Encoded array type, contains element type class, type precision, and dimensionality
     private int type = ColumnType.UNDEFINED;
     private int valuesOffset = 0;
@@ -72,6 +80,11 @@ public class DirectFlyweightArrayView implements ArrayView {
         return values.getDouble(flatIndex);
     }
 
+    @Override
+    public int getFlatElemCount() {
+        return values.size();
+    }
+
     public float getFloat(DirectIntSlice coordinates) {
         return values.getFloat(flatIndex(coordinates));
     }
@@ -94,18 +107,11 @@ public class DirectFlyweightArrayView implements ArrayView {
     }
 
     @Override
-    public int getSize() {
-        return values.size();
-    }
-
-    @Override
     public int getStride(int dimension) {
         return strides.get(dimension);
     }
 
-    /**
-     * Get the array's type
-     */
+    @Override
     public int getType() {
         return type;
     }
@@ -126,7 +132,7 @@ public class DirectFlyweightArrayView implements ArrayView {
      * with the numbers <code>[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4]</code>.</p>
      * <p><strong>IMPORTANT</strong>: The number of elements</p>
      */
-    public ArraySlice getValues() {
+    public DirectArraySlice getValues() {
         return values;
     }
 

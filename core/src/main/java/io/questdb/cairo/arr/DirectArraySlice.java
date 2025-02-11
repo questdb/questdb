@@ -32,7 +32,7 @@ import io.questdb.std.bytes.DirectSequence;
  * <p><strong>IMPORTANT</strong>: The values are accessed by element index,
  * not by address offset.</p>
  */
-public class ArraySlice implements DirectSequence {
+public class DirectArraySlice implements DirectSequence {
     private long ptr = 0;
     private int size = 0;
 
@@ -91,7 +91,7 @@ public class ArraySlice implements DirectSequence {
         return Unsafe.getUnsafe().getShort(addr);
     }
 
-    public ArraySlice of(long ptr, int size) {
+    public DirectArraySlice of(long ptr, int size) {
         assert ptr > 0;
         assert size > 0;
         this.ptr = ptr;
