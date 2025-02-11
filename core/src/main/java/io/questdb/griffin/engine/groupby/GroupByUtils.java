@@ -169,8 +169,7 @@ public class GroupByUtils {
                     } else {
                         // it's a key function
                         if (outKeyFunctions == null || outKeyFunctionNodes == null) {
-                            throw SqlException.$(node.position, "key functions are supported in group by only [function=").put(node)
-                                    .put(']');
+                            throw SqlException.$(node.position, "key functions are supported in GROUP BY only [function=").put(node).put(']');
                         }
                         outKeyFunctions.add(function);
                         outKeyFunctionNodes.add(node);

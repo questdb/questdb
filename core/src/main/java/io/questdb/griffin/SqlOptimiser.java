@@ -4789,7 +4789,7 @@ public class SqlOptimiser implements Mutable {
 
             final ObjList<ExpressionNode> groupBy = nested.getGroupBy();
             if (sampleBy != null && groupBy != null && groupBy.size() > 0) {
-                throw SqlException.$(groupBy.getQuick(0).position, "no need to specify GROUP BY clause in SAMPLE BY query");
+                throw SqlException.$(groupBy.getQuick(0).position, "SELECT query must not contain both GROUP BY and SAMPLE BY");
             }
 
             if (

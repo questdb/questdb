@@ -2990,7 +2990,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " from long_sequence(20)" +
                         ") timestamp(ts) partition by day",
                 95,
-                "no need to specify GROUP BY clause in SAMPLE BY query"
+                "SELECT query must not contain both GROUP BY and SAMPLE BY"
         );
     }
 
@@ -3015,7 +3015,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " from long_sequence(20)" +
                         ") timestamp(ts) partition by day",
                 145,
-                "no need to specify GROUP BY clause in SAMPLE BY query"
+                "SELECT query must not contain both GROUP BY and SAMPLE BY"
         );
     }
 
