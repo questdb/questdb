@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
@@ -49,6 +50,7 @@ import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.ShortFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.griffin.engine.functions.array.ConstructArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InStrFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.NotFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.OrFunctionFactory;
@@ -105,22 +107,22 @@ import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TestRecord;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
-import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
 
 import static io.questdb.cairo.ColumnType.OVERLOAD_NONE;
+import static org.junit.Assert.*;
 
 public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void overloadFromCharToDoubleDoesNotExist() {
-        Assert.assertEquals(ColumnType.overloadDistance(ColumnType.CHAR, ColumnType.DOUBLE), OVERLOAD_NONE);
+        assertEquals(ColumnType.overloadDistance(ColumnType.CHAR, ColumnType.DOUBLE), OVERLOAD_NONE);
     }
 
     @Test
     public void overloadFromShortToIntIsLikelyThanToDouble() {
-        Assert.assertTrue(ColumnType.overloadDistance(ColumnType.SHORT, ColumnType.INT) <
+        assertTrue(ColumnType.overloadDistance(ColumnType.SHORT, ColumnType.INT) <
                 ColumnType.overloadDistance(ColumnType.SHORT, ColumnType.DOUBLE));
     }
 
@@ -135,7 +137,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
         try {
             ColumnType.overloadDistance(ColumnType.INT, ColumnType.UNDEFINED);
-            Assert.fail();
+            fail();
         } catch (AssertionError e) {
             TestUtils.assertContains(e.getMessage(), "Undefined not supported in overloads");
         }
@@ -191,7 +193,53 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         metadata.add(new TableColumnMetadata("c", ColumnType.SHORT));
         FunctionParser functionParser = createFunctionParser();
         Function f = parseFunction("a + c", metadata, functionParser);
-        Assert.assertEquals(123.123f, f.getFloat(null), 0.0001);
+        assertEquals(123.123f, f.getFloat(null), 0.0001);
+    }
+
+    @Test
+    public void testArrayFunction() throws SqlException {
+        functions.add(new ConstructArrayFunctionFactory());
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        FunctionParser functionParser = createFunctionParser();
+        try (Function f = parseFunction("ARRAY[1]", metadata, functionParser)) {
+            ArrayView array = f.getArray(null);
+            assertEquals(1, array.getDimCount());
+            assertEquals(1, f.getArray(null).getFlatElemCount());
+            assertEquals(1, array.getLongAtFlatIndex(0));
+        }
+        try (Function f = parseFunction("ARRAY[1, 2]", metadata, functionParser)) {
+            ArrayView array = f.getArray(null);
+            assertEquals(2, array.getFlatElemCount());
+            assertEquals(1, array.getDimCount());
+            assertEquals(1, array.getLongAtFlatIndex(0));
+            assertEquals(2, array.getLongAtFlatIndex(1));
+        }
+        try (Function f = parseFunction("ARRAY[[1]]", metadata, functionParser)) {
+            ArrayView array = f.getArray(null);
+            assertEquals(2, array.getDimCount());
+            assertEquals(1, array.getDimLen(0));
+            assertEquals(1, array.getDimLen(1));
+            assertEquals(1, array.getFlatElemCount());
+            assertEquals(1, array.getLongAtFlatIndex(0));
+        }
+        try (Function f = parseFunction("ARRAY[[1], [2]]", metadata, functionParser)) {
+            ArrayView array = f.getArray(null);
+            assertEquals(2, array.getDimLen(0));
+            assertEquals(1, array.getDimLen(1));
+            assertEquals(2, array.getFlatElemCount());
+            assertEquals(1, array.getLongAtFlatIndex(0));
+            assertEquals(2, array.getLongAtFlatIndex(1));
+        }
+        try (Function f = parseFunction("ARRAY[[1, 2], [3, 4]]", metadata, functionParser)) {
+            ArrayView array = f.getArray(null);
+            assertEquals(2, array.getDimLen(0));
+            assertEquals(2, array.getDimLen(1));
+            assertEquals(4, array.getFlatElemCount());
+            assertEquals(1, array.getLongAtFlatIndex(0));
+            assertEquals(2, array.getLongAtFlatIndex(1));
+            assertEquals(3, array.getLongAtFlatIndex(2));
+            assertEquals(4, array.getLongAtFlatIndex(3));
+        }
     }
 
     @Test
@@ -211,11 +259,11 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         metadata.add(new TableColumnMetadata("a", ColumnType.BOOLEAN));
         FunctionParser functionParser = createFunctionParser();
         Function function = parseFunction("a or not false", metadata, functionParser);
-        Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
-        Assert.assertTrue(function.getBool(record));
+        assertEquals(ColumnType.BOOLEAN, function.getType());
+        assertTrue(function.getBool(record));
 
         Function function2 = parseFunction("a or true", metadata, functionParser);
-        Assert.assertTrue(function2.getBool(record));
+        assertTrue(function2.getBool(record));
     }
 
     @Test
@@ -238,8 +286,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         metadata.add(new TableColumnMetadata("b", ColumnType.BOOLEAN));
         FunctionParser functionParser = createFunctionParser();
         Function function = parseFunction("a or not b", metadata, functionParser);
-        Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
-        Assert.assertFalse(function.getBool(record));
+        assertEquals(ColumnType.BOOLEAN, function.getType());
+        assertFalse(function.getBool(record));
     }
 
     @Test
@@ -281,8 +329,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         metadata.add(new TableColumnMetadata("b", ColumnType.SHORT));
         FunctionParser functionParser = createFunctionParser();
         Function function = parseFunction("a+b", metadata, functionParser);
-        Assert.assertEquals(ColumnType.INT, function.getType());
-        Assert.assertEquals(33, function.getInt(new Record() {
+        assertEquals(ColumnType.INT, function.getType());
+        assertEquals(33, function.getInt(new Record() {
             @Override
             public byte getByte(int col) {
                 return 12;
@@ -328,8 +376,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         metadata.add(new TableColumnMetadata("a", ColumnType.BYTE));
         FunctionParser functionParser = createFunctionParser();
         Function function = parseFunction("-a", metadata, functionParser);
-        Assert.assertEquals(ColumnType.SHORT, function.getType());
-        Assert.assertEquals(-90, function.getShort(new Record() {
+        assertEquals(ColumnType.SHORT, function.getType());
+        assertEquals(-90, function.getShort(new Record() {
             @Override
             public byte getByte(int col) {
                 return 90;
@@ -389,8 +437,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
         FunctionParser parser = createFunctionParser();
         Function function = parseFunction("a='2020-01-01'", metadata, parser);
-        Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
-        Assert.assertTrue(function.getBool(new Record() {
+        assertEquals(ColumnType.BOOLEAN, function.getType());
+        assertTrue(function.getBool(new Record() {
             @Override
             public long getDate(int col) {
                 return 1577836800000L;
@@ -398,8 +446,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         }));
 
         function = parseFunction("'2020-01-01'=a", metadata, parser);
-        Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
-        Assert.assertTrue(function.getBool(new Record() {
+        assertEquals(ColumnType.BOOLEAN, function.getType());
+        assertTrue(function.getBool(new Record() {
             @Override
             public long getDate(int col) {
                 return 1577836800000L;
@@ -414,8 +462,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         metadata.add(new TableColumnMetadata("a", ColumnType.STRING));
         FunctionParser functionParser = createFunctionParser();
         Function function = parseFunction("a in ('xu', 'yk')", metadata, functionParser);
-        Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
-        Assert.assertTrue(function.getBool(new Record() {
+        assertEquals(ColumnType.BOOLEAN, function.getType());
+        assertTrue(function.getBool(new Record() {
             @Override
             public CharSequence getStrA(int col) {
                 return "yk";
@@ -430,8 +478,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         metadata.add(new TableColumnMetadata("a", ColumnType.INT));
         FunctionParser functionParser = createFunctionParser();
         Function function = parseFunction("COUNT()", metadata, functionParser);
-        Assert.assertEquals(ColumnType.LONG, function.getType());
-        Assert.assertEquals(CountLongConstGroupByFunction.class, function.getClass());
+        assertEquals(ColumnType.LONG, function.getType());
+        assertEquals(CountLongConstGroupByFunction.class, function.getClass());
     }
 
     @Test
@@ -576,7 +624,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
         });
         FunctionParser parser = createFunctionParser();
-        Assert.assertEquals(0, parser.getFunctionFactoryCache().getFunctionCount());
+        assertEquals(0, parser.getFunctionFactoryCache().getFunctionCount());
     }
 
     @Test
@@ -594,11 +642,11 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         Record record = new TestRecord();
 
         Function function = parseFunction("to_str(a, 'EE, dd-MMM-yyyy hh:mm:ss')", metadata, functionParser);
-        Assert.assertEquals(ColumnType.STRING, function.getType());
+        assertEquals(ColumnType.STRING, function.getType());
         TestUtils.assertEquals("Thursday, 03-Apr-150577 02:54:03", function.getStrA(record));
 
         Function function2 = parseFunction("to_str(b, 'EE, dd-MMM-yyyy hh:mm:ss')", metadata, functionParser);
-        Assert.assertEquals(ColumnType.STRING, function2.getType());
+        assertEquals(ColumnType.STRING, function2.getType());
         TestUtils.assertEquals("Tuesday, 21-Nov-2119 07:50:58", function2.getStrA(record));
 
         Function function3 = parseFunction("to_char(c)", metadata, functionParser);
@@ -692,8 +740,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         };
 
         Function function = parseFunction("cast('sp052w92' as geohash(5c))", metadata, functionParser);
-        Assert.assertEquals(ColumnType.getGeoHashTypeWithBits(25), function.getType());
-        Assert.assertEquals(25854114, function.getGeoInt(record));
+        assertEquals(ColumnType.getGeoHashTypeWithBits(25), function.getType());
+        assertEquals(25854114, function.getGeoInt(record));
     }
 
     @Test
@@ -732,8 +780,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
         });
 
-        Assert.assertSame(function, parseFunction("x()", new GenericRecordMetadata(), createFunctionParser()));
-        Assert.assertTrue(function.isConstant());
+        assertSame(function, parseFunction("x()", new GenericRecordMetadata(), createFunctionParser()));
+        assertTrue(function.isConstant());
     }
 
     @Test
@@ -766,7 +814,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         });
 
         Function function = parseFunction("x()", new GenericRecordMetadata(), createFunctionParser());
-        Assert.assertTrue(function instanceof BooleanConstant);
+        assertTrue(function instanceof BooleanConstant);
     }
 
     @Test
@@ -799,7 +847,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         });
 
         Function function = parseFunction("x()", new GenericRecordMetadata(), createFunctionParser());
-        Assert.assertTrue(function instanceof ByteConstant);
+        assertTrue(function instanceof ByteConstant);
     }
 
     @Test
@@ -832,7 +880,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         });
 
         Function function = parseFunction("x()", new GenericRecordMetadata(), createFunctionParser());
-        Assert.assertTrue(function instanceof DateConstant);
+        assertTrue(function instanceof DateConstant);
     }
 
     @Test
@@ -865,7 +913,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         });
 
         Function function = parseFunction("x()", new GenericRecordMetadata(), createFunctionParser());
-        Assert.assertTrue(function instanceof DoubleConstant);
+        assertTrue(function instanceof DoubleConstant);
     }
 
     @Test
@@ -898,7 +946,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         });
 
         Function function = parseFunction("x()", new GenericRecordMetadata(), createFunctionParser());
-        Assert.assertTrue(function instanceof FloatConstant);
+        assertTrue(function instanceof FloatConstant);
     }
 
     @Test
@@ -931,7 +979,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         });
 
         Function function = parseFunction("x()", new GenericRecordMetadata(), createFunctionParser());
-        Assert.assertTrue(function instanceof IntConstant);
+        assertTrue(function instanceof IntConstant);
     }
 
     @Test
@@ -964,7 +1012,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         });
 
         Function function = parseFunction("x()", new GenericRecordMetadata(), createFunctionParser());
-        Assert.assertTrue(function instanceof LongConstant);
+        assertTrue(function instanceof LongConstant);
     }
 
     @Test
@@ -997,7 +1045,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         });
 
         Function function = parseFunction("x()", new GenericRecordMetadata(), createFunctionParser());
-        Assert.assertSame(StrConstant.NULL, function);
+        assertSame(StrConstant.NULL, function);
     }
 
     @Test
@@ -1015,7 +1063,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         });
 
         Function function = parseFunction("x()", new GenericRecordMetadata(), createFunctionParser());
-        Assert.assertTrue(function instanceof SymbolConstant);
+        assertTrue(function instanceof SymbolConstant);
     }
 
     @Test
@@ -1048,7 +1096,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         });
 
         Function function = parseFunction("x()", new GenericRecordMetadata(), createFunctionParser());
-        Assert.assertTrue(function instanceof ShortConstant);
+        assertTrue(function instanceof ShortConstant);
     }
 
     @Test
@@ -1083,7 +1131,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         });
 
         Function function = parseFunction("x()", new GenericRecordMetadata(), createFunctionParser());
-        Assert.assertTrue(function instanceof StrConstant);
+        assertTrue(function instanceof StrConstant);
     }
 
     @Test
@@ -1101,7 +1149,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         });
 
         Function function = parseFunction("x()", new GenericRecordMetadata(), createFunctionParser());
-        Assert.assertTrue(function instanceof SymbolConstant);
+        assertTrue(function instanceof SymbolConstant);
     }
 
     @Test
@@ -1134,7 +1182,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         });
 
         Function function = parseFunction("x()", new GenericRecordMetadata(), createFunctionParser());
-        Assert.assertTrue(function instanceof TimestampConstant);
+        assertTrue(function instanceof TimestampConstant);
     }
 
     @Test
@@ -1195,7 +1243,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                             try {
                                 return DateFormatUtils.parseUTCDate("2018-03-04T21:40:00.000Z");
                             } catch (NumericException e) {
-                                Assert.fail();
+                                fail();
                             }
                             return 0;
                         };
@@ -1230,11 +1278,11 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         for (short type = ColumnType.BOOLEAN; type < ColumnType.NULL; type++) {
             String msg = "type: " + ColumnType.nameOf(type) + "(" + type + ")";
             if (type == ColumnType.STRING || type == ColumnType.SYMBOL) {
-                Assert.assertEquals(msg, -1, ColumnType.overloadDistance(ColumnType.NULL, type));
+                assertEquals(msg, -1, ColumnType.overloadDistance(ColumnType.NULL, type));
             } else {
-                Assert.assertEquals(msg, 0, ColumnType.overloadDistance(ColumnType.NULL, type));
+                assertEquals(msg, 0, ColumnType.overloadDistance(ColumnType.NULL, type));
             }
-            Assert.assertEquals(msg, OVERLOAD_NONE, ColumnType.overloadDistance(type, ColumnType.NULL));
+            assertEquals(msg, OVERLOAD_NONE, ColumnType.overloadDistance(type, ColumnType.NULL));
         }
     }
 
@@ -1264,9 +1312,9 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         try {
             parseFunction("x(NaN)", metadata, createFunctionParser());
-            Assert.fail();
+            fail();
         } catch (SqlException e) {
-            Assert.assertEquals(0, e.getPosition());
+            assertEquals(0, e.getPosition());
             TestUtils.assertContains(e.getFlyweightMessage(), "bad function factory (NULL), check log");
         }
     }
@@ -1289,9 +1337,9 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         metadata.add(new TableColumnMetadata("a", ColumnType.INT));
         try {
             parseFunction("x(a)", metadata, createFunctionParser());
-            Assert.fail();
+            fail();
         } catch (SqlException e) {
-            Assert.assertEquals(2, e.getPosition());
+            assertEquals(2, e.getPosition());
             TestUtils.assertContains(e.getFlyweightMessage(), "argument type mismatch for function `x` at #1 expected: INT constant, actual: INT");
         }
     }
@@ -1412,13 +1460,13 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                       }
                 , sqlExecutionContext);
 
-        Assert.assertEquals(2, function.getInt(record));
+        assertEquals(2, function.getInt(record));
 
         Function function1 = parseFunction("length(null)", metadata, functionParser);
-        Assert.assertEquals(-1, function1.getInt(record));
+        assertEquals(-1, function1.getInt(record));
 
         Function function2 = parseFunction("length(NULL)", metadata, functionParser);
-        Assert.assertEquals(-1, function2.getInt(record));
+        assertEquals(-1, function2.getInt(record));
     }
 
     @Test
@@ -1437,8 +1485,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         try (Function f = parseFunction("$2 = $1", null, createFunctionParser())) {
             TestUtils.assertContains(f.getClass().getCanonicalName(), "io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory.Func");
         }
-        Assert.assertEquals(ColumnType.DOUBLE, bindVariableService.getFunction(0).getType());
-        Assert.assertEquals(ColumnType.DOUBLE, bindVariableService.getFunction(1).getType());
+        assertEquals(ColumnType.DOUBLE, bindVariableService.getFunction(0).getType());
+        assertEquals(ColumnType.DOUBLE, bindVariableService.getFunction(1).getType());
     }
 
     @Test
@@ -1466,9 +1514,9 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         bindVariableService.clear();
         functions.add(new CursorDereferenceFunctionFactory());
         try (Function ignored = parseFunction("($1).n", null, createFunctionParser())) {
-            Assert.fail();
+            fail();
         } catch (SqlException e) {
-            Assert.assertEquals(1, e.getPosition());
+            assertEquals(1, e.getPosition());
         }
     }
 
@@ -1568,9 +1616,9 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         functions.add(new SwitchFunctionFactory());
         try {
             parseFunction("case $1 when 'A' then $3 else $4 end", null, createFunctionParser());
-            Assert.fail();
+            fail();
         } catch (SqlException e) {
-            Assert.assertEquals(5, e.getPosition());
+            assertEquals(5, e.getPosition());
             TestUtils.assertContains("bind variable is not supported here, please use column instead", e.getFlyweightMessage());
         }
     }
@@ -1586,7 +1634,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         try (Function f = parseFunction("a = $1", metadata, createFunctionParser())) {
             TestUtils.assertContains(f.getClass().getCanonicalName(), "io.questdb.griffin.engine.functions.eq.EqLongFunctionFactory.Func");
         }
-        Assert.assertEquals(ColumnType.LONG, bindVariableService.getFunction(0).getType());
+        assertEquals(ColumnType.LONG, bindVariableService.getFunction(0).getType());
     }
 
     @Test
@@ -1600,7 +1648,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         try (Function f = parseFunction("a = $1", metadata, createFunctionParser())) {
             TestUtils.assertContains(f.getClass().getCanonicalName(), "io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory.Func");
         }
-        Assert.assertEquals(ColumnType.DOUBLE, bindVariableService.getFunction(0).getType());
+        assertEquals(ColumnType.DOUBLE, bindVariableService.getFunction(0).getType());
     }
 
     @Test
@@ -1619,8 +1667,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         };
 
         Function function = parseFunction("a in ('XY', 'YZ')", metadata, functionParser);
-        Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
-        Assert.assertTrue(function.getBool(record));
+        assertEquals(ColumnType.BOOLEAN, function.getType());
+        assertTrue(function.getBool(record));
     }
 
     @Test
@@ -1634,9 +1682,9 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
         try {
             parseFunction("a in ()", metadata, functionParser);
-            Assert.fail();
+            fail();
         } catch (SqlException e) {
-            Assert.assertEquals("[2] too few arguments for 'in'", e.getMessage());
+            assertEquals("[2] too few arguments for 'in'", e.getMessage());
         }
     }
 
@@ -1657,7 +1705,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             if (expected > -1) {
                 final int actual = bindVariableService.getFunction(i).getType();
                 if (expected != actual) {
-                    Assert.fail("type mismatch [expected=" + ColumnType.nameOf(expected) + ", actual=" + ColumnType.nameOf(actual) + ", i=" + i + "]");
+                    fail("type mismatch [expected=" + ColumnType.nameOf(expected) + ", actual=" + ColumnType.nameOf(actual) + ", i=" + i + "]");
                 }
             }
         }
@@ -1670,8 +1718,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         metadata.add(new TableColumnMetadata("b", type2));
         FunctionParser functionParser = createFunctionParser();
         Function function = parseFunction("a+b", metadata, functionParser);
-        Assert.assertEquals(ColumnType.DOUBLE, function.getType());
-        Assert.assertEquals(expected, function.getDouble(record), 0.00001);
+        assertEquals(ColumnType.DOUBLE, function.getType());
+        assertEquals(expected, function.getDouble(record), 0.00001);
     }
 
     private void assertCastToFloat(Record record) throws SqlException {
@@ -1681,8 +1729,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         metadata.add(new TableColumnMetadata("b", ColumnType.SHORT));
         FunctionParser functionParser = createFunctionParser();
         Function function = parseFunction("a+b", metadata, functionParser);
-        Assert.assertEquals(ColumnType.FLOAT, function.getType());
-        Assert.assertEquals((float) 33, function.getFloat(record), 0.00001);
+        assertEquals(ColumnType.FLOAT, function.getType());
+        assertEquals((float) 33, function.getFloat(record), 0.00001);
     }
 
     private void assertCastToLong(long expected, int type1, int type2, Record record) throws SqlException {
@@ -1692,17 +1740,17 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         metadata.add(new TableColumnMetadata("b", type2));
         FunctionParser functionParser = createFunctionParser();
         Function function = parseFunction("a+b", metadata, functionParser);
-        Assert.assertEquals(ColumnType.LONG, function.getType());
-        Assert.assertEquals(expected, function.getLong(record));
+        assertEquals(ColumnType.LONG, function.getType());
+        assertEquals(expected, function.getLong(record));
     }
 
     private void assertFail(int expectedPos, String expectedMessage, String expression, GenericRecordMetadata metadata) {
         FunctionParser functionParser = createFunctionParser();
         try {
             parseFunction(expression, metadata, functionParser);
-            Assert.fail();
+            fail();
         } catch (SqlException e) {
-            Assert.assertEquals(expectedPos, e.getPosition());
+            assertEquals(expectedPos, e.getPosition());
             TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
         }
     }
@@ -1717,19 +1765,19 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         functions.add(factory);
         try (Function f = parseFunction("geohash_func()", null, createFunctionParser())) {
             TestUtils.assertContains(f.getClass().getCanonicalName(), expectedFunctionClass);
-            Assert.assertEquals(expectedType, f.getType());
+            assertEquals(expectedType, f.getType());
             switch (ColumnType.tagOf(expectedType)) {
                 case ColumnType.GEOBYTE:
-                    Assert.assertEquals(expectedValue, f.getGeoByte(null));
+                    assertEquals(expectedValue, f.getGeoByte(null));
                     break;
                 case ColumnType.GEOSHORT:
-                    Assert.assertEquals(expectedValue, f.getGeoShort(null));
+                    assertEquals(expectedValue, f.getGeoShort(null));
                     break;
                 case ColumnType.GEOINT:
-                    Assert.assertEquals(expectedValue, f.getGeoInt(null));
+                    assertEquals(expectedValue, f.getGeoInt(null));
                     break;
                 default:
-                    Assert.assertEquals(expectedValue, f.getGeoLong(null));
+                    assertEquals(expectedValue, f.getGeoLong(null));
                     break;
             }
         }
@@ -1753,8 +1801,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         metadata.add(new TableColumnMetadata("a", ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("b", ColumnType.BOOLEAN));
         FunctionParser functionParser = createFunctionParser();
-        Assert.assertNotNull(parseFunction("a or not b", metadata, functionParser));
-        Assert.assertEquals(2, functionParser.getFunctionFactoryCache().getFunctionCount());
+        assertNotNull(parseFunction("a or not b", metadata, functionParser));
+        assertEquals(2, functionParser.getFunctionFactoryCache().getFunctionCount());
     }
 
     @NotNull
@@ -1784,6 +1832,6 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                 return constant;
             }
         });
-        Assert.assertSame(constant, parseFunction("x()", new GenericRecordMetadata(), createFunctionParser()));
+        assertSame(constant, parseFunction("x()", new GenericRecordMetadata(), createFunctionParser()));
     }
 }
