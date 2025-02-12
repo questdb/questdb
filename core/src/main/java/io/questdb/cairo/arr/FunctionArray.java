@@ -45,7 +45,45 @@ public class FunctionArray implements ArrayView {
 
     @Override
     public void appendWithDefaultStrides(MemoryA mem) {
-        throw new UnsupportedOperationException();
+        short elemType = ColumnType.decodeArrayElementType(type);
+        for (int n = getFlatElemCount(), i = 0; i < n; i++) {
+            Function f = functions[i];
+            switch (elemType) {
+                case ColumnType.BYTE:
+                    mem.putByte(f.getByte(record));
+                    break;
+                case ColumnType.SHORT:
+                    mem.putShort(f.getShort(record));
+                    break;
+                case ColumnType.INT:
+                    mem.putInt(f.getInt(record));
+                    break;
+                case ColumnType.LONG:
+                    mem.putLong(f.getLong(record));
+                    break;
+                case ColumnType.DATE:
+                    mem.putLong(f.getDate(record));
+                    break;
+                case ColumnType.TIMESTAMP:
+                    mem.putLong(f.getTimestamp(record));
+                    break;
+                case ColumnType.FLOAT:
+                    mem.putFloat(f.getFloat(record));
+                    break;
+                case ColumnType.DOUBLE:
+                    mem.putDouble(f.getDouble(record));
+                    break;
+                case ColumnType.LONG256:
+                    throw new UnsupportedOperationException("long256");
+                case ColumnType.UUID:
+                    throw new UnsupportedOperationException("uuid");
+                case ColumnType.IPv4:
+                    mem.putInt(f.getIPv4(record));
+                    break;
+                default:
+                    throw new AssertionError("impossible array element type");
+            }
+        }
     }
 
     public void applyShape() {
