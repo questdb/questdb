@@ -83,9 +83,9 @@ public class ArrayTest extends AbstractCairoTest {
         try (ArrayParser parser = new ArrayParser(configuration);
              DirectUtf8Sink sink = new DirectUtf8Sink(20)
         ) {
-            String arrayExpr = "[[1,2],[3,4]]";
+            String arrayExpr = "[[1.0,2.0],[3.0,4.0]]";
             sink.clear();
-            sink.put("[6i").put(arrayExpr.substring(1));
+            sink.put("[6f").put(arrayExpr.substring(1));
             parser.parse(str.of(sink.lo(), sink.hi()));
             sink.clear();
             ArrayTypeDriver.arrayToJson(parser.getArray(), sink);
@@ -211,92 +211,20 @@ public class ArrayTest extends AbstractCairoTest {
 
     @Test
     public void testInsertAsSelectLiteral1d() throws Exception {
-        execute("CREATE TABLE tango (a LONG, b LONG)");
-        execute("CREATE TABLE samba (arr LONG[])");
-        execute("INSERT INTO tango VALUES (1, 2)");
+        execute("CREATE TABLE tango (a DOUBLE, b DOUBLE)");
+        execute("CREATE TABLE samba (arr DOUBLE[])");
+        execute("INSERT INTO tango VALUES (1.0, 2.0)");
         execute("INSERT INTO samba SELECT ARRAY[a, b] FROM tango");
-        assertSql("arr\n[1,2]\n", "samba");
+        assertSql("arr\n[1.0,2.0]\n", "samba");
     }
 
     @Test
     public void testInsertAsSelectLiteral2d() throws Exception {
-        execute("CREATE TABLE tango (a LONG, b LONG)");
-        execute("CREATE TABLE samba (arr LONG[][])");
-        execute("INSERT INTO tango VALUES (1, 2)");
+        execute("CREATE TABLE tango (a DOUBLE, b DOUBLE)");
+        execute("CREATE TABLE samba (arr DOUBLE[][])");
+        execute("INSERT INTO tango VALUES (1.0, 2.0)");
         execute("INSERT INTO samba SELECT ARRAY[[a, a], [b, b]] FROM tango");
-        assertSql("arr\n[[1,1],[2,2]]\n", "samba");
-    }
-
-    @Test
-    public void testSelectLiteral() throws Exception {
-        execute("CREATE TABLE tango (a LONG, b LONG)");
-        execute("INSERT INTO tango VALUES (1, 2)");
-        assertSql("ARRAY\n[1,2]\n", "SELECT ARRAY[a, b] FROM tango");
-        assertSql("ARRAY\n[[1],[2]]\n", "SELECT ARRAY[[a], [b]] FROM tango");
-    }
-
-    @Test
-    public void testTypeCast() {
-        for (int i = 1; i < ColumnType.ARRAY_NDIMS_LIMIT; i++) {
-            for (short j = ColumnType.BOOLEAN; j <= ColumnType.IPv4; j++) {
-                if (!ColumnType.isSupportedArrayElementType(j)) {
-                    continue;
-                }
-                Assert.assertTrue(ColumnType.isAssignableFrom(
-                        ColumnType.encodeArrayType(j, i),
-                        ColumnType.encodeArrayType(j, i)
-                ));
-                Assert.assertTrue(ColumnType.isAssignableFrom(
-                        ColumnType.NULL,
-                        ColumnType.encodeArrayType(j, i)
-                ));
-            }
-        }
-
-        for (int i = 1; i < ColumnType.ARRAY_NDIMS_LIMIT; i++) {
-            for (short j = ColumnType.BOOLEAN; j <= ColumnType.IPv4; j++) {
-                if (!ColumnType.isSupportedArrayElementType(j)) {
-                    continue;
-                }
-                // not assignable from scalar to any array
-                Assert.assertFalse(ColumnType.isAssignableFrom(j, ColumnType.encodeArrayType(j, i)));
-                // ... nor the other way around
-                Assert.assertFalse(ColumnType.isAssignableFrom(ColumnType.encodeArrayType(j, i), j));
-            }
-        }
-    }
-
-    @Test
-    public void testUnsupportedArrayDimension() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table x (a int[][][][][][][][][][][][][][][][])");
-            try (TableMetadata m = engine.getTableMetadata(engine.verifyTableName("x"))) {
-                Assert.assertEquals(1, m.getColumnCount());
-                Assert.assertEquals("a", m.getColumnName(0));
-                Assert.assertEquals("INT[][][][][][][][][][][][][][][][]", ColumnType.nameOf(m.getColumnType(0)));
-            }
-            assertExceptionNoLeakCheck(
-                    "create table y (a int[][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][])", // 33 dimensions
-                    18,
-                    "array dimension limit is 32"
-            );
-        });
-    }
-
-    @Test
-    public void testUnsupportedArrayType() throws Exception {
-        assertMemoryLeak(() -> {
-            assertExceptionNoLeakCheck(
-                    "create table x (a symbol[][][])",
-                    18,
-                    "SYMBOL array type is not supported"
-            );
-            assertExceptionNoLeakCheck(
-                    "create table x (abc varchar[][][])",
-                    20,
-                    "VARCHAR array type is not supported"
-            );
-        });
+        assertSql("arr\n[[1.0,1.0],[2.0,2.0]]\n", "samba");
     }
 
     @Test
@@ -358,6 +286,78 @@ public class ArrayTest extends AbstractCairoTest {
                             "  functions: [rnd_double_array(3,1,4)]\n" +
                             "    long_sequence count: 1\n",
                     "explain select rnd_double_array(3, 1, 4)"
+            );
+        });
+    }
+
+    @Test
+    public void testSelectLiteral() throws Exception {
+        execute("CREATE TABLE tango (a DOUBLE, b DOUBLE)");
+        execute("INSERT INTO tango VALUES (1.0, 2.0)");
+        assertSql("ARRAY\n[1.0,2.0]\n", "SELECT ARRAY[a, b] FROM tango");
+        assertSql("ARRAY\n[[1.0],[2.0]]\n", "SELECT ARRAY[[a], [b]] FROM tango");
+    }
+
+    @Test
+    public void testTypeCast() {
+        for (int i = 1; i < ColumnType.ARRAY_NDIMS_LIMIT; i++) {
+            for (short j = ColumnType.BOOLEAN; j <= ColumnType.IPv4; j++) {
+                if (!ColumnType.isSupportedArrayElementType(j)) {
+                    continue;
+                }
+                Assert.assertTrue(ColumnType.isAssignableFrom(
+                        ColumnType.encodeArrayType(j, i),
+                        ColumnType.encodeArrayType(j, i)
+                ));
+                Assert.assertTrue(ColumnType.isAssignableFrom(
+                        ColumnType.NULL,
+                        ColumnType.encodeArrayType(j, i)
+                ));
+            }
+        }
+
+        for (int i = 1; i < ColumnType.ARRAY_NDIMS_LIMIT; i++) {
+            for (short j = ColumnType.BOOLEAN; j <= ColumnType.IPv4; j++) {
+                if (!ColumnType.isSupportedArrayElementType(j)) {
+                    continue;
+                }
+                // not assignable from scalar to any array
+                Assert.assertFalse(ColumnType.isAssignableFrom(j, ColumnType.encodeArrayType(j, i)));
+                // ... nor the other way around
+                Assert.assertFalse(ColumnType.isAssignableFrom(ColumnType.encodeArrayType(j, i), j));
+            }
+        }
+    }
+
+    @Test
+    public void testUnsupportedArrayDimension() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (a DOUBLE[][][][][][][][][][][][][][][][])");
+            try (TableMetadata m = engine.getTableMetadata(engine.verifyTableName("x"))) {
+                Assert.assertEquals(1, m.getColumnCount());
+                Assert.assertEquals("a", m.getColumnName(0));
+                Assert.assertEquals("DOUBLE[][][][][][][][][][][][][][][][]", ColumnType.nameOf(m.getColumnType(0)));
+            }
+            assertExceptionNoLeakCheck(
+                    "create table y (a DOUBLE[][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][])", // 33 dimensions
+                    18,
+                    "array dimension limit is 32"
+            );
+        });
+    }
+
+    @Test
+    public void testUnsupportedArrayType() throws Exception {
+        assertMemoryLeak(() -> {
+            assertExceptionNoLeakCheck(
+                    "create table x (a SYMBOL[][][])",
+                    18,
+                    "SYMBOL array type is not supported"
+            );
+            assertExceptionNoLeakCheck(
+                    "create table x (abc VARCHAR[][][])",
+                    20,
+                    "VARCHAR array type is not supported"
             );
         });
     }
