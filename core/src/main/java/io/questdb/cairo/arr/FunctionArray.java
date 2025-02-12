@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.std.Long256;
 
 public class FunctionArray implements ArrayView {
 
@@ -74,9 +75,12 @@ public class FunctionArray implements ArrayView {
                     mem.putDouble(f.getDouble(record));
                     break;
                 case ColumnType.LONG256:
-                    throw new UnsupportedOperationException("long256");
+                    Long256 v = f.getLong256A(record);
+                    mem.putLong256(v.getLong0(), v.getLong1(), v.getLong2(), v.getLong3());
+                    break;
                 case ColumnType.UUID:
-                    throw new UnsupportedOperationException("uuid");
+                    mem.putLong128(f.getLong128Lo(record), f.getLong128Hi(record));
+                    break;
                 case ColumnType.IPv4:
                     mem.putInt(f.getIPv4(record));
                     break;
