@@ -28,9 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.FunctionArray;
-import io.questdb.cairo.arr.HeapLongArray;
 import io.questdb.cairo.sql.ArrayFunction;
-import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -64,61 +62,6 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
         return ColumnType.ARRAY;
     }
 
-    private static class ConstantArrayFunction extends ArrayFunction {
-        private final HeapLongArray array;
-
-        public ConstantArrayFunction(ObjList<Function> args, IntList argPositions) throws SqlException {
-            int outerDimLen = args.size();
-            Function arg0 = args.getQuick(0);
-            if (ColumnType.isArray(arg0.getType())) {
-                ArrayView array0 = arg0.getArray(null);
-                final int nestedNDims = array0.getDimCount();
-                final int nestedElemCount = array0.getFlatElemCount();
-                for (int n = args.size(), i = 1; i < n; i++) {
-                    Function argI = args.getQuick(i);
-                    if (!ColumnType.isArray(argI.getType())) {
-                        throw SqlException.$(argPositions.getQuick(i), "not an array");
-                    }
-                    ArrayView arrayI = argI.getArray(null);
-                    if (arrayI.getDimCount() != nestedNDims) {
-                        throw SqlException.$(argPositions.getQuick(i), "mismatched array shape");
-                    }
-                    assert arrayI.getFlatElemCount() == nestedElemCount : "flat element counts don't match";
-                }
-                this.array = new HeapLongArray(nestedNDims + 1);
-                array.setDimLen(0, outerDimLen);
-                for (int i = 0; i < nestedNDims; i++) {
-                    array.setDimLen(i + 1, array0.getDimLen(i));
-                }
-                array.applyShape();
-                int flatIndex = 0;
-                for (int i = 0; i < outerDimLen; i++) {
-                    ArrayView arrayI = args.getQuick(i).getArray(null);
-                    for (int j = 0; j < nestedElemCount; j++) {
-                        array.putLong(flatIndex++, arrayI.getLongAtFlatIndex(j));
-                    }
-                }
-            } else {
-                this.array = new HeapLongArray(1);
-                array.setDimLen(0, outerDimLen);
-                array.applyShape();
-                for (int i = 0; i < outerDimLen; i++) {
-                    array.putLong(i, args.getQuick(i).getLong(null));
-                }
-            }
-            this.type = array.getType();
-        }
-
-        @Override
-        public void assignType(int type, BindVariableService bindVariableService) {
-        }
-
-        @Override
-        public ArrayView getArray(Record rec) {
-            return array;
-        }
-    }
-
     private static class FunctionArrayFunction extends ArrayFunction {
         private final FunctionArray array;
 
@@ -136,7 +79,7 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
                     Function argI = args.getQuick(i);
                     int typeI = argI.getType();
                     if (!ColumnType.isArray(typeI)) {
-                        throw SqlException.$(argPositions.getQuick(i), "not an array");
+                        throw SqlException.$(argPositions.getQuick(i), "mixed array and non-array elements");
                     }
                     commonElemType = commonWideningType(commonElemType, decodeArrayElementType(typeI));
                     ArrayView arrayI = argI.getArray(null);
@@ -162,7 +105,7 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
                 for (int i = 1; i < outerDimLen; i++) {
                     short typeI = (short) args.getQuick(i).getType();
                     if (ColumnType.isArray(typeI)) {
-                        throw SqlException.$(argPositions.getQuick(i), "array out of place");
+                        throw SqlException.$(argPositions.getQuick(i), "mixed array and non-array elements");
                     }
                     commonElemType = commonWideningType(commonElemType, typeI);
                 }
