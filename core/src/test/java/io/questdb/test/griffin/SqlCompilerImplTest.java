@@ -6913,20 +6913,20 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         }
 
         @Override
-        protected void compileDropOther(@NotNull SqlExecutionContext executionContext, @NotNull CharSequence tok, int position) throws SqlException {
-            compileDropOtherCalled = true;
-            super.compileDropOther(executionContext, tok, position);
-        }
-
-        @Override
-        protected void compileDropTableExt(
+        protected void compileDropExt(
                 @NotNull SqlExecutionContext executionContext,
                 @NotNull GenericDropOperationBuilder opBuilder,
                 @NotNull CharSequence tok,
                 int position
         ) throws SqlException {
             compileDropTableExtCalled = true;
-            super.compileDropTableExt(executionContext, opBuilder, tok, position);
+            super.compileDropExt(executionContext, opBuilder, tok, position);
+        }
+
+        @Override
+        protected void compileDropOther(@NotNull SqlExecutionContext executionContext, @NotNull CharSequence tok, int position) throws SqlException {
+            compileDropOtherCalled = true;
+            super.compileDropOther(executionContext, tok, position);
         }
 
         @Override

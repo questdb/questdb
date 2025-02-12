@@ -1788,7 +1788,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 dropOperationBuilder.setIfExists(hasIfExists);
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok != null && !Chars.equals(tok, ';')) {
-                    compileDropTableExt(executionContext, dropOperationBuilder, tok, lexer.lastTokenPosition());
+                    compileDropExt(executionContext, dropOperationBuilder, tok, lexer.lastTokenPosition());
                 }
                 dropOperationBuilder.setSqlText(sqlText);
                 compiledQuery.ofDrop(dropOperationBuilder.build());
@@ -1832,7 +1832,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 dropOperationBuilder.setIfExists(hasIfExists);
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok != null && !Chars.equals(tok, ';')) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "expected ';'");
+                    compileDropExt(executionContext, dropOperationBuilder, tok, lexer.lastTokenPosition());
                 }
                 dropOperationBuilder.setSqlText(sqlText);
                 compiledQuery.ofDrop(dropOperationBuilder.build());
@@ -3544,6 +3544,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         throw SqlException.position(lexer.lastTokenPosition()).put("'table' expected");
     }
 
+    protected void compileDropExt(
+            @NotNull SqlExecutionContext executionContext,
+            @NotNull GenericDropOperationBuilder opBuilder,
+            @NotNull CharSequence tok,
+            int position
+    ) throws SqlException {
+        throw SqlException.$(position, "unexpected token [").put(tok).put(']');
+    }
+
     protected void compileDropOther(
             @NotNull SqlExecutionContext executionContext,
             @NotNull CharSequence tok,
@@ -3554,15 +3563,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     protected void compileDropReportExpected(int position) throws SqlException {
         throw SqlException.position(position).put("'table' or 'materialized view' or 'all' expected");
-    }
-
-    protected void compileDropTableExt(
-            @NotNull SqlExecutionContext executionContext,
-            @NotNull GenericDropOperationBuilder opBuilder,
-            @NotNull CharSequence tok,
-            int position
-    ) throws SqlException {
-        throw SqlException.$(position, "unexpected token [").put(tok).put(']');
     }
 
     protected RecordCursorFactory generateSelectOneShot(
