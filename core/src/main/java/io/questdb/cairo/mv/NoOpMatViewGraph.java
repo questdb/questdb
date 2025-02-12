@@ -71,6 +71,14 @@ public class NoOpMatViewGraph implements MatViewGraph {
     }
 
     @Override
+    public void getDependentViewsInOrder(ObjHashSet<TableToken> tables, ObjList<TableToken> ordered) {
+        ordered.clear();
+        for (int i = 0, n = tables.size(); i < n; i++) {
+            ordered.add(tables.get(i));
+        }
+    }
+
+    @Override
     public MatViewDefinition getMatViewDefinition(TableToken matViewToken) {
         return null;
     }
@@ -99,13 +107,5 @@ public class NoOpMatViewGraph implements MatViewGraph {
     @Override
     public boolean tryDequeueRefreshTask(MatViewRefreshTask task) {
         return false;
-    }
-
-    @Override
-    public void getDependentViewsInOrder(ObjHashSet<TableToken> tables, ObjList<TableToken> ordered) {
-        ordered.clear();
-        for (int i = 0, n = tables.size(); i < n; i++) {
-            ordered.add(tables.get(i));
-        }
     }
 }

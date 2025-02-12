@@ -2219,7 +2219,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
                     checkMatViewModification(executionModel);
                     final RenameTableModel rtm = (RenameTableModel) executionModel;
-                    engine.rename(executionContext.getSecurityContext(), path, mem, GenericLexer.unquote(rtm.getFrom().token), renamePath, GenericLexer.unquote(rtm.getTo().token));
+                    engine.rename(
+                            executionContext.getSecurityContext(),
+                            path,
+                            mem,
+                            GenericLexer.unquote(rtm.getFrom().token),
+                            renamePath,
+                            GenericLexer.unquote(rtm.getTo().token)
+                    );
                     compiledQuery.ofRenameTable();
                     break;
                 case ExecutionModel.UPDATE:

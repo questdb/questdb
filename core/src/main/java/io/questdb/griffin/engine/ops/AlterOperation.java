@@ -326,6 +326,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     @Override
     public String matViewInvalidationReason() {
         switch (command) {
+            case RENAME_TABLE:
+                return "table rename operation";
             case DROP_COLUMN:
                 return "drop column operation";
             case RENAME_COLUMN:

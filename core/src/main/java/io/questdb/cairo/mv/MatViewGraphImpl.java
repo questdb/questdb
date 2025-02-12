@@ -107,7 +107,7 @@ public class MatViewGraphImpl implements MatViewGraph {
     @Override
     public void createView(MatViewDefinition viewDefinition) {
         addView(viewDefinition).init();
-        enqueueRefreshTask(viewDefinition.getMatViewToken(), MatViewRefreshTask.REFRESH, null);
+        enqueueMatViewTask(viewDefinition.getMatViewToken(), MatViewRefreshTask.REFRESH, null);
     }
 
     @Override
@@ -154,7 +154,7 @@ public class MatViewGraphImpl implements MatViewGraph {
     public void enqueueRefreshTaskIfStateExists(TableToken matViewToken, int operation, String invalidationReason) {
         final MatViewRefreshState state = refreshStateByTableDirName.get(matViewToken.getDirName());
         if (state != null && !state.isDropped()) {
-            enqueueRefreshTask(matViewToken, operation, invalidationReason);
+            enqueueMatViewTask(matViewToken, operation, invalidationReason);
         }
     }
 
@@ -250,13 +250,15 @@ public class MatViewGraphImpl implements MatViewGraph {
         return refreshTaskQueue.tryDequeue(task);
     }
 
-    private void enqueueRefreshTask(TableToken matViewToken, int operation, String invalidationReason) {
+    private void enqueueMatViewTask(TableToken matViewToken, int operation, String invalidationReason) {
         final MatViewRefreshTask task = taskHolder.get();
-        task.baseTableToken = null;
+        task.clear();
         task.matViewToken = matViewToken;
         task.operation = operation;
         task.invalidationReason = invalidationReason;
-        task.refreshTriggeredTimestamp = microsecondClock.getTicks();
+        if (operation == MatViewRefreshTask.REFRESH || operation == MatViewRefreshTask.REBUILD) {
+            task.refreshTriggeredTimestamp = microsecondClock.getTicks();
+        }
         refreshTaskQueue.enqueue(task);
     }
 

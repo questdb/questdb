@@ -58,6 +58,8 @@ public interface MatViewGraph extends QuietCloseable, Mutable {
 
     void getDependentMatViews(TableToken baseTableToken, ObjList<TableToken> sink);
 
+    void getDependentViewsInOrder(ObjHashSet<TableToken> tables, ObjList<TableToken> ordered);
+
     @Nullable
     MatViewDefinition getMatViewDefinition(TableToken matViewToken);
 
@@ -73,6 +75,4 @@ public interface MatViewGraph extends QuietCloseable, Mutable {
     void notifyTxnApplied(MatViewRefreshTask task, long seqTxn);
 
     boolean tryDequeueRefreshTask(MatViewRefreshTask task);
-
-    void getDependentViewsInOrder(ObjHashSet<TableToken> tables, ObjList<TableToken> ordered);
 }

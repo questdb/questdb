@@ -193,6 +193,53 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBaseTableSwappedWithRename() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create table base_price2 (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
+            execute(
+                    "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            );
+
+            currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
+            drainQueues();
+
+            assertSql(
+                    "name\tbaseTableName\tlastRefreshTimestamp\tviewSql\tviewTableDirName\tinvalidationReason\tinvalid\tbaseTableTxn\tappliedBaseTableTxn\n" +
+                            "price_1h\tbase_price\t2024-10-24T17:22:09.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~3\t\tfalse\t1\t1\n",
+                    "mat_views"
+            );
+
+            // Swap the tables with each other.
+            execute("rename table base_price to base_price_tmp");
+            execute("rename table base_price2 to base_price");
+            execute("rename table base_price_tmp to base_price2");
+            currentMicros = parseFloorPartialTimestamp("2024-10-24T18");
+            drainQueues();
+
+            assertSql(
+                    "name\tbaseTableName\tlastRefreshTimestamp\tviewSql\tviewTableDirName\tinvalidationReason\tinvalid\tbaseTableTxn\tappliedBaseTableTxn\n" +
+                            "price_1h\tbase_price\t2024-10-24T17:22:09.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~3\ttable rename operation\ttrue\t1\t1\n",
+                    "mat_views"
+            );
+        });
+    }
+
+    @Test
     public void testBatchInsert() throws Exception {
         setProperty(PropertyKey.CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE, "10");
         assertMemoryLeak(() -> {

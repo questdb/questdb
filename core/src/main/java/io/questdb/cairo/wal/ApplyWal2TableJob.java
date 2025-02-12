@@ -614,7 +614,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         // This is definitely dropped table.
                         throw CairoException.tableDropped(tableToken);
                     }
-                    // No progress, same token or no token and it's not dropped.
+                    // No progress, same token or no token, and it's not dropped.
                     // Stop processing WAL transactions for this table, switch to the next table.
                     LOG.info().$("failed to compile SQL, table rename not fully applied, will retry [table=").$(tableToken).I$();
                     throw EjectApplyWalException.INSTANCE;
