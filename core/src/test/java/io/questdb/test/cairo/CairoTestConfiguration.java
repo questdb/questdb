@@ -45,16 +45,18 @@ import org.jetbrains.annotations.NotNull;
 import java.util.Map;
 
 public class CairoTestConfiguration extends CairoConfigurationWrapper {
+    private final String dbRoot;
+    private final String installRoot;
     private final Overrides overrides;
-    private final String root;
     private final String snapshotRoot;
     private final TelemetryConfiguration telemetryConfiguration;
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
 
-    public CairoTestConfiguration(CharSequence root, TelemetryConfiguration telemetryConfiguration, Overrides overrides) {
+    public CairoTestConfiguration(CharSequence dbRoot, TelemetryConfiguration telemetryConfiguration, Overrides overrides) {
         super(Metrics.ENABLED);
-        this.root = Chars.toString(root);
-        this.snapshotRoot = Chars.toString(root) + Files.SEPARATOR + TableUtils.CHECKPOINT_DIRECTORY;
+        this.dbRoot = Chars.toString(dbRoot);
+        this.installRoot = java.nio.file.Paths.get(this.dbRoot).getParent().toAbsolutePath().toString();
+        this.snapshotRoot = Chars.toString(dbRoot) + Files.SEPARATOR + TableUtils.CHECKPOINT_DIRECTORY;
         this.telemetryConfiguration = telemetryConfiguration;
         this.overrides = overrides;
     }
@@ -76,7 +78,7 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
 
     @Override
     public @NotNull String getDbRoot() {
-        return root;
+        return dbRoot;
     }
 
     @Override
@@ -98,6 +100,11 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     @Override
     public long getInactiveWalWriterTTL() {
         return -10000;
+    }
+
+    @Override
+    public @NotNull String getInstallRoot() {
+        return installRoot;
     }
 
     @Override
@@ -168,6 +175,6 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
 
     @Override
     protected CairoConfiguration getDelegate() {
-        return overrides.getConfiguration(root);
+        return overrides.getConfiguration(dbRoot);
     }
 }

@@ -489,6 +489,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         }
 
         final FilesFacade ff = configuration.getFilesFacade();
+        final CharSequence installRoot = configuration.getInstallRoot();
         final CharSequence dbRoot = configuration.getDbRoot();
         final CharSequence checkpointRoot = configuration.getCheckpointRoot();
         final CharSequence legacyCheckpointRoot = configuration.getLegacyCheckpointRoot();
@@ -515,7 +516,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             srcPath.concat(configuration.getDbDirectory());
             final int checkpointRootLen = srcPath.size();
 
-            dstPath.of(dbRoot).parent().concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME);
+            dstPath.of(installRoot).concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME);
             boolean triggerExists = ff.exists(dstPath.$());
 
             // Check if the checkpoint dir exists.
@@ -691,7 +692,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                         .put(", errno=").put(ff.errno())
                         .put(']');
             }
-            dstPath.of(dbRoot).parent().concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME);
+            dstPath.of(installRoot).concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME);
             if (triggerExists && !ff.removeQuiet(dstPath.$())) {
                 throw CairoException.critical(ff.errno())
                         .put("could not remove restore trigger file. file permission issues? [file=").put(dstPath).put(']');
