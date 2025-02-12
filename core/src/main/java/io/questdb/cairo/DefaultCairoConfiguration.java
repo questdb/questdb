@@ -55,7 +55,6 @@ import io.questdb.std.datetime.millitime.DateFormatUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.io.File;
 import java.util.function.LongSupplier;
 
 public class DefaultCairoConfiguration implements CairoConfiguration {
@@ -74,24 +73,25 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
     private final boolean writerMixedIOEnabled;
 
-    public DefaultCairoConfiguration(CharSequence installRoot) {
-        this.installRoot = Chars.toString(installRoot);
+    public DefaultCairoConfiguration(CharSequence dbRoot) {
+        this(dbRoot, null);
+    }
 
-        // TODO: This is wrong, the `dbRoot` should be set to:
-        //       this.dbRoot = new File(this.installRoot, "db").getAbsolutePath();
-        //       This is a legacy bug would require fixing hundreds of test cases
-        //       which historically conflated the two directories.
-        //       The installRoot was introduced as part of PR #5375 and this change was left out for expediency.
-        this.dbRoot = this.installRoot;
+    public DefaultCairoConfiguration(CharSequence dbRoot, CharSequence installRoot) {
+        assert dbRoot != null;
+        this.dbRoot = Chars.toString(dbRoot);
+        this.installRoot = installRoot == null
+                ? java.nio.file.Paths.get(this.dbRoot).getParent().toAbsolutePath().toString()
+                : Chars.toString(installRoot);
 
-        this.confRoot = PropServerConfiguration.rootSubdir(installRoot, PropServerConfiguration.CONFIG_DIRECTORY);
+        this.confRoot = PropServerConfiguration.rootSubdir(dbRoot, PropServerConfiguration.CONFIG_DIRECTORY);
         this.textConfiguration = new DefaultTextConfiguration(Chars.toString(confRoot));
-        this.checkpointRoot = PropServerConfiguration.rootSubdir(installRoot, TableUtils.CHECKPOINT_DIRECTORY);
-        this.legacyCheckpointRoot = PropServerConfiguration.rootSubdir(installRoot, TableUtils.LEGACY_CHECKPOINT_DIRECTORY);
+        this.checkpointRoot = PropServerConfiguration.rootSubdir(dbRoot, TableUtils.CHECKPOINT_DIRECTORY);
+        this.legacyCheckpointRoot = PropServerConfiguration.rootSubdir(dbRoot, TableUtils.LEGACY_CHECKPOINT_DIRECTORY);
         Rnd rnd = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
         this.databaseIdLo = rnd.nextLong();
         this.databaseIdHi = rnd.nextLong();
-        this.writerMixedIOEnabled = getFilesFacade().allowMixedIO(installRoot);
+        this.writerMixedIOEnabled = getFilesFacade().allowMixedIO(dbRoot);
     }
 
     @Override
