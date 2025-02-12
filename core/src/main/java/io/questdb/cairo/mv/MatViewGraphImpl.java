@@ -195,6 +195,14 @@ public class MatViewGraphImpl implements MatViewGraph {
     }
 
     @Override
+    public void notifyBaseInvalidated(TableToken baseTableToken) {
+        final MatViewRefreshList list = dependentViewsByTableName.get(baseTableToken.getTableName());
+        if (list != null) {
+            list.notifyOnBaseInvalidated();
+        }
+    }
+
+    @Override
     public void notifyBaseRefreshed(MatViewRefreshTask task, long seqTxn) {
         final MatViewRefreshList list = dependentViewsByTableName.get(task.baseTableToken.getTableName());
         if (list != null) {
@@ -212,8 +220,7 @@ public class MatViewGraphImpl implements MatViewGraph {
         if (list != null) {
             // Always notify refresh job in case of mat view invalidation or rebuild.
             // For incremental refresh we check if we haven't already notified on the given txn.
-            final boolean shouldNotify = task.operation != MatViewRefreshTask.REFRESH || list.notifyOnBaseTableCommitNoLock(seqTxn);
-            if (shouldNotify) {
+            if (task.operation != MatViewRefreshTask.REFRESH || list.notifyOnBaseTableCommitNoLock(seqTxn)) {
                 task.refreshTriggeredTimestamp = microsecondClock.getTicks();
                 refreshTaskQueue.enqueue(task);
                 LOG.debug().$("refresh job notified [table=").$(task.baseTableToken.getTableName()).I$();

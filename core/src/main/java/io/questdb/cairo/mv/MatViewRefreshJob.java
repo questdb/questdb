@@ -305,6 +305,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             final TableToken viewToken = childViewSink.get(v);
             invalidateView(viewToken, viewGraph, invalidationReason);
         }
+        viewGraph.notifyBaseInvalidated(baseTableToken);
     }
 
     private void invalidateView(TableToken viewToken, MatViewGraph viewGraph, String invalidationReason) {

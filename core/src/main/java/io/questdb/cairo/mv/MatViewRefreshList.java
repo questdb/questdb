@@ -39,9 +39,16 @@ import java.util.concurrent.locks.ReadWriteLock;
  * incremental refresh messages to the underlying queue.
  */
 public class MatViewRefreshList {
+    // Flips to negative value once a refresh message is processed.
+    // Long.MIN_VALUE stands for "just invalidated" state.
     private final AtomicLong lastNotifiedBaseTableTxn = new AtomicLong(0);
     private final ReadWriteLock lock = new SimpleReadWriteLock();
     private final ObjList<TableToken> matViews = new ObjList<>();
+
+    // Called by refresh job once it invalidated dependent mat views.
+    public void notifyOnBaseInvalidated() {
+        lastNotifiedBaseTableTxn.set(Long.MIN_VALUE);
+    }
 
     // Called by WAL apply job once it applied transaction(s) to the base table
     // and wants to send refresh job an incremental refresh message.
@@ -60,7 +67,8 @@ public class MatViewRefreshList {
     public boolean notifyOnBaseTableRefreshedNoLock(long seqTxn) {
         // Flip the sign bit in the last notified base table txn number.
         lastNotifiedBaseTableTxn.compareAndSet(seqTxn, -seqTxn);
-        return lastNotifiedBaseTableTxn.get() != -seqTxn;
+        long lastNotified = lastNotifiedBaseTableTxn.get();
+        return lastNotified != Long.MIN_VALUE && lastNotified != -seqTxn;
     }
 
     ObjList<TableToken> lockForRead() {

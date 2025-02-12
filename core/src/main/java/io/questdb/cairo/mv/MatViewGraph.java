@@ -65,6 +65,8 @@ public interface MatViewGraph extends QuietCloseable, Mutable {
 
     void getViews(ObjList<TableToken> bucket);
 
+    void notifyBaseInvalidated(TableToken baseTableToken);
+
     void notifyBaseRefreshed(MatViewRefreshTask task, long seqTxn);
 
     void notifyTxnApplied(MatViewRefreshTask task, long seqTxn);

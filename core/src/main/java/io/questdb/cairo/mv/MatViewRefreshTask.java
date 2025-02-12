@@ -29,7 +29,7 @@ import io.questdb.mp.ValueHolder;
 
 public class MatViewRefreshTask implements ValueHolder<MatViewRefreshTask> {
     public static final int INVALIDATE = 2;
-    public static final int REBUILD = 1; // full mat view rebuild
+    public static final int REBUILD = 1; // full rebuild
     public static final int REFRESH = 0; // incremental refresh
     public static final int UNDEFINED = -1;
     public TableToken baseTableToken;

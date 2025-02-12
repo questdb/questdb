@@ -84,6 +84,10 @@ public class NoOpMatViewGraph implements MatViewGraph {
     }
 
     @Override
+    public void notifyBaseInvalidated(TableToken baseTableToken) {
+    }
+
+    @Override
     public void notifyBaseRefreshed(MatViewRefreshTask task, long seqTxn) {
     }
 
