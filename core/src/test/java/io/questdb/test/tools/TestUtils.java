@@ -1745,6 +1745,7 @@ public final class TestUtils {
                         break;
                 }
             } catch (AssertionError e) {
+                e.printStackTrace();
                 String expected = recordToString(rr, metadataExpected, genericStringMatch);
                 String actual = recordToString(lr, metadataActual, genericStringMatch);
                 Assert.assertEquals(String.format(String.format("Row %d column %s[%s]",
@@ -1803,8 +1804,8 @@ public final class TestUtils {
                         expected,
                         actual,
                         dim + 1,
-                        expectedFlatIndex + dim * expected.getStride(dim),
-                        actualFlatIndex + dim * actual.getStride(dim)
+                        expectedFlatIndex + i * expected.getStride(dim),
+                        actualFlatIndex + i * actual.getStride(dim)
                 );
             }
         }
