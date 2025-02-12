@@ -47,46 +47,65 @@ public class FunctionArray implements ArrayView {
     @Override
     public void appendWithDefaultStrides(MemoryA mem) {
         short elemType = ColumnType.decodeArrayElementType(type);
-        for (int n = getFlatElemCount(), i = 0; i < n; i++) {
-            Function f = functions[i];
-            switch (elemType) {
-                case ColumnType.BYTE:
-                    mem.putByte(f.getByte(record));
-                    break;
-                case ColumnType.SHORT:
-                    mem.putShort(f.getShort(record));
-                    break;
-                case ColumnType.INT:
-                    mem.putInt(f.getInt(record));
-                    break;
-                case ColumnType.LONG:
-                    mem.putLong(f.getLong(record));
-                    break;
-                case ColumnType.DATE:
-                    mem.putLong(f.getDate(record));
-                    break;
-                case ColumnType.TIMESTAMP:
-                    mem.putLong(f.getTimestamp(record));
-                    break;
-                case ColumnType.FLOAT:
-                    mem.putFloat(f.getFloat(record));
-                    break;
-                case ColumnType.DOUBLE:
-                    mem.putDouble(f.getDouble(record));
-                    break;
-                case ColumnType.LONG256:
-                    Long256 v = f.getLong256A(record);
+        switch (elemType) {
+            case ColumnType.BYTE:
+                for (int n = getFlatElemCount(), i = 0; i < n; i++) {
+                    mem.putByte(functions[i].getByte(record));
+                }
+                break;
+            case ColumnType.SHORT:
+                for (int n = getFlatElemCount(), i = 0; i < n; i++) {
+                    mem.putShort(functions[i].getShort(record));
+                }
+                break;
+            case ColumnType.INT:
+                for (int n = getFlatElemCount(), i = 0; i < n; i++) {
+                    mem.putInt(functions[i].getInt(record));
+                }
+                break;
+            case ColumnType.LONG:
+                for (int n = getFlatElemCount(), i = 0; i < n; i++) {
+                    mem.putLong(functions[i].getLong(record));
+                }
+                break;
+            case ColumnType.DATE:
+                for (int n = getFlatElemCount(), i = 0; i < n; i++) {
+                    mem.putLong(functions[i].getDate(record));
+                }
+                break;
+            case ColumnType.TIMESTAMP:
+                for (int n = getFlatElemCount(), i = 0; i < n; i++) {
+                    mem.putLong(functions[i].getTimestamp(record));
+                }
+                break;
+            case ColumnType.FLOAT:
+                for (int n = getFlatElemCount(), i = 0; i < n; i++) {
+                    mem.putFloat(functions[i].getFloat(record));
+                }
+                break;
+            case ColumnType.DOUBLE:
+                for (int n = getFlatElemCount(), i = 0; i < n; i++) {
+                    mem.putDouble(functions[i].getDouble(record));
+                }
+                break;
+            case ColumnType.LONG256:
+                for (int n = getFlatElemCount(), i = 0; i < n; i++) {
+                    Long256 v = functions[i].getLong256A(record);
                     mem.putLong256(v.getLong0(), v.getLong1(), v.getLong2(), v.getLong3());
-                    break;
-                case ColumnType.UUID:
-                    mem.putLong128(f.getLong128Lo(record), f.getLong128Hi(record));
-                    break;
-                case ColumnType.IPv4:
-                    mem.putInt(f.getIPv4(record));
-                    break;
-                default:
-                    throw new AssertionError("impossible array element type");
-            }
+                }
+                break;
+            case ColumnType.UUID:
+                for (int n = getFlatElemCount(), i = 0; i < n; i++) {
+                    mem.putLong128(functions[i].getLong128Lo(record), functions[i].getLong128Hi(record));
+                }
+                break;
+            case ColumnType.IPv4:
+                for (int n = getFlatElemCount(), i = 0; i < n; i++) {
+                    mem.putInt(functions[i].getIPv4(record));
+                }
+                break;
+            default:
+                throw new AssertionError("impossible array element type");
         }
     }
 
