@@ -77,10 +77,6 @@ public abstract class BaseLongWindowFunction extends LongFunction implements Win
     }
 
     @Override
-    public void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order) {
-    }
-
-    @Override
     public void reset() {
     }
 
