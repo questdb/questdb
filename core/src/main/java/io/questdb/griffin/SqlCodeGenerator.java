@@ -550,6 +550,22 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return new ExplainPlanFactory(recordCursorFactory, format);
     }
 
+    public BytecodeAssembler getAsm() {
+        return asm;
+    }
+
+    public EntityColumnFilter getEntityColumnFilter() {
+        return entityColumnFilter;
+    }
+
+    public ListColumnFilter getIndexColumnFilter() {
+        return listColumnFilterA;
+    }
+
+    public RecordComparatorCompiler getRecordComparatorCompiler() {
+        return recordComparatorCompiler;
+    }
+
     public IntList toOrderIndices(RecordMetadata m, ObjList<ExpressionNode> orderBy, IntList orderByDirection) throws SqlException {
         final IntList indices = intListPool.next();
         for (int i = 0, n = orderBy.size(); i < n; i++) {
@@ -570,22 +586,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             indices.add(index);
         }
         return indices;
-    }
-
-    public BytecodeAssembler getAsm() {
-        return asm;
-    }
-
-    public EntityColumnFilter getEntityColumnFilter() {
-        return entityColumnFilter;
-    }
-
-    public ListColumnFilter getIndexColumnFilter() {
-        return listColumnFilterA;
-    }
-
-    public RecordComparatorCompiler getRecordComparatorCompiler() {
-        return recordComparatorCompiler;
     }
 
     private static boolean allGroupsFirstLastWithSingleSymbolFilter(QueryModel model, RecordMetadata metadata) {
@@ -6290,17 +6290,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return defaultValue;
         }
 
-        final Function func = functionParser.parseFunction(limit, EmptyRecordMetadata.INSTANCE, executionContext);
-        final int type = func.getType();
-        if (limitTypes.excludes(type)) {
-            throw SqlException.$(limit.position, "invalid type: ").put(ColumnType.nameOf(type));
+        final Function limitFunc = functionParser.parseFunction(limit, EmptyRecordMetadata.INSTANCE, executionContext);
+
+        // coerce to a convertible type
+        coerceRuntimeConstantType(limitFunc, ColumnType.INT, executionContext, "LIMIT expressions must be convertible to INT", limit.position);
+
+        // also rule out string, varchar etc.
+        int limitFuncType = limitFunc.getType();
+        if (limitTypes.excludes(limitFuncType)) {
+            throw SqlException.$(limit.position, "invalid type: ").put(ColumnType.nameOf(limitFuncType));
         }
 
-        if (type == ColumnType.UNDEFINED) {
-            func.assignType(ColumnType.INT, executionContext.getBindVariableService());
-        }
-        return func;
+        return limitFunc;
     }
+
 
     private void validateBothTimestampOrders(RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory, int position) throws SqlException {
         if (masterFactory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD) {

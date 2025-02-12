@@ -62,6 +62,10 @@ public abstract class AbstractIntHashSet implements Mutable {
         return keyIndex(key) > -1;
     }
 
+    public boolean includes(int key) {
+        return !excludes(key);
+    }
+
     public int keyIndex(int key) {
         int index = key & mask;
         if (keys[index] == noEntryKeyValue) {
