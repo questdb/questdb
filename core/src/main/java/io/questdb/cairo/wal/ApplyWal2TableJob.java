@@ -587,8 +587,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             return -1;
                         case CMD_UPDATE_TABLE:
                             final long rowsAffected = operationExecutor.executeUpdate(tableWriter, sql, seqTxn);
-                            mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
-                            mvRefreshTask.invalidationReason = UpdateOperation.MAT_VIEW_INVALIDATION_REASON;
+                            if (rowsAffected > 0) {
+                                mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
+                                mvRefreshTask.invalidationReason = UpdateOperation.MAT_VIEW_INVALIDATION_REASON;
+                            }
                             return rowsAffected;
                         default:
                             throw new UnsupportedOperationException("Unsupported command type: " + cmdType);

@@ -29,7 +29,7 @@ public interface O3JobParallelismRegulator {
 
     int getMaxO3MergeParallelism();
 
-    void updateInFlightPartitions(int count);
+    void updateInflightPartitions(int count);
 
     class EmptyO3JobParallelismRegulator implements O3JobParallelismRegulator {
 
@@ -39,7 +39,7 @@ public interface O3JobParallelismRegulator {
         }
 
         @Override
-        public void updateInFlightPartitions(int count) {
+        public void updateInflightPartitions(int count) {
             // do nothing
         }
     }

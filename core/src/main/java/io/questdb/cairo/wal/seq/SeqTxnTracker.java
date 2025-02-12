@@ -223,7 +223,7 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
     }
 
     @Override
-    public void updateInFlightPartitions(int count) {
+    public void updateInflightPartitions(int count) {
         maxRecordedInFlightPartitions = Math.max(maxRecordedInFlightPartitions, count);
     }
 

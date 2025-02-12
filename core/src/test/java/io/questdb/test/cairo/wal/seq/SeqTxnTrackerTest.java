@@ -171,7 +171,7 @@ public class SeqTxnTrackerTest {
         final String tableName = "table1";
         final SeqTxnTracker tracker = new SeqTxnTracker();
         assertEquals("initial memory pressure level", 0, tracker.getMemoryPressureLevel());
-        tracker.updateInFlightPartitions(2);
+        tracker.updateInflightPartitions(2);
         tracker.onOutOfMemory(0, tableName, rnd);
         assertEquals("memory pressure level after one OOM", 1, tracker.getMemoryPressureLevel());
         tracker.onOutOfMemory(0, tableName, rnd);
@@ -184,7 +184,7 @@ public class SeqTxnTrackerTest {
         final String tableName = "table1";
         final SeqTxnTracker tracker = new SeqTxnTracker();
         int expectedParallelism = 16;
-        tracker.updateInFlightPartitions(expectedParallelism);
+        tracker.updateInflightPartitions(expectedParallelism);
         tracker.onOutOfMemory(0, tableName, rnd);
         expectedParallelism /= 2;
         assertEquals(expectedParallelism, tracker.getMaxO3MergeParallelism());
@@ -235,14 +235,14 @@ public class SeqTxnTrackerTest {
         final String tableName = "table1";
         final SeqTxnTracker tracker = new SeqTxnTracker();
         int expectedParallelism = 16;
-        tracker.updateInFlightPartitions(expectedParallelism);
+        tracker.updateInflightPartitions(expectedParallelism);
         while (true) {
             tracker.onOutOfMemory(0, tableName, rnd);
             expectedParallelism /= 2;
             if (expectedParallelism < 1) {
                 break;
             }
-            tracker.updateInFlightPartitions(expectedParallelism);
+            tracker.updateInflightPartitions(expectedParallelism);
             assertEquals(expectedParallelism, tracker.getMaxO3MergeParallelism());
         }
     }

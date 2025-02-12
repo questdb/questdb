@@ -6675,7 +6675,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int inflightPartitions = 0;
             while (srcOoo < srcOooMax) {
                 inflightPartitions++;
-                regulator.updateInFlightPartitions(inflightPartitions);
+                regulator.updateInflightPartitions(inflightPartitions);
                 try {
                     final long srcOooLo = srcOoo;
                     final long o3Timestamp = getTimestampIndexValue(sortedTimestampsAddr, srcOoo);

@@ -75,7 +75,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
 
             long now = 0;
             int parallelism = txnTracker.getMaxO3MergeParallelism();
-            txnTracker.updateInFlightPartitions(parallelism);
+            txnTracker.updateInflightPartitions(parallelism);
             txnTracker.onOutOfMemory(now, "A", rnd);
 
             // Memory pressure level should be 1 after the first OOM event - it indicates that the table is under memory pressure
@@ -85,7 +85,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
             do {
                 now += 1000;
                 parallelism = txnTracker.getMaxO3MergeParallelism();
-                txnTracker.updateInFlightPartitions(parallelism);
+                txnTracker.updateInflightPartitions(parallelism);
                 txnTracker.onOutOfMemory(now, "A", rnd);
             } while (txnTracker.getMemoryPressureLevel() == 1);
 
@@ -97,7 +97,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
             // now let's simulate reducing memory pressure
             now += 1000;
             parallelism = txnTracker.getMaxO3MergeParallelism();
-            txnTracker.updateInFlightPartitions(parallelism);
+            txnTracker.updateInflightPartitions(parallelism);
             txnTracker.hadEnoughMemory("A", rnd);
 
             // after a first successful O3 merge memory pressure level should be 1 - still reducing parallelism
@@ -107,7 +107,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
             do {
                 now += 1000;
                 parallelism = txnTracker.getMaxO3MergeParallelism();
-                txnTracker.updateInFlightPartitions(parallelism);
+                txnTracker.updateInflightPartitions(parallelism);
                 txnTracker.hadEnoughMemory("A", rnd);
             } while (txnTracker.getMemoryPressureLevel() == 1);
 
