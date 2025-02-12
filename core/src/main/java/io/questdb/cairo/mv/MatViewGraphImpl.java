@@ -59,7 +59,7 @@ public class MatViewGraphImpl implements MatViewGraph {
     public MatViewGraphImpl(CairoEngine engine) {
         this.createRefreshList = name -> new MatViewRefreshList();
         this.matViewTelemetry = engine.getTelemetryMatView();
-        this.matViewTelemetryFacade = matViewTelemetry.isEnabled() ? this::storeMatViewTelemetry : this::storeMatViewTelemetryNoop;
+        this.matViewTelemetryFacade = matViewTelemetry.isEnabled() ? this::storeMatViewTelemetry : this::storeMatViewTelemetryNoOp;
         this.microsecondClock = engine.getConfiguration().getMicrosecondClock();
     }
 
@@ -170,6 +170,19 @@ public class MatViewGraphImpl implements MatViewGraph {
     }
 
     @Override
+    public void getDependentViewsInOrder(ObjHashSet<TableToken> tables, ObjList<TableToken> ordered) {
+        ordered.clear();
+        ObjHashSet<TableToken> seen = new ObjHashSet<>();
+        ArrayDeque<TableToken> stack = new ArrayDeque<>();
+        for (int i = 0, n = tables.size(); i < n; i++) {
+            TableToken token = tables.get(i);
+            if (!seen.contains(token)) {
+                getDependentViewsInOrder(token, seen, stack, ordered);
+            }
+        }
+    }
+
+    @Override
     public MatViewDefinition getMatViewDefinition(TableToken matViewToken) {
         final MatViewRefreshState state = refreshStateByTableDirName.get(matViewToken.getDirName());
         if (state != null) {
@@ -247,31 +260,6 @@ public class MatViewGraphImpl implements MatViewGraph {
         refreshTaskQueue.enqueue(task);
     }
 
-    @NotNull
-    private MatViewRefreshList getOrCreateDependentViews(CharSequence baseTableName) {
-        return dependentViewsByTableName.computeIfAbsent(baseTableName, createRefreshList);
-    }
-
-    private void storeMatViewTelemetry(short event, TableToken tableToken, long baseTableTxn, CharSequence errorMessage, long latencyUs) {
-        TelemetryMatViewTask.store(matViewTelemetry, event, tableToken.getTableId(), baseTableTxn, errorMessage, latencyUs);
-    }
-
-    private void storeMatViewTelemetryNoop(short event, TableToken tableToken, long baseTableTxn, CharSequence errorMessage, long latencyUs) {
-    }
-
-    @Override
-    public void getDependentViewsInOrder(ObjHashSet<TableToken> tables, ObjList<TableToken> ordered) {
-        ordered.clear();
-        ObjHashSet<TableToken> seen = new ObjHashSet<>();
-        ArrayDeque<TableToken> stack = new ArrayDeque<>();
-        for (int i = 0, n = tables.size(); i < n; i++) {
-            TableToken token = tables.get(i);
-            if (!seen.contains(token)) {
-                getDependentViewsInOrder(token, seen, stack, ordered);
-            }
-        }
-    }
-
     private void getDependentViewsInOrder(
             TableToken current,
             ObjHashSet<TableToken> seen,
@@ -307,5 +295,17 @@ public class MatViewGraphImpl implements MatViewGraph {
                 stack.pop();
             }
         }
+    }
+
+    @NotNull
+    private MatViewRefreshList getOrCreateDependentViews(CharSequence baseTableName) {
+        return dependentViewsByTableName.computeIfAbsent(baseTableName, createRefreshList);
+    }
+
+    private void storeMatViewTelemetry(short event, TableToken tableToken, long baseTableTxn, CharSequence errorMessage, long latencyUs) {
+        TelemetryMatViewTask.store(matViewTelemetry, event, tableToken.getTableId(), baseTableTxn, errorMessage, latencyUs);
+    }
+
+    private void storeMatViewTelemetryNoOp(short event, TableToken tableToken, long baseTableTxn, CharSequence errorMessage, long latencyUs) {
     }
 }

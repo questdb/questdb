@@ -268,8 +268,8 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
 
         ObjectFactory<T> getTaskFactory();
 
-        //todo: we could tailor the config for each telemetry type
-        // we could set different queue sizes or disable telemetry per type, for example
+        // TODO(glasstiger): we could tailor the config for each telemetry type
+        //                   we could set different queue sizes or disable telemetry per type, for example
         default TelemetryConfiguration getTelemetryConfiguration(@NotNull CairoConfiguration configuration) {
             return configuration.getTelemetryConfiguration();
         }

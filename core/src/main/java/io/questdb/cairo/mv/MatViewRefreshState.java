@@ -56,8 +56,8 @@ public class MatViewRefreshState implements QuietCloseable {
     private volatile boolean dropped;
     private volatile boolean invalid;
     private volatile String invalidationReason;
-    private volatile long lastRefreshTimestamp = Numbers.LONG_NULL;
     private volatile long lastRefreshBaseTxn = -1;
+    private volatile long lastRefreshTimestamp = Numbers.LONG_NULL;
     private volatile boolean pendingInvalidation;
     private long recordRowCopierMetadataVersion;
     private RecordToRowCopier recordToRowCopier;
@@ -70,6 +70,18 @@ public class MatViewRefreshState implements QuietCloseable {
         this.viewDefinition = viewDefinition;
         this.telemetryFacade = telemetryFacade;
         this.invalid = invalid;
+    }
+
+    // refreshState can be null, in this case "default" record will be written
+    public static void commitTo(@NotNull MetaFileWriter writer, @Nullable MatViewRefreshState refreshState) {
+        final AppendableBlock mem = writer.append();
+        writeTo(mem, refreshState);
+        mem.commit(
+                MAT_VIEW_STATE_FORMAT_MSG_TYPE,
+                MAT_VIEW_STATE_FORMAT_MSG_VERSION,
+                MAT_VIEW_STATE_FORMAT_FLAGS
+        );
+        writer.commit();
     }
 
     public static void readFrom(@NotNull MetaFileReader reader, @NotNull MatViewRefreshState refreshState) {
@@ -94,42 +106,6 @@ public class MatViewRefreshState implements QuietCloseable {
         mem.putStr(refreshState.getInvalidationReason());
     }
 
-    // refreshState can be null, in this case "default" record will be written
-    public static void commitTo(@NotNull MetaFileWriter writer, @Nullable MatViewRefreshState refreshState) {
-        final AppendableBlock mem = writer.append();
-        writeTo(mem, refreshState);
-        mem.commit(
-                MAT_VIEW_STATE_FORMAT_MSG_TYPE,
-                MAT_VIEW_STATE_FORMAT_MSG_VERSION,
-                MAT_VIEW_STATE_FORMAT_FLAGS
-        );
-        writer.commit();
-    }
-
-    public long getLastRefreshBaseTxn() {
-        return lastRefreshBaseTxn;
-    }
-
-    public long readLastRefreshBaseTableTxn(@NotNull MetaFileReader metaFileReader, @NotNull Path dbRoot) {
-        dbRoot
-                .concat(getViewDefinition().getMatViewToken())
-                .concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
-        metaFileReader.of(dbRoot.$());
-        MatViewRefreshState.readFrom(metaFileReader, this);
-        return lastRefreshBaseTxn;
-    }
-
-    public void writeLastRefreshBaseTableTxn(@NotNull MetaFileWriter metaFileWriter, @NotNull Path dbRoot, long txn) {
-        if (txn != lastRefreshBaseTxn) {
-            lastRefreshBaseTxn = txn;
-            dbRoot
-                    .concat(getViewDefinition().getMatViewToken())
-                    .concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
-            metaFileWriter.of(dbRoot.$());
-            MatViewRefreshState.commitTo(metaFileWriter, this);
-        }
-    }
-
     public RecordCursorFactory acquireRecordFactory() {
         assert latch.get();
         RecordCursorFactory factory = cursorFactory;
@@ -145,6 +121,10 @@ public class MatViewRefreshState implements QuietCloseable {
     @Nullable
     public String getInvalidationReason() {
         return invalidationReason;
+    }
+
+    public long getLastRefreshBaseTxn() {
+        return lastRefreshBaseTxn;
     }
 
     public long getLastRefreshTimestamp() {
@@ -164,7 +144,7 @@ public class MatViewRefreshState implements QuietCloseable {
     }
 
     public void init() {
-        telemetryFacade.store(MAT_VIEW_CREATE, viewDefinition.getMatViewToken(), -1, null, 0);
+        telemetryFacade.store(MAT_VIEW_CREATE, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, null, 0);
     }
 
     public boolean isDropped() {
@@ -185,7 +165,7 @@ public class MatViewRefreshState implements QuietCloseable {
 
     public void markAsDropped() {
         dropped = true;
-        telemetryFacade.store(MAT_VIEW_DROP, viewDefinition.getMatViewToken(), -1, null, 0);
+        telemetryFacade.store(MAT_VIEW_DROP, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, null, 0);
     }
 
     public void markAsInvalid(@NotNull MetaFileWriter metaFileWriter, @NotNull Path dbRoot, @Nullable CharSequence invalidationReason) {
@@ -197,7 +177,7 @@ public class MatViewRefreshState implements QuietCloseable {
         this.invalid = true;
         if (wasValid || invalidationReasonChanged) {
             updateInvalidationStatus(metaFileWriter, dbRoot);
-            telemetryFacade.store(MAT_VIEW_INVALIDATE, viewDefinition.getMatViewToken(), -1, invalidationReason, 0);
+            telemetryFacade.store(MAT_VIEW_INVALIDATE, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, invalidationReason, 0);
         }
     }
 
@@ -215,11 +195,20 @@ public class MatViewRefreshState implements QuietCloseable {
         }
     }
 
+    public long readLastRefreshBaseTableTxn(@NotNull MetaFileReader metaFileReader, @NotNull Path dbRoot) {
+        dbRoot
+                .concat(getViewDefinition().getMatViewToken())
+                .concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
+        metaFileReader.of(dbRoot.$());
+        MatViewRefreshState.readFrom(metaFileReader, this);
+        return lastRefreshBaseTxn;
+    }
+
     public void refreshFail(@NotNull MetaFileWriter metaFileWriter, @NotNull Path dbRoot, long refreshTimestamp, CharSequence errorMessage) {
         assert latch.get();
         markAsInvalid(metaFileWriter, dbRoot, errorMessage);
         this.lastRefreshTimestamp = refreshTimestamp;
-        telemetryFacade.store(MAT_VIEW_REFRESH_FAIL, viewDefinition.getMatViewToken(), -1, errorMessage, 0);
+        telemetryFacade.store(MAT_VIEW_REFRESH_FAIL, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, errorMessage, 0);
     }
 
     public void refreshSuccess(
@@ -266,6 +255,17 @@ public class MatViewRefreshState implements QuietCloseable {
 
         if (!latch.compareAndSet(true, false)) {
             throw new IllegalStateException("cannot unlock, not locked");
+        }
+    }
+
+    public void writeLastRefreshBaseTableTxn(@NotNull MetaFileWriter metaFileWriter, @NotNull Path dbRoot, long txn) {
+        if (txn != lastRefreshBaseTxn) {
+            lastRefreshBaseTxn = txn;
+            dbRoot
+                    .concat(getViewDefinition().getMatViewToken())
+                    .concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
+            metaFileWriter.of(dbRoot.$());
+            MatViewRefreshState.commitTo(metaFileWriter, this);
         }
     }
 
