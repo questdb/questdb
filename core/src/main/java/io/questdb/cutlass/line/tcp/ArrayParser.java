@@ -190,7 +190,7 @@ public class ArrayParser implements QuietCloseable {
             throw ParseException.invalidType(position());
         }
 
-        array.setType(arrayType);
+        array.setElementType(arrayType);
         input.advance();
     }
 
@@ -298,11 +298,11 @@ public class ArrayParser implements QuietCloseable {
                 }
             }
         }
-        array.setType(ColumnType.encodeArrayType(elemType, nDims));
+        array.setElementType(ColumnType.encodeArrayType(elemType, nDims));
         for (int n = shape.size(), i = 0; i < n; i++) {
             array.setDimLen(i, shape.getQuick(i));
         }
-        array.applyShape();
+        array.applyShape(0);
     }
 
     private void parseLeaf(int elemType, int tokenLimit, int flatIndex) throws ParseException {

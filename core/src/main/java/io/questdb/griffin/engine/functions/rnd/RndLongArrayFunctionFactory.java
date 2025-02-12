@@ -60,7 +60,7 @@ public class RndLongArrayFunctionFactory implements FunctionFactory {
         if (dimensionCount <= 0) {
             return NullConstant.NULL;
         }
-        return new RndLongArrayFunction(configuration, dimensionCount);
+        return new RndLongArrayFunction(configuration, dimensionCount, position);
     }
 
     public static class RndLongArrayFunction extends ArrayFunction {
@@ -68,11 +68,13 @@ public class RndLongArrayFunctionFactory implements FunctionFactory {
         private final int nDims;
         private DirectArrayView array;
         private Rnd rnd;
+        private final int functionPosition;
 
-        public RndLongArrayFunction(CairoConfiguration configuration, int nDims) {
+        public RndLongArrayFunction(CairoConfiguration configuration, int nDims, int functionPosition) {
             this.nDims = nDims;
             this.array = new DirectArrayView(configuration);
-            this.array.setType(ColumnType.encodeArrayType(ColumnType.LONG, nDims));
+            this.array.setElementType(ColumnType.encodeArrayType(ColumnType.LONG, nDims));
+            this.functionPosition = functionPosition;
         }
 
         @Override
@@ -103,7 +105,7 @@ public class RndLongArrayFunctionFactory implements FunctionFactory {
         }
 
         private void regenerate() {
-            rnd.nextLongArray(nDims, array, 0, MAX_DIM_LEN);
+            rnd.nextLongArray(nDims, array, 0, MAX_DIM_LEN, functionPosition);
         }
     }
 }

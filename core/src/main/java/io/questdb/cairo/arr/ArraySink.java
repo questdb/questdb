@@ -25,7 +25,7 @@
 package io.questdb.cairo.arr;
 
 public interface ArraySink {
-    void applyShape();
+    void applyShape(int errorPosition);
 
     void putByte(int flatIndex, byte value);
 
@@ -41,5 +41,5 @@ public interface ArraySink {
 
     void setDimLen(int dimension, int length);
 
-    void setType(int type);
+    void setElementType(int elementType);
 }

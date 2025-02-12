@@ -44,7 +44,7 @@ public class RndTest extends AbstractTest {
             try (DirectArrayView arrayView = new DirectArrayView(new DefaultCairoConfiguration(root))) {
                 for (int i = 0; i < 1000; i++) {
                     arrayView.clear();
-                    rnd.nextDoubleArray(2, arrayView, 0, 8);
+                    rnd.nextDoubleArray(2, arrayView, 0, 8, 1);
                     Assert.assertTrue(arrayView.getFlatElemCount() > 0);
                 }
             }

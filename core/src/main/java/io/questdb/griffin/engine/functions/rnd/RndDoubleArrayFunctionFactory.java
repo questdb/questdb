@@ -43,9 +43,11 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
 public class RndDoubleArrayFunctionFactory implements FunctionFactory {
+    private static final int MAX_DIM_LEN = 16;
+
     @Override
     public String getSignature() {
-        return "rnd_double_array(ii)";
+        return "rnd_double_array(v)";
     }
 
     @Override
@@ -56,35 +58,79 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
+        // The following forms are supported:
+        // - rnd_double_array(dimensionCount) - 1 arg, generates random dim lengths up to 16 and random element values. No nulls.
+        // - rnd_double_array(dimensionCount, nanRate) - 2 args, generates random dim lengths up to 16 and random element values. Null frequency is using (rndInt() % nanRate == 0)
+        // - rnd_double_array(dimensionCount, nanRate, maxDimLength) - 3 args, same as the previous, except maxDimLen is not 16 but whatever is provided as the arg
+        // - rnd_double_array(dimensionCount, nanRate, 0, dim1Len, dim2Len, dim3Len, ...) - 4+ args - generates fixed size array with random elements, null rate is as the above
         int dimensionCount = args.getQuick(0).getInt(null);
         if (dimensionCount <= 0) {
             return NullConstant.NULL;
         }
+
+        if (args.size() == 1) {
+            return new RndDoubleArrayRndDimLenFunction(configuration, dimensionCount, 0, MAX_DIM_LEN, position);
+        }
+
         int nanRate = args.getQuick(1).getInt(null);
         if (nanRate < 0) {
-            throw SqlException.$(argPositions.getQuick(0), "invalid NaN rate [nanRate=").put(nanRate).put(']');
+            throw SqlException.$(argPositions.getQuick(1), "invalid NaN rate [nanRate=").put(nanRate).put(']');
         }
-        return new RndDoubleArrayFunction(configuration, dimensionCount, nanRate);
+
+        if (args.size() == 2) {
+            return new RndDoubleArrayRndDimLenFunction(configuration, dimensionCount, nanRate, MAX_DIM_LEN, position);
+        }
+
+        int maxDimLen = args.getQuick(2).getInt(null);
+        // ignore validation for signature where user provides fixed size array
+        if (maxDimLen <= 0 && args.size() == 3) {
+            throw SqlException.$(argPositions.getQuick(2), "maxDimLen must be positive int [maxDimLen=").put(maxDimLen).put(']');
+        }
+
+        if (args.size() == 3) {
+            return new RndDoubleArrayRndDimLenFunction(configuration, dimensionCount, nanRate, maxDimLen, position);
+        }
+
+        if (args.size() < dimensionCount + 3) {
+            throw SqlException.$(argPositions.getQuick(args.size() - 1), "not enough values for dim length [dimensionCount=").put(dimensionCount)
+                    .put(", dimLengths=").put(args.size() - 3)
+                    .put(']');
+        }
+
+        if (args.size() > dimensionCount + 3) {
+            throw SqlException.$(argPositions.getQuick(dimensionCount  + 3), "too many values for dim length [dimensionCount=").put(dimensionCount)
+                    .put(", dimLengths=").put(args.size() - 3)
+                    .put(']');
+        }
+
+        IntList dimLens = new IntList(dimensionCount);
+        for (int i = 3, n = args.size(); i < n; i++) {
+            dimLens.add(args.getQuick(i).getInt(null));
+        }
+
+        return new RndDoubleArrayFixDimLenFunction(configuration, dimensionCount, nanRate, dimLens, position);
     }
 
-    public static class RndDoubleArrayFunction extends ArrayFunction {
-        private static final int MAX_DIM_LEN = 16;
+    public static class RndDoubleArrayFixDimLenFunction extends ArrayFunction {
+        private final IntList dimLens;
         private final int nDims;
         private final int nanRate;
         private DirectArrayView array;
         private Rnd rnd;
+        private final int functionPosition;
 
-        public RndDoubleArrayFunction(CairoConfiguration configuration, int nDims, int nanRate) {
+        public RndDoubleArrayFixDimLenFunction(CairoConfiguration configuration, int nDims, int nanRate, IntList dimLens, int functionPosition) {
             this.nanRate = nanRate + 1;
             this.nDims = nDims;
             this.array = new DirectArrayView(configuration);
-            this.array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims));
+            this.array.setElementType(ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims));
+            this.dimLens = dimLens;
+            this.functionPosition = functionPosition;
         }
 
         @Override
         public void close() {
             this.array = Misc.free(array);
-            super.close();
         }
 
         @Override
@@ -108,12 +154,72 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("rnd_double_array").val('(')
                     .val(array.getDimCount()).val(',')
-                    .val(nanRate).val(')')
+                    .val(nanRate - 1).val(',')
+                    .val("ignored,");
+            for (int i = 0, n = dimLens.size(); i < n; i++) {
+                if (i > 0) {
+                    sink.val(',');
+                }
+                sink.val(dimLens.getQuick(i));
+            }
+            sink.val(')');
+        }
+
+        private void regenerate() {
+            rnd.nextDoubleArray(nDims, array, nanRate, dimLens, functionPosition);
+        }
+    }
+
+    public static class RndDoubleArrayRndDimLenFunction extends ArrayFunction {
+        private final int maxDimLen;
+        private final int nDims;
+        private final int nanRate;
+        private DirectArrayView array;
+        private Rnd rnd;
+        private final int functionPosition;
+
+        public RndDoubleArrayRndDimLenFunction(CairoConfiguration configuration, int nDims, int nanRate, int maxDimLen, int functionPosition) {
+            this.nanRate = nanRate + 1;
+            this.nDims = nDims;
+            this.array = new DirectArrayView(configuration);
+            this.array.setElementType(ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims));
+            this.maxDimLen = maxDimLen;
+            this.functionPosition = functionPosition;
+        }
+
+        @Override
+        public void close() {
+            this.array = Misc.free(array);
+        }
+
+        @Override
+        public ArrayView getArray(Record rec) {
+            regenerate();
+            return array;
+        }
+
+        @Override
+        public int getType() {
+            return array.getType();
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            this.rnd = executionContext.getRandom();
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("rnd_double_array").val('(')
+                    .val(array.getDimCount()).val(',')
+                    .val(nanRate - 1).val(',')
+                    .val(maxDimLen)
                     .val(')');
         }
 
         private void regenerate() {
-            rnd.nextDoubleArray(nDims, array, nanRate, MAX_DIM_LEN);
+            rnd.nextDoubleArray(nDims, array, nanRate, maxDimLen, functionPosition);
         }
     }
 }

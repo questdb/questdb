@@ -61,7 +61,7 @@ public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietClos
     }
 
     @Override
-    public void applyShape() {
+    public void applyShape(int errorPosition) {
         assert strides.length == shape.length;
 
         int maxArrayElementCount = configuration.maxArrayElementCount();
@@ -69,7 +69,7 @@ public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietClos
         for (int i = 0, n = shape.length; i < n; i++) {
             flatElemCount *= shape[i];
             if (flatElemCount > maxArrayElementCount) {
-                throw CairoException.nonCritical()
+                throw CairoException.nonCritical().position(errorPosition)
                         .put("array is too large [elementCount=").put(flatElemCount)
                         .put(", dimensionsLeft=").put(n - i - 1)
                         .put(", max=").put(maxArrayElementCount)
@@ -209,11 +209,11 @@ public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietClos
     }
 
     @Override
-    public void setType(int type) {
-        assert ColumnType.isArray(type);
+    public void setElementType(int elementType) {
+        assert ColumnType.isArray(elementType);
 
-        int nDims = ColumnType.decodeArrayDimensionality(type);
-        this.type = type;
+        int nDims = ColumnType.decodeArrayDimensionality(elementType);
+        this.type = elementType;
         if (shape == null || shape.length != nDims) {
             shape = new int[nDims];
             strides = new int[nDims];
