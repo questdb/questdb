@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.window.CountConstWindowFunctionFactor
 import io.questdb.griffin.engine.functions.window.CountDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.CountSymbolWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.CountVarcharWindowFunctionFactory;
+import io.questdb.griffin.engine.functions.window.DenseRankFunctionFactory;
 import io.questdb.griffin.engine.functions.window.FirstValueDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.LagDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.window.LastValueDoubleWindowFunctionFactory;
@@ -3223,6 +3224,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "   max(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   min(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   rank() over (partition by i order by j asc), " +
+                            "   dense_rank() over (partition by i order by j asc), " +
                             "   lag(j) over (partition by i order by j asc), " +
                             "   lead(j) over (partition by i order by j asc), " +
                             "   lag(j) ignore nulls over (partition by i order by j asc), " +
@@ -3231,7 +3233,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "order by ts asc",
                     "SelectedRecord\n" +
                             "    CachedWindow\n" +
-                            "      orderedFunctions: [[j desc] => [lead(j, 1, NULL) over (partition by [i]),lead(j, 1, NULL) ignore nulls over (partition by [i])],[ts desc] => [avg(j) over (partition by [i] rows between unbounded preceding and current row),sum(j) over (partition by [i] rows between unbounded preceding and current row),first_value(j) over (partition by [i] rows between unbounded preceding and current row),first_value(j) ignore nulls over (partition by [i] rows between unbounded preceding and current row),last_value(j) over (partition by [i] rows between unbounded preceding and current row),last_value(j) ignore nulls over (partition by [i] rows between unbounded preceding and current row),count(*) over (partition by [i] rows between unbounded preceding and current row),count(j) over (partition by [i] rows between unbounded preceding and current row),count(s) over (partition by [i] rows between unbounded preceding and current row),count(d) over (partition by [i] rows between unbounded preceding and current row),count(c) over (partition by [i] rows between unbounded preceding and current row),max(j) over (partition by [i] rows between unbounded preceding and current row),min(j) over (partition by [i] rows between unbounded preceding and current row)],[j] => [rank() over (partition by [i]),lag(j, 1, NULL) over (partition by [i]),lag(j, 1, NULL) ignore nulls over (partition by [i])]]\n" +
+                            "      orderedFunctions: [[j desc] => [lead(j, 1, NULL) over (partition by [i]),lead(j, 1, NULL) ignore nulls over (partition by [i])],[ts desc] => [avg(j) over (partition by [i] rows between unbounded preceding and current row),sum(j) over (partition by [i] rows between unbounded preceding and current row),first_value(j) over (partition by [i] rows between unbounded preceding and current row),first_value(j) ignore nulls over (partition by [i] rows between unbounded preceding and current row),last_value(j) over (partition by [i] rows between unbounded preceding and current row),last_value(j) ignore nulls over (partition by [i] rows between unbounded preceding and current row),count(*) over (partition by [i] rows between unbounded preceding and current row),count(j) over (partition by [i] rows between unbounded preceding and current row),count(s) over (partition by [i] rows between unbounded preceding and current row),count(d) over (partition by [i] rows between unbounded preceding and current row),count(c) over (partition by [i] rows between unbounded preceding and current row),max(j) over (partition by [i] rows between unbounded preceding and current row),min(j) over (partition by [i] rows between unbounded preceding and current row)],[j] => [rank() over (partition by [i]),dense_rank() over (partition by [i]),lag(j, 1, NULL) over (partition by [i]),lag(j, 1, NULL) ignore nulls over (partition by [i])]]\n" +
                             "      unorderedFunctions: [row_number() over (partition by [i])]\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
@@ -3239,14 +3241,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "row_number\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\trank\tlag\tlead\tlag_ignore_nulls\tlead_ignore_nulls\n" +
-                            "1\t2.0\t6.0\t3.0\t3.0\t1.0\t1.0\t3\t3\t3\t3\t3\t3.0\t1.0\t1\tnull\t2.0\tnull\t2.0\n" +
-                            "2\t2.5\t5.0\t3.0\t3.0\t2.0\t2.0\t2\t2\t2\t2\t2\t3.0\t2.0\t2\t1.0\t3.0\t1.0\t3.0\n" +
-                            "3\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t1\t1\t1\t1\t1\t3.0\t3.0\t3\t2.0\tnull\t2.0\tnull\n" +
-                            "1\t1.75\t7.0\t2.0\t2.0\t4.0\t4.0\t4\t4\t4\t4\t4\t4.0\t0.0\t4\t2.0\tnull\t2.0\tnull\n" +
-                            "2\t1.0\t3.0\t2.0\t2.0\t0.0\t0.0\t3\t3\t3\t3\t3\t2.0\t0.0\t1\tnull\t1.0\tnull\t1.0\n" +
-                            "3\t1.5\t3.0\t2.0\t2.0\t1.0\t1.0\t2\t2\t2\t2\t2\t2.0\t1.0\t2\t0.0\t2.0\t0.0\t2.0\n" +
-                            "4\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\t3\t1.0\t4.0\t1.0\t4.0\n",
+                    "row_number\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\trank\tdense_rank\tlag\tlead\tlag_ignore_nulls\tlead_ignore_nulls\n" +
+                            "1\t2.0\t6.0\t3.0\t3.0\t1.0\t1.0\t3\t3\t3\t3\t3\t3.0\t1.0\t1\t1\tnull\t2.0\tnull\t2.0\n" +
+                            "2\t2.5\t5.0\t3.0\t3.0\t2.0\t2.0\t2\t2\t2\t2\t2\t3.0\t2.0\t2\t2\t1.0\t3.0\t1.0\t3.0\n" +
+                            "3\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t1\t1\t1\t1\t1\t3.0\t3.0\t3\t3\t2.0\tnull\t2.0\tnull\n" +
+                            "1\t1.75\t7.0\t2.0\t2.0\t4.0\t4.0\t4\t4\t4\t4\t4\t4.0\t0.0\t4\t4\t2.0\tnull\t2.0\tnull\n" +
+                            "2\t1.0\t3.0\t2.0\t2.0\t0.0\t0.0\t3\t3\t3\t3\t3\t2.0\t0.0\t1\t1\tnull\t1.0\tnull\t1.0\n" +
+                            "3\t1.5\t3.0\t2.0\t2.0\t1.0\t1.0\t2\t2\t2\t2\t2\t2.0\t1.0\t2\t2\t0.0\t2.0\t0.0\t2.0\n" +
+                            "4\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\t3\t3\t1.0\t4.0\t1.0\t4.0\n",
                     "select row_number() over (partition by i order by ts asc), " +
                             "   avg(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   sum(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
@@ -3262,6 +3264,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "   max(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   min(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   rank() over (partition by i order by j asc), " +
+                            "   dense_rank() over (partition by i order by j asc), " +
                             "   lag(j) over (partition by i order by j asc), " +
                             "   lead(j) over (partition by i order by j asc), " +
                             "   lag(j) ignore nulls over (partition by i order by j asc), " +
@@ -3274,14 +3277,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "row_number\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\trank\tlag\tlead\tlag_ignore_nulls\tlead_ignore_nulls\n" +
-                            "4\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\t3\t1.0\t4.0\t1.0\t4.0\n" +
-                            "3\t1.5\t3.0\t2.0\t2.0\t1.0\t1.0\t2\t2\t2\t2\t2\t2.0\t1.0\t2\t0.0\t2.0\t0.0\t2.0\n" +
-                            "2\t1.0\t3.0\t2.0\t2.0\t0.0\t0.0\t3\t3\t3\t3\t3\t2.0\t0.0\t1\tnull\t1.0\tnull\t1.0\n" +
-                            "1\t1.75\t7.0\t2.0\t2.0\t4.0\t4.0\t4\t4\t4\t4\t4\t4.0\t0.0\t4\t2.0\tnull\t2.0\tnull\n" +
-                            "3\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t1\t1\t1\t1\t1\t3.0\t3.0\t3\t2.0\tnull\t2.0\tnull\n" +
-                            "2\t2.5\t5.0\t3.0\t3.0\t2.0\t2.0\t2\t2\t2\t2\t2\t3.0\t2.0\t2\t1.0\t3.0\t1.0\t3.0\n" +
-                            "1\t2.0\t6.0\t3.0\t3.0\t1.0\t1.0\t3\t3\t3\t3\t3\t3.0\t1.0\t1\tnull\t2.0\tnull\t2.0\n",
+                    "row_number\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\trank\tdense_rank\tlag\tlead\tlag_ignore_nulls\tlead_ignore_nulls\n" +
+                            "4\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t1\t2.0\t2.0\t3\t3\t1.0\t4.0\t1.0\t4.0\n" +
+                            "3\t1.5\t3.0\t2.0\t2.0\t1.0\t1.0\t2\t2\t2\t2\t2\t2.0\t1.0\t2\t2\t0.0\t2.0\t0.0\t2.0\n" +
+                            "2\t1.0\t3.0\t2.0\t2.0\t0.0\t0.0\t3\t3\t3\t3\t3\t2.0\t0.0\t1\t1\tnull\t1.0\tnull\t1.0\n" +
+                            "1\t1.75\t7.0\t2.0\t2.0\t4.0\t4.0\t4\t4\t4\t4\t4\t4.0\t0.0\t4\t4\t2.0\tnull\t2.0\tnull\n" +
+                            "3\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t1\t1\t1\t1\t1\t3.0\t3.0\t3\t3\t2.0\tnull\t2.0\tnull\n" +
+                            "2\t2.5\t5.0\t3.0\t3.0\t2.0\t2.0\t2\t2\t2\t2\t2\t3.0\t2.0\t2\t2\t1.0\t3.0\t1.0\t3.0\n" +
+                            "1\t2.0\t6.0\t3.0\t3.0\t1.0\t1.0\t3\t3\t3\t3\t3\t3.0\t1.0\t1\t1\tnull\t2.0\tnull\t2.0\n",
                     "select row_number() over (partition by i order by ts asc), " +
                             "   avg(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   sum(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
@@ -3297,6 +3300,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "   max(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   min(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   rank() over (partition by i order by j asc), " +
+                            "   dense_rank() over (partition by i order by j asc), " +
                             "   lag(j) over (partition by i order by j asc), " +
                             "   lead(j) over (partition by i order by j asc), " +
                             "   lag(j) ignore nulls over (partition by i order by j asc), " +
@@ -3313,18 +3317,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testRankWithNoPartitionByAndNoOrderByWildcardLast() throws Exception {
         assertQuery(
-                "rank\tprice\tsymbol\tts\n" +
-                        "1\t1\tBB\t1970-01-01T00:00:00.000000Z\n" +
-                        "1\t2\tCC\t1970-01-02T03:46:40.000000Z\n" +
-                        "1\t2\tAA\t1970-01-03T07:33:20.000000Z\n" +
-                        "1\t1\tCC\t1970-01-04T11:20:00.000000Z\n" +
-                        "1\t2\tBB\t1970-01-05T15:06:40.000000Z\n" +
-                        "1\t1\tBB\t1970-01-06T18:53:20.000000Z\n" +
-                        "1\t1\tBB\t1970-01-07T22:40:00.000000Z\n" +
-                        "1\t1\tCC\t1970-01-09T02:26:40.000000Z\n" +
-                        "1\t1\tCC\t1970-01-10T06:13:20.000000Z\n" +
-                        "1\t2\tAA\t1970-01-11T10:00:00.000000Z\n",
-                "select rank() over (), * from trades",
+                "rank\tdense_rank\tprice\tsymbol\tts\n" +
+                        "1\t1\t1\tBB\t1970-01-01T00:00:00.000000Z\n" +
+                        "1\t1\t2\tCC\t1970-01-02T03:46:40.000000Z\n" +
+                        "1\t1\t2\tAA\t1970-01-03T07:33:20.000000Z\n" +
+                        "1\t1\t1\tCC\t1970-01-04T11:20:00.000000Z\n" +
+                        "1\t1\t2\tBB\t1970-01-05T15:06:40.000000Z\n" +
+                        "1\t1\t1\tBB\t1970-01-06T18:53:20.000000Z\n" +
+                        "1\t1\t1\tBB\t1970-01-07T22:40:00.000000Z\n" +
+                        "1\t1\t1\tCC\t1970-01-09T02:26:40.000000Z\n" +
+                        "1\t1\t1\tCC\t1970-01-10T06:13:20.000000Z\n" +
+                        "1\t1\t2\tAA\t1970-01-11T10:00:00.000000Z\n",
+                "select rank() over (), dense_rank() over (), * from trades",
                 "create table trades as " +
                         "(" +
                         "select" +
@@ -3334,26 +3338,26 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 "ts",
-                true,
-                false
+                false,
+                true
         );
     }
 
     @Test
     public void testRankWithNoPartitionByAndOrderBySymbolWildcardLast() throws Exception {
         assertQuery(
-                "rank\tprice\tsymbol\tts\n" +
-                        "3\t1\tBB\t1970-01-01T00:00:00.000000Z\n" +
-                        "7\t2\tCC\t1970-01-02T03:46:40.000000Z\n" +
-                        "1\t2\tAA\t1970-01-03T07:33:20.000000Z\n" +
-                        "7\t1\tCC\t1970-01-04T11:20:00.000000Z\n" +
-                        "3\t2\tBB\t1970-01-05T15:06:40.000000Z\n" +
-                        "3\t1\tBB\t1970-01-06T18:53:20.000000Z\n" +
-                        "3\t1\tBB\t1970-01-07T22:40:00.000000Z\n" +
-                        "7\t1\tCC\t1970-01-09T02:26:40.000000Z\n" +
-                        "7\t1\tCC\t1970-01-10T06:13:20.000000Z\n" +
-                        "1\t2\tAA\t1970-01-11T10:00:00.000000Z\n",
-                "select rank() over (order by symbol), * from trades",
+                "rank\tdense_rank\tprice\tsymbol\tts\n" +
+                        "3\t2\t1\tBB\t1970-01-01T00:00:00.000000Z\n" +
+                        "7\t3\t2\tCC\t1970-01-02T03:46:40.000000Z\n" +
+                        "1\t1\t2\tAA\t1970-01-03T07:33:20.000000Z\n" +
+                        "7\t3\t1\tCC\t1970-01-04T11:20:00.000000Z\n" +
+                        "3\t2\t2\tBB\t1970-01-05T15:06:40.000000Z\n" +
+                        "3\t2\t1\tBB\t1970-01-06T18:53:20.000000Z\n" +
+                        "3\t2\t1\tBB\t1970-01-07T22:40:00.000000Z\n" +
+                        "7\t3\t1\tCC\t1970-01-09T02:26:40.000000Z\n" +
+                        "7\t3\t1\tCC\t1970-01-10T06:13:20.000000Z\n" +
+                        "1\t1\t2\tAA\t1970-01-11T10:00:00.000000Z\n",
+                "select rank() over (order by symbol), dense_rank() over (order by symbol), * from trades",
                 "create table trades as " +
                         "(" +
                         "select" +
@@ -3371,18 +3375,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testRankWithPartitionAndOrderByNonSymbol() throws Exception {
         assertQuery(
-                "rank\tprice\tts\n" +
-                        "1\t42\t1970-01-01T00:00:00.000000Z\n" +
-                        "2\t42\t1970-01-02T03:46:40.000000Z\n" +
-                        "3\t42\t1970-01-03T07:33:20.000000Z\n" +
-                        "4\t42\t1970-01-04T11:20:00.000000Z\n" +
-                        "5\t42\t1970-01-05T15:06:40.000000Z\n" +
-                        "6\t42\t1970-01-06T18:53:20.000000Z\n" +
-                        "7\t42\t1970-01-07T22:40:00.000000Z\n" +
-                        "8\t42\t1970-01-09T02:26:40.000000Z\n" +
-                        "9\t42\t1970-01-10T06:13:20.000000Z\n" +
-                        "10\t42\t1970-01-11T10:00:00.000000Z\n",
-                "select rank() over (partition by price order by ts), price, ts from trades",
+                "rank\tdense_rank\tprice\tts\n" +
+                        "1\t1\t42\t1970-01-01T00:00:00.000000Z\n" +
+                        "2\t2\t42\t1970-01-02T03:46:40.000000Z\n" +
+                        "3\t3\t42\t1970-01-03T07:33:20.000000Z\n" +
+                        "4\t4\t42\t1970-01-04T11:20:00.000000Z\n" +
+                        "5\t5\t42\t1970-01-05T15:06:40.000000Z\n" +
+                        "6\t6\t42\t1970-01-06T18:53:20.000000Z\n" +
+                        "7\t7\t42\t1970-01-07T22:40:00.000000Z\n" +
+                        "8\t8\t42\t1970-01-09T02:26:40.000000Z\n" +
+                        "9\t9\t42\t1970-01-10T06:13:20.000000Z\n" +
+                        "10\t10\t42\t1970-01-11T10:00:00.000000Z\n",
+                "select rank() over (partition by price order by ts), dense_rank() over (partition by price order by ts), price, ts from trades",
                 "create table trades as " +
                         "(" +
                         "select" +
@@ -3400,18 +3404,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testRankWithPartitionAndOrderBySymbolNoWildcard() throws Exception {
         assertQuery(
-                "rank\n" +
-                        "1\n" +
-                        "1\n" +
-                        "1\n" +
-                        "1\n" +
-                        "1\n" +
-                        "1\n" +
-                        "1\n" +
-                        "1\n" +
-                        "1\n" +
-                        "1\n",
-                "select rank() over (partition by symbol order by symbol) from trades",
+                "rank\tdense_rank\n" +
+                        "1\t1\n" +
+                        "1\t1\n" +
+                        "1\t1\n" +
+                        "1\t1\n" +
+                        "1\t1\n" +
+                        "1\t1\n" +
+                        "1\t1\n" +
+                        "1\t1\n" +
+                        "1\t1\n" +
+                        "1\t1\n",
+                "select rank() over (partition by symbol order by symbol), dense_rank() over (partition by symbol order by symbol) from trades",
                 "create table trades as " +
                         "(" +
                         "select" +
@@ -3429,18 +3433,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testRankWithPartitionAndOrderBySymbolWildcardFirst() throws Exception {
         assertQuery(
-                "price\tsymbol\tts\trank\n" +
-                        "0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\t1\n" +
-                        "0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z\t1\n" +
-                        "0.9344604857394011\tCC\t1970-01-03T07:33:20.000000Z\t1\n" +
-                        "0.7905675319675964\tAA\t1970-01-04T11:20:00.000000Z\t1\n" +
-                        "0.8899286912289663\tBB\t1970-01-05T15:06:40.000000Z\t1\n" +
-                        "0.11427984775756228\tCC\t1970-01-06T18:53:20.000000Z\t1\n" +
-                        "0.4217768841969397\tBB\t1970-01-07T22:40:00.000000Z\t1\n" +
-                        "0.7261136209823622\tBB\t1970-01-09T02:26:40.000000Z\t1\n" +
-                        "0.6693837147631712\tBB\t1970-01-10T06:13:20.000000Z\t1\n" +
-                        "0.8756771741121929\tBB\t1970-01-11T10:00:00.000000Z\t1\n",
-                "select *, rank() over (partition by symbol order by symbol) from trades",
+                "price\tsymbol\tts\trank\tdense_rank\n" +
+                        "0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\t1\t1\n" +
+                        "0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z\t1\t1\n" +
+                        "0.9344604857394011\tCC\t1970-01-03T07:33:20.000000Z\t1\t1\n" +
+                        "0.7905675319675964\tAA\t1970-01-04T11:20:00.000000Z\t1\t1\n" +
+                        "0.8899286912289663\tBB\t1970-01-05T15:06:40.000000Z\t1\t1\n" +
+                        "0.11427984775756228\tCC\t1970-01-06T18:53:20.000000Z\t1\t1\n" +
+                        "0.4217768841969397\tBB\t1970-01-07T22:40:00.000000Z\t1\t1\n" +
+                        "0.7261136209823622\tBB\t1970-01-09T02:26:40.000000Z\t1\t1\n" +
+                        "0.6693837147631712\tBB\t1970-01-10T06:13:20.000000Z\t1\t1\n" +
+                        "0.8756771741121929\tBB\t1970-01-11T10:00:00.000000Z\t1\t1\n",
+                "select *, rank() over (partition by symbol order by symbol), dense_rank() over (partition by symbol order by symbol) from trades",
                 "create table trades as " +
                         "(" +
                         "select" +
@@ -3458,18 +3462,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testRankWithPartitionAndOrderBySymbolWildcardLast() throws Exception {
         assertQuery(
-                "rank\tprice\tsymbol\tts\n" +
-                        "1\t0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\n" +
-                        "1\t0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z\n" +
-                        "1\t0.9344604857394011\tCC\t1970-01-03T07:33:20.000000Z\n" +
-                        "1\t0.7905675319675964\tAA\t1970-01-04T11:20:00.000000Z\n" +
-                        "1\t0.8899286912289663\tBB\t1970-01-05T15:06:40.000000Z\n" +
-                        "1\t0.11427984775756228\tCC\t1970-01-06T18:53:20.000000Z\n" +
-                        "1\t0.4217768841969397\tBB\t1970-01-07T22:40:00.000000Z\n" +
-                        "1\t0.7261136209823622\tBB\t1970-01-09T02:26:40.000000Z\n" +
-                        "1\t0.6693837147631712\tBB\t1970-01-10T06:13:20.000000Z\n" +
-                        "1\t0.8756771741121929\tBB\t1970-01-11T10:00:00.000000Z\n",
-                "select rank() over (partition by symbol order by symbol), * from trades",
+                "rank\tdense_rank\tprice\tsymbol\tts\n" +
+                        "1\t1\t0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\n" +
+                        "1\t1\t0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z\n" +
+                        "1\t1\t0.9344604857394011\tCC\t1970-01-03T07:33:20.000000Z\n" +
+                        "1\t1\t0.7905675319675964\tAA\t1970-01-04T11:20:00.000000Z\n" +
+                        "1\t1\t0.8899286912289663\tBB\t1970-01-05T15:06:40.000000Z\n" +
+                        "1\t1\t0.11427984775756228\tCC\t1970-01-06T18:53:20.000000Z\n" +
+                        "1\t1\t0.4217768841969397\tBB\t1970-01-07T22:40:00.000000Z\n" +
+                        "1\t1\t0.7261136209823622\tBB\t1970-01-09T02:26:40.000000Z\n" +
+                        "1\t1\t0.6693837147631712\tBB\t1970-01-10T06:13:20.000000Z\n" +
+                        "1\t1\t0.8756771741121929\tBB\t1970-01-11T10:00:00.000000Z\n",
+                "select rank() over (partition by symbol order by symbol), dense_rank() over (partition by symbol order by symbol), * from trades",
                 "create table trades as " +
                         "(" +
                         "select" +
@@ -3487,18 +3491,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testRankWithPartitionBySymbolAndMultiOrderWildcardLast() throws Exception {
         assertQuery(
-                "rank\tprice\tsymbol\tts\n" +
-                        "1\t1\tBB\t1970-01-01T00:00:00.000000Z\n" +
-                        "4\t2\tCC\t1970-01-02T03:46:40.000000Z\n" +
-                        "1\t2\tAA\t1970-01-03T07:33:20.000000Z\n" +
-                        "1\t1\tCC\t1970-01-04T11:20:00.000000Z\n" +
-                        "4\t2\tBB\t1970-01-05T15:06:40.000000Z\n" +
-                        "1\t1\tBB\t1970-01-06T18:53:20.000000Z\n" +
-                        "1\t1\tBB\t1970-01-07T22:40:00.000000Z\n" +
-                        "1\t1\tCC\t1970-01-09T02:26:40.000000Z\n" +
-                        "1\t1\tCC\t1970-01-10T06:13:20.000000Z\n" +
-                        "1\t2\tAA\t1970-01-11T10:00:00.000000Z\n",
-                "select rank() over (partition by symbol order by symbol, price), * from trades",
+                "rank\tdense_rank\tprice\tsymbol\tts\n" +
+                        "1\t1\t1\tBB\t1970-01-01T00:00:00.000000Z\n" +
+                        "4\t2\t2\tCC\t1970-01-02T03:46:40.000000Z\n" +
+                        "1\t1\t2\tAA\t1970-01-03T07:33:20.000000Z\n" +
+                        "1\t1\t1\tCC\t1970-01-04T11:20:00.000000Z\n" +
+                        "4\t2\t2\tBB\t1970-01-05T15:06:40.000000Z\n" +
+                        "1\t1\t1\tBB\t1970-01-06T18:53:20.000000Z\n" +
+                        "1\t1\t1\tBB\t1970-01-07T22:40:00.000000Z\n" +
+                        "1\t1\t1\tCC\t1970-01-09T02:26:40.000000Z\n" +
+                        "1\t1\t1\tCC\t1970-01-10T06:13:20.000000Z\n" +
+                        "1\t1\t2\tAA\t1970-01-11T10:00:00.000000Z\n",
+                "select rank() over (partition by symbol order by symbol, price), dense_rank() over (partition by symbol order by symbol, price),  * from trades",
                 "create table trades as " +
                         "(" +
                         "select" +
@@ -3516,18 +3520,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testRankWithPartitionBySymbolAndNoOrderWildcardLast() throws Exception {
         assertQuery(
-                "rank\tprice\tsymbol\tts\n" +
-                        "1\t1\tBB\t1970-01-01T00:00:00.000000Z\n" +
-                        "1\t2\tCC\t1970-01-02T03:46:40.000000Z\n" +
-                        "1\t2\tAA\t1970-01-03T07:33:20.000000Z\n" +
-                        "2\t1\tCC\t1970-01-04T11:20:00.000000Z\n" +
-                        "2\t2\tBB\t1970-01-05T15:06:40.000000Z\n" +
-                        "3\t1\tBB\t1970-01-06T18:53:20.000000Z\n" +
-                        "4\t1\tBB\t1970-01-07T22:40:00.000000Z\n" +
-                        "3\t1\tCC\t1970-01-09T02:26:40.000000Z\n" +
-                        "4\t1\tCC\t1970-01-10T06:13:20.000000Z\n" +
-                        "2\t2\tAA\t1970-01-11T10:00:00.000000Z\n",
-                "select rank() over (partition by symbol), * from trades",
+                "rank\tdense_rank\tprice\tsymbol\tts\n" +
+                        "1\t1\t1\tBB\t1970-01-01T00:00:00.000000Z\n" +
+                        "1\t1\t2\tCC\t1970-01-02T03:46:40.000000Z\n" +
+                        "1\t1\t2\tAA\t1970-01-03T07:33:20.000000Z\n" +
+                        "1\t1\t1\tCC\t1970-01-04T11:20:00.000000Z\n" +
+                        "1\t1\t2\tBB\t1970-01-05T15:06:40.000000Z\n" +
+                        "1\t1\t1\tBB\t1970-01-06T18:53:20.000000Z\n" +
+                        "1\t1\t1\tBB\t1970-01-07T22:40:00.000000Z\n" +
+                        "1\t1\t1\tCC\t1970-01-09T02:26:40.000000Z\n" +
+                        "1\t1\t1\tCC\t1970-01-10T06:13:20.000000Z\n" +
+                        "1\t1\t2\tAA\t1970-01-11T10:00:00.000000Z\n",
+                "select rank() over (partition by symbol), dense_rank() over (partition by symbol), * from trades",
                 "create table trades as " +
                         "(" +
                         "select" +
@@ -3545,18 +3549,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testRankWithPartitionBySymbolAndOrderByIntPriceDescWildcardLast() throws Exception {
         assertQuery(
-                "rank\tprice\tsymbol\tts\n" +
-                        "2\t1\tBB\t1970-01-01T00:00:00.000000Z\n" +
-                        "1\t2\tCC\t1970-01-02T03:46:40.000000Z\n" +
-                        "1\t2\tAA\t1970-01-03T07:33:20.000000Z\n" +
-                        "2\t1\tCC\t1970-01-04T11:20:00.000000Z\n" +
-                        "1\t2\tBB\t1970-01-05T15:06:40.000000Z\n" +
-                        "2\t1\tBB\t1970-01-06T18:53:20.000000Z\n" +
-                        "2\t1\tBB\t1970-01-07T22:40:00.000000Z\n" +
-                        "2\t1\tCC\t1970-01-09T02:26:40.000000Z\n" +
-                        "2\t1\tCC\t1970-01-10T06:13:20.000000Z\n" +
-                        "1\t2\tAA\t1970-01-11T10:00:00.000000Z\n",
-                "select rank() over (partition by symbol order by price desc), * from trades",
+                "rank\tdense_rank\tprice\tsymbol\tts\n" +
+                        "2\t2\t1\tBB\t1970-01-01T00:00:00.000000Z\n" +
+                        "1\t1\t2\tCC\t1970-01-02T03:46:40.000000Z\n" +
+                        "1\t1\t2\tAA\t1970-01-03T07:33:20.000000Z\n" +
+                        "2\t2\t1\tCC\t1970-01-04T11:20:00.000000Z\n" +
+                        "1\t1\t2\tBB\t1970-01-05T15:06:40.000000Z\n" +
+                        "2\t2\t1\tBB\t1970-01-06T18:53:20.000000Z\n" +
+                        "2\t2\t1\tBB\t1970-01-07T22:40:00.000000Z\n" +
+                        "2\t2\t1\tCC\t1970-01-09T02:26:40.000000Z\n" +
+                        "2\t2\t1\tCC\t1970-01-10T06:13:20.000000Z\n" +
+                        "1\t1\t2\tAA\t1970-01-11T10:00:00.000000Z\n",
+                "select rank() over (partition by symbol order by price desc), dense_rank() over (partition by symbol order by price desc), * from trades",
                 "create table trades as " +
                         "(" +
                         "select" +
@@ -3574,18 +3578,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testRankWithPartitionBySymbolAndOrderByIntPriceWildcardLast() throws Exception {
         assertQuery(
-                "rank\tprice\tsymbol\tts\n" +
-                        "1\t1\tBB\t1970-01-01T00:00:00.000000Z\n" +
-                        "4\t2\tCC\t1970-01-02T03:46:40.000000Z\n" +
-                        "1\t2\tAA\t1970-01-03T07:33:20.000000Z\n" +
-                        "1\t1\tCC\t1970-01-04T11:20:00.000000Z\n" +
-                        "4\t2\tBB\t1970-01-05T15:06:40.000000Z\n" +
-                        "1\t1\tBB\t1970-01-06T18:53:20.000000Z\n" +
-                        "1\t1\tBB\t1970-01-07T22:40:00.000000Z\n" +
-                        "1\t1\tCC\t1970-01-09T02:26:40.000000Z\n" +
-                        "1\t1\tCC\t1970-01-10T06:13:20.000000Z\n" +
-                        "1\t2\tAA\t1970-01-11T10:00:00.000000Z\n",
-                "select rank() over (partition by symbol order by price), * from trades",
+                "rank\tdense_rank\tprice\tsymbol\tts\n" +
+                        "1\t1\t1\tBB\t1970-01-01T00:00:00.000000Z\n" +
+                        "4\t2\t2\tCC\t1970-01-02T03:46:40.000000Z\n" +
+                        "1\t1\t2\tAA\t1970-01-03T07:33:20.000000Z\n" +
+                        "1\t1\t1\tCC\t1970-01-04T11:20:00.000000Z\n" +
+                        "4\t2\t2\tBB\t1970-01-05T15:06:40.000000Z\n" +
+                        "1\t1\t1\tBB\t1970-01-06T18:53:20.000000Z\n" +
+                        "1\t1\t1\tBB\t1970-01-07T22:40:00.000000Z\n" +
+                        "1\t1\t1\tCC\t1970-01-09T02:26:40.000000Z\n" +
+                        "1\t1\t1\tCC\t1970-01-10T06:13:20.000000Z\n" +
+                        "1\t1\t2\tAA\t1970-01-11T10:00:00.000000Z\n",
+                "select rank() over (partition by symbol order by price), dense_rank() over (partition by symbol order by price), * from trades",
                 "create table trades as " +
                         "(" +
                         "select" +
@@ -3603,18 +3607,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testRankWithPartitionBySymbolAndOrderByPriceWildcardLast() throws Exception {
         assertQuery(
-                "rank\tprice\tsymbol\tts\n" +
-                        "2\t0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\n" +
-                        "1\t0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z\n" +
-                        "3\t0.9344604857394011\tCC\t1970-01-03T07:33:20.000000Z\n" +
-                        "1\t0.7905675319675964\tAA\t1970-01-04T11:20:00.000000Z\n" +
-                        "6\t0.8899286912289663\tBB\t1970-01-05T15:06:40.000000Z\n" +
-                        "1\t0.11427984775756228\tCC\t1970-01-06T18:53:20.000000Z\n" +
-                        "2\t0.4217768841969397\tBB\t1970-01-07T22:40:00.000000Z\n" +
-                        "4\t0.7261136209823622\tBB\t1970-01-09T02:26:40.000000Z\n" +
-                        "3\t0.6693837147631712\tBB\t1970-01-10T06:13:20.000000Z\n" +
-                        "5\t0.8756771741121929\tBB\t1970-01-11T10:00:00.000000Z\n",
-                "select rank() over (partition by symbol order by price), * from trades",
+                "rank\tdense_rank\tprice\tsymbol\tts\n" +
+                        "2\t2\t0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\n" +
+                        "1\t1\t0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z\n" +
+                        "3\t3\t0.9344604857394011\tCC\t1970-01-03T07:33:20.000000Z\n" +
+                        "1\t1\t0.7905675319675964\tAA\t1970-01-04T11:20:00.000000Z\n" +
+                        "6\t6\t0.8899286912289663\tBB\t1970-01-05T15:06:40.000000Z\n" +
+                        "1\t1\t0.11427984775756228\tCC\t1970-01-06T18:53:20.000000Z\n" +
+                        "2\t2\t0.4217768841969397\tBB\t1970-01-07T22:40:00.000000Z\n" +
+                        "4\t4\t0.7261136209823622\tBB\t1970-01-09T02:26:40.000000Z\n" +
+                        "3\t3\t0.6693837147631712\tBB\t1970-01-10T06:13:20.000000Z\n" +
+                        "5\t5\t0.8756771741121929\tBB\t1970-01-11T10:00:00.000000Z\n",
+                "select rank() over (partition by symbol order by price), dense_rank() over (partition by symbol order by price), * from trades",
                 "create table trades as " +
                         "(" +
                         "select" +
@@ -3960,6 +3964,34 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRowNumberWithPartitionByScalarFunction() throws Exception {
+        assertQuery(
+                "row_number\tts\n" +
+                        "1\t1970-01-01T00:00:00.000000Z\n" +
+                        "2\t1970-01-02T03:46:40.000000Z\n" +
+                        "1\t1970-01-03T07:33:20.000000Z\n" +
+                        "1\t1970-01-04T11:20:00.000000Z\n" +
+                        "2\t1970-01-05T15:06:40.000000Z\n" +
+                        "3\t1970-01-06T18:53:20.000000Z\n" +
+                        "4\t1970-01-07T22:40:00.000000Z\n" +
+                        "2\t1970-01-09T02:26:40.000000Z\n" +
+                        "3\t1970-01-10T06:13:20.000000Z\n" +
+                        "3\t1970-01-11T10:00:00.000000Z\n",
+                "select row_number() over (partition by concat(symbol, '_foo') order by symbol), ts from trades",
+                "create table trades as " +
+                        "(" +
+                        "select" +
+                        " rnd_symbol('AA','BB','CC') symbol," +
+                        " timestamp_sequence(0, 100000000000) ts" +
+                        " from long_sequence(10)" +
+                        ") timestamp(ts) partition by day",
+                "ts",
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testWindowBufferExceedsLimit() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 4096);
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES, 10);
@@ -4080,17 +4112,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "min(j) over (), " +
                             "row_number() over (), " +
                             "rank() over (), " +
+                            "dense_rank() over (), " +
                             "lag(j) over (), " +
                             "lead(j) over (), " +
                             "lag(j) ignore nulls over (), " +
                             "lead(j) ignore nulls over () " +
                             "from tab",
                     "CachedWindow\n" +
-                            "  unorderedFunctions: [first_value(j) over (),first_value(j) ignore nulls over (),last_value(j) over (),last_value(j) ignore nulls over (),avg(j) over (),sum(j) over (),count(j) over (),count(*) over (),count(c) over (),count(sym) over (),max(j) over (),min(j) over (),row_number(),rank(),lag(j, 1, NULL) over (),lead(j, 1, NULL) over (),lag(j, 1, NULL) ignore nulls over (),lead(j, 1, NULL) ignore nulls over ()]\n" +
+                            "  unorderedFunctions: [first_value(j) over (),first_value(j) ignore nulls over (),last_value(j) over (),last_value(j) ignore nulls over (),avg(j) over (),sum(j) over (),count(j) over (),count(*) over (),count(c) over (),count(sym) over (),max(j) over (),min(j) over (),row_number(),rank() over (),dense_rank() over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) over (),lag(j, 1, NULL) ignore nulls over (),lead(j, 1, NULL) ignore nulls over ()]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n",
-                    "ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\trow_number\trank\tlag\tlead\tlag_ignore_nulls\tlead_ignore_nulls\n",
+                    "ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\trow_number\trank\tdense_rank\tlag\tlead\tlag_ignore_nulls\tlead_ignore_nulls\n",
                     "ts",
                     true,
                     false
@@ -5138,6 +5171,252 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRankFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, i long, s symbol) timestamp(ts)");
+            execute("insert into tab select (x/4)::timestamp, x/2, 'k' || (x%2) ::symbol from long_sequence(12)");
+
+            // rank()/dense_rank() over(partition by)
+            assertQueryNoLeakCheck(
+                    "ts\trank\tdense_rank\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000001Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000001Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000001Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000001Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000002Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000002Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000002Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000002Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000003Z\t1\t1\n",
+                    "select ts, " +
+                            "rank() over (partition by s), " +
+                            "dense_rank() over (partition by s) " +
+                            "from tab ",
+                    "ts",
+                    false,
+                    true
+            );
+
+            // rank()/dense_rank() over()
+            assertQueryNoLeakCheck(
+                    "ts\trank\tdense_rank\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000001Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000001Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000001Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000001Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000002Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000002Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000002Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000002Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000003Z\t1\t1\n",
+                    "select ts, " +
+                            "rank() over (), " +
+                            "dense_rank() over () " +
+                            "from tab ",
+                    "ts",
+                    false,
+                    true
+            );
+
+            // rank()/dense_rank() over(partition by xxx order by xxx)
+            assertQueryNoLeakCheck(
+                    "ts\ts\trank\tdense_rank\n" +
+                            "1970-01-01T00:00:00.000000Z\tk1\t1\t1\n" +
+                            "1970-01-01T00:00:00.000000Z\tk0\t1\t1\n" +
+                            "1970-01-01T00:00:00.000000Z\tk1\t1\t1\n" +
+                            "1970-01-01T00:00:00.000001Z\tk0\t2\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\tk1\t3\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\tk0\t2\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\tk1\t3\t2\n" +
+                            "1970-01-01T00:00:00.000002Z\tk0\t4\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\tk1\t5\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\tk0\t4\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\tk1\t5\t3\n" +
+                            "1970-01-01T00:00:00.000003Z\tk0\t6\t4\n",
+                    "select ts, s," +
+                            "rank() over (partition by s order by ts), " +
+                            "dense_rank() over (partition by s order by ts) " +
+                            "from tab ",
+                    "ts",
+                    false,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\ts\trank\tdense_rank\n" +
+                            "1970-01-01T00:00:00.000000Z\tk0\t1\t1\n" +
+                            "1970-01-01T00:00:00.000001Z\tk0\t2\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\tk0\t2\t2\n" +
+                            "1970-01-01T00:00:00.000002Z\tk0\t4\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\tk0\t4\t3\n" +
+                            "1970-01-01T00:00:00.000003Z\tk0\t6\t4\n" +
+                            "1970-01-01T00:00:00.000000Z\tk1\t1\t1\n" +
+                            "1970-01-01T00:00:00.000000Z\tk1\t1\t1\n" +
+                            "1970-01-01T00:00:00.000001Z\tk1\t3\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\tk1\t3\t2\n" +
+                            "1970-01-01T00:00:00.000002Z\tk1\t5\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\tk1\t5\t3\n",
+                    "select ts, s," +
+                            "rank() over (partition by s order by ts), " +
+                            "dense_rank() over (partition by s order by ts) " +
+                            "from tab order by s, ts",
+                    "",
+                    true,
+                    false
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\ts\trank\trank1\tdense_rank\tdense_rank1\n" +
+                            "1970-01-01T00:00:00.000000Z\tk0\t1\t6\t1\t4\n" +
+                            "1970-01-01T00:00:00.000001Z\tk0\t2\t4\t2\t3\n" +
+                            "1970-01-01T00:00:00.000001Z\tk0\t2\t4\t2\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\tk0\t4\t2\t3\t2\n" +
+                            "1970-01-01T00:00:00.000002Z\tk0\t4\t2\t3\t2\n" +
+                            "1970-01-01T00:00:00.000003Z\tk0\t6\t1\t4\t1\n" +
+                            "1970-01-01T00:00:00.000000Z\tk1\t1\t5\t1\t3\n" +
+                            "1970-01-01T00:00:00.000000Z\tk1\t1\t5\t1\t3\n" +
+                            "1970-01-01T00:00:00.000001Z\tk1\t3\t3\t2\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\tk1\t3\t3\t2\t2\n" +
+                            "1970-01-01T00:00:00.000002Z\tk1\t5\t1\t3\t1\n" +
+                            "1970-01-01T00:00:00.000002Z\tk1\t5\t1\t3\t1\n",
+                    "select ts, s," +
+                            "rank() over (partition by s order by ts), " +
+                            "rank() over (partition by s order by ts desc), " +
+                            "dense_rank() over (partition by s order by ts), " +
+                            "dense_rank() over (partition by s order by ts desc) " +
+                            "from tab order by s, ts",
+                    "",
+                    true,
+                    false
+            );
+
+            // rank()/dense_rank() over(order by xxx)
+            assertQueryNoLeakCheck(
+                    "ts\trank\tdense_rank\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000001Z\t4\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\t4\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\t4\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\t4\t2\n" +
+                            "1970-01-01T00:00:00.000002Z\t8\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\t8\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\t8\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\t8\t3\n" +
+                            "1970-01-01T00:00:00.000003Z\t12\t4\n",
+                    "select ts," +
+                            "rank() over (order by ts), " +
+                            "dense_rank() over (order by ts) " +
+                            "from tab order by ts",
+                    "ts",
+                    false,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\ts\trank\tdense_rank\n" +
+                            "1970-01-01T00:00:00.000000Z\tk0\t1\t1\n" +
+                            "1970-01-01T00:00:00.000001Z\tk0\t4\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\tk0\t4\t2\n" +
+                            "1970-01-01T00:00:00.000002Z\tk0\t8\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\tk0\t8\t3\n" +
+                            "1970-01-01T00:00:00.000003Z\tk0\t12\t4\n" +
+                            "1970-01-01T00:00:00.000000Z\tk1\t1\t1\n" +
+                            "1970-01-01T00:00:00.000000Z\tk1\t1\t1\n" +
+                            "1970-01-01T00:00:00.000001Z\tk1\t4\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\tk1\t4\t2\n" +
+                            "1970-01-01T00:00:00.000002Z\tk1\t8\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\tk1\t8\t3\n",
+                    "select ts, s," +
+                            "rank() over (order by ts), " +
+                            "dense_rank() over (order by ts) " +
+                            "from tab order by s",
+                    "",
+                    true,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\trank\tdense_rank\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000001Z\t4\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\t4\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\t4\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\t4\t2\n" +
+                            "1970-01-01T00:00:00.000002Z\t8\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\t8\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\t8\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\t8\t3\n" +
+                            "1970-01-01T00:00:00.000003Z\t12\t4\n",
+                    "select ts," +
+                            "rank() over (order by ts), " +
+                            "dense_rank() over (order by ts) " +
+                            "from tab",
+                    "ts",
+                    false,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\trank\tdense_rank\trank1\tdense_rank1\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\t10\t4\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\t10\t4\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\t10\t4\n" +
+                            "1970-01-01T00:00:00.000001Z\t4\t2\t6\t3\n" +
+                            "1970-01-01T00:00:00.000001Z\t4\t2\t6\t3\n" +
+                            "1970-01-01T00:00:00.000001Z\t4\t2\t6\t3\n" +
+                            "1970-01-01T00:00:00.000001Z\t4\t2\t6\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\t8\t3\t2\t2\n" +
+                            "1970-01-01T00:00:00.000002Z\t8\t3\t2\t2\n" +
+                            "1970-01-01T00:00:00.000002Z\t8\t3\t2\t2\n" +
+                            "1970-01-01T00:00:00.000002Z\t8\t3\t2\t2\n" +
+                            "1970-01-01T00:00:00.000003Z\t12\t4\t1\t1\n",
+                    "select ts," +
+                            "rank() over (order by ts), " +
+                            "dense_rank() over (order by ts), " +
+                            "rank() over (order by ts desc), " +
+                            "dense_rank() over (order by ts desc) " +
+                            "from tab",
+                    "ts",
+                    true,
+                    false
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\ts\trank\tdense_rank\n" +
+                            "1970-01-01T00:00:00.000000Z\tk0\t6\t4\n" +
+                            "1970-01-01T00:00:00.000001Z\tk0\t4\t3\n" +
+                            "1970-01-01T00:00:00.000001Z\tk0\t4\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\tk0\t2\t2\n" +
+                            "1970-01-01T00:00:00.000002Z\tk0\t2\t2\n" +
+                            "1970-01-01T00:00:00.000003Z\tk0\t1\t1\n" +
+                            "1970-01-01T00:00:00.000000Z\tk1\t5\t3\n" +
+                            "1970-01-01T00:00:00.000000Z\tk1\t5\t3\n" +
+                            "1970-01-01T00:00:00.000001Z\tk1\t3\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\tk1\t3\t2\n" +
+                            "1970-01-01T00:00:00.000002Z\tk1\t1\t1\n" +
+                            "1970-01-01T00:00:00.000002Z\tk1\t1\t1\n",
+                    "select ts, s," +
+                            "rank() over (partition by concat(s,'foobar') order by ts desc)," +
+                            "dense_rank() over (partition by concat(s,'foobar') order by ts desc)" +
+                            "from tab order by s, ts",
+                    "",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testWindowFunctionDoesntSortIfOrderByIsCompatibleWithBaseQuery() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab (ts timestamp, i long, j long, sym symbol index) timestamp(ts)");
@@ -5206,7 +5485,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowFunctionFailsInNonWindowContext() throws Exception {
         assertMemoryLeak(() -> {
-            Class<?>[] factories = new Class<?>[]{RankFunctionFactory.class,
+            Class<?>[] factories = new Class<?>[]{
+                    RankFunctionFactory.class,
+                    DenseRankFunctionFactory.class,
                     RowNumberFunctionFactory.class,
                     AvgDoubleWindowFunctionFactory.class,
                     SumDoubleWindowFunctionFactory.class,
@@ -5406,7 +5687,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 "first_value(#COLUMN) respect nulls", "count(#COLUMN)", "max(#COLUMN)", "min(#COLUMN)",
                 "last_value(#COLUMN)", "last_value(#COLUMN) ignore nulls", "last_value(#COLUMN) respect nulls");
 
-        WINDOW_ONLY_FUNCTIONS = Arrays.asList("rank()", "row_number()", "first_value(1.0)", "last_value(1.0)", "lag(1.0)", "lead(1.0)",
+        WINDOW_ONLY_FUNCTIONS = Arrays.asList("rank()", "dense_rank()", "row_number()", "first_value(1.0)", "last_value(1.0)", "lag(1.0)", "lead(1.0)",
                 "lag(1.0) ignore nulls", "lead(1.0) ignore nulls", "lag(1.0) respect nulls", "lead(1.0) respect nulls",
                 "first_value(1.0) ignore nulls", "last_value(1.0) ignore nulls", "first_value(1.0) respect nulls", "last_value(1.0) respect nulls");
 
