@@ -86,6 +86,25 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testLowAndHighLimitWithCache() throws Exception {
+        assertMemoryLeak(() -> {
+            createDummyConfiguration("pg.select.cache.enabled=true");
+            try (final ServerMain serverMain = TestServerMain.createWithManualWalRun(getServerMainArgs())) {
+                serverMain.start();
+                createTable(serverMain, 100);
+                try (Connection connection = getConnection(serverMain)) {
+                    final String sql = "SELECT col1, sum(status) as sum, last(ts) as last FROM tab ORDER BY 2 DESC LIMIT ?,?";
+                    runQueryWithParamsTwice(connection, sql, 1, 3, 1, 2, "col1[VARCHAR],sum[BIGINT],last[TIMESTAMP]\n" +
+                                    "Sym2,50,1970-01-01 00:00:29.7\n" +
+                                    "Sym1,49,1970-01-01 00:00:29.9\n",
+                            "col1[VARCHAR],sum[BIGINT],last[TIMESTAMP]\n" +
+                                    "Sym2,50,1970-01-01 00:00:29.7\n");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testLowLimitOnly() throws Exception {
         assertMemoryLeak(() -> {
             try (final ServerMain serverMain = TestServerMain.createWithManualWalRun(getServerMainArgs())) {
@@ -147,6 +166,7 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
         });
     }
 
+
     private static void createTable(ServerMain serverMain, int numOfRows) {
         final CairoEngine engine = serverMain.getEngine();
         try (
@@ -183,6 +203,24 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
         }
         final ResultSet resultSet = stmt.executeQuery();
         assertResultSet(expected, Misc.getThreadLocalSink(), resultSet);
+        stmt.close();
+    }
+
+    private static void runQueryWithParamsTwice(Connection connection, String sql, int limitLow, int limitHigh, int limitLow2, int limitHigh2, String expected, String expected2) throws SQLException, IOException {
+        final PreparedStatement stmt = connection.prepareStatement(sql);
+        stmt.setInt(1, limitLow);
+        if (limitHigh != 0) {
+            stmt.setInt(2, limitHigh);
+        }
+        final ResultSet resultSet = stmt.executeQuery();
+        assertResultSet(expected, Misc.getThreadLocalSink(), resultSet);
+        stmt.clearParameters();
+        stmt.setInt(1, limitLow2);
+        if (limitHigh != 0) {
+            stmt.setInt(2, limitHigh2);
+        }
+        final ResultSet resultSet2 = stmt.executeQuery();
+        assertResultSet(expected2, Misc.getThreadLocalSink(), resultSet2);
         stmt.close();
     }
 }
