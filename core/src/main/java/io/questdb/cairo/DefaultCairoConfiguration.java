@@ -78,11 +78,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     public DefaultCairoConfiguration(CharSequence dbRoot, CharSequence installRoot) {
-        assert dbRoot != null;
         this.dbRoot = Chars.toString(dbRoot);
-        this.installRoot = installRoot == null
-                ? java.nio.file.Paths.get(this.dbRoot).getParent().toAbsolutePath().toString()
-                : Chars.toString(installRoot);
+        this.installRoot = installRoot != null
+                ? Chars.toString(installRoot)
+                : dbRoot != null ? java.nio.file.Paths.get(this.dbRoot).getParent().toAbsolutePath().toString()
+                : null;
 
         this.confRoot = PropServerConfiguration.rootSubdir(dbRoot, PropServerConfiguration.CONFIG_DIRECTORY);
         this.textConfiguration = new DefaultTextConfiguration(Chars.toString(confRoot));
