@@ -72,20 +72,20 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testArrayConstruct() throws SqlException {
-        x("1 2 3 [,]", "ARRAY[1, 2, 3]");
-        x("1 2 [,] 3 [,]", "ARRAY[1, [2], 3]");
-        x("1 2 3 4 [,] [,] 5 [,]", "ARRAY[1, [2, [3, 4]], 5]");
+        x("1 2 3 ARRAY", "ARRAY[1, 2, 3]");
+        x("1 2 ARRAY 3 ARRAY", "ARRAY[1, [2], 3]");
+        x("1 2 3 4 ARRAY ARRAY 5 ARRAY", "ARRAY[1, [2, [3, 4]], 5]");
         x("x 1 []", "x[1]");
         x("x 1 2 []", "x[1, 2]");
         x("x.y 1 2 []", "x.y[1, 2]");
         x("b i [] c i [] func", "func(b[i], c[i])");
-        x("1 2 func 3 [,]", "ARRAY[1, func(2), 3]");
+        x("1 2 func 3 ARRAY", "ARRAY[1, func(2), 3]");
         x("1 func 2 []", "func(1)[2]");
-        x("1 2 func 3 [] 4 [,]", "ARRAY[1, func(2)[3], 4]");
-        x("1 2 func [,] 3 [,]", "ARRAY[1, [func(2)], 3]");
-        x("1 2 [,] 3 [,]", "ARRAY[1, ARRAY[2], 3]");
-        x("1 [,] 2 []", "ARRAY[1][2]");
-        x("1 2 [,] 3 [] 4 [,]", "ARRAY[1, ARRAY[2][3], 4]");
+        x("1 2 func 3 [] 4 ARRAY", "ARRAY[1, func(2)[3], 4]");
+        x("1 2 func ARRAY 3 ARRAY", "ARRAY[1, [func(2)], 3]");
+        x("1 2 ARRAY 3 ARRAY", "ARRAY[1, ARRAY[2], 3]");
+        x("1 ARRAY 2 []", "ARRAY[1][2]");
+        x("1 2 ARRAY 3 [] 4 ARRAY", "ARRAY[1, ARRAY[2][3], 4]");
     }
 
     @Test
