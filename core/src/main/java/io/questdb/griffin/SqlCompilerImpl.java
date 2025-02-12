@@ -87,10 +87,8 @@ import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.engine.ops.DropAllOperation;
-import io.questdb.griffin.engine.ops.DropMatViewOperation;
-import io.questdb.griffin.engine.ops.DropMatViewOperationBuilder;
-import io.questdb.griffin.engine.ops.DropTableOperation;
-import io.questdb.griffin.engine.ops.DropTableOperationBuilder;
+import io.questdb.griffin.engine.ops.GenericDropOperation;
+import io.questdb.griffin.engine.ops.GenericDropOperationBuilder;
 import io.questdb.griffin.engine.ops.InsertOperationImpl;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
@@ -172,8 +170,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final CharacterStore characterStore;
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final CharSequenceObjHashMap<String> dropAllTablesFailedTableNames = new CharSequenceObjHashMap<>();
-    private final DropMatViewOperationBuilder dropMatViewOperationBuilder;
-    private final DropTableOperationBuilder dropTableOperationBuilder;
+    private final GenericDropOperationBuilder dropOperationBuilder;
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
     private final FilesFacade ff;
     private final FunctionParser functionParser;
@@ -260,8 +257,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             );
 
             alterOperationBuilder = new AlterOperationBuilder();
-            dropTableOperationBuilder = new DropTableOperationBuilder();
-            dropMatViewOperationBuilder = new DropMatViewOperationBuilder();
+            dropOperationBuilder = new GenericDropOperationBuilder();
             queryRegistry = engine.getQueryRegistry();
             metaFileWriter = new MetaFileWriter(ff);
         } catch (Throwable th) {
@@ -403,10 +399,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 executeCreateMatView((CreateMatViewOperation) op, executionContext);
                 break;
             case OperationCodes.DROP_TABLE:
-                executeDropTable((DropTableOperation) op, executionContext);
+                executeDropTable((GenericDropOperation) op, executionContext);
                 break;
             case OperationCodes.DROP_MAT_VIEW:
-                executeDropMatView((DropMatViewOperation) op, executionContext);
+                executeDropMatView((GenericDropOperation) op, executionContext);
                 break;
             case OperationCodes.DROP_ALL:
                 executeDropAllTables(executionContext);
@@ -1760,7 +1756,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (tok != null) {
             // DROP TABLE [ IF EXISTS ] name [;]
             if (isTableKeyword(tok)) {
-                dropTableOperationBuilder.clear();
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok == null) {
                     throw SqlException.$(lexer.lastTokenPosition(), "expected ").put("IF EXISTS table-name");
@@ -1782,27 +1777,23 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
 
                 final CharSequence tableName = GenericLexer.unquote(tok);
-                final String tableNameInterned;
                 // define operation to make sure we generate correct errors in case
                 // of syntax check failure.
                 final TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
                 checkMatViewModification(tableToken);
-                if (tableToken == null) {
-                    // table does not exist, but it may exist at execution time
-                    tableNameInterned = Chars.toString(tableName);
-                } else {
-                    tableNameInterned = tableToken.getTableName();
-                }
-                dropTableOperationBuilder.of(tableNameInterned, tableNamePosition, hasIfExists);
+                dropOperationBuilder.clear();
+                dropOperationBuilder.setOperationCode(OperationCodes.DROP_TABLE);
+                dropOperationBuilder.setEntityName(tableName);
+                dropOperationBuilder.setEntityNamePosition(tableNamePosition);
+                dropOperationBuilder.setIfExists(hasIfExists);
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok != null && !Chars.equals(tok, ';')) {
-                    compileDropTableExt(executionContext, dropTableOperationBuilder, tok, lexer.lastTokenPosition());
+                    compileDropTableExt(executionContext, dropOperationBuilder, tok, lexer.lastTokenPosition());
                 }
-                dropTableOperationBuilder.setSqlText(sqlText);
-                compiledQuery.ofDrop(dropTableOperationBuilder.build());
+                dropOperationBuilder.setSqlText(sqlText);
+                compiledQuery.ofDrop(dropOperationBuilder.build());
                 // DROP MATERIALIZED VIEW [ IF EXISTS ] name [;]
             } else if (isMaterializedKeyword(tok)) {
-                dropMatViewOperationBuilder.clear();
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok == null || !isViewKeyword(tok)) {
                     throw SqlException.$(lexer.lastTokenPosition(), "expected VIEW");
@@ -1828,26 +1819,23 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
 
                 final CharSequence matViewName = GenericLexer.unquote(tok);
-                final String matViewNameInterned;
                 // define operation to make sure we generate correct errors in case
                 // of syntax check failure.
                 final TableToken tableToken = executionContext.getTableTokenIfExists(matViewName);
                 if (tableToken != null && !tableToken.isMatView()) {
                     throw SqlException.$(lexer.lastTokenPosition(), "materialized view name expected, got table name");
                 }
-                if (tableToken == null) {
-                    // mat view does not exist, but it may exist at execution time
-                    matViewNameInterned = Chars.toString(matViewName);
-                } else {
-                    matViewNameInterned = tableToken.getTableName();
-                }
-                dropMatViewOperationBuilder.of(matViewNameInterned, tableNamePosition, hasIfExists);
+                dropOperationBuilder.clear();
+                dropOperationBuilder.setOperationCode(OperationCodes.DROP_MAT_VIEW);
+                dropOperationBuilder.setEntityName(matViewName);
+                dropOperationBuilder.setEntityNamePosition(tableNamePosition);
+                dropOperationBuilder.setIfExists(hasIfExists);
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok != null && !Chars.equals(tok, ';')) {
                     throw SqlException.$(lexer.lastTokenPosition(), "expected ';'");
                 }
-                dropMatViewOperationBuilder.setSqlText(sqlText);
-                compiledQuery.ofDrop(dropMatViewOperationBuilder.build());
+                dropOperationBuilder.setSqlText(sqlText);
+                compiledQuery.ofDrop(dropOperationBuilder.build());
             } else if (isAllKeyword(tok)) {
                 // DROP ALL[;] or legacy DROP ALL TABLES [;]
                 tok = SqlUtil.fetchNext(lexer);
@@ -2883,18 +2871,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void executeDropMatView(
-            DropMatViewOperation op,
+            GenericDropOperation op,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final TableToken tableToken = sqlExecutionContext.getTableTokenIfExists(op.getMatViewName());
+        final TableToken tableToken = sqlExecutionContext.getTableTokenIfExists(op.getEntityName());
         if (tableToken == null || TableNameRegistry.isLocked(tableToken)) {
             if (op.ifExists()) {
                 return;
             }
-            throw SqlException.matViewDoesNotExist(op.getMatViewNamePosition(), op.getMatViewName());
+            throw SqlException.matViewDoesNotExist(op.getEntityNamePosition(), op.getEntityName());
         }
         if (!tableToken.isMatView()) {
-            throw SqlException.$(op.getMatViewNamePosition(), "materialized view name expected, got table name: ").put(op.getMatViewName());
+            throw SqlException.$(op.getEntityNamePosition(), "materialized view name expected, got table name: ").put(op.getEntityName());
         }
         sqlExecutionContext.getSecurityContext().authorizeMatViewDrop(tableToken);
 
@@ -2908,7 +2896,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 return;
             } else if (!op.ifExists() && ex.isTableDropped()) {
                 // Concurrently dropped, this should report mat view does not exist
-                throw CairoException.matViewDoesNotExist(op.getMatViewName());
+                throw CairoException.matViewDoesNotExist(op.getEntityName());
             }
             throw ex;
         } finally {
@@ -2917,18 +2905,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void executeDropTable(
-            DropTableOperation op,
+            GenericDropOperation op,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final TableToken tableToken = sqlExecutionContext.getTableTokenIfExists(op.getTableName());
+        final TableToken tableToken = sqlExecutionContext.getTableTokenIfExists(op.getEntityName());
         if (tableToken == null || TableNameRegistry.isLocked(tableToken)) {
             if (op.ifExists()) {
                 return;
             }
-            throw SqlException.tableDoesNotExist(op.getTableNamePosition(), op.getTableName());
+            throw SqlException.tableDoesNotExist(op.getEntityNamePosition(), op.getEntityName());
         }
         if (tableToken.isMatView()) {
-            throw SqlException.$(op.getTableNamePosition(), "table name expected, got materialized view name: ").put(op.getTableName());
+            throw SqlException.$(op.getEntityNamePosition(), "table name expected, got materialized view name: ").put(op.getEntityName());
         }
         sqlExecutionContext.getSecurityContext().authorizeTableDrop(tableToken);
 
@@ -2942,7 +2930,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 return;
             } else if (!op.ifExists() && ex.isTableDropped()) {
                 // Concurrently dropped, this should report table does not exist
-                throw CairoException.tableDoesNotExist(op.getTableName());
+                throw CairoException.tableDoesNotExist(op.getEntityName());
             }
             throw ex;
         } finally {
@@ -3563,7 +3551,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     protected void compileDropTableExt(
             @NotNull SqlExecutionContext executionContext,
-            @NotNull DropTableOperationBuilder opBuilder,
+            @NotNull GenericDropOperationBuilder opBuilder,
             @NotNull CharSequence tok,
             int position
     ) throws SqlException {

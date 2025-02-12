@@ -46,7 +46,7 @@ import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
-import io.questdb.griffin.engine.ops.DropTableOperationBuilder;
+import io.questdb.griffin.engine.ops.GenericDropOperationBuilder;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
@@ -6921,7 +6921,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         @Override
         protected void compileDropTableExt(
                 @NotNull SqlExecutionContext executionContext,
-                @NotNull DropTableOperationBuilder opBuilder,
+                @NotNull GenericDropOperationBuilder opBuilder,
                 @NotNull CharSequence tok,
                 int position
         ) throws SqlException {
