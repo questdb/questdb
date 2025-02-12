@@ -279,7 +279,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String logTimestampTimezone;
     private final TimeZoneRules logTimestampTimezoneRules;
     private final boolean matViewEnabled;
-    private final int matViewInsertAsSelectBatchSize;
+    private final long matViewInsertAsSelectBatchSize;
     private final int matViewMaxRecompileAttempts;
     private final boolean matViewParallelExecutionEnabled;
     private final WorkerPoolConfiguration matViewRefreshPoolConfiguration = new PropMatViewRefreshPoolConfiguration();
@@ -1262,7 +1262,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             // reuse wal apply defaults for mat view workers
             this.matViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ENABLED, false);
             this.matViewMaxRecompileAttempts = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_SQL_MAX_RECOMPILE_ATTEMPTS, 10);
-            this.matViewInsertAsSelectBatchSize = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE, 100_000);
             this.matViewRefreshWorkerCount = getInt(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_COUNT, cpuWalApplyWorkers);
             this.matViewRefreshWorkerAffinity = getAffinity(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_AFFINITY, matViewRefreshWorkerCount);
             this.matViewRefreshWorkerHaltOnError = getBoolean(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_HALT_ON_ERROR, false);
@@ -1327,6 +1326,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlWithClauseModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_WITH_CLAUSE_MODEL_POOL_CAPACITY, 128);
             this.sqlInsertModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_INSERT_MODEL_POOL_CAPACITY, 64);
             this.sqlInsertModelBatchSize = getLong(properties, env, PropertyKey.CAIRO_SQL_INSERT_MODEL_BATCH_SIZE, 1_000_000);
+            this.matViewInsertAsSelectBatchSize = getLong(properties, env, PropertyKey.CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE, sqlInsertModelBatchSize);
             this.sqlCopyBufferSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 2 * Numbers.SIZE_1MB);
             this.columnPurgeQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY, 128);
             this.columnPurgeTaskPoolCapacity = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_TASK_POOL_CAPACITY, 256);
@@ -2886,7 +2886,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getMatViewInsertAsSelectBatchSize() {
+        public long getMatViewInsertAsSelectBatchSize() {
             return matViewInsertAsSelectBatchSize;
         }
 

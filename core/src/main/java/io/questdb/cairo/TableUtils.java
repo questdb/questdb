@@ -202,7 +202,6 @@ public final class TableUtils {
     public static final long TX_OFFSET_LAG_ROW_COUNT_32 = TX_OFFSET_LAG_TXN_COUNT_32 + 4;
     public static final long TX_OFFSET_LAG_MIN_TIMESTAMP_64 = TX_OFFSET_LAG_ROW_COUNT_32 + 4;
     public static final long TX_OFFSET_LAG_MAX_TIMESTAMP_64 = TX_OFFSET_LAG_MIN_TIMESTAMP_64 + 8;
-    public static final long TX_OFFSET_MAT_VIEW_BASE_TXN_64 = TX_OFFSET_LAG_MAX_TIMESTAMP_64 + 8;
     // @formatter:on
     public static final int TX_RECORD_HEADER_SIZE = (int) TX_OFFSET_MAP_WRITER_COUNT_32 + Integer.BYTES;
     public static final String UPGRADE_FILE_NAME = "_upgrade.d";
@@ -1060,7 +1059,7 @@ public final class TableUtils {
         MetaFileReader.BlockCursor cursor = reader.getCursor();
         if (cursor.hasNext()) {
             // for now, we only have one message in the file
-            return loadMatViewDefinitionMessage(cursor.next(), matViewToken);
+            return loadMatViewDefinition(cursor.next(), matViewToken);
         } else {
             throw CairoException.critical(0)
                     .put("cannot read materialized view definition, file is empty [path=")
@@ -1923,7 +1922,7 @@ public final class TableUtils {
         return metaMem.getStrA(offset);
     }
 
-    private static MatViewDefinition loadMatViewDefinitionMessage(final ReadableBlock mem, final TableToken matViewToken) {
+    private static MatViewDefinition loadMatViewDefinition(final ReadableBlock mem, final TableToken matViewToken) {
         if (mem.version() != MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_MSG_VERSION
                 || mem.type() != MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE
         ) {

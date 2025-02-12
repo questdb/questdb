@@ -63,7 +63,7 @@ import org.jetbrains.annotations.TestOnly;
 
 public class MatViewRefreshJob implements Job, QuietCloseable {
     private static final Log LOG = LogFactory.getLog(MatViewRefreshJob.class);
-    private final int batchSize;
+    private final long batchSize;
     private final ObjList<TableToken> childViewSink = new ObjList<>();
     private final EntityColumnFilter columnFilter = new EntityColumnFilter();
     private final Path dbRoot;

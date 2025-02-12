@@ -252,7 +252,7 @@ public interface CairoConfiguration {
 
     TimeZoneRules getLogTimestampTimezoneRules();
 
-    int getMatViewInsertAsSelectBatchSize();
+    long getMatViewInsertAsSelectBatchSize();
 
     int getMatViewMaxRecompileAttempts();
 

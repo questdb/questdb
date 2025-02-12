@@ -604,11 +604,6 @@ public class TxReader implements Closeable, Mutable {
         seqTxn = -1L;
     }
 
-    public long getMatViewBaseTxn() {
-        // Do not load it all the time, it's very rarely read
-        return getLong(TX_OFFSET_MAT_VIEW_BASE_TXN_64);
-    }
-
     private int getInt(long readOffset) {
         assert readOffset + Integer.BYTES <= size : "offset " + readOffset + ", size " + size + ", txn=" + txn;
         return roTxMemBase.getInt(baseOffset + readOffset);

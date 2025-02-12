@@ -417,7 +417,7 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getMatViewInsertAsSelectBatchSize() {
+    public long getMatViewInsertAsSelectBatchSize() {
         return getDelegate().getMatViewInsertAsSelectBatchSize();
     }
 
