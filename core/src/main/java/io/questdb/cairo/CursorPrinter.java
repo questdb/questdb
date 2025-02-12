@@ -170,7 +170,7 @@ public class CursorPrinter {
                 }
                 break;
             case ColumnType.ARRAY:
-                ArrayTypeDriver.arrayToJson(record.getArray(columnIndex, columnType), sink);
+                ArrayTypeDriver.arrayToJson(record.getArray(columnIndex, columnType), sink, null);
                 break;
             default:
                 break;

@@ -53,7 +53,7 @@ public class ArrayTest extends AbstractCairoTest {
             array.putDouble(2, 3.0);
             array.putDouble(3, 4.0);
             sink.clear();
-            ArrayTypeDriver.arrayToJson(array, sink);
+            ArrayTypeDriver.arrayToJson(array, sink, null);
             assertEquals("[[1.0,2.0],[3.0,4.0]]", sink.toString());
         }
     }
@@ -72,7 +72,7 @@ public class ArrayTest extends AbstractCairoTest {
             array.putLong(2, 3);
             array.putLong(3, 4);
             sink.clear();
-            ArrayTypeDriver.arrayToJson(array, sink);
+            ArrayTypeDriver.arrayToJson(array, sink, null);
             assertEquals("[[1,2],[3,4]]", sink.toString());
         }
     }
@@ -88,7 +88,7 @@ public class ArrayTest extends AbstractCairoTest {
             sink.put("[6i").put(arrayExpr.substring(1));
             parser.parse(str.of(sink.lo(), sink.hi()));
             sink.clear();
-            ArrayTypeDriver.arrayToJson(parser.getArray(), sink);
+            ArrayTypeDriver.arrayToJson(parser.getArray(), sink, null);
             assertEquals(arrayExpr, sink.toString());
         } catch (ArrayParser.ParseException e) {
             throw new RuntimeException(e);

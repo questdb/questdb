@@ -142,12 +142,13 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
      */
     public static void arrayToJson(
             @Nullable ArrayView arrayView,
-            @NotNull CharSink<?> sink
+            @NotNull CharSink<?> sink,
+            ArrayState arrayState
     ) {
         if (arrayView == null) {
             sink.put("null");
         } else {
-            arrayToText(arrayView, 0, 0, sink, resolveAppender(arrayView), '[', ']', "null");
+            arrayToText(arrayView, 0, 0, 0, sink, resolveAppender(arrayView), '[', ']', "null", arrayState);
         }
     }
 
@@ -156,9 +157,66 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
      */
     public static void arrayToPgWire(
             @NotNull ArrayView arrayView,
-            @NotNull CharSink<?> sink
+            @NotNull CharSink<?> sink,
+            ArrayState arrayState
     ) {
-        arrayToText(arrayView, 0, 0, sink, resolveAppender(arrayView), '{', '}', "NULL");
+        arrayToText(arrayView, 0, 0, 0, sink, resolveAppender(arrayView), '{', '}', "NULL", arrayState);
+    }
+
+    /**
+     * Recursively builds a string representation of a multidimensional array stored in row‑major order.
+     * With [] as open-close chars, it produces JSON. With {}, it produces PG Wire format.
+     *
+     * @param array       flat array containing all the elements
+     * @param dim         current dimension being processed, starting at 0
+     * @param flatIndex   index of the current element in the flat array, starting at 0
+     * @param sink        sink that accumulates the JSON string
+     * @param openChar    opening character for each array plane
+     * @param closeChar   closing character for each array plane
+     * @param nullLiteral text that represents a null value
+     */
+    public static void arrayToText(
+            @NotNull ArrayView array,
+            int dim,
+            int dimIndex,
+            int flatIndex,
+            @NotNull CharSink<?> sink,
+            @NotNull ArrayValueAppender appender,
+            char openChar,
+            char closeChar,
+            @NotNull String nullLiteral,
+            ArrayState arrayState
+    ) {
+
+        final int count = array.getDimLen(dim);
+        final int stride = array.getStride(dim);
+        final boolean atDeepestDim = dim == array.getDimCount() - 1;
+
+        sink.putAscii(openChar);
+        if (atDeepestDim) {
+            for (int i = dimIndex; i < count; i++) {
+                if (i % 64 == 0 && arrayState != null) {
+                    arrayState.bookmark(dim, i, flatIndex);
+                }
+                if (i != 0) {
+                    sink.putAscii(',');
+                }
+                appender.appendFromFlatIndex(array, flatIndex, sink, nullLiteral);
+                flatIndex += stride;
+            }
+        } else {
+            for (int i = dimIndex; i < count; i++) {
+                if (arrayState != null) {
+                    arrayState.bookmark(dim, i, flatIndex);
+                }
+                if (i != 0) {
+                    sink.putAscii(',');
+                }
+                arrayToText(array, dim + 1, 0, flatIndex, sink, appender, openChar, closeChar, nullLiteral, arrayState);
+                flatIndex += stride;
+            }
+        }
+        sink.putAscii(closeChar);
     }
 
     /**
@@ -498,48 +556,6 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     private static void appendNullImpl(MemoryA auxMem, MemoryA dataMem) {
         final long offset = dataMem.getAppendOffset();
         appendNullImpl(auxMem, offset);
-    }
-
-    /**
-     * Recursively builds a string representation of a multidimensional array stored in row‑major order.
-     * With [] as open-close chars, it produces JSON. With {}, it produces PG Wire format.
-     *
-     * @param array       flat array containing all the elements
-     * @param dim         current dimension being processed, starting at 0
-     * @param flatIndex   index of the current element in the flat array, starting at 0
-     * @param sink        sink that accumulates the JSON string
-     * @param openChar    opening character for each array plane
-     * @param closeChar   closing character for each array plane
-     * @param nullLiteral text that represents a null value
-     */
-    private static void arrayToText(
-            @NotNull ArrayView array,
-            int dim,
-            int flatIndex,
-            @NotNull CharSink<?> sink,
-            @NotNull ArrayValueAppender appender,
-            char openChar,
-            char closeChar,
-            @NotNull String nullLiteral
-    ) {
-
-        final int count = array.getDimLen(dim);
-        final int stride = array.getStride(dim);
-        final boolean atDeepestDim = dim == array.getDimCount() - 1;
-
-        sink.putAscii(openChar);
-        for (int i = 0; i < count; i++) {
-            if (i != 0) {
-                sink.putAscii(',');
-            }
-            if (atDeepestDim) {
-                appender.appendFromFlatIndex(array, flatIndex, sink, nullLiteral);
-            } else {
-                arrayToText(array, dim + 1, flatIndex, sink, appender, openChar, closeChar, nullLiteral);
-            }
-            flatIndex += stride;
-        }
-        sink.putAscii(closeChar);
     }
 
     private static void padTo(@NotNull MemoryA dataMem, int byteAlignment) {

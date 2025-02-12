@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.arr.ArrayState;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
@@ -129,6 +130,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private long skip;
     private long stop;
     private boolean timings = false;
+    private ArrayState arrayState = null;
 
     public JsonQueryProcessorState(
             HttpConnectionContext httpConnectionContext,
@@ -722,7 +724,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     putIntervalValue(response, record, columnIdx);
                     break;
                 case ColumnType.ARRAY:
-                    ArrayTypeDriver.arrayToJson(record.getArray(columnIdx, columnType), response);
+                    ArrayTypeDriver.arrayToJson(record.getArray(columnIdx, columnType), response, arrayState);
                     break;
                 default:
                     // this should never happen since metadata are already validated
