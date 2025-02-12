@@ -429,7 +429,7 @@ public class ExpressionParser {
                             assert node.token.equals("[[") : "token is neither '[' nor '[['";
                             node = expressionNodePool.next().of(
                                     ExpressionNode.ARRAY_CONSTRUCTOR,
-                                    "[,]",
+                                    "ARRAY",
                                     2,
                                     node.position
                             );
@@ -1513,6 +1513,7 @@ public class ExpressionParser {
 
     static {
         nonLiteralBranches.add(BRANCH_RIGHT_PARENTHESIS);
+        nonLiteralBranches.add(BRANCH_RIGHT_BRACKET);
         nonLiteralBranches.add(BRANCH_CONSTANT);
         nonLiteralBranches.add(BRANCH_LITERAL);
         nonLiteralBranches.add(BRANCH_LAMBDA);

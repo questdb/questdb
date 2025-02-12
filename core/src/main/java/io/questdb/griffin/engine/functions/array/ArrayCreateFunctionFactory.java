@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
@@ -43,7 +44,7 @@ import static io.questdb.cairo.ColumnType.decodeArrayElementType;
 public class ArrayCreateFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "[,](V)";
+        return "array(V)";
     }
 
     @Override
@@ -132,6 +133,11 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
         public ArrayView getArray(Record rec) {
             array.setRecord(rec);
             return array;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("ARRAY[]");
         }
     }
 }
