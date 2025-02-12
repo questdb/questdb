@@ -210,6 +210,32 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertAsSelectLiteral1d() throws Exception {
+        execute("CREATE TABLE tango (a LONG, b LONG)");
+        execute("CREATE TABLE samba (arr LONG[])");
+        execute("INSERT INTO tango VALUES (1, 2)");
+        execute("INSERT INTO samba SELECT ARRAY[a, b] FROM tango");
+        assertSql("arr\n[1,2]\n", "samba");
+    }
+
+    @Test
+    public void testInsertAsSelectLiteral2d() throws Exception {
+        execute("CREATE TABLE tango (a LONG, b LONG)");
+        execute("CREATE TABLE samba (arr LONG[][])");
+        execute("INSERT INTO tango VALUES (1, 2)");
+        execute("INSERT INTO samba SELECT ARRAY[[a, a], [b, b]] FROM tango");
+        assertSql("arr\n[[1,1],[2,2]]\n", "samba");
+    }
+
+    @Test
+    public void testSelectLiteral() throws Exception {
+        execute("CREATE TABLE tango (a LONG, b LONG)");
+        execute("INSERT INTO tango VALUES (1, 2)");
+        assertSql("ARRAY\n[1,2]\n", "SELECT ARRAY[a, b] FROM tango");
+        assertSql("ARRAY\n[[1],[2]]\n", "SELECT ARRAY[[a], [b]] FROM tango");
+    }
+
+    @Test
     public void testTypeCast() {
         for (int i = 1; i < ColumnType.ARRAY_NDIMS_LIMIT; i++) {
             for (short j = ColumnType.BOOLEAN; j <= ColumnType.IPv4; j++) {
