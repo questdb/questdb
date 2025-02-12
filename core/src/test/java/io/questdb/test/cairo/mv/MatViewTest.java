@@ -274,6 +274,15 @@ public class MatViewTest extends AbstractCairoTest {
             assertCannotModifyMatView("insert into price_1h select sym, last(price) as price, ts from base_price sample by 1h");
             // alter
             assertCannotModifyMatView("alter table price_1h add column x int");
+            assertCannotModifyMatView("alter table price_1h rename column sym to sym2");
+            assertCannotModifyMatView("alter table price_1h alter column sym type varchar");
+            assertCannotModifyMatView("alter table price_1h drop column sym");
+            assertCannotModifyMatView("alter table price_1h drop partition where ts > 0");
+            assertCannotModifyMatView("alter table price_1h dedup disable");
+            assertCannotModifyMatView("alter table price_1h set type bypass wal");
+            assertCannotModifyMatView("alter table price_1h set ttl 3 weeks");
+            assertCannotModifyMatView("alter table price_1h set param o3MaxLag = 20s");
+            assertCannotModifyMatView("alter table price_1h resume wal");
             // reindex
             assertCannotModifyMatView("reindex table price_1h");
             // truncate
