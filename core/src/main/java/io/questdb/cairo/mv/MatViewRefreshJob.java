@@ -33,8 +33,8 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
-import io.questdb.cairo.meta.MetaFileReader;
-import io.questdb.cairo.meta.MetaFileWriter;
+import io.questdb.cairo.file.BlockFileReader;
+import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -64,14 +64,14 @@ import org.jetbrains.annotations.TestOnly;
 public class MatViewRefreshJob implements Job, QuietCloseable {
     private static final Log LOG = LogFactory.getLog(MatViewRefreshJob.class);
     private final long batchSize;
+    private final BlockFileReader blockFileReader;
+    private final BlockFileWriter blockFileWriter;
     private final ObjList<TableToken> childViewSink = new ObjList<>();
     private final EntityColumnFilter columnFilter = new EntityColumnFilter();
     private final Path dbRoot;
     private final int dbRootLen;
     private final CairoEngine engine;
     private final int maxRecompileAttempts;
-    private final MetaFileReader metaFileReader;
-    private final MetaFileWriter metaFileWriter;
     private final MicrosecondClock microsecondClock;
     private final MatViewRefreshExecutionContext mvRefreshExecutionContext;
     private final MatViewRefreshTask mvRefreshTask = new MatViewRefreshTask();
@@ -87,8 +87,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             this.microsecondClock = engine.getConfiguration().getMicrosecondClock();
             this.maxRecompileAttempts = engine.getConfiguration().getMatViewMaxRecompileAttempts();
             this.batchSize = engine.getConfiguration().getMatViewInsertAsSelectBatchSize();
-            this.metaFileWriter = new MetaFileWriter(engine.getConfiguration().getFilesFacade());
-            this.metaFileReader = new MetaFileReader(engine.getConfiguration());
+            this.blockFileWriter = new BlockFileWriter(engine.getConfiguration().getFilesFacade());
+            this.blockFileReader = new BlockFileReader(engine.getConfiguration());
             this.dbRoot = new Path();
             dbRoot.of(engine.getConfiguration().getRoot());
             this.dbRootLen = dbRoot.size();
@@ -107,8 +107,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     public void close() {
         LOG.info().$("materialized view refresh job closing [workerId=").$(workerId).I$();
         Misc.free(mvRefreshExecutionContext);
-        Misc.free(metaFileWriter);
-        Misc.free(metaFileReader);
+        Misc.free(blockFileWriter);
+        Misc.free(blockFileReader);
         Misc.free(dbRoot);
     }
 
@@ -326,7 +326,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     private long readLastRefreshBaseTableTxn(MatViewRefreshState state) {
-        return state.readLastRefreshBaseTableTxn(metaFileReader, dbRoot.trimTo(dbRootLen));
+        return state.readLastRefreshBaseTableTxn(blockFileReader, dbRoot.trimTo(dbRootLen));
     }
 
     private boolean rebuildView(@NotNull TableToken viewToken, MatViewGraph viewGraph, long refreshTriggeredTimestamp) {
@@ -482,7 +482,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     private void refreshFailState(MatViewRefreshState state, long refreshTimestamp, CharSequence errorMessage) {
-        state.refreshFail(metaFileWriter, dbRoot.trimTo(dbRootLen), refreshTimestamp, errorMessage);
+        state.refreshFail(blockFileWriter, dbRoot.trimTo(dbRootLen), refreshTimestamp, errorMessage);
     }
 
     private boolean refreshNotifiedViews() {
@@ -656,14 +656,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     private void resetInvalidState(MatViewRefreshState state) {
-        state.markAsValid(metaFileWriter, dbRoot.trimTo(dbRootLen));
+        state.markAsValid(blockFileWriter, dbRoot.trimTo(dbRootLen));
     }
 
     private void setInvalidState(MatViewRefreshState state, String invalidationReason) {
-        state.markAsInvalid(metaFileWriter, dbRoot.trimTo(dbRootLen), invalidationReason);
+        state.markAsInvalid(blockFileWriter, dbRoot.trimTo(dbRootLen), invalidationReason);
     }
 
     private void writeLastRefreshBaseTableTxn(MatViewRefreshState state, long txn) {
-        state.writeLastRefreshBaseTableTxn(metaFileWriter, dbRoot.trimTo(dbRootLen), txn);
+        state.writeLastRefreshBaseTableTxn(blockFileWriter, dbRoot.trimTo(dbRootLen), txn);
     }
 }

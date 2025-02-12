@@ -26,10 +26,10 @@ package io.questdb.cairo.mv;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.meta.AppendableBlock;
-import io.questdb.cairo.meta.MetaFileReader;
-import io.questdb.cairo.meta.MetaFileWriter;
-import io.questdb.cairo.meta.ReadableBlock;
+import io.questdb.cairo.file.AppendableBlock;
+import io.questdb.cairo.file.BlockFileReader;
+import io.questdb.cairo.file.BlockFileWriter;
+import io.questdb.cairo.file.ReadableBlock;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
@@ -116,7 +116,7 @@ public class MatViewDefinition {
         }
     }
 
-    public static void commitTo(@NotNull MetaFileWriter writer, @NotNull MatViewDefinition matViewDefinition) {
+    public static void commitTo(@NotNull BlockFileWriter writer, @NotNull MatViewDefinition matViewDefinition) {
         final AppendableBlock mem = writer.append();
         writeTo(mem, matViewDefinition);
         mem.commit(
@@ -127,19 +127,10 @@ public class MatViewDefinition {
         writer.commit();
     }
 
-    public static void writeTo(@NotNull AppendableBlock mem, @NotNull MatViewDefinition matViewDefinition) {
-        mem.putStr(matViewDefinition.getBaseTableName());
-        mem.putLong(matViewDefinition.getSamplingInterval());
-        mem.putChar(matViewDefinition.getSamplingIntervalUnit());
-        mem.putStr(matViewDefinition.getTimeZone());
-        mem.putStr(matViewDefinition.getTimeZoneOffset());
-        mem.putStr(matViewDefinition.getMatViewSql());
-    }
-
-    public static MatViewDefinition readFrom(@NotNull MetaFileReader reader, Path path, int rootLen, final TableToken matViewToken) {
+    public static MatViewDefinition readFrom(@NotNull BlockFileReader reader, Path path, int rootLen, final TableToken matViewToken) {
         path.trimTo(rootLen).concat(matViewToken.getDirName()).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME);
         reader.of(path.$());
-        MetaFileReader.BlockCursor cursor = reader.getCursor();
+        BlockFileReader.BlockCursor cursor = reader.getCursor();
         if (cursor.hasNext()) {
             return loadMatViewDefinition(cursor.next(), matViewToken);
         } else {
@@ -148,6 +139,15 @@ public class MatViewDefinition {
                     .put(path)
                     .put(']');
         }
+    }
+
+    public static void writeTo(@NotNull AppendableBlock mem, @NotNull MatViewDefinition matViewDefinition) {
+        mem.putStr(matViewDefinition.getBaseTableName());
+        mem.putLong(matViewDefinition.getSamplingInterval());
+        mem.putChar(matViewDefinition.getSamplingIntervalUnit());
+        mem.putStr(matViewDefinition.getTimeZone());
+        mem.putStr(matViewDefinition.getTimeZoneOffset());
+        mem.putStr(matViewDefinition.getMatViewSql());
     }
 
     public String getBaseTableName() {

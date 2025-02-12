@@ -26,7 +26,7 @@ package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.meta.MetaFileReader;
+import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.sql.TableMetadata;
@@ -830,7 +830,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             String timeZoneOffset
     ) {
         final TableToken matViewToken = engine.getTableTokenIfExists(name);
-        try (MetaFileReader reader = new MetaFileReader(configuration); Path path = new Path()) {
+        try (BlockFileReader reader = new BlockFileReader(configuration); Path path = new Path()) {
             path.of(configuration.getRoot());
             final int rootLen = path.size();
             MatViewDefinition mvd = MatViewDefinition.readFrom(

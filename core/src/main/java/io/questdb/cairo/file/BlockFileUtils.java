@@ -22,11 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.meta;
+package io.questdb.cairo.file;
 
 import io.questdb.std.Zip;
 
-public class MetaFileUtils {
+public class BlockFileUtils {
     /**
      * +---------------------------------------------------------------------+
      * |                        Block Length (4 bytes)                       |

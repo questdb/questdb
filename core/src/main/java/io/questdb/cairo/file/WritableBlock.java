@@ -22,47 +22,44 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.meta;
+package io.questdb.cairo.file;
 
 import io.questdb.std.BinarySequence;
 import io.questdb.std.str.Utf8Sequence;
-
+import org.jetbrains.annotations.Nullable;
 
 /**
- * Interface for reading various types of data from a memory block.
- * Provides a random access API where the offset is relative to the block start.
- * The size of the block can be obtained via the {@link #length()} method.
+ * Interface for writing various types of data to a pre-allocated memory block.
+ * The block has a fixed size and provides a random access API.
+ * The offset is relative to the block start.
+ * <p>
+ * For an extendable block with append API, see {@link AppendableBlock}.
  */
-public interface ReadableBlock {
-    long addressOf(long offset);
+public interface WritableBlock {
 
-    byte flags();
+    boolean commit(short type, byte version, byte flags);
 
-    BinarySequence getBin(long offset);
+    int length();
 
-    boolean getBool(long offset);
+    void putBin(long offset, BinarySequence value);
 
-    byte getByte(long offset);
+    void putBool(long offset, boolean value);
 
-    char getChar(long offset);
+    void putByte(long offset, byte value);
 
-    double getDouble(long offset);
+    void putChar(long offset, char value);
 
-    float getFloat(long offset);
+    void putDouble(long offset, double value);
 
-    int getInt(long offset);
+    void putFloat(long offset, float value);
 
-    long getLong(long offset);
+    void putInt(long offset, int value);
 
-    short getShort(long offset);
+    void putLong(long offset, long value);
 
-    CharSequence getStr(long offset);
+    void putShort(long offset, short value);
 
-    Utf8Sequence getVarchar(long offset);
+    void putStr(long offset, CharSequence value);
 
-    long length();
-
-    short type();
-
-    byte version();
+    void putVarchar(long offset, @Nullable Utf8Sequence value);
 }

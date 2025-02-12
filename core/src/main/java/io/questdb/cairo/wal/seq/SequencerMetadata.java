@@ -30,7 +30,7 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.meta.MetaFileWriter;
+import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewRefreshState;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -138,7 +138,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
 
         if (writeInitialMetadata && tableStruct.isMatView()) {
             assert tableStruct.getMatViewDefinition() != null;
-            try (MetaFileWriter writer = new MetaFileWriter(ff)) {
+            try (BlockFileWriter writer = new BlockFileWriter(ff)) {
                 writer.of(path.trimTo(pathLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
                 MatViewDefinition.commitTo(writer, tableStruct.getMatViewDefinition());
                 writer.of(path.trimTo(pathLen).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());

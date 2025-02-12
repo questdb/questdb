@@ -22,44 +22,45 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.meta;
+package io.questdb.cairo.file;
 
 import io.questdb.std.BinarySequence;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Interface for writing various types of data to a pre-allocated memory block.
- * The block has a fixed size and provides a random access API.
- * The offset is relative to the block start.
+ * Interface for appending various types of data to a memory block.
+ * The block is extendable, meaning it can grow as more data is appended.
  * <p>
- * For an extendable block with append API, see {@link AppendableBlock}.
+ * For a pre-allocated block with random access API, see {@link WritableBlock}.
  */
-public interface WritableBlock {
+public interface AppendableBlock {
 
     boolean commit(short type, byte version, byte flags);
 
     int length();
 
-    void putBin(long offset, BinarySequence value);
+    long putBin(BinarySequence value);
 
-    void putBool(long offset, boolean value);
+    void putBool(boolean value);
 
-    void putByte(long offset, byte value);
+    void putByte(byte value);
 
-    void putChar(long offset, char value);
+    void putChar(char value);
 
-    void putDouble(long offset, double value);
+    void putDouble(double value);
 
-    void putFloat(long offset, float value);
+    void putFloat(float value);
 
-    void putInt(long offset, int value);
+    void putInt(int value);
 
-    void putLong(long offset, long value);
+    void putLong(long value);
 
-    void putShort(long offset, short value);
+    void putShort(short value);
 
-    void putStr(long offset, CharSequence value);
+    long putStr(CharSequence value);
 
-    void putVarchar(long offset, @Nullable Utf8Sequence value);
+    long putVarchar(@Nullable Utf8Sequence value);
+
+    void skip(long bytes);
 }

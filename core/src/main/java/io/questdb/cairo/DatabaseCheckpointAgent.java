@@ -24,7 +24,7 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.meta.MetaFileWriter;
+import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
 import io.questdb.cairo.mv.MatViewRefreshState;
@@ -198,7 +198,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                     engine.getTableTokens(tables, false);
                     engine.getMatViewGraph().getDependentViewsInOrder(tables, ordered);
 
-                    try (MemoryCMARW mem = Vm.getCMARWInstance(); MetaFileWriter writer = new MetaFileWriter(ff)) {
+                    try (MemoryCMARW mem = Vm.getCMARWInstance(); BlockFileWriter writer = new BlockFileWriter(ff)) {
                         // Copy metadata files for all tables.
                         for (int t = 0, n = ordered.size(); t < n; t++) {
                             TableToken tableToken = ordered.get(t);

@@ -25,10 +25,10 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.meta.MetaFileWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewRefreshState;
 import io.questdb.cairo.sql.Function;
@@ -463,7 +463,7 @@ public final class TableUtils {
             CharSequence root,
             int mkDirMode,
             MemoryMARW memory,
-            @Nullable MetaFileWriter metaFileWriter,
+            @Nullable BlockFileWriter blockFileWriter,
             Path path,
             CharSequence tableDir,
             TableStructure structure,
@@ -482,7 +482,7 @@ public final class TableUtils {
                 throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path.trimTo(rootLen).$()).put(']');
             }
             dirCreated = true;
-            createTableOrMatViewFiles(ff, memory, metaFileWriter, path, rootLen, tableDir, structure, tableVersion, tableId);
+            createTableOrMatViewFiles(ff, memory, blockFileWriter, path, rootLen, tableDir, structure, tableVersion, tableId);
         } catch (Throwable e) {
             if (dirCreated) {
                 ff.rmdir(path.trimTo(rootLen).slash());
@@ -496,7 +496,7 @@ public final class TableUtils {
     public static void createTableOrMatViewFiles(
             FilesFacade ff,
             MemoryMARW memory,
-            @Nullable MetaFileWriter metaFileWriter,
+            @Nullable BlockFileWriter blockFileWriter,
             Path path,
             int rootLen,
             CharSequence tableDir,
@@ -504,13 +504,13 @@ public final class TableUtils {
             int tableVersion,
             int tableId
     ) {
-        createTableOrMatViewFiles(ff, memory, metaFileWriter, path, rootLen, tableDir, structure, tableVersion, tableId, TXN_FILE_NAME);
+        createTableOrMatViewFiles(ff, memory, blockFileWriter, path, rootLen, tableDir, structure, tableVersion, tableId, TXN_FILE_NAME);
     }
 
     public static void createTableOrMatViewFiles(
             FilesFacade ff,
             MemoryMARW memory,
-            @Nullable MetaFileWriter metaFileWriter,
+            @Nullable BlockFileWriter blockFileWriter,
             Path path,
             int rootLen,
             CharSequence tableDir,
@@ -557,8 +557,8 @@ public final class TableUtils {
             createTableNameFile(mem, getTableNameFromDirName(tableDir));
 
             if (structure.isMatView()) {
-                assert metaFileWriter != null;
-                try (MetaFileWriter writer = metaFileWriter) {
+                assert blockFileWriter != null;
+                try (BlockFileWriter writer = blockFileWriter) {
                     writer.of(path.trimTo(rootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
                     MatViewDefinition.commitTo(writer, structure.getMatViewDefinition());
                     writer.of(path.trimTo(rootLen).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
@@ -582,7 +582,7 @@ public final class TableUtils {
             CharSequence root,
             int mkDirMode,
             MemoryMARW memory,
-            @Nullable MetaFileWriter metaFileWriter,
+            @Nullable BlockFileWriter blockFileWriter,
             Path path,
             CharSequence tableDir,
             TableStructure structure,
@@ -611,7 +611,7 @@ public final class TableUtils {
                 }
                 throw CairoException.critical(ff.errno()).put("could not create soft link [src=").put(path.trimTo(rootLen).$()).put(", tableDir=").put(tableDir).put(']');
             }
-            createTableOrMatViewFiles(ff, memory, metaFileWriter, path, rootLen, tableDir, structure, tableVersion, tableId);
+            createTableOrMatViewFiles(ff, memory, blockFileWriter, path, rootLen, tableDir, structure, tableVersion, tableId);
         } finally {
             path.trimTo(rootLen);
         }

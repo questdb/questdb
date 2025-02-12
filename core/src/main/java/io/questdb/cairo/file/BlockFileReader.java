@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.meta;
+package io.questdb.cairo.file;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
@@ -47,9 +47,9 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
-import static io.questdb.cairo.meta.MetaFileUtils.*;
+import static io.questdb.cairo.file.BlockFileUtils.*;
 
-public class MetaFileReader implements Closeable, Mutable {
+public class BlockFileReader implements Closeable, Mutable {
     private final BlockCursor blockCursor = new BlockCursor();
     private final @NotNull MillisecondClock clock;
     private final FilesFacade ff;
@@ -57,7 +57,7 @@ public class MetaFileReader implements Closeable, Mutable {
     private MemoryCMR file;
     private MemoryCR memory;
 
-    public MetaFileReader(final CairoConfiguration configuration) {
+    public BlockFileReader(final CairoConfiguration configuration) {
         this.ff = configuration.getFilesFacade();
         this.spinLockTimeoutMs = configuration.getSpinLockTimeout();
         this.clock = configuration.getMillisecondClock();

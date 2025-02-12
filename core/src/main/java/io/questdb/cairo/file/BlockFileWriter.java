@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.meta;
+package io.questdb.cairo.file;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CommitMode;
@@ -44,9 +44,9 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
-import static io.questdb.cairo.meta.MetaFileUtils.*;
+import static io.questdb.cairo.file.BlockFileUtils.*;
 
-public class MetaFileWriter implements Closeable, Mutable {
+public class BlockFileWriter implements Closeable, Mutable {
     private final BlockMemoryHandleImpl blockMemoryHandle = new BlockMemoryHandleImpl();
     private final int commitMode;
     private final FilesFacade ff;
@@ -56,7 +56,7 @@ public class MetaFileWriter implements Closeable, Mutable {
     private boolean isCommitted;
     private MemoryCARW memory;
 
-    public MetaFileWriter(FilesFacade ff, int commitMode) {
+    public BlockFileWriter(FilesFacade ff, int commitMode) {
         assert commitMode == CommitMode.ASYNC
                 || commitMode == CommitMode.NOSYNC
                 || commitMode == CommitMode.SYNC;
@@ -64,7 +64,7 @@ public class MetaFileWriter implements Closeable, Mutable {
         this.commitMode = commitMode;
     }
 
-    public MetaFileWriter(FilesFacade ff) {
+    public BlockFileWriter(FilesFacade ff) {
         this.ff = ff;
         this.commitMode = CommitMode.SYNC;
     }
