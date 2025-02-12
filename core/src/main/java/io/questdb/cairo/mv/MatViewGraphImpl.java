@@ -33,6 +33,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.ConcurrentQueue;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -40,6 +41,7 @@ import io.questdb.tasks.TelemetryMatViewTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
+import java.util.ArrayDeque;
 import java.util.function.Function;
 
 public class MatViewGraphImpl implements MatViewGraph {
@@ -255,5 +257,55 @@ public class MatViewGraphImpl implements MatViewGraph {
     }
 
     private void storeMatViewTelemetryNoop(short event, TableToken tableToken, long baseTableTxn, CharSequence errorMessage, long latencyUs) {
+    }
+
+    @Override
+    public void getDependentViewsInOrder(ObjHashSet<TableToken> tables, ObjList<TableToken> ordered) {
+        ordered.clear();
+        ObjHashSet<TableToken> seen = new ObjHashSet<>();
+        ArrayDeque<TableToken> stack = new ArrayDeque<>();
+        for (int i = 0, n = tables.size(); i < n; i++) {
+            TableToken token = tables.get(i);
+            if (!seen.contains(token)) {
+                getDependentViewsInOrder(token, seen, stack, ordered);
+            }
+        }
+    }
+
+    private void getDependentViewsInOrder(
+            TableToken current,
+            ObjHashSet<TableToken> seen,
+            ArrayDeque<TableToken> stack,
+            ObjList<TableToken> sink) {
+        stack.push(current);
+        while (!stack.isEmpty()) {
+            TableToken top = stack.peek();
+            if (!seen.contains(top)) {
+                MatViewRefreshList list = dependentViewsByTableName.get(top.getTableName());
+                if (list == null) {
+                    sink.add(top);
+                    seen.add(top);
+                    stack.pop();
+                } else {
+                    boolean allDependentSeen = true;
+                    ObjList<TableToken> views = list.lockForRead();
+                    for (int i = 0, n = views.size(); i < n; i++) {
+                        TableToken view = views.get(i);
+                        if (!seen.contains(view)) {
+                            stack.push(view);
+                            allDependentSeen = false;
+                        }
+                    }
+                    list.unlockAfterRead();
+                    if (allDependentSeen) {
+                        sink.add(top);
+                        seen.add(top);
+                        stack.pop();
+                    }
+                }
+            } else {
+                stack.pop();
+            }
+        }
     }
 }

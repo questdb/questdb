@@ -25,6 +25,7 @@
 package io.questdb.cairo.mv;
 
 import io.questdb.cairo.TableToken;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.TestOnly;
 
@@ -98,5 +99,13 @@ public class NoOpMatViewGraph implements MatViewGraph {
     @Override
     public boolean tryDequeueRefreshTask(MatViewRefreshTask task) {
         return false;
+    }
+
+    @Override
+    public void getDependentViewsInOrder(ObjHashSet<TableToken> tables, ObjList<TableToken> ordered) {
+        ordered.clear();
+        for (int i = 0, n = tables.size(); i < n; i++) {
+            ordered.add(tables.get(i));
+        }
     }
 }

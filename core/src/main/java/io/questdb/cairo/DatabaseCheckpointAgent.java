@@ -49,6 +49,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.datetime.DateFormat;
@@ -193,12 +194,14 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                     path.trimTo(checkpointDbLen).$();
 
                     ObjHashSet<TableToken> tables = new ObjHashSet<>();
+                    ObjList<TableToken> ordered = new ObjList<>();
                     engine.getTableTokens(tables, false);
+                    engine.getMatViewGraph().getDependentViewsInOrder(tables, ordered);
 
-                    try (MemoryCMARW mem = Vm.getCMARWInstance()) {
+                    try (MemoryCMARW mem = Vm.getCMARWInstance(); MetaFileWriter writer = new MetaFileWriter(ff)) {
                         // Copy metadata files for all tables.
-                        for (int t = 0, n = tables.size(); t < n; t++) {
-                            TableToken tableToken = tables.get(t);
+                        for (int t = 0, n = ordered.size(); t < n; t++) {
+                            TableToken tableToken = ordered.get(t);
                             if (engine.isTableDropped(tableToken)) {
                                 LOG.info().$("skipping, table is dropped [table=").$(tableToken).I$();
                                 continue;
@@ -275,22 +278,19 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                     }
 
                                     if (tableToken.isMatView()) {
-                                        try (MetaFileWriter writer = new MetaFileWriter(ff)) {
-                                            MatViewGraph graph = engine.getMatViewGraph();
-                                            MatViewRefreshState state = graph.getViewRefreshState(tableToken);
-                                            writer.of(path.trimTo(rootLen).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
-                                            MatViewRefreshState.commitTo(writer, state);
-                                            MatViewDefinition matViewDefinition = (state != null) ?
-                                                    state.getViewDefinition() : graph.getMatViewDefinition(tableToken);
-                                            if (matViewDefinition != null) {
-                                                writer.of(path.trimTo(rootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
-                                                MatViewDefinition.commitTo(writer, matViewDefinition);
-                                            } else {
-                                                LOG.info().$("materialized view definition not found [view=").$(tableToken).I$();
-                                            }
+                                        MatViewGraph graph = engine.getMatViewGraph();
+                                        MatViewRefreshState state = graph.getViewRefreshState(tableToken);
+                                        writer.of(path.trimTo(rootLen).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
+                                        MatViewRefreshState.commitTo(writer, state);
+                                        MatViewDefinition matViewDefinition = (state != null) ?
+                                                state.getViewDefinition() : graph.getMatViewDefinition(tableToken);
+                                        if (matViewDefinition != null) {
+                                            writer.of(path.trimTo(rootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
+                                            MatViewDefinition.commitTo(writer, matViewDefinition);
+                                        } else {
+                                            LOG.info().$("materialized view definition not found [view=").$(tableToken).I$();
                                         }
                                     }
-
                                     LOG.info().$("table included in the checkpoint [table=").$(tableToken).I$();
                                     break;
                                 } finally {

@@ -26,6 +26,7 @@ package io.questdb.cairo.mv;
 
 import io.questdb.cairo.TableToken;
 import io.questdb.std.Mutable;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
@@ -72,4 +73,6 @@ public interface MatViewGraph extends QuietCloseable, Mutable {
     void notifyTxnApplied(MatViewRefreshTask task, long seqTxn);
 
     boolean tryDequeueRefreshTask(MatViewRefreshTask task);
+
+    void getDependentViewsInOrder(ObjHashSet<TableToken> tables, ObjList<TableToken> ordered);
 }
