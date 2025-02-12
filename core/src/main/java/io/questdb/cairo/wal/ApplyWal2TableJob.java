@@ -433,7 +433,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             .I$();
                 }
 
-                if (initialSeqTxn < writer.getAppliedSeqTxn()) {
+                if (initialSeqTxn < writer.getSeqTxn()) {
                     engine.notifyMatViewBaseCommit(mvRefreshTask, writer.getSeqTxn());
                 }
             } catch (Throwable th) {

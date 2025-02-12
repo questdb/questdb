@@ -369,8 +369,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return false;
         } finally {
             state.unlock();
-            // Try closing the factory if there was a concurrent drop mat view.
-            state.tryCloseIfDropped();
         }
 
         // Kickstart incremental refresh.
@@ -465,8 +463,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     refreshFailState(state, microsecondClock.getTicks(), th.getMessage());
                 } finally {
                     state.unlock();
-                    // Try closing the factory if there was a concurrent drop mat view.
-                    state.tryCloseIfDropped();
                 }
             }
         }
@@ -650,8 +646,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return false;
         } finally {
             state.unlock();
-            // Try closing the factory if there was a concurrent drop mat view.
-            state.tryCloseIfDropped();
         }
     }
 
