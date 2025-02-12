@@ -2096,7 +2096,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         } else {
             parts = unparsedResult.split(",");
         }
-        for (int i = 0, n = defaultValue.length; i < n; i++) {
+        for (int i = 0, n = parts.length; i < n; i++) {
             String url = parts[i].trim();
             if (url.isEmpty()) {
                 throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), "empty URL in the list");
