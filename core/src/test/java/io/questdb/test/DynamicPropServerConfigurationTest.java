@@ -67,6 +67,7 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 import static org.junit.Assert.assertFalse;
 
 public class DynamicPropServerConfigurationTest extends AbstractTest {
+    private static final TestHttpClient testHttpClient = new TestHttpClient();
     private File serverConf;
 
     @Before
@@ -181,7 +182,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 querySink.put(Chars.repeat("q", 150));
                 querySink.put("');");
                 final String query = querySink.toString();
-                try (TestHttpClient testHttpClient = new TestHttpClient()) {
+                try {
                     testHttpClient.assertGet(
                             "/exec",
                             "",
@@ -202,7 +203,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 // second reload should not reload (no changes)
                 assertReloadConfig(false);
 
-                try (TestHttpClient testHttpClient = new TestHttpClient()) {
+                try {
                     testHttpClient.assertGet(
                             "/exec",
                             "{\"query\":\"select length('qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq');\",\"columns\":[{\"name\":\"length\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[150]],\"count\":1}",
@@ -225,13 +226,11 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 // second reload should not reload (no changes)
                 assertReloadConfig(false);
 
-                try (TestHttpClient testHttpClient = new TestHttpClient()) {
-                    testHttpClient.assertGet(
-                            "/exec",
-                            "{\"query\":\"select length('qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq');\",\"columns\":[{\"name\":\"length\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[150]],\"count\":1}",
-                            query
-                    );
-                }
+                testHttpClient.assertGet(
+                        "/exec",
+                        "{\"query\":\"select length('qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq');\",\"columns\":[{\"name\":\"length\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[150]],\"count\":1}",
+                        query
+                );
             }
         });
     }
@@ -249,7 +248,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 serverMain.start();
 
                 final String query = "select rpad('QuestDB', 150, '0');";
-                try (TestHttpClient testHttpClient = new TestHttpClient()) {
+                try {
                     testHttpClient.assertGet(
                             "/exec",
                             "",
@@ -266,13 +265,11 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
 
                 assertReloadConfig(true);
 
-                try (TestHttpClient testHttpClient = new TestHttpClient()) {
-                    testHttpClient.assertGet(
-                            "/exec",
-                            "{\"query\":\"select rpad('QuestDB', 150, '0');\",\"columns\":[{\"name\":\"rpad\",\"type\":\"STRING\"}],\"timestamp\":-1,\"dataset\":[[\"QuestDB00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\"]],\"count\":1}",
-                            query
-                    );
-                }
+                testHttpClient.assertGet(
+                        "/exec",
+                        "{\"query\":\"select rpad('QuestDB', 150, '0');\",\"columns\":[{\"name\":\"rpad\",\"type\":\"STRING\"}],\"timestamp\":-1,\"dataset\":[[\"QuestDB00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\"]],\"count\":1}",
+                        query
+                );
             }
         });
     }

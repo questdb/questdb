@@ -8797,14 +8797,6 @@ public class IODispatcherTest extends AbstractTest {
                 .build(cairoConfiguration);
     }
 
-    private HttpQueryTestBuilder getSimpleTester() {
-        return new HttpQueryTestBuilder()
-                .withTempFolder(root)
-                .withWorkerCount(1)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .withTelemetry(false);
-    }
-
     private boolean handleClientOperation(
             HttpConnectionContext context,
             int operation,

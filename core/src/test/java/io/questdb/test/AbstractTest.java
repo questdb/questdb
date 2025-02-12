@@ -28,6 +28,8 @@ import io.questdb.Bootstrap;
 import io.questdb.Metrics;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.test.cutlass.http.HttpQueryTestBuilder;
+import io.questdb.test.cutlass.http.HttpServerConfigurationBuilder;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.AfterClass;
@@ -79,5 +81,13 @@ public class AbstractTest {
 
     protected static String[] getServerMainArgs() {
         return Bootstrap.getServerMainArgs(root);
+    }
+
+    protected static HttpQueryTestBuilder getSimpleTester() {
+        return new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false);
     }
 }

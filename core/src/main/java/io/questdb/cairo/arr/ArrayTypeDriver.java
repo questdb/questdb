@@ -522,6 +522,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             char closeChar,
             @NotNull String nullLiteral
     ) {
+
         final int count = array.getDimLen(dim);
         final int stride = array.getStride(dim);
         final boolean atDeepestDim = dim == array.getDimCount() - 1;

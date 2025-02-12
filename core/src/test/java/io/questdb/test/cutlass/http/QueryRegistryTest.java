@@ -25,42 +25,16 @@
 package io.questdb.test.cutlass.http;
 
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
-import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractTest;
-import org.junit.AfterClass;
 import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.Timeout;
 
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class QueryRegistryTest extends AbstractTest {
-    private static TestHttpClient testHttpClient;
+    private static final TestHttpClient testHttpClient = new TestHttpClient();
     private final AtomicInteger counter = new AtomicInteger();
-    @Rule
-    public Timeout timeout = Timeout.builder()
-            .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
-            .withLookingForStuckThread(true)
-            .build();
-
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        AbstractTest.setUpStatic();
-        // this method could be called for multiple iterations within single test
-        // we have some synthetic re-runs
-        testHttpClient = Misc.free(testHttpClient);
-        testHttpClient = new TestHttpClient();
-    }
-
-    @AfterClass
-    public static void tearDownStatic() {
-        testHttpClient = Misc.free(testHttpClient);
-        AbstractTest.tearDownStatic();
-    }
 
     @Before
     public void setUp() {
@@ -227,13 +201,5 @@ public class QueryRegistryTest extends AbstractTest {
                         "\"count\":1}",
                 "select query_id, query from query_activity()"
         );
-    }
-
-    private HttpQueryTestBuilder getSimpleTester() {
-        return new HttpQueryTestBuilder()
-                .withTempFolder(root)
-                .withWorkerCount(1)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .withTelemetry(false);
     }
 }
