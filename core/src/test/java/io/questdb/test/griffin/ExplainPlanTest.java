@@ -129,6 +129,7 @@ import io.questdb.griffin.engine.functions.lt.LtStrIPv4FunctionFactory;
 import io.questdb.griffin.engine.functions.math.GreatestNumericFunctionFactory;
 import io.questdb.griffin.engine.functions.math.LeastNumericFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
+import io.questdb.griffin.engine.functions.rnd.RndDoubleArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndIPv4CCFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndSymbolListFunctionFactory;
 import io.questdb.griffin.engine.functions.table.HydrateTableMetadataFunctionFactory;
@@ -2462,6 +2463,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                         useConst = true;
                                     } else if (factory instanceof ArrayCreateFunctionFactory) {
                                         sigArgType = ColumnType.INT;
+                                    } else if (factory instanceof RndDoubleArrayFunctionFactory) {
+                                        sigArgType = ColumnType.INT;
+                                        useConst = true;
                                     } else {
                                         sigArgType = ColumnType.STRING;
                                     }
