@@ -518,6 +518,26 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testContextPath() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.HTTP_CONTEXT_WEB_CONSOLE.getPropertyPath(), "/context");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals("/context", configuration.getHttpServerConfiguration().getContextPathWebConsole());
+
+        properties.setProperty(PropertyKey.HTTP_CONTEXT_ILP.getPropertyPath(), "/ilp/write");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(1, configuration.getHttpServerConfiguration().getContextPathILP().size());
+        Assert.assertEquals("/ilp/write", configuration.getHttpServerConfiguration().getContextPathILP().get(0));
+
+        properties.setProperty(PropertyKey.HTTP_CONTEXT_ILP.getPropertyPath(), "/ilp/write,/write,/ilp");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(3, configuration.getHttpServerConfiguration().getContextPathILP().size());
+        Assert.assertEquals("/ilp/write", configuration.getHttpServerConfiguration().getContextPathILP().get(0));
+        Assert.assertEquals("/write", configuration.getHttpServerConfiguration().getContextPathILP().get(1));
+        Assert.assertEquals("/ilp", configuration.getHttpServerConfiguration().getContextPathILP().get(2));
+    }
+
+    @Test
     public void testDefaultAddColumnTypeForFloat() throws Exception {
         Properties properties = new Properties();
 
