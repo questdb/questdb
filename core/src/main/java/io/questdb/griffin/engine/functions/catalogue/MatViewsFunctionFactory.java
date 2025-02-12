@@ -47,11 +47,11 @@ import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class ViewsFunctionFactory implements FunctionFactory {
+public class MatViewsFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "views()";
+        return "mat_views()";
     }
 
     @Override
@@ -101,7 +101,7 @@ public class ViewsFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("views()");
+            sink.val("mat_views()");
         }
 
         private static class ViewsListCursor implements NoRandomAccessRecordCursor {
@@ -171,8 +171,8 @@ public class ViewsFunctionFactory implements FunctionFactory {
             private static class ViewsListRecord implements Record {
                 private boolean invalid;
                 private String invalidationReason;
-                private long lastRefreshTimestamp;
                 private long lastAppliedBaseTxn;
+                private long lastRefreshTimestamp;
                 private long lastRefreshTxn;
                 private MatViewDefinition viewDefinition;
 

@@ -256,7 +256,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 assertSql(
                         "count\n" +
                                 "1\n",
-                        "select count() from views where name = '" + mvName + "' and not invalid;"
+                        "select count() from mat_views where name = '" + mvName + "' and not invalid;"
                 );
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     TestUtils.assertSqlCursors(
@@ -351,7 +351,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 assertSql(
                         "count\n" +
                                 "1\n",
-                        "select count() from views where name = '" + mvName + "' and not invalid;"
+                        "select count() from mat_views where name = '" + mvName + "' and not invalid;"
                 );
                 TestUtils.assertSqlCursors(
                         compiler,

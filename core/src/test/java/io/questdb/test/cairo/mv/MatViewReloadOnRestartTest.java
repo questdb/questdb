@@ -286,7 +286,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                         main2,
                         "count\n" +
                                 "0\n",
-                        "select count() from views();"
+                        "select count() from mat_views();"
                 );
             }
         });
@@ -355,7 +355,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                             main1,
                             "name\tinvalid\tinvalidationReason\n" +
                                     "price_1h\ttrue\ttruncate operation\n",
-                            "select name, invalid, invalidationReason from views()"
+                            "select name, invalid, invalidationReason from mat_views()"
                     );
                 }
             }
@@ -368,7 +368,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                         main2,
                         "name\tinvalid\tinvalidationReason\n" +
                                 "price_1h\ttrue\ttruncate operation\n",
-                        "select name, invalid, invalidationReason from views()"
+                        "select name, invalid, invalidationReason from mat_views()"
                 );
 
                 execute(main2, "refresh materialized view price_1h");
@@ -382,7 +382,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                         main2,
                         "name\tinvalid\tinvalidationReason\n" +
                                 "price_1h\tfalse\t\n",
-                        "select name, invalid, invalidationReason from views()"
+                        "select name, invalid, invalidationReason from mat_views()"
                 );
             }
 
@@ -394,7 +394,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                         main3,
                         "name\tinvalid\tinvalidationReason\n" +
                                 "price_1h\tfalse\t\n",
-                        "select name, invalid, invalidationReason from views()"
+                        "select name, invalid, invalidationReason from mat_views()"
                 );
             }
         });
@@ -452,7 +452,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                         main2,
                         "count\n" +
                                 "0\n",
-                        "select count() from views();"
+                        "select count() from mat_views();"
                 );
             }
         });
