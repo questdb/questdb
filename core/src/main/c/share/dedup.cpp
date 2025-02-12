@@ -38,7 +38,7 @@
 
 constexpr int64_t error_not_sorted = -1;
 constexpr int64_t no_timestamp_duplicates = -2;
-constexpr int64_t error_out_of_range = -2;
+constexpr int64_t error_out_of_range = -3;
 
 template<typename LambdaDiff>
 inline int64_t branch_free_search(const index_t *array, int64_t count, int64_t value_index, LambdaDiff compare) {

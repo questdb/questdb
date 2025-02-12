@@ -239,7 +239,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_configureLinger
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_connect
         (JNIEnv *e, jclass cl, jint fd, jlong sockAddr) {
-    jboolean retry = 1;
+    jboolean retry = 0;
     int result;
     do {
         result = connect((int) fd, (const struct sockaddr *) sockAddr, sizeof(struct sockaddr));
