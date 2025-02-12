@@ -331,9 +331,8 @@ void set_varchar_null_refs(int64_t *aux, int64_t offset, int64_t count) {
 
 // 31
 void set_array_null_refs(int64_t *aux, int64_t offset, int64_t count) {
-    auto o = offset << 16;
     for (int64_t i = 0; i < 2 * count; i += 2) {
-        aux[i] = o;
+        aux[i] = offset;
         aux[i + 1] = 0; // null flag
     }
 }
