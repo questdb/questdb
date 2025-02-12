@@ -24,8 +24,11 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.griffin.engine.functions.window.DenseRankFunctionFactory;
 import io.questdb.griffin.engine.functions.window.FirstValueDoubleWindowFunctionFactory;
+import io.questdb.griffin.engine.functions.window.LagDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.window.LastValueDoubleWindowFunctionFactory;
+import io.questdb.griffin.engine.functions.window.LeadDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.window.RankFunctionFactory;
 import io.questdb.griffin.engine.functions.window.RowNumberFunctionFactory;
 import io.questdb.std.Chars;
@@ -231,8 +234,7 @@ public final class WindowColumn extends QueryColumn {
         }
 
         // Range frames work correctly depending on the ORDER BY clause of the subquery, which cannot be removed by the optimizer.
-        boolean stopOrderBy = framingMode == FRAMING_RANGE && !Chars.equalsIgnoreCase(getAst().token, RowNumberFunctionFactory.NAME)
-                && !Chars.equalsIgnoreCase(getAst().token, RankFunctionFactory.NAME) &&
+        boolean stopOrderBy = framingMode == FRAMING_RANGE && isRangeFrameDependOnSubqueryOrderBy(getAst().token) &&
                 orderBy.size() > 0 && ((rowsHi != 0 || rowsLo != Long.MIN_VALUE) && !(rowsHi == Long.MAX_VALUE && rowsLo == Long.MIN_VALUE));
 
         // Heuristic. If current recordCursor has orderBy column exactly same as orderBy of window frame, we continue to push the order.
@@ -319,5 +321,13 @@ public final class WindowColumn extends QueryColumn {
 
     public void setNullsDescPos(int nullsDescPos) {
         this.nullsDescPos = nullsDescPos;
+    }
+
+    private static boolean isRangeFrameDependOnSubqueryOrderBy(CharSequence funName) {
+        return !Chars.equalsIgnoreCase(funName, RowNumberFunctionFactory.NAME)
+                && !Chars.equalsIgnoreCase(funName, RankFunctionFactory.NAME)
+                && !Chars.equalsIgnoreCase(funName, DenseRankFunctionFactory.NAME)
+                && !Chars.equalsIgnoreCase(funName, LeadDoubleFunctionFactory.NAME)
+                && !Chars.equalsIgnoreCase(funName, LagDoubleFunctionFactory.NAME);
     }
 }

@@ -125,23 +125,32 @@ jobs:
             core/src/main/resources/io/questdb/bin/linux-x86-64/libquestdbr.so
           key: nativelibs-linux-${{ github.sha }}
   build-all-linux-aarch64:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-22.04-arm
+    container:
+      image: quay.io/pypa/manylinux_2_28_aarch64
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: false
-      - name: Install rs-cross
+      - name: Install Tools
         run: |
-          cargo install cross
+          ldd --version
+          yum update -y
+          yum install wget zstd curl python3 -y
+      - name: Install toolchains (Rust)
+        run: |
+          python3 ./.github/prepare_rust_env.py --nightly
+          echo "PATH=/github/home/.cargo/bin/:$PATH" >> "$GITHUB_ENV"
       - name: Build linux-aarch64 Rust Library
         run: |
           cd core/rust/qdbr
           cargo clean
-          cross build --target aarch64-unknown-linux-gnu --release --target-dir `pwd`/target
+          cargo build --release
           mkdir -p ../../src/main/resources/io/questdb/bin/linux-aarch64/
-          cp target/aarch64-unknown-linux-gnu/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/linux-aarch64/
+          cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/linux-aarch64/
       - name: Check git status
         run: |
+          git config --global --add safe.directory /__w/questdb/questdb
           git status
       - name: Save linux-aarch64 Libraries to Cache
         uses: actions/cache/save@v3
