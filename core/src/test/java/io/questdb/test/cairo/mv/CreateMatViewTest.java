@@ -26,7 +26,6 @@ package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.meta.MetaFileReader;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewRefreshJob;
@@ -834,7 +833,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
         try (MetaFileReader reader = new MetaFileReader(configuration); Path path = new Path()) {
             path.of(configuration.getRoot());
             final int rootLen = path.size();
-            MatViewDefinition mvd = TableUtils.loadMatViewDefinition(
+            MatViewDefinition mvd = MatViewDefinition.readFrom(
                     reader,
                     path,
                     rootLen,
