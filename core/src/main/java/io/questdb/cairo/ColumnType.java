@@ -501,23 +501,7 @@ public final class ColumnType {
     private static boolean isGeoHashWideningCast(int fromType, int toType) {
         final int toTag = tagOf(toType);
         final int fromTag = tagOf(fromType);
-        // Deliberate fallthrough in all case branches!
-        switch (fromTag) {
-            case GEOLONG:
-                if (toTag == GEOINT) {
-                    return true;
-                }
-            case GEOINT:
-                if (toTag == GEOSHORT) {
-                    return true;
-                }
-            case GEOSHORT:
-                if (toTag == GEOBYTE) {
-                    return true;
-                }
-            default:
-                return false;
-        }
+        return (fromTag == GEOLONG && toTag == GEOINT) || (fromTag == GEOLONG && toTag == GEOSHORT) || (fromTag == GEOLONG && toTag == GEOBYTE) || (fromTag == GEOINT && toTag == GEOSHORT) || (fromTag == GEOINT && toTag == GEOBYTE) || (fromTag == GEOSHORT && toTag == GEOBYTE);
     }
 
     private static boolean isIPv4Cast(int fromType, int toType) {
@@ -547,16 +531,16 @@ public final class ColumnType {
                 || (fromType == INT && toType >= BYTE && toType <= SHORT)
                 || (fromType == SHORT && toType == BYTE)
                 || (fromType == CHAR && toType == BYTE)
-                || isStringyType(fromType) && (
-                toType == BYTE ||
-                        toType == INT ||
-                        toType == LONG ||
-                        toType == DATE ||
-                        toType == TIMESTAMP ||
-                        toType == FLOAT ||
-                        toType == DOUBLE ||
-                        toType == CHAR ||
-                        toType == UUID);
+                || ((fromType == STRING || fromType == VARCHAR) && toType == BYTE)
+                || ((fromType == STRING || fromType == VARCHAR) && toType == SHORT)
+                || ((fromType == STRING || fromType == VARCHAR) && toType == INT)
+                || ((fromType == STRING || fromType == VARCHAR) && toType == LONG)
+                || ((fromType == STRING || fromType == VARCHAR) && toType == DATE)
+                || ((fromType == STRING || fromType == VARCHAR) && toType == TIMESTAMP)
+                || ((fromType == STRING || fromType == VARCHAR) && toType == FLOAT)
+                || ((fromType == STRING || fromType == VARCHAR) && toType == DOUBLE)
+                || ((fromType == STRING || fromType == VARCHAR) && toType == CHAR)
+                || ((fromType == STRING || fromType == VARCHAR) && toType == UUID);
     }
 
     private static boolean isStringCast(int fromType, int toType) {
