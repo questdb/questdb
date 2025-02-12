@@ -421,7 +421,7 @@ public class ExpressionParser {
                                     ExpressionNode.ARRAY_ACCESS,
                                     "[]",
                                     2,
-                                    lastPos
+                                    node.position
                             );
                             node.paramCount = 2;
                             opStack.push(node);
@@ -431,7 +431,7 @@ public class ExpressionParser {
                                     ExpressionNode.ARRAY_CONSTRUCTOR,
                                     "[,]",
                                     2,
-                                    lastPos
+                                    node.position
                             );
                             node.paramCount = paramCount + 1;
                             argStackDepth = onNode(listener, node, argStackDepth, false);

@@ -206,7 +206,19 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             f.getArray(null);
             fail();
         } catch (SqlException e) {
-
+            assertEquals("[11] mixed array and non-array elements", e.getMessage());
+        }
+        try (Function f = parseFunction("ARRAY[1, [2]]", metadata, functionParser)) {
+            f.getArray(null);
+            fail();
+        } catch (SqlException e) {
+            assertEquals("[9] mixed array and non-array elements", e.getMessage());
+        }
+        try (Function f = parseFunction("ARRAY[[1], [[2]]]", metadata, functionParser)) {
+            f.getArray(null);
+            fail();
+        } catch (SqlException e) {
+            assertEquals("[11] mismatched array shape", e.getMessage());
         }
     }
 
