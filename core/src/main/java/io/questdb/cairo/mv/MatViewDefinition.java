@@ -27,15 +27,20 @@ package io.questdb.cairo.mv;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.meta.AppendableBlock;
+import io.questdb.cairo.meta.MetaFileReader;
 import io.questdb.cairo.meta.MetaFileWriter;
+import io.questdb.cairo.meta.ReadableBlock;
+import io.questdb.cairo.vm.Vm;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -131,6 +136,20 @@ public class MatViewDefinition {
         mem.putStr(matViewDefinition.getMatViewSql());
     }
 
+    public static MatViewDefinition readFrom(@NotNull MetaFileReader reader, Path path, int rootLen, final TableToken matViewToken) {
+        path.trimTo(rootLen).concat(matViewToken.getDirName()).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME);
+        reader.of(path.$());
+        MetaFileReader.BlockCursor cursor = reader.getCursor();
+        if (cursor.hasNext()) {
+            return loadMatViewDefinition(cursor.next(), matViewToken);
+        } else {
+            throw CairoException.critical(0)
+                    .put("cannot read materialized view definition, file is empty [path=")
+                    .put(path)
+                    .put(']');
+        }
+    }
+
     public String getBaseTableName() {
         return baseTableName;
     }
@@ -169,5 +188,64 @@ public class MatViewDefinition {
 
     public @Nullable TimeZoneRules getTzRules() {
         return rules;
+    }
+
+    private static MatViewDefinition loadMatViewDefinition(final ReadableBlock mem, final TableToken matViewToken) {
+        if (mem.version() != MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_MSG_VERSION
+                || mem.type() != MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE
+        ) {
+            throw CairoException.critical(0)
+                    .put("unsupported materialized view definition format [view=")
+                    .put(matViewToken.getTableName())
+                    .put(", msgVersion=")
+                    .put(mem.version())
+                    .put(", msgType=")
+                    .put(mem.type())
+                    .put(']');
+        }
+
+        long offset = 0;
+        final CharSequence baseTableName = mem.getStr(offset);
+        if (baseTableName == null || baseTableName.length() == 0) {
+            throw CairoException.critical(0)
+                    .put("base table name for materialized view is empty [view=")
+                    .put(matViewToken.getTableName())
+                    .put(']');
+        }
+        offset += Vm.getStorageLength(baseTableName);
+        final String baseTableNameStr = Chars.toString(baseTableName);
+
+        final long samplingInterval = mem.getLong(offset);
+        offset += Long.BYTES;
+
+        final char samplingIntervalUnit = mem.getChar(offset);
+        offset += Character.BYTES;
+
+        final CharSequence timeZone = mem.getStr(offset);
+        offset += Vm.getStorageLength(timeZone);
+        final String timeZoneStr = Chars.toString(timeZone);
+
+        final CharSequence timeZoneOffset = mem.getStr(offset);
+        offset += Vm.getStorageLength(timeZoneOffset);
+        final String timeZoneOffsetStr = Chars.toString(timeZoneOffset);
+
+        final CharSequence matViewSql = mem.getStr(offset);
+        if (matViewSql == null || matViewSql.length() == 0) {
+            throw CairoException.critical(0)
+                    .put("materialized view SQL is empty [view=")
+                    .put(matViewToken.getTableName())
+                    .put(']');
+        }
+        final String matViewSqlStr = Chars.toString(matViewSql);
+
+        return new MatViewDefinition(
+                matViewToken,
+                matViewSqlStr,
+                baseTableNameStr,
+                samplingInterval,
+                samplingIntervalUnit,
+                timeZoneStr,
+                timeZoneOffsetStr
+        );
     }
 }

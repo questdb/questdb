@@ -28,9 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.meta.MetaFileReader;
 import io.questdb.cairo.meta.MetaFileWriter;
-import io.questdb.cairo.meta.ReadableBlock;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewRefreshState;
 import io.questdb.cairo.sql.Function;
@@ -1048,26 +1046,6 @@ public final class TableUtils {
         return columnValue != null ? columnValue.length() : NULL_LEN;
     }
 
-    public static @NotNull MatViewDefinition loadMatViewDefinition(
-            MetaFileReader reader,
-            Path path,
-            int rootLen,
-            TableToken matViewToken
-    ) {
-        path.trimTo(rootLen).concat(matViewToken.getDirName()).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME);
-        reader.of(path.$());
-        MetaFileReader.BlockCursor cursor = reader.getCursor();
-        if (cursor.hasNext()) {
-            // for now, we only have one message in the file
-            return loadMatViewDefinition(cursor.next(), matViewToken);
-        } else {
-            throw CairoException.critical(0)
-                    .put("cannot read materialized view definition, file is empty [path=")
-                    .put(path)
-                    .put(']');
-        }
-    }
-
     public static long lock(FilesFacade ff, LPSZ path, boolean verbose) {
         // workaround for https://github.com/docker/for-mac/issues/7004
         if (Files.VIRTIO_FS_DETECTED) {
@@ -1920,65 +1898,6 @@ public final class TableUtils {
             throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(offset + storageLength);
         }
         return metaMem.getStrA(offset);
-    }
-
-    private static MatViewDefinition loadMatViewDefinition(final ReadableBlock mem, final TableToken matViewToken) {
-        if (mem.version() != MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_MSG_VERSION
-                || mem.type() != MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE
-        ) {
-            throw CairoException.critical(0)
-                    .put("unsupported materialized view definition format [view=")
-                    .put(matViewToken.getTableName())
-                    .put(", msgVersion=")
-                    .put(mem.version())
-                    .put(", msgType=")
-                    .put(mem.type())
-                    .put(']');
-        }
-
-        long offset = 0;
-        final CharSequence baseTableName = mem.getStr(offset);
-        if (baseTableName == null || baseTableName.length() == 0) {
-            throw CairoException.critical(0)
-                    .put("base table name for materialized view is empty [view=")
-                    .put(matViewToken.getTableName())
-                    .put(']');
-        }
-        offset += Vm.getStorageLength(baseTableName);
-        final String baseTableNameStr = Chars.toString(baseTableName);
-
-        final long samplingInterval = mem.getLong(offset);
-        offset += Long.BYTES;
-
-        final char samplingIntervalUnit = mem.getChar(offset);
-        offset += Character.BYTES;
-
-        final CharSequence timeZone = mem.getStr(offset);
-        offset += Vm.getStorageLength(timeZone);
-        final String timeZoneStr = Chars.toString(timeZone);
-
-        final CharSequence timeZoneOffset = mem.getStr(offset);
-        offset += Vm.getStorageLength(timeZoneOffset);
-        final String timeZoneOffsetStr = Chars.toString(timeZoneOffset);
-
-        final CharSequence matViewSql = mem.getStr(offset);
-        if (matViewSql == null || matViewSql.length() == 0) {
-            throw CairoException.critical(0)
-                    .put("materialized view SQL is empty [view=")
-                    .put(matViewToken.getTableName())
-                    .put(']');
-        }
-        final String matViewSqlStr = Chars.toString(matViewSql);
-
-        return new MatViewDefinition(
-                matViewToken,
-                matViewSqlStr,
-                baseTableNameStr,
-                samplingInterval,
-                samplingIntervalUnit,
-                timeZoneStr,
-                timeZoneOffsetStr
-        );
     }
 
     // Utility method for debugging. This method is not used in production.
