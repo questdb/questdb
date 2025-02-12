@@ -133,7 +133,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         //noinspection AssertWithSideEffects
         assert assertsEnabled = true;
 
-        // test asserts the assert in the production code
+        // test asserts that an assert statement in production code will fail
         Assume.assumeTrue(assertsEnabled);
 
         try {
