@@ -26,6 +26,7 @@ package io.questdb.cairo.mv;
 
 import io.questdb.cairo.TableToken;
 import io.questdb.std.ObjList;
+import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.SimpleReadWriteLock;
 
 import java.util.concurrent.atomic.AtomicLong;
@@ -71,7 +72,7 @@ public class MatViewRefreshList {
         return lastNotified != Long.MIN_VALUE && lastNotified != -seqTxn;
     }
 
-    ObjList<TableToken> lockForRead() {
+    ReadOnlyObjList<TableToken> lockForRead() {
         lock.readLock().lock();
         return matViews;
     }

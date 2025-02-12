@@ -355,7 +355,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     }
                     throw ex;
                 }
-                final long safeToPurgeTxn = getSafeToPurgeTxn();
+                final long safeToPurgeTxn = getSafeToPurgeTxn(txReader.getSeqTxn());
 
                 TableSequencerAPI tableSequencerAPI = engine.getTableSequencerAPI();
                 try (TransactionLogCursor transactionLogCursor = tableSequencerAPI.getCursor(tableToken, safeToPurgeTxn)) {
@@ -386,8 +386,8 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         // No need to do anything, all discovered segments / wals will be deleted
     }
 
-    private long getSafeToPurgeTxn() {
-        long safeToPurgeTxn = txReader.getSeqTxn();
+    private long getSafeToPurgeTxn(long readerSeqTxn) {
+        long safeToPurgeTxn = readerSeqTxn;
         childViewSink.clear();
         engine.getMatViewGraph().getDependentMatViews(tableToken, childViewSink);
         for (int v = 0, n = childViewSink.size(); v < n; v++) {

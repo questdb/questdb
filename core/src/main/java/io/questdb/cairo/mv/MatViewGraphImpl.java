@@ -35,6 +35,7 @@ import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
+import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.tasks.TelemetryMatViewTask;
@@ -64,11 +65,11 @@ public class MatViewGraphImpl implements MatViewGraph {
     }
 
     @Override
-    public MatViewRefreshState addView(MatViewDefinition viewDefinition, boolean isInvalid) {
+    public MatViewRefreshState addView(MatViewDefinition viewDefinition) {
         final TableToken matViewToken = viewDefinition.getMatViewToken();
         final MatViewRefreshState state = new MatViewRefreshState(
                 viewDefinition,
-                isInvalid,
+                false,
                 matViewTelemetryFacade
         );
 
@@ -161,7 +162,7 @@ public class MatViewGraphImpl implements MatViewGraph {
     @Override
     public void getDependentMatViews(TableToken baseTableToken, ObjList<TableToken> sink) {
         final MatViewRefreshList list = getOrCreateDependentViews(baseTableToken.getTableName());
-        final ObjList<TableToken> matViews = list.lockForRead();
+        final ReadOnlyObjList<TableToken> matViews = list.lockForRead();
         try {
             sink.addAll(matViews);
         } finally {
@@ -278,7 +279,7 @@ public class MatViewGraphImpl implements MatViewGraph {
                     stack.pop();
                 } else {
                     boolean allDependentSeen = true;
-                    ObjList<TableToken> views = list.lockForRead();
+                    ReadOnlyObjList<TableToken> views = list.lockForRead();
                     for (int i = 0, n = views.size(); i < n; i++) {
                         TableToken view = views.get(i);
                         if (!seen.contains(view)) {

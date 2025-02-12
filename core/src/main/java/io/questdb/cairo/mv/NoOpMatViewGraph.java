@@ -33,7 +33,7 @@ public class NoOpMatViewGraph implements MatViewGraph {
     public static final NoOpMatViewGraph INSTANCE = new NoOpMatViewGraph();
 
     @Override
-    public MatViewRefreshState addView(MatViewDefinition viewDefinition, boolean isInvalid) {
+    public MatViewRefreshState addView(MatViewDefinition viewDefinition) {
         return null;
     }
 
