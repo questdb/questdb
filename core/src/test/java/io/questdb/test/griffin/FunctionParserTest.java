@@ -50,7 +50,7 @@ import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.ShortFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
-import io.questdb.griffin.engine.functions.array.ConstructArrayFunctionFactory;
+import io.questdb.griffin.engine.functions.array.ArrayCreateFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InStrFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.NotFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.OrFunctionFactory;
@@ -198,8 +198,21 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testArrayFunctionInvalid() {
+        functions.add(new ArrayCreateFunctionFactory());
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        FunctionParser functionParser = createFunctionParser();
+        try (Function f = parseFunction("ARRAY[[1], 2]", metadata, functionParser)) {
+            f.getArray(null);
+            fail();
+        } catch (SqlException e) {
+
+        }
+    }
+
+    @Test
     public void testArrayFunctionWithLiterals() throws SqlException {
-        functions.add(new ConstructArrayFunctionFactory());
+        functions.add(new ArrayCreateFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         FunctionParser functionParser = createFunctionParser();
         try (Function f = parseFunction("ARRAY[1]", metadata, functionParser)) {
@@ -250,7 +263,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testArrayFunctionWithRecord() throws SqlException {
-        functions.add(new ConstructArrayFunctionFactory());
+        functions.add(new ArrayCreateFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         final Record record = new Record() {
             @Override

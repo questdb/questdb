@@ -42,7 +42,7 @@ import io.questdb.std.ObjList;
 import static io.questdb.cairo.ColumnType.commonWideningType;
 import static io.questdb.cairo.ColumnType.decodeArrayElementType;
 
-public class ConstructArrayFunctionFactory implements FunctionFactory {
+public class ArrayCreateFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "[,](V)";
