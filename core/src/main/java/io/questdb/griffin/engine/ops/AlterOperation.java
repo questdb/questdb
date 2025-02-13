@@ -341,6 +341,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             case ATTACH_PARTITION:
                 return "attach partition operation";
             case SET_DEDUP_ENABLE:
+                // We disallow creation of mat views with keys outside the base table's dedup columns.
+                // So, we invalidate mat views when user enables dedup on the base table, not to break this restriction.
                 return "enable deduplication operation";
             default:
                 return null;
