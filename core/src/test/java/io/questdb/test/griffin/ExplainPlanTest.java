@@ -2406,7 +2406,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                     for (int p = 0; p < sigArgCount; p++) {
                         int typeWithFlags = descriptor.getArgTypeWithFlags(p);
-                        final short sigArgType = FunctionFactoryDescriptor.toType(typeWithFlags);
+                        final short sigArgType = FunctionFactoryDescriptor.toTypeTag(typeWithFlags);
                         boolean isArray = FunctionFactoryDescriptor.isArray(typeWithFlags);
 
                         if (p > 0) {
@@ -2424,7 +2424,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     for (int p = 0; p < sigArgCount; p++) {
                         int typeWithFlags = descriptor.getArgTypeWithFlags(p);
                         boolean isConstant = FunctionFactoryDescriptor.isConstant(typeWithFlags);
-                        short sigArgType = FunctionFactoryDescriptor.toType(typeWithFlags);
+                        short sigArgType = FunctionFactoryDescriptor.toTypeTag(typeWithFlags);
                         ObjList<Function> availableValues = constFuncs.get(sigArgType);
                         int constValues = availableValues != null ? availableValues.size() : 1;
                         combinations *= (constValues + (isConstant ? 0 : 1));
@@ -2441,7 +2441,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         try {
                             for (int p = 0; p < sigArgCount; p++) {
                                 int typeWithFlags = descriptor.getArgTypeWithFlags(p);
-                                short sigArgType = FunctionFactoryDescriptor.toType(typeWithFlags);
+                                short sigArgType = FunctionFactoryDescriptor.toTypeTag(typeWithFlags);
                                 boolean isConstant = FunctionFactoryDescriptor.isConstant(typeWithFlags);
                                 boolean isArray = FunctionFactoryDescriptor.isArray(typeWithFlags);
                                 boolean useConst = isConstant || (tempNo & 1) == 1 || sigArgType == ColumnType.CURSOR || sigArgType == ColumnType.RECORD;

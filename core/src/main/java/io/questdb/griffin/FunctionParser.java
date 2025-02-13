@@ -416,7 +416,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     ex.put("expression type mismatch,");
                     for (int i = 0, n = descriptor.getSigArgCount(); i < n; i++) {
                         final int typeWithFlags = descriptor.getArgTypeWithFlags(i);
-                        final int expectedType = FunctionFactoryDescriptor.toType(typeWithFlags);
+                        final int expectedType = FunctionFactoryDescriptor.toTypeTag(typeWithFlags);
                         final boolean expectedConstant = FunctionFactoryDescriptor.isConstant(typeWithFlags);
                         final int actualType = args.getQuick(i).getType();
                         final boolean actualConstant = args.getQuick(i).isConstant();
@@ -435,7 +435,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     ex.put("argument type mismatch for function `").put(node.token).put('`');
                     for (int i = 0, n = descriptor.getSigArgCount(); i < n; i++) {
                         final int typeWithFlags = descriptor.getArgTypeWithFlags(i);
-                        final int expectedType = FunctionFactoryDescriptor.toType(typeWithFlags);
+                        final int expectedType = FunctionFactoryDescriptor.toTypeTag(typeWithFlags);
                         final boolean expectedConstant = FunctionFactoryDescriptor.isConstant(typeWithFlags);
                         final int actualType = args.getQuick(i).getType();
                         final boolean actualConstant = args.getQuick(i).isConstant();
@@ -466,7 +466,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     ex.put(", ");
                 }
                 final int typeWithFlags = descriptor.getArgTypeWithFlags(i);
-                ex.put(ColumnType.nameOf(FunctionFactoryDescriptor.toType(typeWithFlags)));
+                ex.put(ColumnType.nameOf(FunctionFactoryDescriptor.toTypeTag(typeWithFlags)));
                 if (FunctionFactoryDescriptor.isArray(typeWithFlags)) {
                     ex.put("[]");
                 }
@@ -771,7 +771,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
             if (sigArgCount > 0) {
                 final int lastSigArgTypeWithFlags = descriptor.getArgTypeWithFlags(sigArgCount - 1);
-                sigVarArg = FunctionFactoryDescriptor.toType(lastSigArgTypeWithFlags) == ColumnType.VAR_ARG;
+                sigVarArg = FunctionFactoryDescriptor.toTypeTag(lastSigArgTypeWithFlags) == ColumnType.VAR_ARG;
                 sigVarArgConst = FunctionFactoryDescriptor.isConstant(lastSigArgTypeWithFlags);
             } else {
                 sigVarArg = false;
@@ -842,7 +842,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     //
                     // output of a cast() function is always the 2nd argument in a function signature
                     if (argIdx != 1 || !SqlKeywords.isCastKeyword(node.token)) {
-                        int overloadDistance = ColumnType.overloadDistance(argTypeTag, sigArgType); // NULL to any is 0
+                        int overloadDistance = ColumnType.overloadDistance(argTypeTag, sigArgTypeTag); // NULL to any is 0
 
                         if (argTypeTag == ColumnType.STRING && sigArgTypeTag == ColumnType.CHAR) {
                             if (arg.isConstant()) {
@@ -952,7 +952,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             final int pos = undefinedVariables.getQuick(i);
             if (pos < candidateSigArgCount) {
                 // assign arguments based on the candidate function descriptor
-                final int sigArgType = FunctionFactoryDescriptor.toType(candidateDescriptor.getArgTypeWithFlags(pos));
+                final int sigArgType = FunctionFactoryDescriptor.toTypeTag(candidateDescriptor.getArgTypeWithFlags(pos));
                 args.getQuick(pos).assignType(sigArgType, sqlExecutionContext.getBindVariableService());
             } else {
                 // in case of vararg it is possible that we have more undefined variables than args in the function descriptor,
@@ -964,7 +964,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
         for (int k = 0; k < candidateSigArgCount; k++) {
             final Function arg = args.getQuick(k);
-            final short sigArgTypeTag = FunctionFactoryDescriptor.toType(candidateDescriptor.getArgTypeWithFlags(k));
+            final short sigArgTypeTag = FunctionFactoryDescriptor.toTypeTag(candidateDescriptor.getArgTypeWithFlags(k));
             final short argTypeTag = ColumnType.tagOf(arg.getType());
 
             if (argTypeTag == ColumnType.DOUBLE && arg.isConstant() && Numbers.isNull(arg.getDouble(null))) {

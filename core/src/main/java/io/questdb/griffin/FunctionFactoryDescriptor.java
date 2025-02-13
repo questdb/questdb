@@ -51,7 +51,7 @@ public class FunctionFactoryDescriptor {
                 i < n; typeCount++
         ) {
             char cc = sig.charAt(i);
-            if (FunctionFactoryDescriptor.getArgType(cc) == -1) {
+            if (FunctionFactoryDescriptor.getArgTypeTag(cc) == -1) {
                 throw SqlException.position(0).put("illegal argument type: ").put('`').put(cc).put('`');
             }
             // check if this is an array
@@ -69,7 +69,7 @@ public class FunctionFactoryDescriptor {
         long[] types = new long[typeCount % 2 == 0 ? typeCount / 2 : typeCount / 2 + 1];
         for (int i = openParenIndex + 1, n = sig.length() - 1, typeIndex = 0; i < n; ) {
             final char c = sig.charAt(i);
-            int type = FunctionFactoryDescriptor.getArgType(c);
+            int type = FunctionFactoryDescriptor.getArgTypeTag(c);
             final int arrayIndex = typeIndex / 2;
             final int arrayValueOffset = (typeIndex % 2) * 32;
             // check if this is an array
@@ -91,8 +91,8 @@ public class FunctionFactoryDescriptor {
         this.sigArgCount = typeCount;
     }
 
-    public static int getArgType(char c) {
-        int sigArgType;
+    public static short getArgTypeTag(char c) {
+        short sigArgType;
         switch (c | 32) {
             case 'a':
                 sigArgType = ColumnType.CHAR;
@@ -215,8 +215,8 @@ public class FunctionFactoryDescriptor {
         return signatureBuilder.toString();
     }
 
-    public static short toType(int mask) {
-        return (short) (mask & TYPE_MASK);
+    public static short toTypeTag(int typeWithFlags) {
+        return (short) (typeWithFlags & TYPE_MASK);
     }
 
     public static StringSink translateSignature(CharSequence funcName, String signature, StringSink sink) {

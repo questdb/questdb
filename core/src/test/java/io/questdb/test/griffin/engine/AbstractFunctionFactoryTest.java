@@ -158,7 +158,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         if (argTypeFromSig) {
             final char typeChar = signature.charAt(signatureTypeOffset + i + 1);
             constantArg = Character.isLowerCase(typeChar);
-            argType = FunctionFactoryDescriptor.getArgType(typeChar);
+            argType = FunctionFactoryDescriptor.getArgTypeTag(typeChar);
         } else {
             constantArg = constVarArg;
             argType = getArgType(arg);

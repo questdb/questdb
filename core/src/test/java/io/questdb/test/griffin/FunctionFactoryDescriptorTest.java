@@ -128,7 +128,7 @@ public class FunctionFactoryDescriptorTest {
     }
 
     private static void assertType(FunctionFactoryDescriptor descriptor, int argIndex) {
-        Assert.assertEquals(ColumnType.STRING, FunctionFactoryDescriptor.toType(descriptor.getArgTypeWithFlags(argIndex)));
+        Assert.assertEquals(ColumnType.STRING, FunctionFactoryDescriptor.toTypeTag(descriptor.getArgTypeWithFlags(argIndex)));
     }
 
     private static FunctionFactoryDescriptor descriptorOf(String signature) throws SqlException {
