@@ -312,31 +312,31 @@ public class FunctionFactoryDescriptor {
     }
 
     static {
-        typeNameMap.put('d', "double");
-        typeNameMap.put('b', "byte");
-        typeNameMap.put('e', "short");
         typeNameMap.put('a', "char");
+        typeNameMap.put('b', "byte");
+        typeNameMap.put('c', "cursor");
+        typeNameMap.put('d', "double");
+        typeNameMap.put('e', "short");
         typeNameMap.put('f', "float");
+        typeNameMap.put('g', "geohash");
+        typeNameMap.put('h', "long256");
         typeNameMap.put('i', "int");
-        typeNameMap.put('l', "long");
-        typeNameMap.put('s', "string");
-        typeNameMap.put('t', "boolean");
+        typeNameMap.put('j', "long128");
         typeNameMap.put('k', "symbol");
+        typeNameMap.put('l', "long");
         typeNameMap.put('m', "date");
         typeNameMap.put('n', "timestamp");
-        typeNameMap.put('u', "binary");
-        typeNameMap.put('v', "var_arg");
-        typeNameMap.put('c', "cursor");
-        typeNameMap.put('r', "record");
-        typeNameMap.put('h', "long256");
-        typeNameMap.put('g', "geohash");
         typeNameMap.put('o', "null");
         typeNameMap.put('p', "reg_class");
         typeNameMap.put('q', "reg_procedure");
+        typeNameMap.put('r', "record");
+        typeNameMap.put('s', "string");
+        typeNameMap.put('t', "boolean");
+        typeNameMap.put('u', "binary");
+        typeNameMap.put('v', "var_arg");
         typeNameMap.put('w', "array_string");
-        typeNameMap.put('j', "long128");
-        typeNameMap.put('z', "uuid");
         typeNameMap.put('x', "ipv4");
+        typeNameMap.put('z', "uuid");
         typeNameMap.put('ø', "varchar");
         typeNameMap.put('δ', "interval");
         typeNameMap.put('[' | 32, "[]");
