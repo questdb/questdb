@@ -50,22 +50,22 @@ public interface FunctionFactory {
      * <li>G = GeoHash</li>
      * <li>H = long256</li>
      * <li>I = int</li>
+     * <li>J = long128</li>
      * <li>K = symbol</li>
      * <li>L = long</li>
      * <li>M = date</li>
      * <li>N = timestamp</li>
+     * <li>o = NULL - this type is used in cast()</li>
+     * <li>p = REGCLASS - this type is used in cast()</li>
+     * <li>q = REGPROCEDURE - this type is used in cast()</li>
      * <li>R = record</li>
      * <li>S = string</li>
      * <li>T = boolean</li>
      * <li>U = binary</li>
      * <li>V = variable argument list</li>
-     * <li>o = NULL - this type is used in cast()</li>
-     * <li>p = REGCLASS - this type is used in cast()</li>
-     * <li>q = REGPROCEDURE - this type is used in cast()</li>
-     * <li>J = long128</li>
-     * <li>Z = uuid</li>
      * <li>W = string array</li>
      * <li>X = ipv4</li>
+     * <li>Z = uuid</li>
      * <li>Ø(ø) = varchar</li>
      * <li>Δ(δ) = interval</li>
      * </ul>
