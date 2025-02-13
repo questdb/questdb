@@ -29,8 +29,12 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.Long256;
+import io.questdb.std.Misc;
 
-public class FunctionArray implements ArrayView {
+import java.io.Closeable;
+import java.io.IOException;
+
+public class FunctionArray implements ArrayView, Closeable {
 
     private final int[] shape;
     private final int[] strides;
@@ -46,7 +50,8 @@ public class FunctionArray implements ArrayView {
 
     @Override
     public void appendWithDefaultStrides(MemoryA mem) {
-        short elemType = ColumnType.decodeArrayElementType(type);
+        final short elemType = ColumnType.decodeArrayElementType(type);
+        final Function[] functions = functions();
         switch (elemType) {
             case ColumnType.BYTE:
                 for (int n = getFlatElemCount(), i = 0; i < n; i++) {
@@ -125,6 +130,14 @@ public class FunctionArray implements ArrayView {
     }
 
     @Override
+    public void close() throws IOException {
+        Function[] functions = functions();
+        for (int n = functions.length, i = 0; i < n; i++) {
+            functions[i] = Misc.free(functions[i]);
+        }
+    }
+
+    @Override
     public int getDimCount() {
         return shape.length;
     }
@@ -136,21 +149,21 @@ public class FunctionArray implements ArrayView {
 
     @Override
     public double getDoubleAtFlatIndex(int flatIndex) {
-        return functions[flatIndex].getDouble(record);
+        return functions()[flatIndex].getDouble(record);
     }
 
     @Override
     public int getFlatElemCount() {
-        return functions.length;
+        return functions().length;
     }
 
     public Function getFunctionAtFlatIndex(int flatIndex) {
-        return functions[flatIndex];
+        return functions()[flatIndex];
     }
 
     @Override
     public long getLongAtFlatIndex(int flatIndex) {
-        return functions[flatIndex].getLong(record);
+        return functions()[flatIndex].getLong(record);
     }
 
     @Override
@@ -164,7 +177,7 @@ public class FunctionArray implements ArrayView {
     }
 
     public void putFunction(int flatIndex, Function f) {
-        functions[flatIndex] = f;
+        functions()[flatIndex] = f;
     }
 
     public void setDimLen(int dim, int len) {
@@ -177,5 +190,13 @@ public class FunctionArray implements ArrayView {
 
     public void setType(int type) {
         this.type = type;
+    }
+
+    private Function[] functions() {
+        try {
+            return functions;
+        } catch (NullPointerException e) {
+            throw new IllegalStateException("used FunctionArray before calling applyShape()");
+        }
     }
 }
