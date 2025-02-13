@@ -218,12 +218,12 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             if (oldVal == null || !oldVal.equals(entry.getValue())) {
                 final ConfigPropertyKey propKey = keyResolver.apply(key);
                 if (propKey == null) {
-                    return false;
+                    log.error().$("unknown property, ignoring [update, key=").$(key).I$();
+                    continue;
                 }
 
                 if (reloadableProps.contains(propKey)) {
-                    final LogRecord rec = log.info()
-                            .$("reloaded config option [update, key=").$(key);
+                    final LogRecord rec = log.info().$("reloaded config option [update, key=").$(key);
                     if (!propKey.isSensitive()) {
                         rec
                                 .$(", oldValue=").$(oldVal)
@@ -246,11 +246,12 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             if (!newProperties.containsKey(key)) {
                 final ConfigPropertyKey propKey = keyResolver.apply((String) key);
                 if (propKey == null) {
+                    log.error().$("unknown property, ignoring [remove, key=").$(key).I$();
                     continue;
                 }
+
                 if (reloadableProps.contains(propKey)) {
-                    final LogRecord rec = log.info()
-                            .$("reloaded config option [remove, key=").$(key);
+                    final LogRecord rec = log.info().$("reloaded config option [remove, key=").$(key);
                     if (!propKey.isSensitive()) {
                         rec.$(", value=").$(oldProperties.getProperty((String) key));
                     }
