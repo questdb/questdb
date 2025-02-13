@@ -94,59 +94,47 @@ public class FunctionFactoryDescriptor {
     public static int getArgType(char c) {
         int sigArgType;
         switch (c | 32) {
-            case 'd':
-                sigArgType = ColumnType.DOUBLE;
+            case 'a':
+                sigArgType = ColumnType.CHAR;
                 break;
             case 'b':
                 sigArgType = ColumnType.BYTE;
                 break;
+            case 'c':
+                sigArgType = ColumnType.CURSOR;
+                break;
+            case 'd':
+                sigArgType = ColumnType.DOUBLE;
+                break;
             case 'e':
                 sigArgType = ColumnType.SHORT;
-                break;
-            case 'a':
-                sigArgType = ColumnType.CHAR;
                 break;
             case 'f':
                 sigArgType = ColumnType.FLOAT;
                 break;
+            case 'g':
+                sigArgType = ColumnType.GEOHASH;
+                break;
+            case 'h':
+                sigArgType = ColumnType.LONG256;
+                break;
             case 'i':
                 sigArgType = ColumnType.INT;
                 break;
-            case 'l':
-                sigArgType = ColumnType.LONG;
-                break;
-            case 's':
-                sigArgType = ColumnType.STRING;
-                break;
-            case 't':
-                sigArgType = ColumnType.BOOLEAN;
+            case 'j':
+                sigArgType = ColumnType.LONG128;
                 break;
             case 'k':
                 sigArgType = ColumnType.SYMBOL;
+                break;
+            case 'l':
+                sigArgType = ColumnType.LONG;
                 break;
             case 'm':
                 sigArgType = ColumnType.DATE;
                 break;
             case 'n':
                 sigArgType = ColumnType.TIMESTAMP;
-                break;
-            case 'u':
-                sigArgType = ColumnType.BINARY;
-                break;
-            case 'v':
-                sigArgType = ColumnType.VAR_ARG;
-                break;
-            case 'c':
-                sigArgType = ColumnType.CURSOR;
-                break;
-            case 'r':
-                sigArgType = ColumnType.RECORD;
-                break;
-            case 'h':
-                sigArgType = ColumnType.LONG256;
-                break;
-            case 'g':
-                sigArgType = ColumnType.GEOHASH;
                 break;
             case 'o':
                 sigArgType = ColumnType.NULL;
@@ -157,17 +145,29 @@ public class FunctionFactoryDescriptor {
             case 'q':
                 sigArgType = ColumnType.REGPROCEDURE;
                 break;
+            case 'r':
+                sigArgType = ColumnType.RECORD;
+                break;
+            case 's':
+                sigArgType = ColumnType.STRING;
+                break;
+            case 't':
+                sigArgType = ColumnType.BOOLEAN;
+                break;
+            case 'u':
+                sigArgType = ColumnType.BINARY;
+                break;
+            case 'v':
+                sigArgType = ColumnType.VAR_ARG;
+                break;
             case 'w':
                 sigArgType = ColumnType.ARRAY_STRING;
                 break;
-            case 'j':
-                sigArgType = ColumnType.LONG128;
+            case 'x':
+                sigArgType = ColumnType.IPv4;
                 break;
             case 'z':
                 sigArgType = ColumnType.UUID;
-                break;
-            case 'x':
-                sigArgType = ColumnType.IPv4;
                 break;
             case 'ø':
                 sigArgType = ColumnType.VARCHAR;
