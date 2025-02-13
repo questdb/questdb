@@ -24,33 +24,89 @@
 
 package io.questdb.cairo;
 
-import io.questdb.*;
+import io.questdb.ConfigReloader;
+import io.questdb.MessageBus;
+import io.questdb.MessageBusImpl;
+import io.questdb.Metrics;
+import io.questdb.Telemetry;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mig.EngineMigration;
-import io.questdb.cairo.mv.*;
-import io.questdb.cairo.pool.*;
+import io.questdb.cairo.mv.MatViewDefinition;
+import io.questdb.cairo.mv.MatViewGraph;
+import io.questdb.cairo.mv.MatViewGraphImpl;
+import io.questdb.cairo.mv.MatViewRefreshState;
+import io.questdb.cairo.mv.MatViewRefreshTask;
+import io.questdb.cairo.mv.NoOpMatViewGraph;
+import io.questdb.cairo.pool.AbstractMultiTenantPool;
+import io.questdb.cairo.pool.PoolListener;
+import io.questdb.cairo.pool.ReaderPool;
+import io.questdb.cairo.pool.ResourcePoolSupervisor;
+import io.questdb.cairo.pool.SequencerMetadataPool;
+import io.questdb.cairo.pool.SqlCompilerPool;
+import io.questdb.cairo.pool.TableMetadataPool;
+import io.questdb.cairo.pool.WalWriterPool;
+import io.questdb.cairo.pool.WriterPool;
+import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.security.AllowAllSecurityContext;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.AsyncWriterCommand;
+import io.questdb.cairo.sql.InsertMethod;
+import io.questdb.cairo.sql.InsertOperation;
+import io.questdb.cairo.sql.OperationFuture;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cairo.wal.*;
+import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
+import io.questdb.cairo.wal.DefaultWalListener;
+import io.questdb.cairo.wal.WalDirectoryPolicy;
+import io.questdb.cairo.wal.WalListener;
+import io.questdb.cairo.wal.WalReader;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cutlass.text.CopyContext;
-import io.questdb.griffin.*;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.griffin.QueryRegistry;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerFactory;
+import io.questdb.griffin.SqlCompilerFactoryImpl;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.CreateMatViewOperation;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.*;
-import io.questdb.std.*;
+import io.questdb.mp.Job;
+import io.questdb.mp.SCSequence;
+import io.questdb.mp.Sequence;
+import io.questdb.mp.SimpleWaitingLock;
+import io.questdb.mp.SynchronizedJob;
+import io.questdb.std.Chars;
+import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Transient;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.tasks.*;
+import io.questdb.tasks.AbstractTelemetryTask;
+import io.questdb.tasks.TelemetryMatViewTask;
+import io.questdb.tasks.TelemetryTask;
+import io.questdb.tasks.TelemetryWalTask;
+import io.questdb.tasks.WalTxnNotificationTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -473,10 +529,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return configReloader;
     }
 
-    public void setConfigReloader(@NotNull ConfigReloader configReloader) {
-        this.configReloader = configReloader;
-    }
-
     public CairoConfiguration getConfiguration() {
         return configuration;
     }
@@ -543,15 +595,6 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public PoolListener getPoolListener() {
         return this.writerPool.getPoolListener();
-    }
-
-    @TestOnly
-    public void setPoolListener(PoolListener poolListener) {
-        this.tableMetadataPool.setPoolListener(poolListener);
-        this.sequencerMetadataPool.setPoolListener(poolListener);
-        this.writerPool.setPoolListener(poolListener);
-        this.readerPool.setPoolListener(poolListener);
-        this.walWriterPool.setPoolListener(poolListener);
     }
 
     public QueryRegistry getQueryRegistry() {
@@ -803,16 +846,8 @@ public class CairoEngine implements Closeable, WriterSource {
         return walDirectoryPolicy;
     }
 
-    public void setWalDirectoryPolicy(@NotNull WalDirectoryPolicy walDirectoryPolicy) {
-        this.walDirectoryPolicy = walDirectoryPolicy;
-    }
-
     public @NotNull WalListener getWalListener() {
         return walListener;
-    }
-
-    public void setWalListener(@NotNull WalListener walListener) {
-        this.walListener = walListener;
     }
 
     // For testing only
@@ -1194,9 +1229,22 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    public void setConfigReloader(@NotNull ConfigReloader configReloader) {
+        this.configReloader = configReloader;
+    }
+
     @SuppressWarnings("unused")
     public void setDdlListener(@NotNull DdlListener ddlListener) {
         this.ddlListener = ddlListener;
+    }
+
+    @TestOnly
+    public void setPoolListener(PoolListener poolListener) {
+        this.tableMetadataPool.setPoolListener(poolListener);
+        this.sequencerMetadataPool.setPoolListener(poolListener);
+        this.writerPool.setPoolListener(poolListener);
+        this.readerPool.setPoolListener(poolListener);
+        this.walWriterPool.setPoolListener(poolListener);
     }
 
     @TestOnly
@@ -1206,6 +1254,14 @@ public class CairoEngine implements Closeable, WriterSource {
 
     @TestOnly
     public void setUp() {
+    }
+
+    public void setWalDirectoryPolicy(@NotNull WalDirectoryPolicy walDirectoryPolicy) {
+        this.walDirectoryPolicy = walDirectoryPolicy;
+    }
+
+    public void setWalListener(@NotNull WalListener walListener) {
+        this.walListener = walListener;
     }
 
     public void setWalPurgeJobRunLock(@Nullable SimpleWaitingLock walPurgeJobRunLock) {
@@ -1333,18 +1389,19 @@ public class CairoEngine implements Closeable, WriterSource {
                         );
                         final TableToken baseTableToken = tableNameRegistry.getTableToken(matViewDefinition.getBaseTableName());
                         if (baseTableToken == null || tableNameRegistry.isTableDropped(baseTableToken)) {
-                            LOG.error().$("base table for materialized view does not exist [table=").utf8(matViewDefinition.getBaseTableName())
+                            // Print a warning, but let the mat view load in invalid state.
+                            LOG.info().$("base table for materialized view does not exist [table=").utf8(matViewDefinition.getBaseTableName())
                                     .$(", view=").utf8(tableToken.getTableName())
                                     .I$();
-                        } else {
-                            path.trimTo(pathLen).concat(tableToken.getDirName()).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
-                            reader.of(path.$());
-                            MatViewRefreshState state = matViewGraph.addView(matViewDefinition);
-                            MatViewRefreshState.readFrom(reader, state);
+                        }
 
-                            if (!state.isInvalid()) {
-                                matViewGraph.enqueueRefresh(tableToken);
-                            }
+                        path.trimTo(pathLen).concat(tableToken.getDirName()).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
+                        reader.of(path.$());
+                        MatViewRefreshState state = matViewGraph.addView(matViewDefinition);
+                        MatViewRefreshState.readFrom(reader, state);
+
+                        if (!state.isInvalid()) {
+                            matViewGraph.enqueueRefresh(tableToken);
                         }
                     } catch (CairoException e) {
                         LOG.error().$("could not load materialized view definition [view=").utf8(tableToken.getTableName())

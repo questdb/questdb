@@ -407,17 +407,21 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
                     PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
             )) {
-                execute(main1, "create table base_price (" +
-                        "sym varchar, price double, ts timestamp" +
-                        ") timestamp(ts) partition by DAY WAL"
+                execute(
+                        main1,
+                        "create table base_price (" +
+                                "sym varchar, price double, ts timestamp" +
+                                ") timestamp(ts) partition by DAY WAL"
                 );
 
                 createMatView(main1, "price_1h", "select sym, last(price) as price, ts from base_price sample by 1h");
 
-                execute(main1, "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
-                        ",('gbpusd', 1.323, '2024-09-10T12:02')" +
-                        ",('jpyusd', 103.21, '2024-09-10T12:02')" +
-                        ",('gbpusd', 1.321, '2024-09-10T13:02')"
+                execute(
+                        main1,
+                        "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                                ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                                ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                                ",('gbpusd', 1.321, '2024-09-10T13:02')"
                 );
                 drainWalQueue(main1.getEngine());
 
@@ -448,11 +452,12 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     refreshJob.run(0);
                 }
 
+                // The mat view should be loaded, but left in invalid state.
                 assertSql(
                         main2,
-                        "count\n" +
-                                "0\n",
-                        "select count() from mat_views();"
+                        "name\tinvalid\n" +
+                                "price_1h\ttrue\n",
+                        "select name, invalid from mat_views();"
                 );
             }
         });
