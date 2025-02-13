@@ -10,7 +10,6 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
 import java.net.URI;
 import java.net.URL;
 import java.nio.file.FileSystems;
@@ -18,12 +17,10 @@ import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Enumeration;
-import java.util.HashMap;
-import java.util.List;
-import java.util.jar.JarEntry;
+import java.util.Collections;
 import java.util.jar.JarFile;
 import java.lang.reflect.Modifier;
+import java.util.zip.ZipFile;
 
 // This class loads Function Factories using reflection
 // It scans the classpath for classes that implement the FunctionFactory interface
@@ -39,7 +36,8 @@ import java.lang.reflect.Modifier;
 // Loading when QuestDB runs as a directory, that happens when running tests from maven, IDEs
 public class FunctionFactoryScanner {
 
-    private static List<FunctionFactory> functionFactoriesCache;
+    private static final String FUNCTION_LIST_FILE_NAME = "function_list.txt";
+    private static ArrayList<FunctionFactory> functionFactoriesCache;
 
     @TestOnly
     public static void clearCache() {
@@ -52,11 +50,9 @@ public class FunctionFactoryScanner {
         }
 
         try {
-            var orderMap = loadFunctionOrderMap();
-
             // Load function factories in case the code is built as modules file
             // This is usually the case when binaries are build with JDK baked in
-            var functionFactories = findAllClassesFromModules(packageName, log);
+            ArrayList<FunctionFactory> functionFactories = findAllClassesFromModules(packageName, log);
 
 
             // In case the previous load failed (returned an empty list)
@@ -92,6 +88,8 @@ public class FunctionFactoryScanner {
                 throw new CairoError("no functions found in " + packageName);
             }
 
+
+            var orderMap = loadFunctionOrderMap();
             // Function factories sometimes have conflict and have to be loaded in a specific order
             // For example RndSymbolFunctionFactory has to be before RndSymbolListFunctionFactory
             functionFactories.sort((f1, f2) -> compareFactories(f1, f2, orderMap));
@@ -116,15 +114,15 @@ public class FunctionFactoryScanner {
         return Integer.compare(o1, o2);
     }
 
-    private static List<FunctionFactory> findAllClassesFromModules(String packageName, @Nullable Log log) {
-        List<FunctionFactory> factories = new ArrayList<>();
+    private static ArrayList<FunctionFactory> findAllClassesFromModules(String packageName, @Nullable Log log) {
+        var factories = new ArrayList<FunctionFactory>();
         var loader = ClassLoader.getSystemClassLoader();
         try {
-            try (var fs = FileSystems.newFileSystem(URI.create("jrt:/"), new HashMap<>(), loader)) {
+            try (var fs = FileSystems.newFileSystem(URI.create("jrt:/"), Collections.emptyMap(), loader)) {
 
                 Path questdbPath = fs.getPath("modules", "io.questdb", "io");
                 try (var questdbPathFiles = Files.list(questdbPath)) {
-                    StringSink sink = new StringSink();
+                    var sink = new StringSink();
                     questdbPathFiles.forEach(
                             mdl -> {
                                 String pathPattern = "modules/io.questdb/" + packageName.replace('.', '/');
@@ -168,9 +166,9 @@ public class FunctionFactoryScanner {
 
     @Nullable
     private static FunctionFactory getClass(CharSequence className, @Nullable Log log) {
-        @SuppressWarnings("rawtypes") Class clazz;
+        Class<?> clazz;
         try {
-            clazz = Class.forName(className.toString());
+            clazz = FunctionFactoryScanner.class.getClassLoader().loadClass(className.toString());
         } catch (ClassNotFoundException e) {
             return null;
         }
@@ -178,13 +176,12 @@ public class FunctionFactoryScanner {
         if (FunctionFactory.class.isAssignableFrom(clazz) && !Modifier.isAbstract(clazz.getModifiers())) {
             try {
                 // Instantiate the class and add to the list
-                @SuppressWarnings("unchecked") FunctionFactory instance = (FunctionFactory) clazz.getDeclaredConstructor().newInstance();
-                return instance;
+                return (FunctionFactory) clazz.getDeclaredConstructor().newInstance();
             } catch (NoSuchMethodException e) {
                 // It's ok, not a function factory but a wrapper
             } catch (Exception e) {
                 if (log != null) {
-                    log.advisory().$("error loading function: ").$(className).$(", error: ").$(e).$();
+                    log.critical().$("error loading function: ").$(className).$(", error: ").$(e).$();
                 } else {
                     System.out.println("error loading function: " + className + ", error: " + e);
                     e.printStackTrace(System.out);
@@ -203,15 +200,13 @@ public class FunctionFactoryScanner {
         }
         // Unknown functions at the end, longest signature first
         // If name of the signatures match then the functions with fewer arguments come last
-        // so that VARLARG functions are always last
+        // so that VARARG functions are always last
         return orderMap.size() + Math.abs(10000 - f1.getSignature().length());
     }
 
     private static CharSequenceIntHashMap loadFunctionOrderMap() {
-        var fileName = "function_list.txt";
         var map = new CharSequenceIntHashMap();
-
-        try (InputStream inputStream = FunctionFactoryScanner.class.getClassLoader().getResourceAsStream(fileName)) {
+        try (var inputStream = FunctionFactoryScanner.class.getClassLoader().getResourceAsStream(FUNCTION_LIST_FILE_NAME)) {
             if (inputStream != null) {
                 var lines = new String(inputStream.readAllBytes()).split("\n");
 
@@ -230,8 +225,10 @@ public class FunctionFactoryScanner {
     }
 
     // Scan for class files in a directory, including subdirectories
-    private static void scanDirectory(List<FunctionFactory> functionFactories, String dirPath, String packageName, @Nullable Log log) {
+    private static void scanDirectory(ArrayList<FunctionFactory> functionFactories, String dirPath, String packageName, @Nullable Log log) {
         String packagePath = packageName.replace('.', '/');
+
+        // Java File supports both \ and / as file separators on all platforms, this will work on windows and linux:
         File dir = new File(dirPath + "/" + packagePath);
 
         if (dir.exists() && dir.isDirectory()) {
@@ -245,61 +242,58 @@ public class FunctionFactoryScanner {
     }
 
     // Recursive method to scan a directory and its subdirectories
-    private static void scanDirectoryRecursively(List<FunctionFactory> functionFactories, File dir, StringSink packageName, @Nullable Log log) {
+    private static void scanDirectoryRecursively(ArrayList<FunctionFactory> functionFactories, File dir, StringSink packageName, @Nullable Log log) {
         File[] files = dir.listFiles();
 
         int len = packageName.length();
         if (files != null) {
             for (File file : files) {
                 String fileName = file.getName();
-                if (file.isDirectory()) {
+                if (fileName.endsWith(".class")) {
+                    // Get the class name from the file path
+                    packageName.trimTo(len);
+                    packageName.put('.').put(fileName, 0, fileName.length() - ".class".length());
+                    FunctionFactory factory = getClass(packageName, log);
+                    if (factory != null) {
+                        functionFactories.add(factory);
+                    }
+                } else if (file.isDirectory()) {
                     // Recursively scan subdirectories
                     packageName.trimTo(len);
                     packageName.put('.').put(fileName);
                     scanDirectoryRecursively(functionFactories, file, packageName, log);
-                } else {
-                    if (fileName.endsWith(".class")) {
-                        // Get the class name from the file path
-                        packageName.trimTo(len);
-                        packageName.put('.').put(fileName, 0, fileName.length() - ".class".length());
-                        FunctionFactory factory = getClass(packageName, log);
-                        if (factory != null) {
-                            functionFactories.add(factory);
-                        }
-                    }
                 }
             }
         }
     }
 
     // Scan for classes inside a JAR file
-    private static void scanJar(List<FunctionFactory> functionFactories, String jarPath, String packageName, @Nullable Log log) {
+    private static void scanJar(ArrayList<FunctionFactory> functionFactories, String jarPath, String packageName, @Nullable Log log) {
         try {
             // Get the package path from the package name
-            String path = packageName.replace('.', '/');
+            // Jar file separators are always '/' on all platforms
+            String pathFilterPrefix = packageName.replace('.', '/');
 
             StringSink sink = new StringSink();
             // Open the JAR file
-            try (JarFile jarFile = new JarFile(jarPath)) {
-                Enumeration<JarEntry> entries = jarFile.entries();
-
-                // Iterate over the JAR file entries
-                while (entries.hasMoreElements()) {
-                    JarEntry entry = entries.nextElement();
-
-                    // Only process class files in the specified package or subpackages
-                    if (entry.getName().startsWith(path) && entry.getName().endsWith(".class")) {
-                        // Convert entry name to fully qualified class name
-                        sink.clear();
-                        String name = entry.getName();
-                        sink.put(name, 0, name.length() - ".class".length());
-                        sink.replace('/', '.');
-                        FunctionFactory factory = getClass(sink, log);
-                        if (factory != null) {
-                            functionFactories.add(factory);
-                        }
-                    }
-                }
+            try (var jarFile = new JarFile(new File(jarPath), false, ZipFile.OPEN_READ)) {
+                jarFile.stream()
+                        .filter(entry -> {
+                            String entryName = entry.getName();
+                            return entryName.startsWith(pathFilterPrefix) && entryName.endsWith(".class");
+                        })
+                        .forEach(entry -> {
+                                    String entryName = entry.getName();
+                                    // Convert entry name to fully qualified class name
+                                    sink.clear();
+                                    sink.put(entryName, 0, entryName.length() - ".class".length());
+                                    sink.replace('/', '.');
+                                    FunctionFactory factory = getClass(sink, log);
+                                    if (factory != null) {
+                                        functionFactories.add(factory);
+                                    }
+                                }
+                        );
             }
         } catch (IOException e) {
             throw new RuntimeException(e);
