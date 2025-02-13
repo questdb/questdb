@@ -887,7 +887,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return lockReadersByTableToken(tableToken);
     }
 
-    public boolean lockReadersIfNoCheckpoint(TableToken tableToken) {
+    public boolean lockReadersOnDrop(TableToken tableToken) {
         if (checkpointAgent.isInProgress()) {
             // prevent reader locking before checkpoint is released
             return false;
@@ -1215,6 +1215,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void unlockReaders(TableToken tableToken) {
         verifyTableToken(tableToken);
+        readerPool.unlock(tableToken);
+    }
+
+    public void unlockReadersOnDrop(TableToken tableToken) {
         readerPool.unlock(tableToken);
     }
 
