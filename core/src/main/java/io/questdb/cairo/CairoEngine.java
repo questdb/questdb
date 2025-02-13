@@ -583,16 +583,18 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public TableReader getReaderWithRepair(TableToken tableToken) {
-        // todo: untested verification
         verifyTableToken(tableToken);
         try {
             return getReader(tableToken);
+        } catch (EntryUnavailableException e) {
+            throw e;
         } catch (CairoException e) {
             // Cannot open reader on existing table is pretty bad.
             // In some messed states, for example after _meta file swap failure Reader cannot be opened
             // but writer can be. Opening writer fixes the table mess.
             tryRepairTable(tableToken, e);
         }
+
         try {
             return getReader(tableToken);
         } catch (CairoException e) {
@@ -677,6 +679,8 @@ public class CairoEngine implements Closeable, WriterSource {
             final TableMetadata metadata = tableMetadataPool.get(tableToken);
             validateDesiredMetadataVersion(tableToken, metadata, desiredVersion);
             return metadata;
+        } catch (EntryUnavailableException e) {
+            throw e;
         } catch (CairoException e) {
             if (tableToken.isWal()) {
                 throw e;
@@ -883,19 +887,12 @@ public class CairoEngine implements Closeable, WriterSource {
         return lockReadersByTableToken(tableToken);
     }
 
-    public boolean lockReadersAndMetadata(TableToken tableToken) {
+    public boolean lockReadersIfNoCheckpoint(TableToken tableToken) {
         if (checkpointAgent.isInProgress()) {
             // prevent reader locking before checkpoint is released
             return false;
         }
-        if (readerPool.lock(tableToken)) {
-            if (tableMetadataPool.lock(tableToken)) {
-                return true;
-            } else {
-                readerPool.unlock(tableToken);
-            }
-        }
-        return false;
+        return readerPool.lock(tableToken);
     }
 
     public boolean lockReadersByTableToken(TableToken tableToken) {
@@ -1221,11 +1218,6 @@ public class CairoEngine implements Closeable, WriterSource {
         readerPool.unlock(tableToken);
     }
 
-    public void unlockReadersAndMetadata(TableToken tableToken) {
-        readerPool.unlock(tableToken);
-        tableMetadataPool.unlock(tableToken);
-    }
-
     public void unlockTableCreate(TableToken tableToken) {
         createTableLock.remove(tableToken.getTableName(), tableToken);
     }
@@ -1389,6 +1381,12 @@ public class CairoEngine implements Closeable, WriterSource {
                             tableSequencerAPI.registerTable(tableToken.getTableId(), struct, tableToken);
                         }
 
+                        // Unlock the table metadata and readers before registering the name
+                        // Only writer lock is needed when keepLock is true
+                        readerPool.unlock(tableToken);
+                        sequencerMetadataPool.unlock(tableToken);
+                        tableMetadataPool.unlock(tableToken);
+
                         tableNameRegistry.registerName(tableToken);
                         tableCreated = true;
                     } catch (Throwable e) {
@@ -1492,10 +1490,10 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     private void unlockTableUnsafe(TableToken tableToken, TableWriter writer, boolean newTable) {
-        readerPool.unlock(tableToken);
+        readerPool.unlockIfLocked(tableToken);
         writerPool.unlock(tableToken, writer, newTable);
-        sequencerMetadataPool.unlock(tableToken);
-        tableMetadataPool.unlock(tableToken);
+        sequencerMetadataPool.unlockIfLocked(tableToken);
+        tableMetadataPool.unlockIfLocked(tableToken);
     }
 
     private void validNameOrThrow(CharSequence tableName) {
