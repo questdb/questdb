@@ -77,12 +77,12 @@ public class FunctionFactoryDescriptor {
 
             // array bit
             if (i < n && sig.charAt(i) == '[') {
-                type |= (1 << 31);
+                type |= ARRAY_MASK;
                 i += 2;
             }
             // constant bit
-            if ((c | 32) == c) {
-                type |= (1 << 30);
+            if ((c & 32) != 0) {
+                type |= CONST_MASK;
             }
             types[arrayIndex] |= (toUnsignedLong(type) << (32 - arrayValueOffset));
             typeIndex++;
