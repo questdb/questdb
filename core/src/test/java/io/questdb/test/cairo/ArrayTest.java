@@ -299,6 +299,12 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSelectArrayElements() throws Exception {
+        execute("CREATE TABLE tango AS (SELECT ARRAY[1.0, 2, 3] arr FROM long_sequence(1))");
+        assertSql("x\n2.0\n", "SELECT arr[1] x FROM tango");
+    }
+
+    @Test
     public void testSelectLiteral() throws Exception {
         execute("CREATE TABLE tango (a DOUBLE, b DOUBLE)");
         execute("INSERT INTO tango VALUES (1.0, 2.0)");

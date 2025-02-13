@@ -803,17 +803,32 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         break;
                     }
 
+                    final int argType = arg.getType();
+                    final short argTypeTag = ColumnType.tagOf(argType);
+                    final short sigArgTypeTag = FunctionFactoryDescriptor.toTypeTag(sigArgTypeWithFlags);
+
                     final boolean sigIsArray = FunctionFactoryDescriptor.isArray(sigArgTypeWithFlags);
-                    final boolean argIsArray = ColumnType.isArray(arg.getType());
-                    if (sigIsArray != argIsArray) {
-                        match = MATCH_NO_MATCH; // no match
+                    final boolean argIsArray = argTypeTag == ColumnType.ARRAY;
+                    final boolean argIsStringArray = argTypeTag == ColumnType.ARRAY_STRING;
+                    final boolean sigIsStringArray = sigArgTypeTag == ColumnType.ARRAY_STRING;
+                    if (sigIsArray != argIsArray || sigIsStringArray != argIsStringArray) {
+                        match = MATCH_NO_MATCH;
                         break;
                     }
 
-                    final short sigArgType = FunctionFactoryDescriptor.toType(sigArgTypeWithFlags);
-                    final int argType = arg.getType();
-                    final short argTypeTag = ColumnType.tagOf(argType);
-                    final short sigArgTypeTag = ColumnType.tagOf(sigArgType);
+                    if (argIsArray) { // given the above checks, implies that sigIsArray is also true
+                        short argElemTypeTag = ColumnType.decodeArrayElementType(argType);
+                        if (sigArgTypeTag == argElemTypeTag) {
+                            if (match == MATCH_NO_MATCH) {
+                                match = MATCH_EXACT_MATCH;
+                            } else if (match == MATCH_FUZZY_MATCH) {
+                                match = MATCH_PARTIAL_MATCH;
+                            }
+                        } else {
+                            match = MATCH_NO_MATCH;
+                        }
+                        break;
+                    }
 
                     if (sigArgTypeTag == argTypeTag ||
                             (argTypeTag == ColumnType.CHAR &&              // 'a' could also be a string literal, so it should count as proper match
