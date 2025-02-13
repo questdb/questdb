@@ -289,7 +289,7 @@ public class FunctionFactoryDescriptor {
         return openParenIndex;
     }
 
-    public int getArgTypeMask(int index) {
+    public int getArgTypeWithFlags(int index) {
         int arrayIndex = index / 2;
         long mask = argTypes[arrayIndex];
         return (int) (mask >>> (32 - (index % 2) * 32));

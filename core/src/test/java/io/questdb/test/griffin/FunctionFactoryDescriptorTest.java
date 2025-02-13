@@ -128,7 +128,7 @@ public class FunctionFactoryDescriptorTest {
     }
 
     private static void assertType(FunctionFactoryDescriptor descriptor, int argIndex) {
-        Assert.assertEquals(ColumnType.STRING, FunctionFactoryDescriptor.toType(descriptor.getArgTypeMask(argIndex)));
+        Assert.assertEquals(ColumnType.STRING, FunctionFactoryDescriptor.toType(descriptor.getArgTypeWithFlags(argIndex)));
     }
 
     private static FunctionFactoryDescriptor descriptorOf(String signature) throws SqlException {
@@ -146,10 +146,10 @@ public class FunctionFactoryDescriptorTest {
     }
 
     private static boolean isArray(FunctionFactoryDescriptor descriptor, int argIndex) {
-        return FunctionFactoryDescriptor.isArray(descriptor.getArgTypeMask(argIndex));
+        return FunctionFactoryDescriptor.isArray(descriptor.getArgTypeWithFlags(argIndex));
     }
 
     private static boolean isConstant(FunctionFactoryDescriptor descriptor, int argIndex) {
-        return FunctionFactoryDescriptor.isConstant(descriptor.getArgTypeMask(argIndex));
+        return FunctionFactoryDescriptor.isConstant(descriptor.getArgTypeWithFlags(argIndex));
     }
 }

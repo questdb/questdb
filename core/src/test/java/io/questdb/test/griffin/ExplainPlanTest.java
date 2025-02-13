@@ -2405,7 +2405,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     sink.put(factory.getSignature()).put(" types: ");
 
                     for (int p = 0; p < sigArgCount; p++) {
-                        int sigArgTypeMask = descriptor.getArgTypeMask(p);
+                        int sigArgTypeMask = descriptor.getArgTypeWithFlags(p);
                         final short sigArgType = FunctionFactoryDescriptor.toType(sigArgTypeMask);
                         boolean isArray = FunctionFactoryDescriptor.isArray(sigArgTypeMask);
 
@@ -2422,7 +2422,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     int combinations = 1;
 
                     for (int p = 0; p < sigArgCount; p++) {
-                        int argTypeMask = descriptor.getArgTypeMask(p);
+                        int argTypeMask = descriptor.getArgTypeWithFlags(p);
                         boolean isConstant = FunctionFactoryDescriptor.isConstant(argTypeMask);
                         short sigArgType = FunctionFactoryDescriptor.toType(argTypeMask);
                         ObjList<Function> availableValues = constFuncs.get(sigArgType);
@@ -2440,7 +2440,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                         try {
                             for (int p = 0; p < sigArgCount; p++) {
-                                int sigArgTypeMask = descriptor.getArgTypeMask(p);
+                                int sigArgTypeMask = descriptor.getArgTypeWithFlags(p);
                                 short sigArgType = FunctionFactoryDescriptor.toType(sigArgTypeMask);
                                 boolean isConstant = FunctionFactoryDescriptor.isConstant(sigArgTypeMask);
                                 boolean isArray = FunctionFactoryDescriptor.isArray(sigArgTypeMask);
