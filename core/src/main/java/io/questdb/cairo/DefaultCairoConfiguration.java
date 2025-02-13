@@ -79,11 +79,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     public DefaultCairoConfiguration(CharSequence dbRoot, CharSequence installRoot) {
         this.dbRoot = Chars.toString(dbRoot);
-        this.installRoot = installRoot != null
-                ? Chars.toString(installRoot)
-                : dbRoot != null ? java.nio.file.Paths.get(this.dbRoot).getParent().toAbsolutePath().toString()
-                : null;
-
+        this.installRoot = Chars.toString(installRoot);
         this.confRoot = PropServerConfiguration.rootSubdir(dbRoot, PropServerConfiguration.CONFIG_DIRECTORY);
         this.textConfiguration = new DefaultTextConfiguration(Chars.toString(confRoot));
         this.checkpointRoot = PropServerConfiguration.rootSubdir(dbRoot, TableUtils.CHECKPOINT_DIRECTORY);
@@ -420,6 +416,9 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public @NotNull String getInstallRoot() {
+        if (installRoot == null) {
+            throw new UnsupportedOperationException("installRoot was required in this test, but not set");
+        }
         return installRoot;
     }
 
@@ -1167,7 +1166,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isCheckpointRecoveryEnabled() {
-        return true;
+        return false;
     }
 
     @Override

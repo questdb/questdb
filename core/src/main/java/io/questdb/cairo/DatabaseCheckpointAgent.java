@@ -82,7 +82,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     private final GrowOnlyTableNameRegistryStore tableNameRegistryStore; // protected with #lock
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
     private ColumnVersionReader columnVersionReader = null;
-    private Path partitionCleanPath;
+    private Path partitionCleanPath;  // To be used exclusively as parameter for `removePartitionDirsNotAttached`.
     private DateFormat partitionDirFmt;
     private int pathTableLen;
     private TableReaderMetadata tableMetadata = null;
@@ -373,7 +373,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             if (PartitionBy.isPartitioned(tableMetadata.getPartitionBy())) {
                 // Remove non-attached partitions
                 LOG.debug().$("purging non attached partitions [path=").$(tablePath.$()).I$();
-                partitionCleanPath = tablePath;
+                partitionCleanPath = tablePath; // parameter for `removePartitionDirsNotAttached`
                 this.partitionDirFmt = PartitionBy.getPartitionDirFormatMethod(tableMetadata.getPartitionBy());
                 ff.iterateDir(tablePath.$(), removePartitionDirsNotAttached);
             }
