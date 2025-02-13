@@ -54,8 +54,6 @@ public interface MatViewGraph extends QuietCloseable, Mutable {
 
     void getDependentMatViews(TableToken baseTableToken, ObjList<TableToken> sink);
 
-    void getDependentViewsInOrder(ObjHashSet<TableToken> tables, ObjList<TableToken> ordered);
-
     @Nullable
     MatViewDefinition getMatViewDefinition(TableToken matViewToken);
 
@@ -69,6 +67,19 @@ public interface MatViewGraph extends QuietCloseable, Mutable {
     void notifyBaseRefreshed(MatViewRefreshTask task, long seqTxn);
 
     void notifyTxnApplied(MatViewRefreshTask task, long seqTxn);
+
+    /**
+     * Writes all table tokens to the destination list in order, so that dependent materialized views
+     * go first followed by their base tables (or materialized views).
+     * <p>
+     * This is used for checkpoints: we want to first take a snapshot of a mat view and only then
+     * take a snapshot its base table. That's to prevent situation when a checkpoint contains
+     * mat view refreshed with "ghost" base table data that is newer than what's in the checkpoint.
+     *
+     * @param tables      source set of all table tokens
+     * @param orderedSink destination list
+     */
+    void orderByDependentViews(ObjHashSet<TableToken> tables, ObjList<TableToken> orderedSink);
 
     boolean tryDequeueRefreshTask(MatViewRefreshTask task);
 }

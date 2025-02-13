@@ -60,7 +60,7 @@ public class MatViewGraphImplTest extends AbstractCairoTest {
         addDefinition(newViewToken("view2"), newTableToken("table1"));
         addDefinition(newViewToken("view3"), view1);
 
-        graph.getDependentViewsInOrder(tableTokens, ordered);
+        graph.orderByDependentViews(tableTokens, ordered);
         Assert.assertEquals(6, ordered.size());
         Assert.assertEquals("table2", ordered.getQuick(0).getTableName());
         Assert.assertEquals("table3", ordered.getQuick(1).getTableName());
@@ -75,7 +75,7 @@ public class MatViewGraphImplTest extends AbstractCairoTest {
     public void testNoViews() {
         newTableToken("table1");
         newTableToken("table2");
-        graph.getDependentViewsInOrder(tableTokens, ordered);
+        graph.orderByDependentViews(tableTokens, ordered);
         Assert.assertEquals(2, ordered.size());
         Assert.assertEquals("table1", ordered.getQuick(0).getTableName());
         Assert.assertEquals("table2", ordered.getQuick(1).getTableName());
@@ -83,7 +83,7 @@ public class MatViewGraphImplTest extends AbstractCairoTest {
 
     @Test
     public void testNoViewsNoTables() {
-        graph.getDependentViewsInOrder(tableTokens, ordered);
+        graph.orderByDependentViews(tableTokens, ordered);
         Assert.assertEquals(0, ordered.size());
     }
 
@@ -92,7 +92,7 @@ public class MatViewGraphImplTest extends AbstractCairoTest {
         TableToken table1 = newTableToken("table1");
         TableToken view1 = newViewToken("view1");
         addDefinition(view1, table1);
-        graph.getDependentViewsInOrder(tableTokens, ordered);
+        graph.orderByDependentViews(tableTokens, ordered);
         Assert.assertEquals(2, ordered.size());
         Assert.assertEquals("view1", ordered.getQuick(0).getTableName());
         Assert.assertEquals("table1", ordered.getQuick(1).getTableName());

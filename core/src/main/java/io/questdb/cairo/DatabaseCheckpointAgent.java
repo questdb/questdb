@@ -196,7 +196,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                     ObjHashSet<TableToken> tables = new ObjHashSet<>();
                     ObjList<TableToken> ordered = new ObjList<>();
                     engine.getTableTokens(tables, false);
-                    engine.getMatViewGraph().getDependentViewsInOrder(tables, ordered);
+                    engine.getMatViewGraph().orderByDependentViews(tables, ordered);
 
                     try (MemoryCMARW mem = Vm.getCMARWInstance(); BlockFileWriter writer = new BlockFileWriter(ff)) {
                         // Copy metadata files for all tables.
