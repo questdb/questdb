@@ -93,7 +93,7 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             FilesFacade filesFacade = configuration.getFilesFacade();
             try (Path path = new Path()) {
                 TableToken tableToken = engine.verifyTableName("table1");
-                path.concat(configuration.getRoot()).concat(tableToken).concat(META_FILE_NAME).$();
+                path.concat(configuration.getDbRoot()).concat(tableToken).concat(META_FILE_NAME).$();
                 filesFacade.remove(path.$());
             }
 

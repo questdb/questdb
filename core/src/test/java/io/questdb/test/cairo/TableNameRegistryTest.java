@@ -352,7 +352,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 threads.getLast().start();
             }
 
-            try (Path rmPath = new Path().of(configuration.getRoot())) {
+            try (Path rmPath = new Path().of(configuration.getDbRoot())) {
                 TableModel tm = new TableModel(configuration, "abc", PartitionBy.DAY)
                         .timestamp().col("c", ColumnType.TIMESTAMP);
                 // Add / remove tables
@@ -367,7 +367,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                     int iteration = 0;
                     IntHashSet addedTables = new IntHashSet();
                     FilesFacade ff = configuration.getFilesFacade();
-                    int rootLen = configuration.getRoot().length();
+                    int rootLen = configuration.getDbRoot().length();
                     while (addedTables.size() < tableCount) {
                         iteration++;
                         if (rnd.nextDouble() > 0.2) {

@@ -98,7 +98,7 @@ public class TestServerMain extends ServerMain {
         engine.closeNameRegistry();
         FilesFacade ff = engine.getConfiguration().getFilesFacade();
         try (Path p = new Path()) {
-            p.of(engine.getConfiguration().getRoot());
+            p.of(engine.getConfiguration().getDbRoot());
             ff.mkdir(p.$(), engine.getConfiguration().getMkDirMode());
         }
         engine.getTableIdGenerator().open();

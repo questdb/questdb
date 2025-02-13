@@ -148,7 +148,7 @@ public class MetadataCache implements QuietCloseable {
             return;
         }
 
-        Path path = Path.getThreadLocal(engine.getConfiguration().getRoot());
+        Path path = Path.getThreadLocal(engine.getConfiguration().getDbRoot());
 
         // set up dir path
         path.concat(token.getDirName());
@@ -292,7 +292,7 @@ public class MetadataCache implements QuietCloseable {
             LOG.debug().$("hydrating symbol metadata [table=").$(token.getTableName()).$(", column=").$(columnName).I$();
 
             // get column version
-            path.trimTo(configuration.getRoot().length()).concat(token);
+            path.trimTo(configuration.getDbRoot().length()).concat(token);
             int rootLen = path.size();
             path.concat(TableUtils.COLUMN_VERSION_FILE_NAME);
 
@@ -305,14 +305,19 @@ public class MetadataCache implements QuietCloseable {
                 columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerIndex);
             }
 
-            // use txn to find correct symbol entry
-            final var offsetFileName = TableUtils.offsetFileName(path.trimTo(rootLen), columnName, columnNameTxn);
-            var fd = TableUtils.openRO(ff, offsetFileName, LOG);
-
             // initialise symbol map memory
             final long capacityOffset = SymbolMapWriter.HEADER_CAPACITY;
-            int capacity = ff.readNonNegativeInt(fd, capacityOffset);
-            byte isCached = ff.readNonNegativeByte(fd, SymbolMapWriter.HEADER_CACHE_ENABLED);
+            final int capacity;
+            final byte isCached;
+            final var offsetFileName = TableUtils.offsetFileName(path.trimTo(rootLen), columnName, columnNameTxn);
+            long fd = TableUtils.openRO(ff, offsetFileName, LOG);
+            try {
+                // use txn to find correct symbol entry
+                capacity = ff.readNonNegativeInt(fd, capacityOffset);
+                isCached = ff.readNonNegativeByte(fd, SymbolMapWriter.HEADER_CACHE_ENABLED);
+            } finally {
+                ff.close(fd);
+            }
 
             // get symbol properties
             if (capacity > 0 && isCached >= 0) {
@@ -532,7 +537,7 @@ public class MetadataCache implements QuietCloseable {
             int timestampIndex = tableMetadata.getTimestampIndex();
             table.setTimestampIndex(timestampIndex);
             table.setTtlHoursOrMonths(tableMetadata.getTtlHoursOrMonths());
-            Path tempPath = Path.getThreadLocal(engine.getConfiguration().getRoot());
+            Path tempPath = Path.getThreadLocal(engine.getConfiguration().getDbRoot());
             table.setIsSoftLink(engine.getConfiguration().getFilesFacade().isSoftLink(tempPath.concat(tableToken.getDirNameUtf8()).$()));
 
             for (int i = 0; i < columnCount; i++) {

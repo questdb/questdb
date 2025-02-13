@@ -92,7 +92,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
         public WalTableListCursorFactory(CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
             super(METADATA);
             this.ff = configuration.getFilesFacade();
-            this.rootPath = new Path().of(configuration.getRoot());
+            this.rootPath = new Path().of(configuration.getDbRoot());
             this.sqlExecutionContext = sqlExecutionContext;
             this.cursor = new TableListRecordCursor();
         }

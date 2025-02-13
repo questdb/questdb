@@ -42,7 +42,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -96,6 +95,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     private final FilesFacade filesFacade;
     private final FactoryProviderFactory fpf;
     private final HttpServerConfigurationWrapper httpServerConfig;
+    private final String installRoot;
     private final LineTcpReceiverConfigurationWrapper lineTcpConfig;
     private final boolean loadAdditionalConfigurations;
     private final Log log;
@@ -106,13 +106,11 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     private final PGWireConfigurationWrapper pgWireConfig;
     private final Properties properties;
     private final Object reloadLock = new Object();
-    private final String root;
     private final AtomicReference<PropServerConfiguration> serverConfig;
-    private long lastModified;
     private long version;
 
     public DynamicPropServerConfiguration(
-            String root,
+            String installRoot,
             Properties properties,
             @Nullable Map<String, String> env,
             Log log,
@@ -122,7 +120,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             FactoryProviderFactory fpf,
             boolean loadAdditionalConfigurations
     ) throws ServerConfigurationException, JsonException {
-        this.root = root;
+        this.installRoot = installRoot;
         this.properties = properties;
         this.env = env;
         this.log = log;
@@ -132,7 +130,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
         this.fpf = fpf;
         this.loadAdditionalConfigurations = loadAdditionalConfigurations;
         final PropServerConfiguration serverConfig = new PropServerConfiguration(
-                root,
+                installRoot,
                 properties,
                 dynamicProps,
                 env,
@@ -155,17 +153,10 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
         this.version = 0;
         this.confPath = Paths.get(getCairoConfiguration().getConfRoot().toString(), Bootstrap.CONFIG_FILE);
         this.configReloadEnabled = serverConfig.isConfigReloadEnabled();
-        try (Path p = new Path()) {
-            // we assume the config file does exist, otherwise we should not
-            // get to this code. This constructor is passed properties object,
-            // loaded from the same file. We are not expecting races here either.
-            p.of(confPath.toString());
-            lastModified = Files.getLastModified(p.$());
-        }
     }
 
     public DynamicPropServerConfiguration(
-            String root,
+            String installRoot,
             Properties properties,
             @Nullable Map<String, String> env,
             Log log,
@@ -175,7 +166,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             FactoryProviderFactory fpf
     ) throws ServerConfigurationException, JsonException {
         this(
-                root,
+                installRoot,
                 properties,
                 env,
                 log,
@@ -188,14 +179,14 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     }
 
     public DynamicPropServerConfiguration(
-            String root,
+            String installRoot,
             Properties properties,
             @Nullable Map<String, String> env,
             Log log,
             BuildInformation buildInformation
     ) throws ServerConfigurationException, JsonException {
         this(
-                root,
+                installRoot,
                 properties,
                 env,
                 log,
@@ -227,12 +218,12 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             if (oldVal == null || !oldVal.equals(entry.getValue())) {
                 final ConfigPropertyKey propKey = keyResolver.apply(key);
                 if (propKey == null) {
-                    return false;
+                    log.error().$("unknown property, ignoring [update, key=").$(key).I$();
+                    continue;
                 }
 
                 if (reloadableProps.contains(propKey)) {
-                    final LogRecord rec = log.info()
-                            .$("reloaded config option [update, key=").$(key);
+                    final LogRecord rec = log.info().$("reloaded config option [update, key=").$(key);
                     if (!propKey.isSensitive()) {
                         rec
                                 .$(", oldValue=").$(oldVal)
@@ -255,11 +246,12 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             if (!newProperties.containsKey(key)) {
                 final ConfigPropertyKey propKey = keyResolver.apply((String) key);
                 if (propKey == null) {
+                    log.error().$("unknown property, ignoring [remove, key=").$(key).I$();
                     continue;
                 }
+
                 if (reloadableProps.contains(propKey)) {
-                    final LogRecord rec = log.info()
-                            .$("reloaded config option [remove, key=").$(key);
+                    final LogRecord rec = log.info().$("reloaded config option [remove, key=").$(key);
                     if (!propKey.isSensitive()) {
                         rec.$(", value=").$(oldProperties.getProperty((String) key));
                     }
@@ -365,29 +357,22 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
 
             synchronized (reloadLock) {
                 // Check that the file has been modified since the last trigger
-                long newLastModified = Files.getLastModified(p.$());
-                if (newLastModified > lastModified) {
-                    // If it has, update the cached value
-                    lastModified = newLastModified;
+                // Then load the config properties
 
-                    // Then load the config properties
-                    Properties newProperties = new Properties();
-                    try (InputStream is = java.nio.file.Files.newInputStream(confPath)) {
-                        newProperties.load(is);
-                    } catch (IOException exc) {
-                        LOG.error().$(exc).$();
-                        return false;
-                    }
-
-                    if (updateSupportedProperties(properties, newProperties, dynamicProps, keyResolver, LOG)) {
-                        reload0();
-                        LOG.info().$("reloaded, [file=").$(confPath).$(", modifiedAt=").$ts(newLastModified * 1000).I$();
-                        return true;
-                    }
-                    LOG.info().$("nothing to reload [file=").$(confPath).$(", modifiedAt=").$ts(newLastModified * 1000).I$();
-                } else if (newLastModified == -1) {
-                    LOG.critical().$("Server configuration file is inaccessible! This is dangerous as server will likely not boot on restart. Make sure the current user can access the configuration file [path=").$(confPath).I$();
+                Properties newProperties = new Properties();
+                try (InputStream is = java.nio.file.Files.newInputStream(confPath)) {
+                    newProperties.load(is);
+                } catch (IOException exc) {
+                    LOG.error().$(exc).$();
+                    return false;
                 }
+
+                if (updateSupportedProperties(properties, newProperties, dynamicProps, keyResolver, LOG)) {
+                    reload0();
+                    LOG.info().$("reloaded, [file=").$(confPath).I$();
+                    return true;
+                }
+                LOG.info().$("nothing to reload [file=").$(confPath).I$();
             }
         }
         return false;
@@ -397,7 +382,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
         PropServerConfiguration newConfig;
         try {
             newConfig = new PropServerConfiguration(
-                    root,
+                    installRoot,
                     properties,
                     dynamicProps,
                     env,

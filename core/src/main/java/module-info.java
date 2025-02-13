@@ -139,6 +139,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory,
             io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory,
             io.questdb.griffin.engine.functions.test.TestOwnerCountingFunctionFactory,
+            io.questdb.griffin.engine.functions.test.TestTableReferenceOutOfDateFunctionFactory,
             io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory,
             io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.test.TestNPEFactory,
@@ -1011,6 +1012,7 @@ open module io.questdb {
             // window functions
             io.questdb.griffin.engine.functions.window.RowNumberFunctionFactory,
             io.questdb.griffin.engine.functions.window.RankFunctionFactory,
+            io.questdb.griffin.engine.functions.window.DenseRankFunctionFactory,
             io.questdb.griffin.engine.functions.window.AvgDoubleWindowFunctionFactory,
             io.questdb.griffin.engine.functions.window.FirstValueDoubleWindowFunctionFactory,
             io.questdb.griffin.engine.functions.window.SumDoubleWindowFunctionFactory,

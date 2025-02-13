@@ -189,6 +189,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int createAsSelectRetryCount;
     private final int dateAdapterPoolCapacity;
     private final String dbDirectory;
+    private final String dbRoot;
     private final int defaultSeqPartTxnCount;
     private final boolean defaultSymbolCacheFlag;
     private final int defaultSymbolCapacity;
@@ -239,6 +240,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long inactiveWriterTTL;
     private final int indexValueBlockSize;
     private final InputFormatConfiguration inputFormatConfiguration;
+    private final String installRoot;
     private final long instanceHashHi;
     private final long instanceHashLo;
     private final boolean interruptOnClosedConnection;
@@ -333,7 +335,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int rndFunctionMemoryPageSize;
     private final int rollBufferLimit;
     private final int rollBufferSize;
-    private final String root;
     private final long sequencerCheckInterval;
     private final int[] sharedWorkerAffinity;
     private final int sharedWorkerCount;
@@ -611,14 +612,14 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long symbolCacheWaitBeforeReload;
 
     public PropServerConfiguration(
-            String root,
+            String installRoot,
             Properties properties,
             @Nullable Map<String, String> env,
             Log log,
             BuildInformation buildInformation
     ) throws ServerConfigurationException, JsonException {
         this(
-                root,
+                installRoot,
                 properties,
                 null,
                 env,
@@ -632,7 +633,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     public PropServerConfiguration(
-            String root,
+            String installRoot,
             Properties properties,
             @Nullable Set<? extends ConfigPropertyKey> dynamicProperties,
             @Nullable Map<String, String> env,
@@ -643,7 +644,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             FactoryProviderFactory fpf
     ) throws ServerConfigurationException, JsonException {
         this(
-                root,
+                installRoot,
                 properties,
                 dynamicProperties,
                 env,
@@ -657,7 +658,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     public PropServerConfiguration(
-            String root,
+            String installRoot,
             Properties properties,
             @Nullable Map<String, String> env,
             Log log,
@@ -667,7 +668,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             FactoryProviderFactory fpf
     ) throws ServerConfigurationException, JsonException {
         this(
-                root,
+                installRoot,
                 properties,
                 null,
                 env,
@@ -681,7 +682,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     public PropServerConfiguration(
-            String root,
+            String installRoot,
             Properties properties,
             @Nullable Set<? extends ConfigPropertyKey> dynamicProperties,
             @Nullable Map<String, String> env,
@@ -772,21 +773,22 @@ public class PropServerConfiguration implements ServerConfiguration {
                     .put(tempRenamePendingTablePrefix).put(']');
         }
 
+        this.installRoot = installRoot;
         this.dbDirectory = getString(properties, env, PropertyKey.CAIRO_ROOT, DB_DIRECTORY);
         String tmpRoot;
         boolean absDbDir = new File(this.dbDirectory).isAbsolute();
         if (absDbDir) {
-            this.root = this.dbDirectory;
-            this.confRoot = rootSubdir(this.root, CONFIG_DIRECTORY); // ../conf
-            this.checkpointRoot = rootSubdir(this.root, TableUtils.CHECKPOINT_DIRECTORY); // ../.checkpoint
-            this.legacyCheckpointRoot = rootSubdir(this.root, TableUtils.LEGACY_CHECKPOINT_DIRECTORY);
-            tmpRoot = rootSubdir(this.root, TMP_DIRECTORY); // ../tmp
+            this.dbRoot = this.dbDirectory;
+            this.confRoot = rootSubdir(this.dbRoot, CONFIG_DIRECTORY); // ../conf
+            this.checkpointRoot = rootSubdir(this.dbRoot, TableUtils.CHECKPOINT_DIRECTORY); // ../.checkpoint
+            this.legacyCheckpointRoot = rootSubdir(this.dbRoot, TableUtils.LEGACY_CHECKPOINT_DIRECTORY);
+            tmpRoot = rootSubdir(this.dbRoot, TMP_DIRECTORY); // ../tmp
         } else {
-            this.root = new File(root, this.dbDirectory).getAbsolutePath();
-            this.confRoot = new File(root, CONFIG_DIRECTORY).getAbsolutePath();
-            this.checkpointRoot = new File(root, TableUtils.CHECKPOINT_DIRECTORY).getAbsolutePath();
-            this.legacyCheckpointRoot = new File(root, TableUtils.LEGACY_CHECKPOINT_DIRECTORY).getAbsolutePath();
-            tmpRoot = new File(root, TMP_DIRECTORY).getAbsolutePath();
+            this.dbRoot = new File(installRoot, this.dbDirectory).getAbsolutePath();
+            this.confRoot = new File(installRoot, CONFIG_DIRECTORY).getAbsolutePath();
+            this.checkpointRoot = new File(installRoot, TableUtils.CHECKPOINT_DIRECTORY).getAbsolutePath();
+            this.legacyCheckpointRoot = new File(installRoot, TableUtils.LEGACY_CHECKPOINT_DIRECTORY).getAbsolutePath();
+            tmpRoot = new File(installRoot, TMP_DIRECTORY).getAbsolutePath();
         }
 
         String configuredCairoSqlCopyRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_ROOT, "import");
@@ -795,15 +797,15 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.cairoSqlCopyRoot = configuredCairoSqlCopyRoot;
             } else {
                 if (absDbDir) {
-                    this.cairoSqlCopyRoot = rootSubdir(this.root, configuredCairoSqlCopyRoot); // ../import
+                    this.cairoSqlCopyRoot = rootSubdir(this.dbRoot, configuredCairoSqlCopyRoot); // ../import
                 } else {
-                    this.cairoSqlCopyRoot = new File(root, configuredCairoSqlCopyRoot).getAbsolutePath();
+                    this.cairoSqlCopyRoot = new File(installRoot, configuredCairoSqlCopyRoot).getAbsolutePath();
                 }
             }
             String cairoSqlCopyWorkRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_WORK_ROOT, tmpRoot);
             this.cairoSqlCopyWorkRoot = getCanonicalPath(cairoSqlCopyWorkRoot);
-            if (pathEquals(root, this.cairoSqlCopyWorkRoot)
-                    || pathEquals(this.root, this.cairoSqlCopyWorkRoot)
+            if (pathEquals(installRoot, this.cairoSqlCopyWorkRoot)
+                    || pathEquals(this.dbRoot, this.cairoSqlCopyWorkRoot)
                     || pathEquals(this.confRoot, this.cairoSqlCopyWorkRoot)
                     || pathEquals(this.checkpointRoot, this.cairoSqlCopyWorkRoot)) {
                 throw new ServerConfigurationException("Configuration value for " + PropertyKey.CAIRO_SQL_COPY_WORK_ROOT.getPropertyPath() + " can't point to root, data, conf or snapshot dirs. ");
@@ -854,9 +856,9 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
         try (Path path = new Path()) {
-            volumeDefinitions.of(getString(properties, env, PropertyKey.CAIRO_VOLUMES, null), path, root);
-            ff.mkdirs(path.of(this.root).slash(), this.mkdirMode);
-            path.of(this.root).concat(TableUtils.TAB_INDEX_FILE_NAME);
+            volumeDefinitions.of(getString(properties, env, PropertyKey.CAIRO_VOLUMES, null), path, installRoot);
+            ff.mkdirs(path.of(this.dbRoot).slash(), this.mkdirMode);
+            path.of(this.dbRoot).concat(TableUtils.TAB_INDEX_FILE_NAME);
             final long tableIndexFd = TableUtils.openFileRWOrFail(ff, path.$(), CairoConfiguration.O_NONE);
             final long fileSize = ff.length(tableIndexFd);
             if (fileSize < Long.BYTES) {
@@ -1085,7 +1087,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (new File(publicDirectory).isAbsolute()) {
                 this.publicDirectory = publicDirectory;
             } else {
-                this.publicDirectory = new File(root, publicDirectory).getAbsolutePath();
+                this.publicDirectory = new File(installRoot, publicDirectory).getAbsolutePath();
             }
 
             this.defaultSeqPartTxnCount = getInt(properties, env, PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 0);
@@ -1154,7 +1156,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     httpNetBindPort = p;
                 });
                 // load mime types
-                path.of(new File(new File(root, CONFIG_DIRECTORY), "mime.types").getAbsolutePath());
+                path.of(new File(new File(installRoot, CONFIG_DIRECTORY), "mime.types").getAbsolutePath());
                 this.mimeTypesCache = new MimeTypesCache(FilesFacadeImpl.INSTANCE, path.$());
             }
 
@@ -1368,7 +1370,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
             this.writerFileOpenOpts = lopts;
 
-            this.writerMixedIOEnabled = getBoolean(properties, env, PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, ff.allowMixedIO(this.root));
+            this.writerMixedIOEnabled = getBoolean(properties, env, PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, ff.allowMixedIO(this.dbRoot));
 
             this.inputFormatConfiguration = new InputFormatConfiguration(
                     new DateFormatFactory(),
@@ -2096,7 +2098,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         } else {
             parts = unparsedResult.split(",");
         }
-        for (int i = 0, n = defaultValue.length; i < n; i++) {
+        for (int i = 0, n = parts.length; i < n; i++) {
             String url = parts[i].trim();
             if (url.isEmpty()) {
                 throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), "empty URL in the list");
@@ -2679,6 +2681,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public @NotNull String getDbRoot() {
+            return dbRoot;
+        }
+
+        @Override
         public @NotNull DateLocale getDefaultDateLocale() {
             return locale;
         }
@@ -2811,6 +2818,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getInsertModelPoolCapacity() {
             return sqlInsertModelPoolCapacity;
+        }
+
+        @Override
+        public @NotNull String getInstallRoot() {
+            return installRoot;
         }
 
         @Override
@@ -3056,11 +3068,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getRndFunctionMemoryPageSize() {
             return rndFunctionMemoryPageSize;
-        }
-
-        @Override
-        public @NotNull String getRoot() {
-            return root;
         }
 
         @Override
