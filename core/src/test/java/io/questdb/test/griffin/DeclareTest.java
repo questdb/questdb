@@ -511,7 +511,7 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
             drainWalQueue();
-            assertModel("select-group-by timestamp_floor('1h',timestamp) timestamp, symbol, avg(price) avg from (select [timestamp, symbol, price] from trades timestamp (timestamp) stride 1h) order by timestamp",
+            assertModel("select-group-by timestamp_floor('1h',timestamp) timestamp, symbol, avg(price) avg from (select [timestamp, symbol, price] from trades timestamp (timestamp)) stride 1h order by timestamp",
                     "DECLARE @unit := 1h SELECT timestamp, symbol, avg(price) FROM trades SAMPLE BY @unit", ExecutionModel.QUERY);
         });
     }

@@ -1856,6 +1856,35 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testOrderByNotChooseByParent() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (f1 float, f2 float, ts timestamp) timestamp(ts)");
+            execute("insert into tab VALUES(1, 10, '2024-12-24T00:11:00.000Z'), (2, 20, '2024-12-24T00:11:00.000Z')");
+            String q1 = "select f2 - f1 as p1, f1, f2 from tab order by ts desc";
+            assertPlanNoLeakCheck(q1, "SelectedRecord\n" +
+                    "    VirtualRecord\n" +
+                    "      functions: [f2-f1,f1,f2,ts]\n" +
+                    "        PageFrame\n" +
+                    "            Row backward scan\n" +
+                    "            Frame backward scan on: tab\n");
+            assertQueryNoLeakCheck("p1\tf1\tf2\n" +
+                    "18.0\t2.0000\t20.0000\n" +
+                    "9.0\t1.0000\t10.0000\n", q1);
+
+            String q2 = "select f2 - f1, f1, f2 from tab order by ts desc";
+            assertPlanNoLeakCheck(q2, "SelectedRecord\n" +
+                    "    VirtualRecord\n" +
+                    "      functions: [f2-f1,f1,f2,ts]\n" +
+                    "        PageFrame\n" +
+                    "            Row backward scan\n" +
+                    "            Frame backward scan on: tab\n");
+            assertQueryNoLeakCheck("column\tf1\tf2\n" +
+                    "18.0\t2.0000\t20.0000\n" +
+                    "9.0\t1.0000\t10.0000\n", q2);
+        });
+    }
+
+    @Test
     public void testOrderingOfSortsInSingleTimestampCase() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
@@ -1904,35 +1933,6 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "order by ts desc",
                     "ts"
             );
-        });
-    }
-
-    @Test
-    public void testOrderByNotChooseByParent() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tab (f1 float, f2 float, ts timestamp) timestamp(ts)");
-            execute("insert into tab VALUES(1, 10, '2024-12-24T00:11:00.000Z'), (2, 20, '2024-12-24T00:11:00.000Z')");
-            String q1 = "select f2 - f1 as p1, f1, f2 from tab order by ts desc";
-            assertPlanNoLeakCheck(q1, "SelectedRecord\n" +
-                    "    VirtualRecord\n" +
-                    "      functions: [f2-f1,f1,f2,ts]\n" +
-                    "        PageFrame\n" +
-                    "            Row backward scan\n" +
-                    "            Frame backward scan on: tab\n");
-            assertQueryNoLeakCheck("p1\tf1\tf2\n" +
-                    "18.0\t2.0000\t20.0000\n" +
-                    "9.0\t1.0000\t10.0000\n", q1);
-
-            String q2 = "select f2 - f1, f1, f2 from tab order by ts desc";
-            assertPlanNoLeakCheck(q2, "SelectedRecord\n" +
-                    "    VirtualRecord\n" +
-                    "      functions: [f2-f1,f1,f2,ts]\n" +
-                    "        PageFrame\n" +
-                    "            Row backward scan\n" +
-                    "            Frame backward scan on: tab\n");
-            assertQueryNoLeakCheck("column\tf1\tf2\n" +
-                    "18.0\t2.0000\t20.0000\n" +
-                    "9.0\t1.0000\t10.0000\n", q2);
         });
     }
 
@@ -2949,6 +2949,53 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSampleByExpressionDependOtherColumn() throws Exception {
+        execute("create table t (\n" +
+                "  timestamp TIMESTAMP,\n" +
+                "  symbol SYMBOL capacity 256 CACHE,\n" +
+                "  side SYMBOL CAPACITY 256 CACHE,\n" +
+                "  price double\n" +
+                ") timestamp(timestamp) partition by day;");
+
+        execute("INSERT INTO t (timestamp, symbol, side, price) VALUES" +
+                " ('2023-09-01T00:00:00.000Z', 'ETH-USD', 'buyer', 3240.0)," +
+                " ('2023-09-01T01:00:00.000Z', 'ETH-USD', 'buyer', 3241.0)," +
+                " ('2023-09-01T02:00:00.000Z', 'ETH-USD', 'buyer', 3242.0)," +
+                " ('2023-09-01T03:00:00.000Z', 'ETH-USD', 'buyer', 3243.0)," +
+                " ('2023-09-01T04:00:00.000Z', 'ETH-USD', 'buyer', 3244.0)," +
+                " ('2023-09-01T05:00:00.000Z', 'ETH-USD', 'seller', 5.0)");
+        assertMemoryLeak(() -> {
+            final String query = "select timestamp, symbol, side, CASE WHEN price > 3240  THEN avg(price) END as price_today, CASE WHEN price < 3240  THEN avg(price) END as price_yesterday " +
+                    "from t where timestamp >= '2023-09-01T00:00:00.000Z' and symbol = 'ETH-USD' sample by 1h";
+
+            final String result = "timestamp\tsymbol\tside\tprice_today\tprice_yesterday\n" +
+                    "2023-09-01T00:00:00.000000Z\tETH-USD\tbuyer\tnull\tnull\n" +
+                    "2023-09-01T01:00:00.000000Z\tETH-USD\tbuyer\t3241.0\tnull\n" +
+                    "2023-09-01T02:00:00.000000Z\tETH-USD\tbuyer\t3242.0\tnull\n" +
+                    "2023-09-01T03:00:00.000000Z\tETH-USD\tbuyer\t3243.0\tnull\n" +
+                    "2023-09-01T04:00:00.000000Z\tETH-USD\tbuyer\t3244.0\tnull\n" +
+                    "2023-09-01T05:00:00.000000Z\tETH-USD\tseller\tnull\t5.0\n";
+
+            assertSql(result, query);
+        });
+
+        assertMemoryLeak(() -> {
+            final String query = "select timestamp, symbol, side, CASE WHEN extract('day', timestamp) =14  THEN avg(price) END as price_today, CASE WHEN true  THEN avg(price) END as price_yesterday " +
+                    "from t where timestamp >= '2023-09-01T00:00:00.000Z' and symbol = 'ETH-USD' sample by 1h";
+
+            final String result = "timestamp\tsymbol\tside\tprice_today\tprice_yesterday\n" +
+                    "2023-09-01T00:00:00.000000Z\tETH-USD\tbuyer\tnull\t3240.0\n" +
+                    "2023-09-01T01:00:00.000000Z\tETH-USD\tbuyer\tnull\t3241.0\n" +
+                    "2023-09-01T02:00:00.000000Z\tETH-USD\tbuyer\tnull\t3242.0\n" +
+                    "2023-09-01T03:00:00.000000Z\tETH-USD\tbuyer\tnull\t3243.0\n" +
+                    "2023-09-01T04:00:00.000000Z\tETH-USD\tbuyer\tnull\t3244.0\n" +
+                    "2023-09-01T05:00:00.000000Z\tETH-USD\tseller\tnull\t5.0\n";
+
+            assertSql(result, query);
+        });
+    }
+
+    @Test
     public void testSampleByFromToBasicWhereOptimisationBetween() throws Exception {
         assertMemoryLeak(() -> {
             execute(SampleByTest.DDL_FROMTO);
@@ -3097,10 +3144,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     public void testSampleByFromToDisallowedQueryWithKey() throws Exception {
         assertMemoryLeak(() -> {
             execute(SampleByTest.DDL_FROMTO);
-            assertException("SELECT ts, count, s\n" +
-                    "FROM fromto\n" +
-                    "SAMPLE BY 5d FROM '2018-01-01' TO '2019-01-01'\n" +
-                    "LIMIT 6", 0, "are not supported for keyed SAMPLE BY");
+            assertException(
+                    "SELECT ts, count, s FROM fromto SAMPLE BY 5d FROM '2018-01-01' TO '2019-01-01' LIMIT 6",
+                    50,
+                    "are not supported for keyed SAMPLE BY"
+            );
         });
     }
 
@@ -3111,12 +3159,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String query = "select ts, avg(x), sum(x) from fromto\n" +
                     "sample by 5d from '2017-12-20' to '2018-01-31' fill(null)\n";
 
-            assertPlanNoLeakCheck(query, "Sort\n" +
-                    "  keys: [ts]\n" +
-                    "    Fill Range\n" +
-                    "      range: ('2017-12-20','2018-01-31')\n" +
-                    "      stride: '5d'\n" +
-                    "      values: [null,null]\n" +
+            assertPlanNoLeakCheck(query, "Fill Range\n" +
+                    "  range: ('2017-12-20','2018-01-31')\n" +
+                    "  stride: '5d'\n" +
+                    "  values: [null,null]\n" +
+                    "    Radix sort light\n" +
+                    "      keys: [ts]\n" +
                     "        Async Group By workers: 1\n" +
                     "          keys: [ts]\n" +
                     "          values: [avg(x),sum(x)]\n" +
@@ -3158,585 +3206,6 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "from fromto sample by 5d from '2018-01-01' to '2018-01-31' fill(42)";
 
             assertException(query, -1, "not enough fill values");
-        });
-    }
-
-    @Test
-    public void testSampleByFromToParallelSampleByRewrite() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(SampleByTest.DDL_FROMTO);
-            final String query = "select ts, avg(x) from fromto\n" +
-                    "sample by 5d from '2017-12-20' to '2018-01-31' fill(null)\n";
-
-            assertPlanNoLeakCheck(query, "Sort\n" +
-                    "  keys: [ts]\n" +
-                    "    Fill Range\n" +
-                    "      range: ('2017-12-20','2018-01-31')\n" +
-                    "      stride: '5d'\n" +
-                    "      values: [null]\n" +
-                    "        Async Group By workers: 1\n" +
-                    "          keys: [ts]\n" +
-                    "          values: [avg(x)]\n" +
-                    "          filter: null\n" +
-                    "            PageFrame\n" +
-                    "                Row forward scan\n" +
-                    "                Interval forward scan on: fromto\n" +
-                    "                  intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
-            assertSql("ts\tavg\n" +
-                    "2017-12-20T00:00:00.000000Z\tnull\n" +
-                    "2017-12-25T00:00:00.000000Z\tnull\n" +
-                    "2017-12-30T00:00:00.000000Z\t72.5\n" +
-                    "2018-01-04T00:00:00.000000Z\t264.5\n" +
-                    "2018-01-09T00:00:00.000000Z\t432.5\n" +
-                    "2018-01-14T00:00:00.000000Z\tnull\n" +
-                    "2018-01-19T00:00:00.000000Z\tnull\n" +
-                    "2018-01-24T00:00:00.000000Z\tnull\n" +
-                    "2018-01-29T00:00:00.000000Z\tnull\n", query);
-        });
-    }
-
-    @Test
-    public void testSampleByFromToParallelSampleByRewriteMultipleFills() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(SampleByTest.DDL_FROMTO);
-            final String query = "select ts, avg(x), sum(x) from fromto\n" +
-                    "sample by 5d from '2017-12-20' to '2018-01-31' fill(42, 41)";
-
-            assertPlanNoLeakCheck(query, "Sample By\n" +
-                    "  fill: value\n" +
-                    "  range: ('2017-12-20','2018-01-31')\n" +
-                    "  values: [avg(x),sum(x)]\n" +
-                    "    PageFrame\n" +
-                    "        Row forward scan\n" +
-                    "        Interval forward scan on: fromto\n" +
-                    "          intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
-            assertSql("ts\tavg\tsum\n" +
-                    "2017-12-20T00:00:00.000000Z\t42.0\t41\n" +
-                    "2017-12-25T00:00:00.000000Z\t42.0\t41\n" +
-                    "2017-12-30T00:00:00.000000Z\t72.5\t10440\n" +
-                    "2018-01-04T00:00:00.000000Z\t264.5\t63480\n" +
-                    "2018-01-09T00:00:00.000000Z\t432.5\t41520\n" +
-                    "2018-01-14T00:00:00.000000Z\t42.0\t41\n" +
-                    "2018-01-19T00:00:00.000000Z\t42.0\t41\n" +
-                    "2018-01-24T00:00:00.000000Z\t42.0\t41\n" +
-                    "2018-01-29T00:00:00.000000Z\t42.0\t41\n", query);
-        });
-    }
-
-    @Test
-    public void testSampleByFromToParallelSampleByRewritePostfill() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(SampleByTest.DDL_FROMTO);
-            final String query = "select ts, avg(x) from fromto\n" +
-                    "sample by 5d to '2018-01-31' fill(null)";
-
-            assertPlanNoLeakCheck(query, "Sort\n" +
-                    "  keys: [ts]\n" +
-                    "    Fill Range\n" +
-                    "      range: (null,'2018-01-31')\n" +
-                    "      stride: '5d'\n" +
-                    "      values: [null]\n" +
-                    "        Async Group By workers: 1\n" +
-                    "          keys: [ts]\n" +
-                    "          values: [avg(x)]\n" +
-                    "          filter: null\n" +
-                    "            PageFrame\n" +
-                    "                Row forward scan\n" +
-                    "                Interval forward scan on: fromto\n" +
-                    "                  intervals: [(\"MIN\",\"2018-01-30T23:59:59.999999Z\")]\n");
-            assertSql("ts\tavg\n" +
-                    "2017-12-30T00:00:00.000000Z\t72.5\n" +
-                    "2018-01-04T00:00:00.000000Z\t264.5\n" +
-                    "2018-01-09T00:00:00.000000Z\t432.5\n" +
-                    "2018-01-14T00:00:00.000000Z\tnull\n" +
-                    "2018-01-19T00:00:00.000000Z\tnull\n" +
-                    "2018-01-24T00:00:00.000000Z\tnull\n" +
-                    "2018-01-29T00:00:00.000000Z\tnull\n", query);
-        });
-    }
-
-    @Test
-    public void testSampleByFromToParallelSampleByRewritePrefill() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(SampleByTest.DDL_FROMTO);
-            final String query = "select ts, avg(x) from fromto\n" +
-                    "sample by 5d from '2017-12-20' fill(null) ";
-
-            assertPlanNoLeakCheck(query, "Sort\n" +
-                    "  keys: [ts]\n" +
-                    "    Fill Range\n" +
-                    "      range: ('2017-12-20',null)\n" +
-                    "      stride: '5d'\n" +
-                    "      values: [null]\n" +
-                    "        Async Group By workers: 1\n" +
-                    "          keys: [ts]\n" +
-                    "          values: [avg(x)]\n" +
-                    "          filter: null\n" +
-                    "            PageFrame\n" +
-                    "                Row forward scan\n" +
-                    "                Interval forward scan on: fromto\n" +
-                    "                  intervals: [(\"2017-12-20T00:00:00.000000Z\",\"MAX\")]\n");
-            assertSql("ts\tavg\n" +
-                    "2017-12-20T00:00:00.000000Z\tnull\n" +
-                    "2017-12-25T00:00:00.000000Z\tnull\n" +
-                    "2017-12-30T00:00:00.000000Z\t72.5\n" +
-                    "2018-01-04T00:00:00.000000Z\t264.5\n" +
-                    "2018-01-09T00:00:00.000000Z\t432.5\n", query);
-        });
-    }
-
-    @Test
-    public void testSampleByFromToParallelSampleByRewriteWithExcept() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(SampleByTest.DDL_FROMTO);
-            execute(SampleByTest.DDL_FROMTO.replace("fromto", "fromto2"));
-
-            final String exceptAllQuery = "select ts, avg(x), sum(x) from fromto sample by 5d from '2017-12-20' to '2018-01-31' fill(null)\n" +
-                    "except all\n" +
-                    "select ts, avg(x), sum(x) from fromto2 sample by 5d from '2017-12-20' to '2018-01-31' fill(null)\n";
-
-            final String exceptQuery = exceptAllQuery.replace("except all", "except");
-
-            assertPlanNoLeakCheck(exceptAllQuery, "Except All\n" +
-                    "    Sort\n" +
-                    "      keys: [ts]\n" +
-                    "        Fill Range\n" +
-                    "          range: ('2017-12-20','2018-01-31')\n" +
-                    "          stride: '5d'\n" +
-                    "          values: [null,null]\n" +
-                    "            Async Group By workers: 1\n" +
-                    "              keys: [ts]\n" +
-                    "              values: [avg(x),sum(x)]\n" +
-                    "              filter: null\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Interval forward scan on: fromto\n" +
-                    "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n" +
-                    "    Hash\n" +
-                    "        Fill Range\n" +
-                    "          range: ('2017-12-20','2018-01-31')\n" +
-                    "          stride: '5d'\n" +
-                    "          values: [null,null]\n" +
-                    "            Async Group By workers: 1\n" +
-                    "              keys: [ts]\n" +
-                    "              values: [avg(x),sum(x)]\n" +
-                    "              filter: null\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Interval forward scan on: fromto2\n" +
-                    "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
-
-            assertSql("ts\tavg\tsum\n", exceptAllQuery);
-
-            assertPlanNoLeakCheck(exceptQuery, "Except\n" +
-                    "    Sort\n" +
-                    "      keys: [ts]\n" +
-                    "        Fill Range\n" +
-                    "          range: ('2017-12-20','2018-01-31')\n" +
-                    "          stride: '5d'\n" +
-                    "          values: [null,null]\n" +
-                    "            Async Group By workers: 1\n" +
-                    "              keys: [ts]\n" +
-                    "              values: [avg(x),sum(x)]\n" +
-                    "              filter: null\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Interval forward scan on: fromto\n" +
-                    "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n" +
-                    "    Hash\n" +
-                    "        Fill Range\n" +
-                    "          range: ('2017-12-20','2018-01-31')\n" +
-                    "          stride: '5d'\n" +
-                    "          values: [null,null]\n" +
-                    "            Async Group By workers: 1\n" +
-                    "              keys: [ts]\n" +
-                    "              values: [avg(x),sum(x)]\n" +
-                    "              filter: null\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Interval forward scan on: fromto2\n" +
-                    "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
-
-            assertSql("ts\tavg\tsum\n", exceptQuery);
-        });
-    }
-
-    @Test
-    public void testSampleByFromToParallelSampleByRewriteWithIntersect() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(SampleByTest.DDL_FROMTO);
-            execute(SampleByTest.DDL_FROMTO.replace("fromto", "fromto2"));
-
-            final String intersectAllQuery = "select ts, avg(x), sum(x) from fromto sample by 5d from '2017-12-20' to '2018-01-31' fill(null)\n" +
-                    "intersect all\n" +
-                    "select ts, avg(x), sum(x) from fromto2 sample by 5d from '2017-12-20' to '2018-01-31' fill(null)\n";
-
-            final String intersectQuery = intersectAllQuery.replace("intersect all", "intersect");
-
-            assertPlanNoLeakCheck(intersectAllQuery, "Intersect All\n" +
-                    "    Sort\n" +
-                    "      keys: [ts]\n" +
-                    "        Fill Range\n" +
-                    "          range: ('2017-12-20','2018-01-31')\n" +
-                    "          stride: '5d'\n" +
-                    "          values: [null,null]\n" +
-                    "            Async Group By workers: 1\n" +
-                    "              keys: [ts]\n" +
-                    "              values: [avg(x),sum(x)]\n" +
-                    "              filter: null\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Interval forward scan on: fromto\n" +
-                    "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n" +
-                    "    Hash\n" +
-                    "        Fill Range\n" +
-                    "          range: ('2017-12-20','2018-01-31')\n" +
-                    "          stride: '5d'\n" +
-                    "          values: [null,null]\n" +
-                    "            Async Group By workers: 1\n" +
-                    "              keys: [ts]\n" +
-                    "              values: [avg(x),sum(x)]\n" +
-                    "              filter: null\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Interval forward scan on: fromto2\n" +
-                    "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
-
-            assertSql("ts\tavg\tsum\n" +
-                    "2017-12-20T00:00:00.000000Z\tnull\tnull\n" +
-                    "2017-12-25T00:00:00.000000Z\tnull\tnull\n" +
-                    "2017-12-30T00:00:00.000000Z\t72.5\t10440\n" +
-                    "2018-01-04T00:00:00.000000Z\t264.5\t63480\n" +
-                    "2018-01-09T00:00:00.000000Z\t432.5\t41520\n" +
-                    "2018-01-14T00:00:00.000000Z\tnull\tnull\n" +
-                    "2018-01-19T00:00:00.000000Z\tnull\tnull\n" +
-                    "2018-01-24T00:00:00.000000Z\tnull\tnull\n" +
-                    "2018-01-29T00:00:00.000000Z\tnull\tnull\n", intersectAllQuery);
-
-            assertPlanNoLeakCheck(intersectQuery, "Intersect\n" +
-                    "    Sort\n" +
-                    "      keys: [ts]\n" +
-                    "        Fill Range\n" +
-                    "          range: ('2017-12-20','2018-01-31')\n" +
-                    "          stride: '5d'\n" +
-                    "          values: [null,null]\n" +
-                    "            Async Group By workers: 1\n" +
-                    "              keys: [ts]\n" +
-                    "              values: [avg(x),sum(x)]\n" +
-                    "              filter: null\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Interval forward scan on: fromto\n" +
-                    "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n" +
-                    "    Hash\n" +
-                    "        Fill Range\n" +
-                    "          range: ('2017-12-20','2018-01-31')\n" +
-                    "          stride: '5d'\n" +
-                    "          values: [null,null]\n" +
-                    "            Async Group By workers: 1\n" +
-                    "              keys: [ts]\n" +
-                    "              values: [avg(x),sum(x)]\n" +
-                    "              filter: null\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Interval forward scan on: fromto2\n" +
-                    "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
-
-            assertSql("ts\tavg\tsum\n" +
-                    "2017-12-20T00:00:00.000000Z\tnull\tnull\n" +
-                    "2017-12-25T00:00:00.000000Z\tnull\tnull\n" +
-                    "2017-12-30T00:00:00.000000Z\t72.5\t10440\n" +
-                    "2018-01-04T00:00:00.000000Z\t264.5\t63480\n" +
-                    "2018-01-09T00:00:00.000000Z\t432.5\t41520\n" +
-                    "2018-01-14T00:00:00.000000Z\tnull\tnull\n" +
-                    "2018-01-19T00:00:00.000000Z\tnull\tnull\n" +
-                    "2018-01-24T00:00:00.000000Z\tnull\tnull\n" +
-                    "2018-01-29T00:00:00.000000Z\tnull\tnull\n", intersectQuery);
-        });
-    }
-
-    @Test
-    public void testSampleByFromToParallelSampleByRewriteWithJoin() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(SampleByTest.DDL_FROMTO);
-            execute(SampleByTest.DDL_FROMTO.replace("fromto", "fromto2"));
-
-
-            final String query = "select fromto.ts, avg(fromto.x)\n" +
-                    "from fromto\n" +
-                    "asof join fromto2\n" +
-                    "sample by 5d from '2017-12-20' to '2018-01-31' fill(null)\n";
-
-            assertPlanNoLeakCheck(query, "Sort\n" +
-                    "  keys: [ts]\n" +
-                    "    Fill Range\n" +
-                    "      range: ('2017-12-20','2018-01-31')\n" +
-                    "      stride: '5d'\n" +
-                    "      values: [null]\n" +
-                    "        GroupBy vectorized: false\n" +
-                    "          keys: [ts]\n" +
-                    "          values: [avg(x)]\n" +
-                    "            SelectedRecord\n" +
-                    "                AsOf Join Fast Scan\n" +
-                    "                    PageFrame\n" +
-                    "                        Row forward scan\n" +
-                    "                        Interval forward scan on: fromto\n" +
-                    "                          intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n" +
-                    "                    PageFrame\n" +
-                    "                        Row forward scan\n" +
-                    "                        Frame forward scan on: fromto2\n");
-            assertSql("ts\tavg\n" +
-                    "2017-12-20T00:00:00.000000Z\tnull\n" +
-                    "2017-12-25T00:00:00.000000Z\tnull\n" +
-                    "2017-12-30T00:00:00.000000Z\t72.5\n" +
-                    "2018-01-04T00:00:00.000000Z\t264.5\n" +
-                    "2018-01-09T00:00:00.000000Z\t432.5\n" +
-                    "2018-01-14T00:00:00.000000Z\tnull\n" +
-                    "2018-01-19T00:00:00.000000Z\tnull\n" +
-                    "2018-01-24T00:00:00.000000Z\tnull\n" +
-                    "2018-01-29T00:00:00.000000Z\tnull\n", query);
-        });
-    }
-
-    @Test
-    public void testSampleByFromToParallelSampleByRewriteWithJoin2() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(SampleByTest.DDL_FROMTO);
-            execute(SampleByTest.DDL_FROMTO.replace("fromto", "fromto2"));
-
-            final String query = "(select ts as five_days, avg(x) as five_days_avg from fromto sample by 5d from '2017-12-20' to '2018-01-31' fill(null))\n" +
-                    "asof join\n" +
-                    "(select ts as ten_days, avg(x) as ten_days_avg from fromto2 sample by 10d from '2017-12-20' to '2018-01-31' fill(null))\n";
-
-            assertPlanNoLeakCheck(query, "SelectedRecord\n" +
-                    "    AsOf Join\n" +
-                    "        Sort\n" +
-                    "          keys: [five_days]\n" +
-                    "            Fill Range\n" +
-                    "              range: ('2017-12-20','2018-01-31')\n" +
-                    "              stride: '5d'\n" +
-                    "              values: [null]\n" +
-                    "                Async Group By workers: 1\n" +
-                    "                  keys: [five_days]\n" +
-                    "                  values: [avg(x)]\n" +
-                    "                  filter: null\n" +
-                    "                    PageFrame\n" +
-                    "                        Row forward scan\n" +
-                    "                        Interval forward scan on: fromto\n" +
-                    "                          intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n" +
-                    "        Sort\n" +
-                    "          keys: [ten_days]\n" +
-                    "            Fill Range\n" +
-                    "              range: ('2017-12-20','2018-01-31')\n" +
-                    "              stride: '10d'\n" +
-                    "              values: [null]\n" +
-                    "                Async Group By workers: 1\n" +
-                    "                  keys: [ten_days]\n" +
-                    "                  values: [avg(x)]\n" +
-                    "                  filter: null\n" +
-                    "                    PageFrame\n" +
-                    "                        Row forward scan\n" +
-                    "                        Interval forward scan on: fromto2\n" +
-                    "                          intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
-            assertSql("five_days\tfive_days_avg\tten_days\tten_days_avg\n" +
-                    "2017-12-20T00:00:00.000000Z\tnull\t2017-12-20T00:00:00.000000Z\tnull\n" +
-                    "2017-12-25T00:00:00.000000Z\tnull\t2017-12-20T00:00:00.000000Z\tnull\n" +
-                    "2017-12-30T00:00:00.000000Z\t72.5\t2017-12-30T00:00:00.000000Z\t192.5\n" +
-                    "2018-01-04T00:00:00.000000Z\t264.5\t2017-12-30T00:00:00.000000Z\t192.5\n" +
-                    "2018-01-09T00:00:00.000000Z\t432.5\t2018-01-09T00:00:00.000000Z\t432.5\n" +
-                    "2018-01-14T00:00:00.000000Z\tnull\t2018-01-09T00:00:00.000000Z\t432.5\n" +
-                    "2018-01-19T00:00:00.000000Z\tnull\t2018-01-19T00:00:00.000000Z\tnull\n" +
-                    "2018-01-24T00:00:00.000000Z\tnull\t2018-01-19T00:00:00.000000Z\tnull\n" +
-                    "2018-01-29T00:00:00.000000Z\tnull\t2018-01-29T00:00:00.000000Z\tnull\n", query);
-        });
-    }
-
-    @Test
-    public void testSampleByFromToParallelSampleByRewriteWithKeys() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(SampleByTest.DDL_FROMTO);
-            final String shouldFail1a = "select ts, avg(x), s from fromto\n" +
-                    "sample by 5d from '2017-12-20' fill(null) ";
-
-            final String shouldFail1b = "select ts, avg(x), s from fromto\n" +
-                    "sample by 5d from '2017-12-20' fill(null) align to calendar with offset '10:00'";
-
-
-            final String shouldFail2a = "select ts, avg(x), sum(x), concat('1', s) from fromto\n" +
-                    "sample by 5d from '2017-12-20' fill(null) ";
-
-
-            final String shouldFail2b = "select ts, avg(x), sum(x), concat('1', s) from fromto\n" +
-                    "sample by 5d from '2017-12-20' fill(null) align to calendar with offset '10:00'";
-
-            assertException(shouldFail1a, 0, "FROM-TO");
-            assertException(shouldFail1b, 0, "FROM-TO");
-            assertException(shouldFail2a, 0, "FROM-TO");
-            assertException(shouldFail2b, 0, "FROM-TO");
-
-            final String shouldSucceedParallel = "select ts, avg(x), sum(x) from fromto\n" +
-                    "sample by 5d from '2017-12-20' fill(null) ";
-
-            final String shouldSucceedSequential = "select ts, avg(x), sum(x) from fromto\n" +
-                    "sample by 5d from '2017-12-20' fill(null) align to calendar with offset '10:00'";
-
-            final String shouldSucceedResult = "ts\tavg\tsum\n" +
-                    "2017-12-20T00:00:00.000000Z\tnull\tnull\n" +
-                    "2017-12-25T00:00:00.000000Z\tnull\tnull\n" +
-                    "2017-12-30T00:00:00.000000Z\t72.5\t10440\n" +
-                    "2018-01-04T00:00:00.000000Z\t264.5\t63480\n" +
-                    "2018-01-09T00:00:00.000000Z\t432.5\t41520\n";
-
-            assertPlanNoLeakCheck(shouldSucceedParallel, "Sort\n" +
-                    "  keys: [ts]\n" +
-                    "    Fill Range\n" +
-                    "      range: ('2017-12-20',null)\n" +
-                    "      stride: '5d'\n" +
-                    "      values: [null,null]\n" +
-                    "        Async Group By workers: 1\n" +
-                    "          keys: [ts]\n" +
-                    "          values: [avg(x),sum(x)]\n" +
-                    "          filter: null\n" +
-                    "            PageFrame\n" +
-                    "                Row forward scan\n" +
-                    "                Interval forward scan on: fromto\n" +
-                    "                  intervals: [(\"2017-12-20T00:00:00.000000Z\",\"MAX\")]\n");
-            assertSql(shouldSucceedResult, shouldSucceedParallel);
-
-            assertPlanNoLeakCheck(shouldSucceedSequential, "Sample By\n" +
-                    "  fill: null\n" +
-                    "  range: ('2017-12-20',null)\n" +
-                    "  values: [avg(x),sum(x)]\n" +
-                    "    PageFrame\n" +
-                    "        Row forward scan\n" +
-                    "        Interval forward scan on: fromto\n" +
-                    "          intervals: [(\"2017-12-20T00:00:00.000000Z\",\"MAX\")]\n");
-            assertSql(shouldSucceedResult, shouldSucceedSequential);
-        });
-    }
-
-    @Test
-    public void testSampleByFromToParallelSampleByRewriteWithUnion() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(SampleByTest.DDL_FROMTO);
-            execute(SampleByTest.DDL_FROMTO.replace("fromto", "fromto2"));
-
-            final String unionAllQuery = "select ts, avg(x), sum(x) from fromto sample by 5d from '2017-12-20' to '2018-01-31' fill(null)\n" +
-                    "union all\n" +
-                    "select ts, avg(x), sum(x) from fromto2 sample by 5d from '2017-12-20' to '2018-01-31' fill(null)\n";
-
-            final String unionQuery = unionAllQuery.replace("union all", "union");
-
-            assertPlanNoLeakCheck(unionAllQuery, "Union All\n" +
-                    "    Sort\n" +
-                    "      keys: [ts]\n" +
-                    "        Fill Range\n" +
-                    "          range: ('2017-12-20','2018-01-31')\n" +
-                    "          stride: '5d'\n" +
-                    "          values: [null,null]\n" +
-                    "            Async Group By workers: 1\n" +
-                    "              keys: [ts]\n" +
-                    "              values: [avg(x),sum(x)]\n" +
-                    "              filter: null\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Interval forward scan on: fromto\n" +
-                    "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n" +
-                    "    Fill Range\n" +
-                    "      range: ('2017-12-20','2018-01-31')\n" +
-                    "      stride: '5d'\n" +
-                    "      values: [null,null]\n" +
-                    "        Async Group By workers: 1\n" +
-                    "          keys: [ts]\n" +
-                    "          values: [avg(x),sum(x)]\n" +
-                    "          filter: null\n" +
-                    "            PageFrame\n" +
-                    "                Row forward scan\n" +
-                    "                Interval forward scan on: fromto2\n" +
-                    "                  intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
-
-            assertSql("ts\tavg\tsum\n" +
-                    "2017-12-20T00:00:00.000000Z\tnull\tnull\n" +
-                    "2017-12-25T00:00:00.000000Z\tnull\tnull\n" +
-                    "2017-12-30T00:00:00.000000Z\t72.5\t10440\n" +
-                    "2018-01-04T00:00:00.000000Z\t264.5\t63480\n" +
-                    "2018-01-09T00:00:00.000000Z\t432.5\t41520\n" +
-                    "2018-01-14T00:00:00.000000Z\tnull\tnull\n" +
-                    "2018-01-19T00:00:00.000000Z\tnull\tnull\n" +
-                    "2018-01-24T00:00:00.000000Z\tnull\tnull\n" +
-                    "2018-01-29T00:00:00.000000Z\tnull\tnull\n" +
-                    "2017-12-30T00:00:00.000000Z\t72.5\t10440\n" +
-                    "2018-01-04T00:00:00.000000Z\t264.5\t63480\n" +
-                    "2018-01-09T00:00:00.000000Z\t432.5\t41520\n" +
-                    "2017-12-20T00:00:00.000000Z\tnull\tnull\n" +
-                    "2017-12-25T00:00:00.000000Z\tnull\tnull\n" +
-                    "2018-01-14T00:00:00.000000Z\tnull\tnull\n" +
-                    "2018-01-19T00:00:00.000000Z\tnull\tnull\n" +
-                    "2018-01-24T00:00:00.000000Z\tnull\tnull\n" +
-                    "2018-01-29T00:00:00.000000Z\tnull\tnull\n", unionAllQuery);
-
-            assertPlanNoLeakCheck(unionQuery, "Union\n" +
-                    "    Sort\n" +
-                    "      keys: [ts]\n" +
-                    "        Fill Range\n" +
-                    "          range: ('2017-12-20','2018-01-31')\n" +
-                    "          stride: '5d'\n" +
-                    "          values: [null,null]\n" +
-                    "            Async Group By workers: 1\n" +
-                    "              keys: [ts]\n" +
-                    "              values: [avg(x),sum(x)]\n" +
-                    "              filter: null\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Interval forward scan on: fromto\n" +
-                    "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n" +
-                    "    Fill Range\n" +
-                    "      range: ('2017-12-20','2018-01-31')\n" +
-                    "      stride: '5d'\n" +
-                    "      values: [null,null]\n" +
-                    "        Async Group By workers: 1\n" +
-                    "          keys: [ts]\n" +
-                    "          values: [avg(x),sum(x)]\n" +
-                    "          filter: null\n" +
-                    "            PageFrame\n" +
-                    "                Row forward scan\n" +
-                    "                Interval forward scan on: fromto2\n" +
-                    "                  intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
-
-            assertSql("ts\tavg\tsum\n" +
-                    "2017-12-20T00:00:00.000000Z\tnull\tnull\n" +
-                    "2017-12-25T00:00:00.000000Z\tnull\tnull\n" +
-                    "2017-12-30T00:00:00.000000Z\t72.5\t10440\n" +
-                    "2018-01-04T00:00:00.000000Z\t264.5\t63480\n" +
-                    "2018-01-09T00:00:00.000000Z\t432.5\t41520\n" +
-                    "2018-01-14T00:00:00.000000Z\tnull\tnull\n" +
-                    "2018-01-19T00:00:00.000000Z\tnull\tnull\n" +
-                    "2018-01-24T00:00:00.000000Z\tnull\tnull\n" +
-                    "2018-01-29T00:00:00.000000Z\tnull\tnull\n", unionQuery);
-        });
-    }
-
-    @Test
-    public void testSampleByFromToParallelSequentialEquivalence() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(SampleByTest.DDL_FROMTO);
-
-            final String parallel = "select ts, avg(x) from fromto\n" +
-                    "sample by 1w from '2017-12-20' to '2018-01-31' fill(null)";
-
-            // offset is ignored
-            final String sequential = parallel + " align to calendar with offset '10:00'";
-
-            final String result = "ts\tavg\n" +
-                    "2017-12-20T00:00:00.000000Z\tnull\n" +
-                    "2017-12-27T00:00:00.000000Z\t48.5\n" +
-                    "2018-01-03T00:00:00.000000Z\t264.5\n" +
-                    "2018-01-10T00:00:00.000000Z\t456.5\n" +
-                    "2018-01-17T00:00:00.000000Z\tnull\n" +
-                    "2018-01-24T00:00:00.000000Z\tnull\n";
-
-            assertSql(result, parallel);
-            assertSql(result, sequential);
         });
     }
 
@@ -3815,49 +3284,600 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testSampleByExpressionDependOtherColumn() throws Exception {
-        execute("create table t (\n" +
-                "  timestamp TIMESTAMP,\n" +
-                "  symbol SYMBOL capacity 256 CACHE,\n" +
-                "  side SYMBOL CAPACITY 256 CACHE,\n" +
-                "  price double\n" +
-                ") timestamp(timestamp) partition by day;");
-
-        execute("INSERT INTO t (timestamp, symbol, side, price) VALUES" +
-                " ('2023-09-01T00:00:00.000Z', 'ETH-USD', 'buyer', 3240.0)," +
-                " ('2023-09-01T01:00:00.000Z', 'ETH-USD', 'buyer', 3241.0)," +
-                " ('2023-09-01T02:00:00.000Z', 'ETH-USD', 'buyer', 3242.0)," +
-                " ('2023-09-01T03:00:00.000Z', 'ETH-USD', 'buyer', 3243.0)," +
-                " ('2023-09-01T04:00:00.000Z', 'ETH-USD', 'buyer', 3244.0)," +
-                " ('2023-09-01T05:00:00.000Z', 'ETH-USD', 'seller', 5.0)");
+    public void testSampleByFromToParallelSampleByRewrite() throws Exception {
         assertMemoryLeak(() -> {
-            final String query = "select timestamp, symbol, side, CASE WHEN price > 3240  THEN avg(price) END as price_today, CASE WHEN price < 3240  THEN avg(price) END as price_yesterday " +
-                    "from t where timestamp >= '2023-09-01T00:00:00.000Z' and symbol = 'ETH-USD' sample by 1h";
+            execute(SampleByTest.DDL_FROMTO);
+            final String query = "select ts, avg(x) from fromto\n" +
+                    "sample by 5d from '2017-12-20' to '2018-01-31' fill(null)\n";
 
-            final String result = "timestamp\tsymbol\tside\tprice_today\tprice_yesterday\n" +
-                    "2023-09-01T00:00:00.000000Z\tETH-USD\tbuyer\tnull\tnull\n" +
-                    "2023-09-01T01:00:00.000000Z\tETH-USD\tbuyer\t3241.0\tnull\n" +
-                    "2023-09-01T02:00:00.000000Z\tETH-USD\tbuyer\t3242.0\tnull\n" +
-                    "2023-09-01T03:00:00.000000Z\tETH-USD\tbuyer\t3243.0\tnull\n" +
-                    "2023-09-01T04:00:00.000000Z\tETH-USD\tbuyer\t3244.0\tnull\n" +
-                    "2023-09-01T05:00:00.000000Z\tETH-USD\tseller\tnull\t5.0\n";
-
-            assertSql(result, query);
+            assertPlanNoLeakCheck(query, "Fill Range\n" +
+                    "  range: ('2017-12-20','2018-01-31')\n" +
+                    "  stride: '5d'\n" +
+                    "  values: [null]\n" +
+                    "    Radix sort light\n" +
+                    "      keys: [ts]\n" +
+                    "        Async Group By workers: 1\n" +
+                    "          keys: [ts]\n" +
+                    "          values: [avg(x)]\n" +
+                    "          filter: null\n" +
+                    "            PageFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Interval forward scan on: fromto\n" +
+                    "                  intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
+            assertSql("ts\tavg\n" +
+                    "2017-12-20T00:00:00.000000Z\tnull\n" +
+                    "2017-12-25T00:00:00.000000Z\tnull\n" +
+                    "2017-12-30T00:00:00.000000Z\t72.5\n" +
+                    "2018-01-04T00:00:00.000000Z\t264.5\n" +
+                    "2018-01-09T00:00:00.000000Z\t432.5\n" +
+                    "2018-01-14T00:00:00.000000Z\tnull\n" +
+                    "2018-01-19T00:00:00.000000Z\tnull\n" +
+                    "2018-01-24T00:00:00.000000Z\tnull\n" +
+                    "2018-01-29T00:00:00.000000Z\tnull\n", query);
         });
+    }
 
+    @Test
+    public void testSampleByFromToParallelSampleByRewriteMultipleFills() throws Exception {
         assertMemoryLeak(() -> {
-            final String query = "select timestamp, symbol, side, CASE WHEN extract('day', timestamp) =14  THEN avg(price) END as price_today, CASE WHEN true  THEN avg(price) END as price_yesterday " +
-                    "from t where timestamp >= '2023-09-01T00:00:00.000Z' and symbol = 'ETH-USD' sample by 1h";
+            execute(SampleByTest.DDL_FROMTO);
+            final String query = "select ts, avg(x), sum(x) from fromto\n" +
+                    "sample by 5d from '2017-12-20' to '2018-01-31' fill(42, 41)";
 
-            final String result = "timestamp\tsymbol\tside\tprice_today\tprice_yesterday\n" +
-                    "2023-09-01T00:00:00.000000Z\tETH-USD\tbuyer\tnull\t3240.0\n" +
-                    "2023-09-01T01:00:00.000000Z\tETH-USD\tbuyer\tnull\t3241.0\n" +
-                    "2023-09-01T02:00:00.000000Z\tETH-USD\tbuyer\tnull\t3242.0\n" +
-                    "2023-09-01T03:00:00.000000Z\tETH-USD\tbuyer\tnull\t3243.0\n" +
-                    "2023-09-01T04:00:00.000000Z\tETH-USD\tbuyer\tnull\t3244.0\n" +
-                    "2023-09-01T05:00:00.000000Z\tETH-USD\tseller\tnull\t5.0\n";
+            assertPlanNoLeakCheck(query, "Fill Range\n" +
+                    "  range: ('2017-12-20','2018-01-31')\n" +
+                    "  stride: '5d'\n" +
+                    "  values: [42,41]\n" +
+                    "    Radix sort light\n" +
+                    "      keys: [ts]\n" +
+                    "        Async Group By workers: 1\n" +
+                    "          keys: [ts]\n" +
+                    "          values: [avg(x),sum(x)]\n" +
+                    "          filter: null\n" +
+                    "            PageFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Interval forward scan on: fromto\n" +
+                    "                  intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
+            assertSql("ts\tavg\tsum\n" +
+                    "2017-12-20T00:00:00.000000Z\t42.0\t41\n" +
+                    "2017-12-25T00:00:00.000000Z\t42.0\t41\n" +
+                    "2017-12-30T00:00:00.000000Z\t72.5\t10440\n" +
+                    "2018-01-04T00:00:00.000000Z\t264.5\t63480\n" +
+                    "2018-01-09T00:00:00.000000Z\t432.5\t41520\n" +
+                    "2018-01-14T00:00:00.000000Z\t42.0\t41\n" +
+                    "2018-01-19T00:00:00.000000Z\t42.0\t41\n" +
+                    "2018-01-24T00:00:00.000000Z\t42.0\t41\n" +
+                    "2018-01-29T00:00:00.000000Z\t42.0\t41\n", query);
+        });
+    }
 
-            assertSql(result, query);
+    @Test
+    public void testSampleByFromToParallelSampleByRewritePostfill() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(SampleByTest.DDL_FROMTO);
+            final String query = "select ts, avg(x) from fromto\n" +
+                    "sample by 5d to '2018-01-31' fill(null)";
+
+            assertPlanNoLeakCheck(query, "Fill Range\n" +
+                    "  range: (null,'2018-01-31')\n" +
+                    "  stride: '5d'\n" +
+                    "  values: [null]\n" +
+                    "    Radix sort light\n" +
+                    "      keys: [ts]\n" +
+                    "        Async Group By workers: 1\n" +
+                    "          keys: [ts]\n" +
+                    "          values: [avg(x)]\n" +
+                    "          filter: null\n" +
+                    "            PageFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Interval forward scan on: fromto\n" +
+                    "                  intervals: [(\"MIN\",\"2018-01-30T23:59:59.999999Z\")]\n");
+            assertSql("ts\tavg\n" +
+                    "2017-12-30T00:00:00.000000Z\t72.5\n" +
+                    "2018-01-04T00:00:00.000000Z\t264.5\n" +
+                    "2018-01-09T00:00:00.000000Z\t432.5\n" +
+                    "2018-01-14T00:00:00.000000Z\tnull\n" +
+                    "2018-01-19T00:00:00.000000Z\tnull\n" +
+                    "2018-01-24T00:00:00.000000Z\tnull\n" +
+                    "2018-01-29T00:00:00.000000Z\tnull\n", query);
+        });
+    }
+
+    @Test
+    public void testSampleByFromToParallelSampleByRewritePrefill() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(SampleByTest.DDL_FROMTO);
+            final String query = "select ts, avg(x) from fromto\n" +
+                    "sample by 5d from '2017-12-20' fill(null) ";
+
+            assertPlanNoLeakCheck(query, "Fill Range\n" +
+                    "  range: ('2017-12-20',null)\n" +
+                    "  stride: '5d'\n" +
+                    "  values: [null]\n" +
+                    "    Radix sort light\n" +
+                    "      keys: [ts]\n" +
+                    "        Async Group By workers: 1\n" +
+                    "          keys: [ts]\n" +
+                    "          values: [avg(x)]\n" +
+                    "          filter: null\n" +
+                    "            PageFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Interval forward scan on: fromto\n" +
+                    "                  intervals: [(\"2017-12-20T00:00:00.000000Z\",\"MAX\")]\n");
+            assertSql("ts\tavg\n" +
+                    "2017-12-20T00:00:00.000000Z\tnull\n" +
+                    "2017-12-25T00:00:00.000000Z\tnull\n" +
+                    "2017-12-30T00:00:00.000000Z\t72.5\n" +
+                    "2018-01-04T00:00:00.000000Z\t264.5\n" +
+                    "2018-01-09T00:00:00.000000Z\t432.5\n", query);
+        });
+    }
+
+    @Test
+    public void testSampleByFromToParallelSampleByRewriteWithExcept() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(SampleByTest.DDL_FROMTO);
+            execute(SampleByTest.DDL_FROMTO.replace("fromto", "fromto2"));
+
+            final String exceptAllQuery = "select ts, avg(x), sum(x) from fromto sample by 5d from '2017-12-20' to '2018-01-31' fill(null)\n" +
+                    "except all\n" +
+                    "select ts, avg(x), sum(x) from fromto2 sample by 5d from '2017-12-20' to '2018-01-31' fill(null)\n";
+
+            final String exceptQuery = exceptAllQuery.replace("except all", "except");
+
+            assertPlanNoLeakCheck(exceptAllQuery, "Except All\n" +
+                    "    Fill Range\n" +
+                    "      range: ('2017-12-20','2018-01-31')\n" +
+                    "      stride: '5d'\n" +
+                    "      values: [null,null]\n" +
+                    "        Radix sort light\n" +
+                    "          keys: [ts]\n" +
+                    "            Async Group By workers: 1\n" +
+                    "              keys: [ts]\n" +
+                    "              values: [avg(x),sum(x)]\n" +
+                    "              filter: null\n" +
+                    "                PageFrame\n" +
+                    "                    Row forward scan\n" +
+                    "                    Interval forward scan on: fromto\n" +
+                    "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n" +
+                    "    Hash\n" +
+                    "        Fill Range\n" +
+                    "          range: ('2017-12-20','2018-01-31')\n" +
+                    "          stride: '5d'\n" +
+                    "          values: [null,null]\n" +
+                    "            Radix sort light\n" +
+                    "              keys: [ts]\n" +
+                    "                Async Group By workers: 1\n" +
+                    "                  keys: [ts]\n" +
+                    "                  values: [avg(x),sum(x)]\n" +
+                    "                  filter: null\n" +
+                    "                    PageFrame\n" +
+                    "                        Row forward scan\n" +
+                    "                        Interval forward scan on: fromto2\n" +
+                    "                          intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
+
+            assertSql("ts\tavg\tsum\n", exceptAllQuery);
+
+            assertPlanNoLeakCheck(exceptQuery, "Except\n" +
+                    "    Fill Range\n" +
+                    "      range: ('2017-12-20','2018-01-31')\n" +
+                    "      stride: '5d'\n" +
+                    "      values: [null,null]\n" +
+                    "        Radix sort light\n" +
+                    "          keys: [ts]\n" +
+                    "            Async Group By workers: 1\n" +
+                    "              keys: [ts]\n" +
+                    "              values: [avg(x),sum(x)]\n" +
+                    "              filter: null\n" +
+                    "                PageFrame\n" +
+                    "                    Row forward scan\n" +
+                    "                    Interval forward scan on: fromto\n" +
+                    "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n" +
+                    "    Hash\n" +
+                    "        Fill Range\n" +
+                    "          range: ('2017-12-20','2018-01-31')\n" +
+                    "          stride: '5d'\n" +
+                    "          values: [null,null]\n" +
+                    "            Radix sort light\n" +
+                    "              keys: [ts]\n" +
+                    "                Async Group By workers: 1\n" +
+                    "                  keys: [ts]\n" +
+                    "                  values: [avg(x),sum(x)]\n" +
+                    "                  filter: null\n" +
+                    "                    PageFrame\n" +
+                    "                        Row forward scan\n" +
+                    "                        Interval forward scan on: fromto2\n" +
+                    "                          intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
+
+            assertSql("ts\tavg\tsum\n", exceptQuery);
+        });
+    }
+
+    @Test
+    public void testSampleByFromToParallelSampleByRewriteWithIntersect() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(SampleByTest.DDL_FROMTO);
+            execute(SampleByTest.DDL_FROMTO.replace("fromto", "fromto2"));
+
+            final String intersectAllQuery = "select ts, avg(x), sum(x) from fromto sample by 5d from '2017-12-20' to '2018-01-31' fill(null)\n" +
+                    "intersect all\n" +
+                    "select ts, avg(x), sum(x) from fromto2 sample by 5d from '2017-12-20' to '2018-01-31' fill(null)\n";
+
+            final String intersectQuery = intersectAllQuery.replace("intersect all", "intersect");
+
+            assertPlanNoLeakCheck(intersectAllQuery, "Intersect All\n" +
+                    "    Fill Range\n" +
+                    "      range: ('2017-12-20','2018-01-31')\n" +
+                    "      stride: '5d'\n" +
+                    "      values: [null,null]\n" +
+                    "        Radix sort light\n" +
+                    "          keys: [ts]\n" +
+                    "            Async Group By workers: 1\n" +
+                    "              keys: [ts]\n" +
+                    "              values: [avg(x),sum(x)]\n" +
+                    "              filter: null\n" +
+                    "                PageFrame\n" +
+                    "                    Row forward scan\n" +
+                    "                    Interval forward scan on: fromto\n" +
+                    "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n" +
+                    "    Hash\n" +
+                    "        Fill Range\n" +
+                    "          range: ('2017-12-20','2018-01-31')\n" +
+                    "          stride: '5d'\n" +
+                    "          values: [null,null]\n" +
+                    "            Radix sort light\n" +
+                    "              keys: [ts]\n" +
+                    "                Async Group By workers: 1\n" +
+                    "                  keys: [ts]\n" +
+                    "                  values: [avg(x),sum(x)]\n" +
+                    "                  filter: null\n" +
+                    "                    PageFrame\n" +
+                    "                        Row forward scan\n" +
+                    "                        Interval forward scan on: fromto2\n" +
+                    "                          intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
+
+            assertSql("ts\tavg\tsum\n" +
+                    "2017-12-20T00:00:00.000000Z\tnull\tnull\n" +
+                    "2017-12-25T00:00:00.000000Z\tnull\tnull\n" +
+                    "2017-12-30T00:00:00.000000Z\t72.5\t10440\n" +
+                    "2018-01-04T00:00:00.000000Z\t264.5\t63480\n" +
+                    "2018-01-09T00:00:00.000000Z\t432.5\t41520\n" +
+                    "2018-01-14T00:00:00.000000Z\tnull\tnull\n" +
+                    "2018-01-19T00:00:00.000000Z\tnull\tnull\n" +
+                    "2018-01-24T00:00:00.000000Z\tnull\tnull\n" +
+                    "2018-01-29T00:00:00.000000Z\tnull\tnull\n", intersectAllQuery);
+
+            assertPlanNoLeakCheck(intersectQuery, "Intersect\n" +
+                    "    Fill Range\n" +
+                    "      range: ('2017-12-20','2018-01-31')\n" +
+                    "      stride: '5d'\n" +
+                    "      values: [null,null]\n" +
+                    "        Radix sort light\n" +
+                    "          keys: [ts]\n" +
+                    "            Async Group By workers: 1\n" +
+                    "              keys: [ts]\n" +
+                    "              values: [avg(x),sum(x)]\n" +
+                    "              filter: null\n" +
+                    "                PageFrame\n" +
+                    "                    Row forward scan\n" +
+                    "                    Interval forward scan on: fromto\n" +
+                    "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n" +
+                    "    Hash\n" +
+                    "        Fill Range\n" +
+                    "          range: ('2017-12-20','2018-01-31')\n" +
+                    "          stride: '5d'\n" +
+                    "          values: [null,null]\n" +
+                    "            Radix sort light\n" +
+                    "              keys: [ts]\n" +
+                    "                Async Group By workers: 1\n" +
+                    "                  keys: [ts]\n" +
+                    "                  values: [avg(x),sum(x)]\n" +
+                    "                  filter: null\n" +
+                    "                    PageFrame\n" +
+                    "                        Row forward scan\n" +
+                    "                        Interval forward scan on: fromto2\n" +
+                    "                          intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
+
+            assertSql("ts\tavg\tsum\n" +
+                    "2017-12-20T00:00:00.000000Z\tnull\tnull\n" +
+                    "2017-12-25T00:00:00.000000Z\tnull\tnull\n" +
+                    "2017-12-30T00:00:00.000000Z\t72.5\t10440\n" +
+                    "2018-01-04T00:00:00.000000Z\t264.5\t63480\n" +
+                    "2018-01-09T00:00:00.000000Z\t432.5\t41520\n" +
+                    "2018-01-14T00:00:00.000000Z\tnull\tnull\n" +
+                    "2018-01-19T00:00:00.000000Z\tnull\tnull\n" +
+                    "2018-01-24T00:00:00.000000Z\tnull\tnull\n" +
+                    "2018-01-29T00:00:00.000000Z\tnull\tnull\n", intersectQuery);
+        });
+    }
+
+    @Test
+    public void testSampleByFromToParallelSampleByRewriteWithJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(SampleByTest.DDL_FROMTO);
+            execute(SampleByTest.DDL_FROMTO.replace("fromto", "fromto2"));
+
+
+            final String query = "select fromto.ts, avg(fromto.x)\n" +
+                    "from fromto\n" +
+                    "asof join fromto2\n" +
+                    "sample by 5d from '2017-12-20' to '2018-01-31' fill(null)\n";
+
+            assertPlanNoLeakCheck(query, "Fill Range\n" +
+                    "  range: ('2017-12-20','2018-01-31')\n" +
+                    "  stride: '5d'\n" +
+                    "  values: [null]\n" +
+                    "    Radix sort light\n" +
+                    "      keys: [ts]\n" +
+                    "        GroupBy vectorized: false\n" +
+                    "          keys: [ts]\n" +
+                    "          values: [avg(x)]\n" +
+                    "            SelectedRecord\n" +
+                    "                AsOf Join Fast Scan\n" +
+                    "                    PageFrame\n" +
+                    "                        Row forward scan\n" +
+                    "                        Interval forward scan on: fromto\n" +
+                    "                          intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n" +
+                    "                    PageFrame\n" +
+                    "                        Row forward scan\n" +
+                    "                        Frame forward scan on: fromto2\n");
+            assertSql("ts\tavg\n" +
+                    "2017-12-20T00:00:00.000000Z\tnull\n" +
+                    "2017-12-25T00:00:00.000000Z\tnull\n" +
+                    "2017-12-30T00:00:00.000000Z\t72.5\n" +
+                    "2018-01-04T00:00:00.000000Z\t264.5\n" +
+                    "2018-01-09T00:00:00.000000Z\t432.5\n" +
+                    "2018-01-14T00:00:00.000000Z\tnull\n" +
+                    "2018-01-19T00:00:00.000000Z\tnull\n" +
+                    "2018-01-24T00:00:00.000000Z\tnull\n" +
+                    "2018-01-29T00:00:00.000000Z\tnull\n", query);
+        });
+    }
+
+    @Test
+    public void testSampleByFromToParallelSampleByRewriteWithJoin2() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(SampleByTest.DDL_FROMTO);
+            execute(SampleByTest.DDL_FROMTO.replace("fromto", "fromto2"));
+
+            final String query = "(select ts as five_days, avg(x) as five_days_avg from fromto sample by 5d from '2017-12-20' to '2018-01-31' fill(null))\n" +
+                    "asof join\n" +
+                    "(select ts as ten_days, avg(x) as ten_days_avg from fromto2 sample by 10d from '2017-12-20' to '2018-01-31' fill(null))\n";
+
+            assertPlanNoLeakCheck(query, "SelectedRecord\n" +
+                    "    AsOf Join\n" +
+                    "      condition: \n" +
+                    "        Fill Range\n" +
+                    "          range: ('2017-12-20','2018-01-31')\n" +
+                    "          stride: '5d'\n" +
+                    "          values: [null]\n" +
+                    "            Radix sort light\n" +
+                    "              keys: [five_days]\n" +
+                    "                Async Group By workers: 1\n" +
+                    "                  keys: [five_days]\n" +
+                    "                  values: [avg(x)]\n" +
+                    "                  filter: null\n" +
+                    "                    PageFrame\n" +
+                    "                        Row forward scan\n" +
+                    "                        Interval forward scan on: fromto\n" +
+                    "                          intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n" +
+                    "        Fill Range\n" +
+                    "          range: ('2017-12-20','2018-01-31')\n" +
+                    "          stride: '10d'\n" +
+                    "          values: [null]\n" +
+                    "            Radix sort light\n" +
+                    "              keys: [ten_days]\n" +
+                    "                Async Group By workers: 1\n" +
+                    "                  keys: [ten_days]\n" +
+                    "                  values: [avg(x)]\n" +
+                    "                  filter: null\n" +
+                    "                    PageFrame\n" +
+                    "                        Row forward scan\n" +
+                    "                        Interval forward scan on: fromto2\n" +
+                    "                          intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
+            assertSql("five_days\tfive_days_avg\tten_days\tten_days_avg\n" +
+                    "2017-12-20T00:00:00.000000Z\tnull\t2017-12-20T00:00:00.000000Z\tnull\n" +
+                    "2017-12-25T00:00:00.000000Z\tnull\t2017-12-20T00:00:00.000000Z\tnull\n" +
+                    "2017-12-30T00:00:00.000000Z\t72.5\t2017-12-30T00:00:00.000000Z\t192.5\n" +
+                    "2018-01-04T00:00:00.000000Z\t264.5\t2017-12-30T00:00:00.000000Z\t192.5\n" +
+                    "2018-01-09T00:00:00.000000Z\t432.5\t2018-01-09T00:00:00.000000Z\t432.5\n" +
+                    "2018-01-14T00:00:00.000000Z\tnull\t2018-01-09T00:00:00.000000Z\t432.5\n" +
+                    "2018-01-19T00:00:00.000000Z\tnull\t2018-01-19T00:00:00.000000Z\tnull\n" +
+                    "2018-01-24T00:00:00.000000Z\tnull\t2018-01-19T00:00:00.000000Z\tnull\n" +
+                    "2018-01-29T00:00:00.000000Z\tnull\t2018-01-29T00:00:00.000000Z\tnull\n", query);
+        });
+    }
+
+    @Test
+    public void testSampleByFromToParallelSampleByRewriteWithKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(SampleByTest.DDL_FROMTO);
+            final String shouldFail1a = "select ts, avg(x), s from fromto\n" +
+                    "sample by 5d from '2017-12-20' fill(null) ";
+
+            final String shouldFail1b = "select ts, avg(x), s from fromto\n" +
+                    "sample by 5d from '2017-12-20' fill(null) align to calendar with offset '10:00'";
+
+
+            final String shouldFail2a = "select ts, avg(x), sum(x), concat('1', s) from fromto\n" +
+                    "sample by 5d from '2017-12-20' fill(null) ";
+
+
+            final String shouldFail2b = "select ts, avg(x), sum(x), concat('1', s) from fromto\n" +
+                    "sample by 5d from '2017-12-20' fill(null) align to calendar with offset '10:00'";
+
+            assertException(shouldFail1a, 51, "FROM-TO intervals are not supported for keyed SAMPLE BY queries");
+            assertException(shouldFail1b, 51, "FROM-TO intervals are not supported for keyed SAMPLE BY queries");
+            assertException(shouldFail2a, 72, "FROM-TO intervals are not supported for keyed SAMPLE BY queries");
+            assertException(shouldFail2b, 72, "FROM-TO intervals are not supported for keyed SAMPLE BY queries");
+
+            final String shouldSucceedParallel = "select ts, avg(x), sum(x) from fromto\n" +
+                    "sample by 5d from '2017-12-20' fill(null) ";
+
+            final String shouldSucceedSequential = "select ts, avg(x), sum(x) from fromto\n" +
+                    "sample by 5d from '2017-12-20' fill(null) align to calendar with offset '10:00'";
+
+            final String shouldSucceedResult = "ts\tavg\tsum\n" +
+                    "2017-12-20T00:00:00.000000Z\tnull\tnull\n" +
+                    "2017-12-25T00:00:00.000000Z\tnull\tnull\n" +
+                    "2017-12-30T00:00:00.000000Z\t72.5\t10440\n" +
+                    "2018-01-04T00:00:00.000000Z\t264.5\t63480\n" +
+                    "2018-01-09T00:00:00.000000Z\t432.5\t41520\n";
+
+            assertPlanNoLeakCheck(shouldSucceedParallel, "Fill Range\n" +
+                    "  range: ('2017-12-20',null)\n" +
+                    "  stride: '5d'\n" +
+                    "  values: [null,null]\n" +
+                    "    Radix sort light\n" +
+                    "      keys: [ts]\n" +
+                    "        Async Group By workers: 1\n" +
+                    "          keys: [ts]\n" +
+                    "          values: [avg(x),sum(x)]\n" +
+                    "          filter: null\n" +
+                    "            PageFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Interval forward scan on: fromto\n" +
+                    "                  intervals: [(\"2017-12-20T00:00:00.000000Z\",\"MAX\")]\n");
+            assertSql(shouldSucceedResult, shouldSucceedParallel);
+
+            assertPlanNoLeakCheck(shouldSucceedSequential, "Sample By\n" +
+                    "  fill: null\n" +
+                    "  range: ('2017-12-20',null)\n" +
+                    "  values: [avg(x),sum(x)]\n" +
+                    "    PageFrame\n" +
+                    "        Row forward scan\n" +
+                    "        Interval forward scan on: fromto\n" +
+                    "          intervals: [(\"2017-12-20T00:00:00.000000Z\",\"MAX\")]\n");
+            assertSql(shouldSucceedResult, shouldSucceedSequential);
+        });
+    }
+
+    @Test
+    public void testSampleByFromToParallelSampleByRewriteWithUnion() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(SampleByTest.DDL_FROMTO);
+            execute(SampleByTest.DDL_FROMTO.replace("fromto", "fromto2"));
+
+            final String unionAllQuery = "select ts, avg(x), sum(x) from fromto sample by 5d from '2017-12-20' to '2018-01-31' fill(null)\n" +
+                    "union all\n" +
+                    "select ts, avg(x), sum(x) from fromto2 sample by 5d from '2017-12-20' to '2018-01-31' fill(null)\n";
+
+            final String unionQuery = unionAllQuery.replace("union all", "union");
+
+            assertPlanNoLeakCheck(unionAllQuery, "Union All\n" +
+                    "    Fill Range\n" +
+                    "      range: ('2017-12-20','2018-01-31')\n" +
+                    "      stride: '5d'\n" +
+                    "      values: [null,null]\n" +
+                    "        Radix sort light\n" +
+                    "          keys: [ts]\n" +
+                    "            Async Group By workers: 1\n" +
+                    "              keys: [ts]\n" +
+                    "              values: [avg(x),sum(x)]\n" +
+                    "              filter: null\n" +
+                    "                PageFrame\n" +
+                    "                    Row forward scan\n" +
+                    "                    Interval forward scan on: fromto\n" +
+                    "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n" +
+                    "    Fill Range\n" +
+                    "      range: ('2017-12-20','2018-01-31')\n" +
+                    "      stride: '5d'\n" +
+                    "      values: [null,null]\n" +
+                    "        Radix sort light\n" +
+                    "          keys: [ts]\n" +
+                    "            Async Group By workers: 1\n" +
+                    "              keys: [ts]\n" +
+                    "              values: [avg(x),sum(x)]\n" +
+                    "              filter: null\n" +
+                    "                PageFrame\n" +
+                    "                    Row forward scan\n" +
+                    "                    Interval forward scan on: fromto2\n" +
+                    "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
+
+            assertSql("ts\tavg\tsum\n" +
+                    "2017-12-20T00:00:00.000000Z\tnull\tnull\n" +
+                    "2017-12-25T00:00:00.000000Z\tnull\tnull\n" +
+                    "2017-12-30T00:00:00.000000Z\t72.5\t10440\n" +
+                    "2018-01-04T00:00:00.000000Z\t264.5\t63480\n" +
+                    "2018-01-09T00:00:00.000000Z\t432.5\t41520\n" +
+                    "2018-01-14T00:00:00.000000Z\tnull\tnull\n" +
+                    "2018-01-19T00:00:00.000000Z\tnull\tnull\n" +
+                    "2018-01-24T00:00:00.000000Z\tnull\tnull\n" +
+                    "2018-01-29T00:00:00.000000Z\tnull\tnull\n" +
+                    "2017-12-20T00:00:00.000000Z\tnull\tnull\n" +
+                    "2017-12-25T00:00:00.000000Z\tnull\tnull\n" +
+                    "2017-12-30T00:00:00.000000Z\t72.5\t10440\n" +
+                    "2018-01-04T00:00:00.000000Z\t264.5\t63480\n" +
+                    "2018-01-09T00:00:00.000000Z\t432.5\t41520\n" +
+                    "2018-01-14T00:00:00.000000Z\tnull\tnull\n" +
+                    "2018-01-19T00:00:00.000000Z\tnull\tnull\n" +
+                    "2018-01-24T00:00:00.000000Z\tnull\tnull\n" +
+                    "2018-01-29T00:00:00.000000Z\tnull\tnull\n", unionAllQuery);
+
+            assertPlanNoLeakCheck(unionQuery, "Union\n" +
+                    "    Fill Range\n" +
+                    "      range: ('2017-12-20','2018-01-31')\n" +
+                    "      stride: '5d'\n" +
+                    "      values: [null,null]\n" +
+                    "        Radix sort light\n" +
+                    "          keys: [ts]\n" +
+                    "            Async Group By workers: 1\n" +
+                    "              keys: [ts]\n" +
+                    "              values: [avg(x),sum(x)]\n" +
+                    "              filter: null\n" +
+                    "                PageFrame\n" +
+                    "                    Row forward scan\n" +
+                    "                    Interval forward scan on: fromto\n" +
+                    "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n" +
+                    "    Fill Range\n" +
+                    "      range: ('2017-12-20','2018-01-31')\n" +
+                    "      stride: '5d'\n" +
+                    "      values: [null,null]\n" +
+                    "        Radix sort light\n" +
+                    "          keys: [ts]\n" +
+                    "            Async Group By workers: 1\n" +
+                    "              keys: [ts]\n" +
+                    "              values: [avg(x),sum(x)]\n" +
+                    "              filter: null\n" +
+                    "                PageFrame\n" +
+                    "                    Row forward scan\n" +
+                    "                    Interval forward scan on: fromto2\n" +
+                    "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
+
+            assertSql("ts\tavg\tsum\n" +
+                    "2017-12-20T00:00:00.000000Z\tnull\tnull\n" +
+                    "2017-12-25T00:00:00.000000Z\tnull\tnull\n" +
+                    "2017-12-30T00:00:00.000000Z\t72.5\t10440\n" +
+                    "2018-01-04T00:00:00.000000Z\t264.5\t63480\n" +
+                    "2018-01-09T00:00:00.000000Z\t432.5\t41520\n" +
+                    "2018-01-14T00:00:00.000000Z\tnull\tnull\n" +
+                    "2018-01-19T00:00:00.000000Z\tnull\tnull\n" +
+                    "2018-01-24T00:00:00.000000Z\tnull\tnull\n" +
+                    "2018-01-29T00:00:00.000000Z\tnull\tnull\n", unionQuery);
+        });
+    }
+
+    @Test
+    public void testSampleByFromToParallelSequentialEquivalence() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(SampleByTest.DDL_FROMTO);
+
+            final String parallel = "select ts, avg(x) from fromto\n" +
+                    "sample by 1w from '2017-12-20' to '2018-01-31' fill(null)";
+
+            // offset is ignored
+            final String sequential = parallel + " align to calendar with offset '10:00'";
+
+            final String result = "ts\tavg\n" +
+                    "2017-12-20T00:00:00.000000Z\tnull\n" +
+                    "2017-12-27T00:00:00.000000Z\t48.5\n" +
+                    "2018-01-03T00:00:00.000000Z\t264.5\n" +
+                    "2018-01-10T00:00:00.000000Z\t456.5\n" +
+                    "2018-01-17T00:00:00.000000Z\tnull\n" +
+                    "2018-01-24T00:00:00.000000Z\tnull\n";
+
+            assertSql(result, parallel);
+            assertSql(result, sequential);
         });
     }
 
@@ -3931,12 +3951,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String query = "select ts as five_days, avg(x) as five_days_avg from fromto \n" +
                     "sample by 5d from '2017-12-20' to '2018-01-31' fill(null)";
 
-            assertPlanNoLeakCheck(query, "Sort\n" +
-                    "  keys: [five_days]\n" +
-                    "    Fill Range\n" +
-                    "      range: ('2017-12-20','2018-01-31')\n" +
-                    "      stride: '5d'\n" +
-                    "      values: [null]\n" +
+            assertPlanNoLeakCheck(query, "Fill Range\n" +
+                    "  range: ('2017-12-20','2018-01-31')\n" +
+                    "  stride: '5d'\n" +
+                    "  values: [null]\n" +
+                    "    Radix sort light\n" +
+                    "      keys: [five_days]\n" +
                     "        Async Group By workers: 1\n" +
                     "          keys: [five_days]\n" +
                     "          values: [avg(x)]\n" +

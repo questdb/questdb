@@ -6282,7 +6282,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
 
         assertQuery(
-                "select-virtual day(ts) day, isin, last from (select-group-by [timestamp_floor('1d',ts) ts, isin, last(start_price) last] isin, last(start_price) last, timestamp_floor('1d',ts) ts from (select [ts, isin, start_price] from xetra timestamp (ts) where isin = 'DE000A0KRJS4' stride 1d) order by ts)",
+                "select-virtual day(ts) day, isin, last from (select-group-by [timestamp_floor('1d',ts) ts, isin, last(start_price) last] isin, last(start_price) last, timestamp_floor('1d',ts) ts from (select [ts, isin, start_price] from xetra timestamp (ts) where isin = 'DE000A0KRJS4') stride 1d order by ts)",
                 "select day(ts), isin, last(start_price) from xetra where isin='DE000A0KRJS4' sample by 1d",
                 modelOf("xetra")
                         .timestamp("ts")
@@ -6291,7 +6291,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
 
         assertQuery(
-                "select-virtual day(ts) day, isin, last from (select-group-by [timestamp_floor('1d',ts) ts, isin, last(start_price) last] isin, last(start_price) last, timestamp_floor('1d',ts) ts from (select [ts, isin, start_price] from xetra timestamp (ts) where isin = 'DE000A0KRJS4' stride 1d) order by ts)",
+                "select-virtual day(ts) day, isin, last from (select-group-by [timestamp_floor('1d',ts) ts, isin, last(start_price) last] isin, last(start_price) last, timestamp_floor('1d',ts) ts from (select [ts, isin, start_price] from xetra timestamp (ts) where isin = 'DE000A0KRJS4') stride 1d order by ts)",
                 "select day(ts), isin, last(start_price) from xetra where isin='DE000A0KRJS4' sample by 1d align to calendar",
                 modelOf("xetra")
                         .timestamp("ts")
@@ -7061,7 +7061,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
 
         assertQuery(
-                "select-choose a, sum from (select-group-by [a, sum(b) sum, timestamp_floor('2m',t) t] a, sum(b) sum, timestamp_floor('2m',t) t from (select-choose [t, a, b] a, b, t from (select [t, a, b] from tab) order by t) timestamp (t) order by a)",
+                "select-choose a, sum from (select-group-by [a, sum(b) sum, timestamp_floor('2m',t) t] a, sum(b) sum, timestamp_floor('2m',t) t from (select-choose [t, a, b] a, b, t from (select [t, a, b] from tab) order by t) timestamp (t) stride 2m order by a)",
                 "select a, sum(b) from (tab order by t) timestamp(t) sample by 2m order by a",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -7070,7 +7070,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
 
         assertQuery(
-                "select-choose a, sum from (select-group-by [a, sum(b) sum, timestamp_floor('2m',t) t] a, sum(b) sum, timestamp_floor('2m',t) t from (select-choose [t, a, b] a, b, t from (select [t, a, b] from tab) order by t) timestamp (t) order by a)",
+                "select-choose a, sum from (select-group-by [a, sum(b) sum, timestamp_floor('2m',t) t] a, sum(b) sum, timestamp_floor('2m',t) t from (select-choose [t, a, b] a, b, t from (select [t, a, b] from tab) order by t) timestamp (t) stride 2m order by a)",
                 "select a, sum(b) from (tab order by t) timestamp(t) sample by 2m align to calendar order by a",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -7091,7 +7091,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
 
         assertQuery(
-                "select-group-by a, sum(b) sum from (select-choose [a, b] a, b from (select-group-by [a, sum(b) b, timestamp_floor('10m',t) t] a, sum(b) b, timestamp_floor('10m',t) t from (select-choose [t, a, b] a, b, t from (select [t, a, b] from tab) order by t) timestamp (t))) order by a",
+                "select-group-by a, sum(b) sum from (select-choose [a, b] a, b from (select-group-by [a, sum(b) b, timestamp_floor('10m',t) t] a, sum(b) b, timestamp_floor('10m',t) t from (select-choose [t, a, b] a, b, t from (select [t, a, b] from tab) order by t) timestamp (t) stride 10m)) order by a",
                 "select a, sum(b) from (select a,sum(b) b from (tab order by t) timestamp(t) sample by 10m order by b) order by a",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -7100,7 +7100,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
 
         assertQuery(
-                "select-group-by a, sum(b) sum from (select-choose [a, b] a, b from (select-group-by [a, sum(b) b, timestamp_floor('10m',t) t] a, sum(b) b, timestamp_floor('10m',t) t from (select-choose [t, a, b] a, b, t from (select [t, a, b] from tab) order by t) timestamp (t))) order by a",
+                "select-group-by a, sum(b) sum from (select-choose [a, b] a, b from (select-group-by [a, sum(b) b, timestamp_floor('10m',t) t] a, sum(b) b, timestamp_floor('10m',t) t from (select-choose [t, a, b] a, b, t from (select [t, a, b] from tab) order by t) timestamp (t) stride 10m)) order by a",
                 "select a, sum(b) from (select a,sum(b) b from (tab order by t) timestamp(t) sample by 10m align to calendar order by b) order by a",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -7561,7 +7561,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
 
         assertQuery(
-                "select-choose x, sum from (select-group-by [x, sum(y) sum, timestamp_floor('2m',timestamp) timestamp] x, sum(y) sum, timestamp_floor('2m',timestamp) timestamp from (select [x, y, timestamp] from tab timestamp (timestamp) stride 2m) order by timestamp)",
+                "select-choose x, sum from (select-group-by [x, sum(y) sum, timestamp_floor('2m',timestamp) timestamp] x, sum(y) sum, timestamp_floor('2m',timestamp) timestamp from (select [x, y, timestamp] from tab timestamp (timestamp)) stride 2m order by timestamp)",
                 "select x,sum(y) from tab sample by 2m",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
@@ -7570,7 +7570,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
 
         assertQuery(
-                "select-choose x, sum from (select-group-by [x, sum(y) sum, timestamp_floor('2m',timestamp) timestamp] x, sum(y) sum, timestamp_floor('2m',timestamp) timestamp from (select [x, y, timestamp] from tab timestamp (timestamp) stride 2m) order by timestamp)",
+                "select-choose x, sum from (select-group-by [x, sum(y) sum, timestamp_floor('2m',timestamp) timestamp] x, sum(y) sum, timestamp_floor('2m',timestamp) timestamp from (select [x, y, timestamp] from tab timestamp (timestamp)) stride 2m order by timestamp)",
                 "select x,sum(y) from tab sample by 2m align to calendar",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
@@ -7591,7 +7591,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
 
         assertQuery(
-                "select-choose x, sum from (select-group-by [x, sum(y) sum, timestamp_floor('2U',timestamp) timestamp] x, sum(y) sum, timestamp_floor('2U',timestamp) timestamp from (select [x, y, timestamp] from tab timestamp (timestamp) stride 2U) order by timestamp)",
+                "select-choose x, sum from (select-group-by [x, sum(y) sum, timestamp_floor('2U',timestamp) timestamp] x, sum(y) sum, timestamp_floor('2U',timestamp) timestamp from (select [x, y, timestamp] from tab timestamp (timestamp)) stride 2U order by timestamp)",
                 "select x,sum(y) from tab sample by 2U",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
@@ -7600,7 +7600,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
 
         assertQuery(
-                "select-choose x, sum from (select-group-by [x, sum(y) sum, timestamp_floor('2U',timestamp) timestamp] x, sum(y) sum, timestamp_floor('2U',timestamp) timestamp from (select [x, y, timestamp] from tab timestamp (timestamp) stride 2U) order by timestamp)",
+                "select-choose x, sum from (select-group-by [x, sum(y) sum, timestamp_floor('2U',timestamp) timestamp] x, sum(y) sum, timestamp_floor('2U',timestamp) timestamp from (select [x, y, timestamp] from tab timestamp (timestamp)) stride 2U order by timestamp)",
                 "select x,sum(y) from tab sample by 2U align to calendar",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
@@ -7618,13 +7618,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
 
         assertQuery(
-                "select-choose b, sum, k, k1 from (select-group-by [b, sum(a) sum, k, k k1, timestamp_floor('3h',timestamp) timestamp] b, sum(a) sum, k, k k1, timestamp_floor('3h',timestamp) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp) stride 3h) y order by timestamp)",
+                "select-choose b, sum, k, k1 from (select-group-by [b, sum(a) sum, k, k k1, timestamp_floor('3h',timestamp) timestamp] b, sum(a) sum, k, k k1, timestamp_floor('3h',timestamp) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp)) y stride 3h order by timestamp)",
                 "select b, sum(a), k, k from x y sample by 3h",
                 modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
         );
 
         assertQuery(
-                "select-choose b, sum, k, k1 from (select-group-by [b, sum(a) sum, k, k k1, timestamp_floor('3h',timestamp) timestamp] b, sum(a) sum, k, k k1, timestamp_floor('3h',timestamp) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp) stride 3h) y order by timestamp)",
+                "select-choose b, sum, k, k1 from (select-group-by [b, sum(a) sum, k, k k1, timestamp_floor('3h',timestamp) timestamp] b, sum(a) sum, k, k k1, timestamp_floor('3h',timestamp) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp)) y stride 3h order by timestamp)",
                 "select b, sum(a), k, k from x y sample by 3h align to calendar",
                 modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
         );
@@ -7641,7 +7641,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
 
         assertQuery(
-                "select-group-by timestamp_floor('2m',x) x, sum(y) sum from (select [x, y] from tab timestamp (x) stride 2m) order by x",
+                "select-group-by timestamp_floor('2m',x) x, sum(y) sum from (select [x, y] from tab timestamp (x)) stride 2m order by x",
                 "select x,sum(y) from tab timestamp(x) sample by 2m",
                 modelOf("tab")
                         .col("x", ColumnType.TIMESTAMP)
@@ -7649,7 +7649,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
 
         assertQuery(
-                "select-group-by timestamp_floor('2m',x) x, sum(y) sum from (select [x, y] from tab timestamp (x) stride 2m) order by x",
+                "select-group-by timestamp_floor('2m',x) x, sum(y) sum from (select [x, y] from tab timestamp (x)) stride 2m order by x",
                 "select x,sum(y) from tab timestamp(x) sample by 2m align to calendar",
                 modelOf("tab")
                         .col("x", ColumnType.TIMESTAMP)
@@ -7669,7 +7669,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
 
         assertQuery(
-                "select-choose x, sum from (select-group-by [x, sum(y) sum, timestamp_floor('2m',t) t] x, sum(y) sum, timestamp_floor('2m',t) t from (select [x, y, t] from tab timestamp (t) stride 2m) order by t)",
+                "select-choose x, sum from (select-group-by [x, sum(y) sum, timestamp_floor('2m',t) t] x, sum(y) sum, timestamp_floor('2m',t) t from (select [x, y, t] from tab timestamp (t)) stride 2m order by t)",
                 "select x,sum(y) from tab timestamp(t) sample by 2m",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
@@ -7678,7 +7678,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
 
         assertQuery(
-                "select-choose x, sum from (select-group-by [x, sum(y) sum, timestamp_floor('2m',t) t] x, sum(y) sum, timestamp_floor('2m',t) t from (select [x, y, t] from tab timestamp (t) stride 2m) order by t)",
+                "select-choose x, sum from (select-group-by [x, sum(y) sum, timestamp_floor('2m',t) t] x, sum(y) sum, timestamp_floor('2m',t) t from (select [x, y, t] from tab timestamp (t)) stride 2m order by t)",
                 "select x,sum(y) from tab timestamp(t) sample by 2m align to calendar",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
@@ -7924,7 +7924,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByFromToBasicSyntaxWithRewrite() throws SqlException {
         assertQuery(
-                "select-group-by timestamp_floor('5m',ts,'2018-01-01') ts, avg(price) avg from (select [ts, price] from tbl timestamp (ts) where ts >= '2018-01-01' and ts < '2019-01-01' from '2018-01-01' to '2019-01-01' stride 5m) order by ts",
+                "select-group-by timestamp_floor('5m',ts,'2018-01-01') ts, avg(price) avg from (select [ts, price] from tbl timestamp (ts) where ts >= '2018-01-01' and ts < '2019-01-01') from '2018-01-01' to '2019-01-01' stride 5m order by ts",
                 "select ts, avg(price) from tbl sample by 5m from '2018-01-01' to '2019-01-01'",
                 modelOf("tbl")
                         .timestamp("ts")
@@ -7946,7 +7946,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByFromToJustFromOnItsOwnWithRewrite() throws SqlException {
         assertQuery(
-                "select-group-by timestamp_floor('5m',ts,'2018') ts, avg(price) avg from (select [ts, price] from tbl timestamp (ts) where ts >= '2018' from '2018' stride 5m) order by ts",
+                "select-group-by timestamp_floor('5m',ts,'2018') ts, avg(price) avg from (select [ts, price] from tbl timestamp (ts) where ts >= '2018') from '2018' stride 5m order by ts",
                 "select ts, avg(price) from tbl sample by 5m from '2018'",
                 modelOf("tbl")
                         .timestamp("ts")
@@ -8117,7 +8117,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertException("select hostname, a.* from cpu a sample by 1d align to calendar", 17, "wildcard column select is not allowed in sample-by queries");
 
         assertQuery(
-                "select-choose column from (select-virtual [avg * 10 column, timestamp] avg * 10 column, timestamp from (select-group-by [avg(usage_user) avg, timestamp_floor('1d',timestamp) timestamp] avg(usage_user) avg, timestamp_floor('1d',timestamp) timestamp from (select [usage_user, timestamp] from cpu timestamp (timestamp) stride 1d)) order by timestamp)",
+                "select-choose column from (select-virtual [avg * 10 column, timestamp] avg * 10 column, timestamp from (select-group-by [avg(usage_user) avg, timestamp_floor('1d',timestamp) timestamp] avg(usage_user) avg, timestamp_floor('1d',timestamp) timestamp from (select [usage_user, timestamp] from cpu timestamp (timestamp))) stride 1d order by timestamp)",
                 "select avg(usage_user) * 10 from cpu sample by 1d"
         );
     }
@@ -8301,7 +8301,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByToOnItsOwnWithRewrite() throws SqlException {
         assertQuery(
-                "select-group-by timestamp_floor('5m',ts) ts, avg(price) avg from (select [ts, price] from tbl timestamp (ts) where ts < '2019-01-01' to '2019-01-01' stride 5m) order by ts",
+                "select-group-by timestamp_floor('5m',ts) ts, avg(price) avg from (select [ts, price] from tbl timestamp (ts) where ts < '2019-01-01') to '2019-01-01' stride 5m order by ts",
                 "select ts, avg(price) from tbl sample by 5m to '2019-01-01'",
                 modelOf("tbl")
                         .timestamp("ts")
@@ -8411,7 +8411,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByUnionAll() throws SqlException {
         assertQuery(
-                "select-choose b, sum, k1, k from (select-group-by [b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp] b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp) stride 3h) y order by timestamp) union all select-choose b, sum, k1, k from (select-group-by [b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp] b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp) stride 3h) y order by timestamp)",
+                "select-choose b, sum, k1, k from (select-group-by [b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp] b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp)) y stride 3h order by timestamp) union all select-choose b, sum, k1, k from (select-group-by [b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp] b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp)) y stride 3h order by timestamp)",
                 "select b, sum(a), k k1, k from x y sample by 3h align to calendar" +
                         " union all " +
                         "select b, sum(a), k k1, k from x y sample by 3h align to calendar",
@@ -8419,7 +8419,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
 
         assertQuery(
-                "select-choose b, sum, k1, k from (select-group-by [b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp] b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp) stride 3h) y order by timestamp) union all select-choose b, sum, k1, k from (select-group-by [b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp] b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp) stride 3h) y order by timestamp)",
+                "select-choose b, sum, k1, k from (select-group-by [b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp] b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp)) y stride 3h order by timestamp) union all select-choose b, sum, k1, k from (select-group-by [b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp] b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp)) y stride 3h order by timestamp)",
                 "select b, sum(a), k k1, k from x y sample by 3h" +
                         " union all " +
                         "select b, sum(a), k k1, k from x y sample by 3h",
@@ -9816,7 +9816,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
 
         assertQuery(
-                "select-choose x from (select-choose [x, t] x, t from (select [x, t] from a) union select-choose [y, t] y, t from (select [y, t] from b) union all select-choose [k, sum] k, sum from (select-virtual ['a' k, sum] 'a' k, sum, t from (select-group-by [sum(z) sum, timestamp_floor('6h',t) t] sum(z) sum, timestamp_floor('6h',t) t from (select-choose [t, z] z, t from (select [t, z] from c) order by t) timestamp (t)))) order by x",
+                "select-choose x from (select-choose [x, t] x, t from (select [x, t] from a) union select-choose [y, t] y, t from (select [y, t] from b) union all select-choose [k, sum] k, sum from (select-virtual ['a' k, sum] 'a' k, sum, t from (select-group-by [sum(z) sum, timestamp_floor('6h',t) t] sum(z) sum, timestamp_floor('6h',t) t from (select-choose [t, z] z, t from (select [t, z] from c) order by t) timestamp (t)) stride 6h)) order by x",
                 "select x from " +
                         "(select * from a " +
                         "union " +

@@ -3999,6 +3999,24 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByFromToFillMismatchedTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(DDL_FROMTO);
+            drainWalQueue();
+            assertException(
+                    "select ts, count from fromto sample by 5d from '2005' to '2006' fill(1.0)",
+                    69,
+                    "invalid fill value, cannot cast DOUBLE to LONG"
+            );
+            assertException(
+                    "select ts, count, 0::timestamp from fromto sample by 5d from '2005' to '2006' fill(1.0)",
+                    61,
+                    "FROM-TO intervals are not supported for keyed SAMPLE BY queries"
+            );
+        });
+    }
+
+    @Test
     public void testSampleByFromToFillNull() throws Exception {
         assertMemoryLeak(() -> {
             execute(DDL_FROMTO);
@@ -4042,13 +4060,20 @@ public class SampleByTest extends AbstractCairoTest {
     public void testSampleByFromToIsDisallowedForKeyedQueries() throws Exception {
         assertMemoryLeak(() -> {
             execute(DDL_FROMTO);
-            assertException("select ts, avg(x), first(x), last(x), x from fromto\n" +
+            assertException(
+                    "select ts, avg(x), first(x), last(x), x from fromto\n" +
                             "where s != '5'\n" +
                             "sample by 5d from '2017-12-20' to '2018-01-31' fill(42)",
-                    0, "supported");
-            assertException("select ts, avg(x), first(x), last(x), x from fromto\n" +
-                    "where s != '5'\n" +
-                    "sample by 5d from '2017-12-20' to '2018-01-31' fill(42)", 0, "supported");
+                    85,
+                    "FROM-TO intervals are not supported for keyed SAMPLE BY queries"
+            );
+            assertException(
+                    "select ts, avg(x), first(x), last(x), x from fromto\n" +
+                            "where s != '5'\n" +
+                            "sample by 5d from '2017-12-20' to '2018-01-31' fill(42)",
+                    85,
+                    "FROM-TO intervals are not supported for keyed SAMPLE BY queries"
+            );
         });
     }
 
@@ -5234,6 +5259,47 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByWithFillDoesNotReferenceMutableCharSequence() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(DDL_FROMTO);
+
+            String expected = "ts\tavg\n" +
+                    "2000-01-01T00:00:00.000000Z\tnull\n" +
+                    "2004-01-01T00:00:00.000000Z\tnull\n" +
+                    "2008-01-01T00:00:00.000000Z\tnull\n" +
+                    "2012-01-01T00:00:00.000000Z\tnull\n" +
+                    "2016-01-01T00:00:00.000000Z\t240.5\n" +
+                    "2020-01-01T00:00:00.000000Z\tnull\n" +
+                    "2024-01-01T00:00:00.000000Z\tnull\n" +
+                    "2028-01-01T00:00:00.000000Z\tnull\n" +
+                    "2032-01-01T00:00:00.000000Z\tnull\n" +
+                    "2036-01-01T00:00:00.000000Z\tnull\n" +
+                    "2040-01-01T00:00:00.000000Z\tnull\n" +
+                    "2044-01-01T00:00:00.000000Z\tnull\n" +
+                    "2048-01-01T00:00:00.000000Z\tnull\n";
+            StringSink sql = new StringSink();
+            sql.put("select ts, avg(x) from fromto sample by 4y from '2000-01-01' to '2050-01-01' fill(null)");
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                sql.clear();
+                sql.put("just random rubbish to make sure the sql string sink overwrites its previous content");
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    RecordMetadata metadata = factory.getMetadata();
+                    sink.clear();
+                    CursorPrinter.println(metadata, sink);
+
+                    final Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        TestUtils.println(record, metadata, sink);
+                    }
+                }
+                assertEquals(expected, sink);
+            }
+        });
+    }
+
+    @Test
     public void testSampleByWithFilterAndOrderByAndLimit() throws Exception {
         assertQuery(
                 "open\thigh\tlow\tclose\tvolume\ttimestamp\n" +
@@ -5294,47 +5360,6 @@ public class SampleByTest extends AbstractCairoTest {
                 true,
                 false
         );
-    }
-
-    @Test
-    public void testSampleByWithFullDoesNotReferenceMutableCharSequence() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(DDL_FROMTO);
-
-            String expected = "ts\tavg\n" +
-                    "2000-01-01T00:00:00.000000Z\tnull\n" +
-                    "2004-01-01T00:00:00.000000Z\tnull\n" +
-                    "2008-01-01T00:00:00.000000Z\tnull\n" +
-                    "2012-01-01T00:00:00.000000Z\tnull\n" +
-                    "2016-01-01T00:00:00.000000Z\t240.5\n" +
-                    "2020-01-01T00:00:00.000000Z\tnull\n" +
-                    "2024-01-01T00:00:00.000000Z\tnull\n" +
-                    "2028-01-01T00:00:00.000000Z\tnull\n" +
-                    "2032-01-01T00:00:00.000000Z\tnull\n" +
-                    "2036-01-01T00:00:00.000000Z\tnull\n" +
-                    "2040-01-01T00:00:00.000000Z\tnull\n" +
-                    "2044-01-01T00:00:00.000000Z\tnull\n" +
-                    "2048-01-01T00:00:00.000000Z\tnull\n";
-            StringSink sql = new StringSink();
-            sql.put("select ts, avg(x) from fromto sample by 4y from '2000-01-01' to '2050-01-01' fill(null)");
-            try (SqlCompiler compiler = engine.getSqlCompiler();
-                 RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
-            ) {
-                sql.clear();
-                sql.put("just random rubbish to make sure the sql string sink overwrites its previous content");
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    RecordMetadata metadata = factory.getMetadata();
-                    sink.clear();
-                    CursorPrinter.println(metadata, sink);
-
-                    final Record record = cursor.getRecord();
-                    while (cursor.hasNext()) {
-                        TestUtils.println(record, metadata, sink);
-                    }
-                }
-                assertEquals(expected, sink);
-            }
-        });
     }
 
     @Test
@@ -8372,7 +8397,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                true
+                false
         );
     }
 
@@ -8631,11 +8656,11 @@ public class SampleByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select last(z) s from x sample by 30m fill(null)",
                     "SelectedRecord\n" +
-                            "    Sort\n" +
-                            "      keys: [k]\n" +
-                            "        Fill Range\n" +
-                            "          stride: '30m'\n" +
-                            "          values: [null]\n" +
+                            "    Fill Range\n" +
+                            "      stride: '30m'\n" +
+                            "      values: [null]\n" +
+                            "        Radix sort light\n" +
+                            "          keys: [k]\n" +
                             "            Async Group By workers: 1\n" +
                             "              keys: [k]\n" +
                             "              values: [last(z)]\n" +
@@ -11874,7 +11899,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(10)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                true
+                false
         );
     }
 
@@ -11967,7 +11992,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(40)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                true
+                false
         );
     }
 
@@ -12810,15 +12835,32 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampFillValueUnquoted() throws Exception {
-        assertException(
+        assertQuery(
+                "ts\tfirst\tlast\n" +
+                        "2021-03-28T00:00:00.000000Z\t2021-03-28T01:59:00.000000Z\t2021-03-28T01:59:00.000000Z\n" +
+                        "2021-03-29T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                        "2021-03-30T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                        "2021-03-31T00:00:00.000000Z\t2021-03-31T01:59:00.000000Z\t2021-03-31T01:59:00.000000Z\n" +
+                        "2021-04-01T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                        "2021-04-02T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                        "2021-04-03T00:00:00.000000Z\t2021-04-03T01:59:00.000000Z\t2021-04-03T01:59:00.000000Z\n" +
+                        "2021-04-04T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                        "2021-04-05T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                        "2021-04-06T00:00:00.000000Z\t2021-04-06T01:59:00.000000Z\t2021-04-06T01:59:00.000000Z\n" +
+                        "2021-04-07T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                        "2021-04-08T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                        "2021-04-09T00:00:00.000000Z\t2021-04-09T01:59:00.000000Z\t2021-04-09T01:59:00.000000Z\n" +
+                        "2021-04-10T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                        "2021-04-11T00:00:00.000000Z\t\t1970-01-01T00:00:00.001236Z\n" +
+                        "2021-04-12T00:00:00.000000Z\t2021-04-12T01:59:00.000000Z\t2021-04-12T01:59:00.000000Z\n",
                 "select ts, first(ts), last(ts) " +
                         "from trade " +
                         "sample by 1d fill(null, 1236) align to CALENDAR;",
                 "create table trade as (" +
                         "select timestamp_sequence('2021-03-28T01:59:00.00000Z', 3*24*3600*1000000L) ts from long_sequence(6)" +
                         ") timestamp(ts)",
-                66,
-                "Invalid fill value: '1236'. Timestamp fill value must be in quotes."
+                "ts",
+                false
         );
     }
 

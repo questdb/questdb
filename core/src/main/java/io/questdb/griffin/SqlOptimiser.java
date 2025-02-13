@@ -3183,6 +3183,10 @@ public class SqlOptimiser implements Mutable {
             topLevelOrderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
         }
 
+        if (model.getFillValues() != null && model.getFillValues().size() > 0) {
+            topLevelOrderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
+        }
+
         // determine if ordering is required
         switch (topLevelOrderByMnemonic) {
             case OrderByMnemonic.ORDER_BY_UNKNOWN:
@@ -4795,8 +4799,9 @@ public class SqlOptimiser implements Mutable {
             if (
                     sampleBy != null
                             && timestamp != null
-                            && (sampleByOffset != null && SqlKeywords.isZeroOffset(sampleByOffset.token) && (sampleByTimezoneName == null || SqlKeywords.isUTC(sampleByTimezoneName.token)))
-                            && (sampleByFillSize == 0 || (sampleByFillSize == 1 && !SqlKeywords.isPrevKeyword(sampleByFill.getQuick(0).token) && !SqlKeywords.isLinearKeyword(sampleByFill.getQuick(0).token)))
+                            && (sampleByOffset != null && SqlKeywords.isZeroOffset(sampleByOffset.token)
+                            && (sampleByTimezoneName == null || SqlKeywords.isUTC(sampleByTimezoneName.token)))
+                            && (sampleByFillSize == 0 || thereAreNoPrevOrLinearFills(sampleByFill))
                             && sampleByUnit == null
                             && (sampleByFrom == null || ((sampleByFrom.type != BIND_VARIABLE) && (sampleByFrom.type != FUNCTION) && (sampleByFrom.type != OPERATION)))
             ) {
@@ -5034,14 +5039,14 @@ public class SqlOptimiser implements Mutable {
                     orderBy.token = characterStoreEntry.toImmutable();
                     orderBy.type = CONSTANT;
                     nested.getOrderBy().add(orderBy);
-                    nested.getOrderByDirection().add(0);
+                    nested.getOrderByDirection().add(ORDER_DIRECTION_ASCENDING);
                     nested.setTimestamp(nextLiteral(timestamp.token));
                 }
 
-                nested.setFillFrom(sampleByFrom);
-                nested.setFillTo(sampleByTo);
-                nested.setFillStride(sampleBy);
-                nested.setFillValues(sampleByFill);
+                model.setFillFrom(sampleByFrom);
+                model.setFillTo(sampleByTo);
+                model.setFillStride(sampleBy);
+                model.setFillValues(sampleByFill);
 
                 // clear sample by (but keep FILL and FROM-TO)
                 nested.setSampleBy(null);
@@ -5346,7 +5351,7 @@ public class SqlOptimiser implements Mutable {
                     } else if (functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
                         useGroupByModel = true;
 
-                        if (groupByModel.getSampleByFill().size() > 0) { // fill breaks if column is de-duplicated
+                        if (groupByModel.getSampleByFill().size() > 0 || (groupByModel.getFillValues() != null && groupByModel.getFillValues().size() > 0)) { // fill breaks if column is de-duplicated
                             continue;
                         }
 
@@ -5927,6 +5932,27 @@ public class SqlOptimiser implements Mutable {
             root.setUnionModel(model.getUnionModel());
             root.setSetOperationType(model.getSetOperationType());
             root.setModelPosition(model.getModelPosition());
+            root.moveFillFrom(model);
+            if (root.getFillValues() != null && root.getFillValues().size() > 0) {
+                QueryModel nested = root.getNestedModel();
+                if (nested.getOrderBy().size() > 0) {
+                    ExpressionNode orderBy = nested.getOrderBy().getQuick(0);
+                    if (orderBy.type == CONSTANT) {
+                        try {
+                            int i = Numbers.parseInt(orderBy.token);
+                            QueryColumn col = root.getColumns().get(i - 1);
+                            CharSequence toAdd = col.getName();
+                            root.addOrderBy(expressionNodePool.next().of(
+                                    LITERAL,
+                                    toAdd,
+                                    col.getAst().precedence,
+                                    col.getAst().position
+                            ), ORDER_DIRECTION_ASCENDING);
+                        } catch (NumericException ignore) {
+                        }
+                    }
+                }
+            }
             if (model.isUpdate()) {
                 root.setIsUpdate(true);
                 root.copyUpdateTableMetadata(model);
@@ -6148,6 +6174,18 @@ public class SqlOptimiser implements Mutable {
                 target.setJoinType(QueryModel.JOIN_INNER);
             }
         }
+    }
+
+    private boolean thereAreNoPrevOrLinearFills(ObjList<ExpressionNode> sampleByFill) {
+        for (int i = 0; i < sampleByFill.size(); i++) {
+            final ExpressionNode expr = sampleByFill.get(i);
+            if (
+                    SqlKeywords.isPrevKeyword(expr.token)
+                            || SqlKeywords.isLinearKeyword(expr.token)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private void traverseNamesAndIndices(QueryModel parent, ExpressionNode node) throws SqlException {
