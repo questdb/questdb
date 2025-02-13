@@ -31,6 +31,7 @@ import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewRefreshJob;
+import io.questdb.cairo.mv.MatViewRefreshState;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.griffin.SqlCompiler;
@@ -794,7 +795,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIgnoreUnknownBlocks() throws Exception {
+    public void testIgnoreUnknownDefinitionBlock() throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path()) {
                 createTable(TABLE1);
@@ -807,7 +808,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 assertNotNull(matViewDefinition);
 
                 try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade())) {
-                    writer.of(path.of(configuration.getRoot()).concat(matViewToken.getDirName()).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
+                    writer.of(path.of(configuration.getRoot()).concat(matViewToken).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
                     // Add unknown block.
                     AppendableBlock block = writer.append();
                     block.putStr("foobar");
@@ -844,6 +845,61 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     assertEquals(matViewDefinition.getSamplingIntervalUnit(), actualDefinition.getSamplingIntervalUnit());
                     assertEquals(matViewDefinition.getTimeZone(), actualDefinition.getTimeZone());
                     assertEquals(matViewDefinition.getTimeZoneOffset(), actualDefinition.getTimeZoneOffset());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testIgnoreUnknownStateBlock() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+                createTable(TABLE1);
+
+                final String query = "select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
+                execute("create materialized view test as (" + query + ") partition by day");
+
+                final TableToken matViewToken = engine.getTableTokenIfExists("test");
+                final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getMatViewDefinition(matViewToken);
+                assertNotNull(matViewDefinition);
+                final MatViewRefreshState matViewRefreshState = engine.getMatViewGraph().getViewRefreshState(matViewToken);
+                assertNotNull(matViewRefreshState);
+
+                try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade())) {
+                    writer.of(path.of(configuration.getRoot()).concat(matViewToken).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
+                    // Add unknown block.
+                    AppendableBlock block = writer.append();
+                    block.putStr("foobar");
+                    block.commit(
+                            (short) (MatViewRefreshState.MAT_VIEW_STATE_FORMAT_MSG_TYPE + 1),
+                            (byte) (MatViewRefreshState.MAT_VIEW_STATE_FORMAT_MSG_VERSION + 1),
+                            MatViewRefreshState.MAT_VIEW_STATE_FORMAT_FLAGS
+                    );
+                    // Then write mat view state.
+                    block = writer.append();
+                    MatViewRefreshState.writeTo(block, matViewRefreshState);
+                    block.commit(
+                            MatViewRefreshState.MAT_VIEW_STATE_FORMAT_MSG_TYPE,
+                            MatViewRefreshState.MAT_VIEW_STATE_FORMAT_MSG_VERSION,
+                            MatViewRefreshState.MAT_VIEW_STATE_FORMAT_FLAGS
+                    );
+                    writer.commit();
+                }
+
+                // Reader should ignore unknown block.
+                try (BlockFileReader reader = new BlockFileReader(configuration)) {
+                    reader.of(path.of(configuration.getRoot()).concat(matViewToken).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
+                    MatViewRefreshState actualState = new MatViewRefreshState(
+                            matViewDefinition,
+                            false,
+                            (event, tableToken, baseTableTxn, errorMessage, latencyUs) -> {
+                            }
+                    );
+                    MatViewRefreshState.readFrom(reader, actualState);
+
+                    assertEquals(matViewRefreshState.isInvalid(), actualState.isInvalid());
+                    assertEquals(matViewRefreshState.getLastRefreshBaseTxn(), actualState.getLastRefreshBaseTxn());
+                    assertEquals(matViewRefreshState.getInvalidationReason(), actualState.getInvalidationReason());
                 }
             }
         });

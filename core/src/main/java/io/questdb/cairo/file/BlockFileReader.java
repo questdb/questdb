@@ -57,7 +57,7 @@ public class BlockFileReader implements Closeable, Mutable {
     private MemoryCMR file;
     private MemoryCR memory;
 
-    public BlockFileReader(final CairoConfiguration configuration) {
+    public BlockFileReader(CairoConfiguration configuration) {
         this.ff = configuration.getFilesFacade();
         this.spinLockTimeoutMs = configuration.getSpinLockTimeout();
         this.clock = configuration.getMillisecondClock();
@@ -133,7 +133,7 @@ public class BlockFileReader implements Closeable, Mutable {
         );
     }
 
-    public void of(@Transient final LPSZ path) {
+    public void of(@Transient LPSZ path) {
         clear();
         final long pageSize = ff.getPageSize();
         if (!ff.exists(path)) {

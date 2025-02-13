@@ -24,6 +24,8 @@
 
 package io.questdb.cairo.mv;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
@@ -85,12 +87,25 @@ public class MatViewRefreshState implements QuietCloseable {
     }
 
     public static void readFrom(@NotNull BlockFileReader reader, @NotNull MatViewRefreshState refreshState) {
-        BlockFileReader.BlockCursor cursor = reader.getCursor();
-        if (cursor.hasNext()) {
+        final BlockFileReader.BlockCursor cursor = reader.getCursor();
+        // Iterate through the block until we find the one we recognize.
+        boolean found = false;
+        while (cursor.hasNext()) {
             final ReadableBlock mem = cursor.next();
+            if (mem.version() != MAT_VIEW_STATE_FORMAT_MSG_VERSION || mem.type() != MAT_VIEW_STATE_FORMAT_MSG_TYPE) {
+                // Unknown block, skip.
+                continue;
+            }
             refreshState.invalid = mem.getBool(0);
             refreshState.lastRefreshBaseTxn = mem.getLong(Byte.BYTES);
             refreshState.invalidationReason = Chars.toString(mem.getStr(Long.BYTES + Byte.BYTES));
+            found = true;
+        }
+        if (!found) {
+            final TableToken matViewToken = refreshState.getViewDefinition() != null ? refreshState.getViewDefinition().getMatViewToken() : null;
+            throw CairoException.critical(0).put("cannot read materialized view state, block not found [view=")
+                    .put(matViewToken != null ? matViewToken.getTableName() : "N/A")
+                    .put(']');
         }
     }
 
