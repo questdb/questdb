@@ -96,6 +96,14 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateAsSelect2d() throws Exception {
+        execute("CREATE TABLE tango (a DOUBLE, b DOUBLE)");
+        execute("INSERT INTO tango VALUES (1.0, 2.0)");
+        execute("CREATE TABLE samba AS (SELECT ARRAY[[a, a], [b, b]] arr FROM tango)");
+        assertSql("arr\n[[1.0,1.0],[2.0,2.0]]\n", "samba");
+    }
+
+    @Test
     public void testCreateAsSelectDoubleNoWAL() throws Exception {
         assertMemoryLeak(() -> {
             execute(
