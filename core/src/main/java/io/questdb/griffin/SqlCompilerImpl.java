@@ -427,7 +427,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (--remainingRetries < 0) {
                     throw SqlException.position(0).put("too many ").put(e.getFlyweightMessage());
                 }
-                LOG.info().$("retrying plan [q=`").$(queryModel).$("`, fd=").$(executionContext.getRequestFd()).$(']').$();
+                LOG.info().$("retrying plan [q=`").$(queryModel).$("`, fd=").$(executionContext.getRequestFd()).I$();
                 clearExceptSqlText();
                 lexer.restart();
                 queryModel = (QueryModel) compileExecutionModel(executionContext);
@@ -1339,7 +1339,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } catch (CairoException e) {
             LOG.info().$("could not alter materialized view [table=").$(matViewToken.getTableName())
                     .$(", errno=").$(e.getErrno())
-                    .$(", ex=").$(e.getFlyweightMessage()).$();
+                    .$(", ex=").$(e.getFlyweightMessage())
+                    .I$();
             if (e.getPosition() == 0) {
                 e.position(lexer.lastTokenPosition());
             }
@@ -1600,7 +1601,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } catch (CairoException e) {
             LOG.info().$("could not alter table [table=").$(tableToken.getTableName())
                     .$(", errno=").$(e.getErrno())
-                    .$(", ex=").$(e.getFlyweightMessage()).$();
+                    .$(", ex=").$(e.getFlyweightMessage())
+                    .I$();
             if (e.getPosition() == 0) {
                 e.position(lexer.lastTokenPosition());
             }
@@ -2132,7 +2134,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             }
                         }
                     } catch (CairoException | CairoError e) {
-                        LOG.error().$("could not truncate [table=").$(writer.getTableToken()).$(", e=").$((Sinkable) e).$(']').$();
+                        LOG.error().$("could not truncate [table=").$(writer.getTableToken()).$(", e=").$((Sinkable) e).I$();
                         throw e;
                     }
                 }
@@ -3387,7 +3389,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             writer.rollback();
                         } catch (Throwable e2) {
                             // Writer is distressed, exception already logged, the pool will handle it when writer is returned
-                            LOG.error().$("could not rollback, writer must be distressed [table=").$(tableNameExpr).$(']').$();
+                            LOG.error().$("could not rollback, writer must be distressed [table=").$(tableNameExpr).I$();
                         }
                         throw e;
                     }
@@ -3951,7 +3953,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         .$("could not backup [table=").utf8(tableName)
                         .$(", ex=").$(e.getFlyweightMessage())
                         .$(", errno=").$(e.getErrno())
-                        .$(']').$();
+                        .I$();
                 auxPath.of(cachedBackupTmpRoot).concat(tableToken).slash$();
                 if (!ff.rmdir(auxPath)) {
                     LOG.error().$("could not delete directory [path=").$(auxPath).$(", errno=").$(ff.errno()).I$();
