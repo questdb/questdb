@@ -71,7 +71,7 @@ public class NoOpMatViewGraph implements MatViewGraph {
     }
 
     @Override
-    public MatViewDefinition getMatViewDefinition(TableToken matViewToken) {
+    public MatViewDefinition getViewDefinition(TableToken matViewToken) {
         return null;
     }
 

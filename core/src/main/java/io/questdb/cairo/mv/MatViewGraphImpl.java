@@ -171,7 +171,7 @@ public class MatViewGraphImpl implements MatViewGraph {
     }
 
     @Override
-    public MatViewDefinition getMatViewDefinition(TableToken matViewToken) {
+    public MatViewDefinition getViewDefinition(TableToken matViewToken) {
         final MatViewRefreshState state = refreshStateByTableDirName.get(matViewToken.getDirName());
         if (state != null) {
             if (state.isDropped()) {

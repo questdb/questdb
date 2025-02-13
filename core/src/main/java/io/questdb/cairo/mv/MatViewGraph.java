@@ -55,7 +55,7 @@ public interface MatViewGraph extends QuietCloseable, Mutable {
     void getDependentMatViews(TableToken baseTableToken, ObjList<TableToken> sink);
 
     @Nullable
-    MatViewDefinition getMatViewDefinition(TableToken matViewToken);
+    MatViewDefinition getViewDefinition(TableToken matViewToken);
 
     @Nullable
     MatViewRefreshState getViewRefreshState(TableToken matViewToken);

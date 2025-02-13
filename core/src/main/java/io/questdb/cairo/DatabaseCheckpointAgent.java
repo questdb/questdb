@@ -283,7 +283,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         writer.of(path.trimTo(rootLen).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
                                         MatViewRefreshState.commitTo(writer, state);
                                         MatViewDefinition matViewDefinition = (state != null) ?
-                                                state.getViewDefinition() : graph.getMatViewDefinition(tableToken);
+                                                state.getViewDefinition() : graph.getViewDefinition(tableToken);
                                         if (matViewDefinition != null) {
                                             writer.of(path.trimTo(rootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
                                             MatViewDefinition.commitTo(writer, matViewDefinition);

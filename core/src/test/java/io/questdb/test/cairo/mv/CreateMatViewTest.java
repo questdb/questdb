@@ -804,7 +804,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 execute("create materialized view test as (" + query + ") partition by day");
 
                 final TableToken matViewToken = engine.getTableTokenIfExists("test");
-                final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getMatViewDefinition(matViewToken);
+                final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
                 assertNotNull(matViewDefinition);
 
                 try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade())) {
@@ -860,7 +860,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 execute("create materialized view test as (" + query + ") partition by day");
 
                 final TableToken matViewToken = engine.getTableTokenIfExists("test");
-                final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getMatViewDefinition(matViewToken);
+                final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
                 assertNotNull(matViewDefinition);
                 final MatViewRefreshState matViewRefreshState = engine.getMatViewGraph().getViewRefreshState(matViewToken);
                 assertNotNull(matViewRefreshState);
@@ -969,7 +969,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
         if (matViewToken == null) {
             return null;
         }
-        return engine.getMatViewGraph().getMatViewDefinition(matViewToken);
+        return engine.getMatViewGraph().getViewDefinition(matViewToken);
     }
 
     private static long mapRO(FilesFacade ff, Path path, MemoryCMR mem, String fileName) {
