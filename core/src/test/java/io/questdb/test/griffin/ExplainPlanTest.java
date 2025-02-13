@@ -2405,9 +2405,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     sink.put(factory.getSignature()).put(" types: ");
 
                     for (int p = 0; p < sigArgCount; p++) {
-                        int sigArgTypeMask = descriptor.getArgTypeWithFlags(p);
-                        final short sigArgType = FunctionFactoryDescriptor.toType(sigArgTypeMask);
-                        boolean isArray = FunctionFactoryDescriptor.isArray(sigArgTypeMask);
+                        int typeWithFlags = descriptor.getArgTypeWithFlags(p);
+                        final short sigArgType = FunctionFactoryDescriptor.toType(typeWithFlags);
+                        boolean isArray = FunctionFactoryDescriptor.isArray(typeWithFlags);
 
                         if (p > 0) {
                             sink.put(',');
@@ -2422,9 +2422,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     int combinations = 1;
 
                     for (int p = 0; p < sigArgCount; p++) {
-                        int argTypeMask = descriptor.getArgTypeWithFlags(p);
-                        boolean isConstant = FunctionFactoryDescriptor.isConstant(argTypeMask);
-                        short sigArgType = FunctionFactoryDescriptor.toType(argTypeMask);
+                        int typeWithFlags = descriptor.getArgTypeWithFlags(p);
+                        boolean isConstant = FunctionFactoryDescriptor.isConstant(typeWithFlags);
+                        short sigArgType = FunctionFactoryDescriptor.toType(typeWithFlags);
                         ObjList<Function> availableValues = constFuncs.get(sigArgType);
                         int constValues = availableValues != null ? availableValues.size() : 1;
                         combinations *= (constValues + (isConstant ? 0 : 1));
@@ -2440,10 +2440,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                         try {
                             for (int p = 0; p < sigArgCount; p++) {
-                                int sigArgTypeMask = descriptor.getArgTypeWithFlags(p);
-                                short sigArgType = FunctionFactoryDescriptor.toType(sigArgTypeMask);
-                                boolean isConstant = FunctionFactoryDescriptor.isConstant(sigArgTypeMask);
-                                boolean isArray = FunctionFactoryDescriptor.isArray(sigArgTypeMask);
+                                int typeWithFlags = descriptor.getArgTypeWithFlags(p);
+                                short sigArgType = FunctionFactoryDescriptor.toType(typeWithFlags);
+                                boolean isConstant = FunctionFactoryDescriptor.isConstant(typeWithFlags);
+                                boolean isArray = FunctionFactoryDescriptor.isArray(typeWithFlags);
                                 boolean useConst = isConstant || (tempNo & 1) == 1 || sigArgType == ColumnType.CURSOR || sigArgType == ColumnType.RECORD;
                                 boolean isVarArg = sigArgType == ColumnType.VAR_ARG;
 

@@ -415,9 +415,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     // their arguments are not boolean.
                     ex.put("expression type mismatch,");
                     for (int i = 0, n = descriptor.getSigArgCount(); i < n; i++) {
-                        final int mask = descriptor.getArgTypeWithFlags(i);
-                        final int expectedType = FunctionFactoryDescriptor.toType(mask);
-                        final boolean expectedConstant = FunctionFactoryDescriptor.isConstant(mask);
+                        final int typeWithFlags = descriptor.getArgTypeWithFlags(i);
+                        final int expectedType = FunctionFactoryDescriptor.toType(typeWithFlags);
+                        final boolean expectedConstant = FunctionFactoryDescriptor.isConstant(typeWithFlags);
                         final int actualType = args.getQuick(i).getType();
                         final boolean actualConstant = args.getQuick(i).isConstant();
 
@@ -434,9 +434,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 } else {
                     ex.put("argument type mismatch for function `").put(node.token).put('`');
                     for (int i = 0, n = descriptor.getSigArgCount(); i < n; i++) {
-                        final int mask = descriptor.getArgTypeWithFlags(i);
-                        final int expectedType = FunctionFactoryDescriptor.toType(mask);
-                        final boolean expectedConstant = FunctionFactoryDescriptor.isConstant(mask);
+                        final int typeWithFlags = descriptor.getArgTypeWithFlags(i);
+                        final int expectedType = FunctionFactoryDescriptor.toType(typeWithFlags);
+                        final boolean expectedConstant = FunctionFactoryDescriptor.isConstant(typeWithFlags);
                         final int actualType = args.getQuick(i).getType();
                         final boolean actualConstant = args.getQuick(i).isConstant();
 
@@ -465,12 +465,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 if (i > 0) {
                     ex.put(", ");
                 }
-                final int mask = descriptor.getArgTypeWithFlags(i);
-                ex.put(ColumnType.nameOf(FunctionFactoryDescriptor.toType(mask)));
-                if (FunctionFactoryDescriptor.isArray(mask)) {
+                final int typeWithFlags = descriptor.getArgTypeWithFlags(i);
+                ex.put(ColumnType.nameOf(FunctionFactoryDescriptor.toType(typeWithFlags)));
+                if (FunctionFactoryDescriptor.isArray(typeWithFlags)) {
                     ex.put("[]");
                 }
-                if (FunctionFactoryDescriptor.isConstant(mask)) {
+                if (FunctionFactoryDescriptor.isConstant(typeWithFlags)) {
                     ex.put(" constant");
                 }
             }
@@ -770,9 +770,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             final boolean sigVarArgConst;
 
             if (sigArgCount > 0) {
-                final int lastSigArgMask = descriptor.getArgTypeWithFlags(sigArgCount - 1);
-                sigVarArg = FunctionFactoryDescriptor.toType(lastSigArgMask) == ColumnType.VAR_ARG;
-                sigVarArgConst = FunctionFactoryDescriptor.isConstant(lastSigArgMask);
+                final int lastSigArgTypeWithFlags = descriptor.getArgTypeWithFlags(sigArgCount - 1);
+                sigVarArg = FunctionFactoryDescriptor.toType(lastSigArgTypeWithFlags) == ColumnType.VAR_ARG;
+                sigVarArgConst = FunctionFactoryDescriptor.isConstant(lastSigArgTypeWithFlags);
             } else {
                 sigVarArg = false;
                 sigVarArgConst = false;
@@ -796,21 +796,21 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 int sigArgTypeScore = 0;
                 for (int argIdx = 0; argIdx < sigArgCount; argIdx++) {
                     final Function arg = args.getQuick(argIdx);
-                    final int sigArgTypeMask = descriptor.getArgTypeWithFlags(argIdx);
+                    final int sigArgTypeWithFlags = descriptor.getArgTypeWithFlags(argIdx);
 
-                    if (FunctionFactoryDescriptor.isConstant(sigArgTypeMask) && !arg.isConstant()) {
+                    if (FunctionFactoryDescriptor.isConstant(sigArgTypeWithFlags) && !arg.isConstant()) {
                         match = MATCH_NO_MATCH; // no match
                         break;
                     }
 
-                    final boolean sigIsArray = FunctionFactoryDescriptor.isArray(sigArgTypeMask);
-                    final boolean argIsScalar = arg instanceof ScalarFunction;
-                    if ((sigIsArray && argIsScalar) || (!sigIsArray && !argIsScalar)) {
+                    final boolean sigIsArray = FunctionFactoryDescriptor.isArray(sigArgTypeWithFlags);
+                    final boolean argIsArray = ColumnType.isArray(arg.getType());
+                    if (sigIsArray != argIsArray) {
                         match = MATCH_NO_MATCH; // no match
                         break;
                     }
 
-                    final short sigArgType = FunctionFactoryDescriptor.toType(sigArgTypeMask);
+                    final short sigArgType = FunctionFactoryDescriptor.toType(sigArgTypeWithFlags);
                     final int argType = arg.getType();
                     final short argTypeTag = ColumnType.tagOf(argType);
                     final short sigArgTypeTag = ColumnType.tagOf(sigArgType);
