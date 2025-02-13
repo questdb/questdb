@@ -37,6 +37,47 @@ import org.junit.Test;
 
 public class LimitTest extends AbstractCairoTest {
 
+    private static String createTableDdl = "create table y as (" +
+            "select" +
+            " cast(x as int) i," +
+            " rnd_symbol('msft','ibm', 'googl') sym2," +
+            " round(rnd_double(0), 3) price," +
+            " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
+            " rnd_boolean() b," +
+            " rnd_str(1,1,2) c," +
+            " rnd_double(2) d," +
+            " rnd_float(2) e," +
+            " rnd_short(10,1024) f," +
+            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+            " rnd_symbol(4,4,4,2) ik," +
+            " rnd_long() j," +
+            " timestamp_sequence(0, 1000000000) k," +
+            " rnd_byte(2,50) l," +
+            " rnd_bin(10, 20, 2) m," +
+            " rnd_str(5,16,2) n" +
+            " from long_sequence(30)" +
+            ") timestamp(timestamp)";
+
+    private static String createTableDml = "insert into y select * from " +
+            "(select" +
+            " cast(x + 30 as int) i," +
+            " rnd_symbol('msft','ibm', 'googl') sym2," +
+            " round(rnd_double(0), 3) price," +
+            " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp," +
+            " rnd_boolean() b," +
+            " rnd_str('ABC', 'CDE', null, 'KZZ') c," +
+            " rnd_double(2) d," +
+            " rnd_float(2) e," +
+            " rnd_short(10,1024) f," +
+            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+            " rnd_symbol(4,4,4,2) ik," +
+            " rnd_long() j," +
+            " timestamp_sequence(0, 1000000000) k," +
+            " rnd_byte(2,50) l," +
+            " rnd_bin(10, 20, 2) m," +
+            " rnd_str(5,16,2) n" +
+            " from long_sequence(30))";
+
     @Test
     public void testBottomRange() throws Exception {
         String expected = "i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn\n" +
@@ -252,6 +293,50 @@ public class LimitTest extends AbstractCairoTest {
     @Test
     public void testLimitMinusOneJitEnabled() throws Exception {
         testLimitMinusOne();
+    }
+
+    @Test
+    public void testLimitPlanChangesWhenLimitSignChanges() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(createTableDdl);
+            execute(createTableDml);
+
+            String query = "select * from y limit :lo;";
+
+            bindVariableService.setLong("lo", 2L);
+
+            assertQueryAndCache(
+                    "i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn\n" +
+                            "1\tmsft\t0.509\t2018-01-01T00:02:00.000000Z\tfalse\tU\t0.5243722859289777\t0.8072\t365\t2015-05-02T19:30:57.935Z\t\t-4485747798769957016\t1970-01-01T00:00:00.000000Z\t19\t00000000 19 c4 95 94 36 53 49 b4 59 7e 3b 08 a1 1e\tYSBEOUOJSHRUEDRQ\n" +
+                            "2\tgoogl\t0.423\t2018-01-01T00:04:00.000000Z\tfalse\tG\t0.5298405941762054\tnull\t493\t2015-04-09T11:42:28.332Z\tHYRX\t-8811278461560712840\t1970-01-01T00:16:40.000000Z\t29\t00000000 53 d0 fb 64 bb 1a d4 f0 2d 40 e2 4b b1 3e e3 f1\t\n",
+                    query,
+                    "timestamp",
+                    true,
+                    false
+            );
+
+            assertPlanNoLeakCheck(query, "Limit lo: :lo::long\n" +
+                    "    PageFrame\n" +
+                    "        Row forward scan\n" +
+                    "        Frame forward scan on: y\n");
+
+            bindVariableService.setLong("lo", -2L);
+
+            assertPlanNoLeakCheck(query, "Limit lo: :lo::long\n" +
+                    "    PageFrame\n" +
+                    "        Row forward scan\n" +
+                    "        Frame forward scan on: y\n");
+
+            assertQuery(
+                    "i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn\n" +
+                            "59\tgoogl\t0.778\t2018-01-01T01:58:00.000000Z\tfalse\tKZZ\t0.7741801422529707\t0.1870\t586\t2015-05-27T15:12:16.295Z\t\t-7715437488835448247\t1970-01-01T07:46:40.000000Z\t10\t\tEPLWDUWIWJTLCP\n" +
+                            "60\tgoogl\t0.852\t2018-01-01T02:00:00.000000Z\ttrue\tKZZ\tnull\tnull\t834\t2015-07-15T04:34:51.645Z\tLMSR\t-4834150290387342806\t1970-01-01T08:03:20.000000Z\t23\t00000000 dd 02 98 ad a8 82 73 a6 7f db d6 20\tFDRPHNGTNJJPT\n",
+                    query,
+                    "timestamp",
+                    true,
+                    false
+            );
+        });
     }
 
     @Test
@@ -487,6 +572,61 @@ public class LimitTest extends AbstractCairoTest {
                     "ts###DESC",
                     true,
                     false
+            );
+        });
+    }
+
+    @Test
+    public void testSortedAndLimitedFactoriesCorrectlyUpdateWhenLimitsChange() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(createTableDdl);
+            execute(createTableDml);
+
+            String query = "select * from y order by timestamp desc, c limit :lo; :hi";
+
+            bindVariableService.setLong("lo", 2L);
+            bindVariableService.setLong("hi", 5L);
+
+            assertQueryAndCache(
+                    "i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn\n" +
+                            "60\tgoogl\t0.852\t2018-01-01T02:00:00.000000Z\ttrue\tKZZ\tnull\tnull\t834\t2015-07-15T04:34:51.645Z\tLMSR\t-4834150290387342806\t1970-01-01T08:03:20.000000Z\t23\t00000000 dd 02 98 ad a8 82 73 a6 7f db d6 20\tFDRPHNGTNJJPT\n" +
+                            "59\tgoogl\t0.778\t2018-01-01T01:58:00.000000Z\tfalse\tKZZ\t0.7741801422529707\t0.1870\t586\t2015-05-27T15:12:16.295Z\t\t-7715437488835448247\t1970-01-01T07:46:40.000000Z\t10\t\tEPLWDUWIWJTLCP\n",
+                    query,
+                    "timestamp###DESC",
+                    true,
+                    true
+            );
+
+            assertPlanNoLeakCheck(query, "Sort light lo: :lo::long\n" +
+                    "  keys: [timestamp desc, c]\n" +
+                    "    PageFrame\n" +
+                    "        Row forward scan\n" +
+                    "        Frame forward scan on: y\n");
+
+            bindVariableService.setLong("lo", 8L);
+            bindVariableService.setLong("hi", 13L);
+
+            assertPlanNoLeakCheck(query, "Sort light lo: :lo::long\n" +
+                    "  keys: [timestamp desc, c]\n" +
+                    "    PageFrame\n" +
+                    "        Row forward scan\n" +
+                    "        Frame forward scan on: y\n");
+
+            assertQuery(
+                    "i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn\n" +
+                            "60\tgoogl\t0.852\t2018-01-01T02:00:00.000000Z\ttrue\tKZZ\tnull\tnull\t834\t2015-07-15T04:34:51.645Z\tLMSR\t-4834150290387342806\t1970-01-01T08:03:20.000000Z\t23\t00000000 dd 02 98 ad a8 82 73 a6 7f db d6 20\tFDRPHNGTNJJPT\n" +
+                            "59\tgoogl\t0.778\t2018-01-01T01:58:00.000000Z\tfalse\tKZZ\t0.7741801422529707\t0.1870\t586\t2015-05-27T15:12:16.295Z\t\t-7715437488835448247\t1970-01-01T07:46:40.000000Z\t10\t\tEPLWDUWIWJTLCP\n" +
+                            "58\tibm\t0.445\t2018-01-01T01:56:00.000000Z\ttrue\tCDE\t0.7613115945849444\tnull\t118\t\tHGKR\t-5065534156372441821\t1970-01-01T07:30:00.000000Z\t4\t00000000 cd 98 7d ba 9d 68 2a 79 76 fc\tBGCKOSB\n" +
+                            "57\tgoogl\t0.756\t2018-01-01T01:54:00.000000Z\tfalse\tKZZ\t0.8925723033175609\t0.9925\t416\t2015-11-08T09:45:16.753Z\tLVSY\t7173713836788833462\t1970-01-01T07:13:20.000000Z\t29\t00000000 4d 0d d7 44 2d f1 57 ea aa 41 c5 55 ef 19 d9 0f\n" +
+                            "00000010 61 2d\tEYDNMIOCCVV\n" +
+                            "56\tmsft\t0.061\t2018-01-01T01:52:00.000000Z\ttrue\tCDE\t0.7792511437604662\t0.3966\t341\t2015-03-04T08:18:06.265Z\tLVSY\t5320837171213814710\t1970-01-01T06:56:40.000000Z\t16\t\tJCUBBMQSRHLWSX\n" +
+                            "55\tibm\t0.213\t2018-01-01T01:50:00.000000Z\tfalse\tKZZ\tnull\t0.0379\t503\t2015-08-25T16:59:46.151Z\tKKUS\t8510474930626176160\t1970-01-01T06:40:00.000000Z\t13\t\t\n" +
+                            "54\tmsft\t0.266\t2018-01-01T01:48:00.000000Z\tfalse\t\t0.26652004252953776\t0.0911\t937\t\t\t-7761587678997431446\t1970-01-01T06:23:20.000000Z\t39\t00000000 53 28 c0 93 b2 7b c7 55 0c dd fd c1\t\n" +
+                            "53\tgoogl\t0.106\t2018-01-01T01:46:00.000000Z\ttrue\tABC\t0.5869842992348637\t0.4215\t762\t2015-03-07T03:16:06.453Z\tHGKR\t-7872707389967331757\t1970-01-01T06:06:40.000000Z\t3\t00000000 8d ca 1d d0 b2 eb 54 3f 32 82\tQQDOZFIDQTYO\n",
+                    query,
+                    "timestamp###DESC",
+                    true,
+                    true
             );
         });
     }
@@ -770,26 +910,7 @@ public class LimitTest extends AbstractCairoTest {
     private void testLimit(String expected1, String expected2, String query, boolean expectSize) throws Exception {
         assertMemoryLeak(() -> {
             execute(
-                    "create table y as (" +
-                            "select" +
-                            " cast(x as int) i," +
-                            " rnd_symbol('msft','ibm', 'googl') sym2," +
-                            " round(rnd_double(0), 3) price," +
-                            " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
-                            " rnd_boolean() b," +
-                            " rnd_str(1,1,2) c," +
-                            " rnd_double(2) d," +
-                            " rnd_float(2) e," +
-                            " rnd_short(10,1024) f," +
-                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                            " rnd_symbol(4,4,4,2) ik," +
-                            " rnd_long() j," +
-                            " timestamp_sequence(0, 1000000000) k," +
-                            " rnd_byte(2,50) l," +
-                            " rnd_bin(10, 20, 2) m," +
-                            " rnd_str(5,16,2) n" +
-                            " from long_sequence(30)" +
-                            ") timestamp(timestamp)"
+                    createTableDdl
             );
 
             assertQueryAndCache(expected1, query, "timestamp", true, expectSize);
