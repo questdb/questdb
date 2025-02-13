@@ -98,6 +98,10 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     ArrayView getArray(Record rec);
 
+    /**
+     * Returns the length of the string array, coupled with {@link #getStrA(Record, int) getStrA/B(record, arrayindex)}.
+     * Not related to {@link #getArray(Record)}.
+     */
     int getArrayLength();
 
     BinarySequence getBin(Record rec);

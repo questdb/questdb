@@ -44,7 +44,7 @@ public class AllNotEqVarcharFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        // second argument is still a string array
+        // even though this is as VARCHAR function, the second argument is still a string array
         return "<>all(Øs[])";
     }
 

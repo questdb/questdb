@@ -59,7 +59,7 @@ public class FunctionFactoryDescriptor {
             if (i < n && sig.charAt(i) == '[') {
                 i++;
                 if (i >= n || sig.charAt(i) != ']') {
-                    throw SqlException.position(0).put("invalid array declaration");
+                    throw SqlException.position(0).put("invalid array declaration: " + sig);
                 }
                 i++;
             }

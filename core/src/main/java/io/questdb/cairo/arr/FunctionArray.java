@@ -196,7 +196,7 @@ public class FunctionArray implements ArrayView, Closeable {
         try {
             return functions;
         } catch (NullPointerException e) {
-            throw new IllegalStateException("used FunctionArray before calling applyShape()");
+            throw new IllegalStateException("FunctionArray used before calling applyShape()");
         }
     }
 }

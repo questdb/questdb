@@ -27,6 +27,10 @@ package io.questdb.cairo.sql;
 import io.questdb.std.Interval;
 import org.jetbrains.annotations.NotNull;
 
+/**
+ * Represents functions of all persistable types. Excludes types like string array
+ * and interval, which can only occur in expressions, and not as column types.
+ */
 public interface ScalarFunction extends Function {
     @Override
     default int getArrayLength() {
