@@ -24,7 +24,11 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -33,7 +37,12 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8String;
@@ -49,7 +58,6 @@ import org.junit.runners.Parameterized;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 @RunWith(Parameterized.class)
@@ -873,10 +881,10 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
             TableToken xTbl = engine.verifyTableName("x");
 
-            Path path = Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(xTbl).concat("wal1").concat("0").concat("s.d");
+            Path path = Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(xTbl).concat("wal1").concat("0").concat("s.d");
             Assert.assertTrue(Files.exists(path.$()));
 
-            path = Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(xTbl).concat("wal1").concat("0").concat("s.i");
+            path = Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(xTbl).concat("wal1").concat("0").concat("s.i");
             Assert.assertFalse(Files.exists(path.$()));
 
             execute("insert into x(s, timestamp) values(1, '2024-02-04T00:00:00.000Z')", sqlExecutionContext);

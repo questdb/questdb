@@ -157,7 +157,8 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
     };
 
     public TestServerConfiguration(
-            CharSequence root,
+            CharSequence dbRoot,
+            CharSequence installRoot,
             boolean enableHttp,
             boolean enableLineTcp,
             boolean enablePgWire,
@@ -167,7 +168,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
             int workerCountLineTcpWriter,
             FactoryProvider factoryProvider
     ) {
-        super(root);
+        super(dbRoot, installRoot);
         // something we can override in test
         this.workerCountHttp = workerCountHttp;
         this.enableHttp = enableHttp;
@@ -181,7 +182,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
                 return false;
             }
         };
-        this.cairoConfiguration = new DefaultCairoConfiguration(root) {
+        this.cairoConfiguration = new DefaultCairoConfiguration(dbRoot) {
             @Override
             public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
                 return circuitBreakerConfiguration;

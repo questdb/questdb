@@ -120,7 +120,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         // Clean all the files inside table folder name except WAL directories and SEQ_DIR directory
         boolean allClean = true;
         FilesFacade ff = engine.getConfiguration().getFilesFacade();
-        tempPath.of(engine.getConfiguration().getRoot()).concat(tableToken);
+        tempPath.of(engine.getConfiguration().getDbRoot()).concat(tableToken);
         int rootLen = tempPath.size();
 
         long p = ff.findFirst(tempPath.$());
@@ -196,11 +196,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             CairoEngine engine,
             @Transient Path tempPath
     ) {
-        if (engine.lockReadersAndMetadata(tableToken)) {
+        if (engine.lockReadersOnDrop(tableToken)) {
             TableWriter writerToClose = null;
             try {
                 final CairoConfiguration configuration = engine.getConfiguration();
-                if (writer == null && TableUtils.exists(configuration.getFilesFacade(), tempPath, configuration.getRoot(), tableToken.getDirName()) == TABLE_EXISTS) {
+                if (writer == null && TableUtils.exists(configuration.getFilesFacade(), tempPath, configuration.getDbRoot(), tableToken.getDirName()) == TABLE_EXISTS) {
                     try {
                         writer = writerToClose = engine.getWriterUnsafe(tableToken, WAL_2_TABLE_WRITE_REASON);
                     } catch (EntryUnavailableException ex) {
@@ -222,7 +222,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 cleanDroppedTableDirectory(engine, tempPath, tableToken);
             } finally {
                 Misc.free(writerToClose);
-                engine.unlockReadersAndMetadata(tableToken);
+                engine.unlockReadersOnDrop(tableToken);
             }
         } else {
             LOG.info().$("table '").utf8(tableToken.getDirName())
@@ -272,7 +272,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 long physicalRowsAdded = 0;
                 long insertTimespan = 0;
 
-                tempPath.of(engine.getConfiguration().getRoot()).concat(tableToken).slash();
+                tempPath.of(engine.getConfiguration().getDbRoot()).concat(tableToken).slash();
 
                 // Populate transactionMeta with timestamps of future transactions
                 // to avoid O3 commits by pre-calculating safe to commit timestamp for every commit.
@@ -355,7 +355,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             default:
                                 // Always set full path when using thread static path
                                 operationExecutor.setNowAndFixClock(commitTimestamp);
-                                tempPath.of(engine.getConfiguration().getRoot()).concat(tableToken).slash().putAscii(WAL_NAME_BASE).put(walId).slash().put(segmentId);
+                                tempPath.of(engine.getConfiguration().getDbRoot()).concat(tableToken).slash().putAscii(WAL_NAME_BASE).put(walId).slash().put(segmentId);
                                 final long start = microClock.getTicks();
 
                                 long lastLoadedTxnDetails = writer.getWalTnxDetails().getLastSeqTxn();

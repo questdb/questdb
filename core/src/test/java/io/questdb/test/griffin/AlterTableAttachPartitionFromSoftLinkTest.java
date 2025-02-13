@@ -24,7 +24,17 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnPurgeJob;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.O3PartitionPurgeJob;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxReader;
+import io.questdb.cairo.TxWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
@@ -118,7 +128,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                             Assert.assertTrue(fileCount.get() > 0);
 
                             // verify the link was removed
-                            other.of(configuration.getRoot())
+                            other.of(configuration.getDbRoot())
                                     .concat(tableToken)
                                     .concat(readOnlyPartitionName)
                                     .put(configuration.getAttachPartitionSuffix())
@@ -196,7 +206,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                             AtomicInteger fileCount = new AtomicInteger();
                             ff.walk(other, (file, type) -> fileCount.incrementAndGet());
                             Assert.assertTrue(fileCount.get() > 0);
-                            path.of(configuration.getRoot())
+                            path.of(configuration.getDbRoot())
                                     .concat(tableToken)
                                     .concat(readOnlyPartitionName)
                                     .put(".2")
@@ -222,7 +232,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                                 // drop the partition which was attached via soft link
                                 execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
                                 // there is a reader, cannot unlink, thus the link will still exist
-                                path.of(configuration.getRoot()) // <-- soft link path
+                                path.of(configuration.getDbRoot()) // <-- soft link path
                                         .concat(tableToken)
                                         .concat(readOnlyPartitionName)
                                         .put(".2")
@@ -272,7 +282,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
                             runO3PartitionPurgeJob();
 
-                            path.of(configuration.getRoot()).concat(tableToken);
+                            path.of(configuration.getDbRoot()).concat(tableToken);
                             int plen = path.size();
                             // in Windows if this was a real soft link to a folder, the link would be deleted
                             Assert.assertFalse(ff.exists(path.concat(readOnlyPartitionName).$()));
@@ -727,7 +737,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             );
 
             // detach all partitions but last two and them from soft link
-            path.of(configuration.getRoot()).concat(tableToken);
+            path.of(configuration.getDbRoot()).concat(tableToken);
             int pathLen = path.size();
             for (int i = 0; i < partitionCount - 2; i++) {
                 execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + partitionName[i] + "'", sqlExecutionContext);
@@ -936,7 +946,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                             AtomicInteger fileCount = new AtomicInteger();
                             ff.walk(other, (file, type) -> fileCount.incrementAndGet());
                             Assert.assertTrue(fileCount.get() > 0);
-                            path.of(configuration.getRoot())
+                            path.of(configuration.getDbRoot())
                                     .concat(tableToken)
                                     .concat(readOnlyPartitionName)
                                     .put(".2")
@@ -959,7 +969,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             createTableWithReadOnlyPartition(tableName, tableToken -> {
                         try {
                             execute("TRUNCATE TABLE " + tableName, sqlExecutionContext);
-                            path.of(configuration.getRoot()).concat(tableToken);
+                            path.of(configuration.getDbRoot()).concat(tableToken);
                             int plen = path.size();
                             Assert.assertFalse(ff.exists(path.concat(readOnlyPartitionName).$()));
                             Assert.assertFalse(ff.exists(path.trimTo(plen).concat("2022-10-18").$()));
@@ -1099,7 +1109,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
 
             // verify that the link has been renamed to what we expect
-            path.of(configuration.getRoot()).concat(tableToken).concat(readOnlyPartitionName);
+            path.of(configuration.getDbRoot()).concat(tableToken).concat(readOnlyPartitionName);
             TestUtils.txnPartitionConditionally(path, 2);
             Assert.assertTrue(Files.exists(path.$()));
 
@@ -1136,7 +1146,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
         final CharSequence s3Buckets = tmp;
         final String detachedPartitionName = partitionName + TableUtils.DETACHED_DIR_MARKER;
         copyPartitionAndMetadata( // this creates s3Buckets
-                configuration.getRoot(),
+                configuration.getDbRoot(),
                 tableToken,
                 detachedPartitionName,
                 s3Buckets,
@@ -1151,7 +1161,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                 .concat(tableToken)
                 .concat(detachedPartitionName)
                 .$();
-        path.of(configuration.getRoot()) // <-- soft link path
+        path.of(configuration.getDbRoot()) // <-- soft link path
                 .concat(tableToken)
                 .concat(partitionName)
                 .put(configuration.getAttachPartitionSuffix())

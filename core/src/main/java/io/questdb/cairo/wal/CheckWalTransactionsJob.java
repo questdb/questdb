@@ -24,7 +24,12 @@
 
 package io.questdb.cairo.wal;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.mp.SynchronizedJob;
@@ -55,7 +60,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
         this.engine = engine;
         this.ff = engine.getConfiguration().getFilesFacade();
         txReader = new TxReader(engine.getConfiguration().getFilesFacade());
-        dbRoot = engine.getConfiguration().getRoot();
+        dbRoot = engine.getConfiguration().getDbRoot();
         millisecondClock = engine.getConfiguration().getMillisecondClock();
         spinLockTimeout = engine.getConfiguration().getSpinLockTimeout();
         checkNotifyOutstandingTxnInWalRef = (tableToken, txn, txn2) -> checkNotifyOutstandingTxnInWal(txn, txn2);
