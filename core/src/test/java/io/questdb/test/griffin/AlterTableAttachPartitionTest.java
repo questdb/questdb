@@ -24,11 +24,25 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AttachDetachStatus;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.FullFwdPartitionFrameCursor;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.NumericException;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
@@ -407,7 +421,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     s -> {
                         engine.clear();
                         TableToken tableToken = engine.verifyTableName(s.getName());
-                        path.of(configuration.getRoot()).concat(tableToken).concat("2022-08-01").concat("sh.i").$();
+                        path.of(configuration.getDbRoot()).concat(tableToken).concat("2022-08-01").concat("sh.i").$();
                         long fd = TestFilesFacadeImpl.INSTANCE.openRW(path.$(), CairoConfiguration.O_NONE);
                         Files.truncate(fd, Files.length(fd) / 4);
                         TestFilesFacadeImpl.INSTANCE.close(fd);
@@ -473,7 +487,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         // .v file
                         engine.clear();
                         TableToken tableToken = engine.verifyTableName(s.getName());
-                        path.of(configuration.getRoot()).concat(tableToken).concat("2022-08-01").concat("sh.v").$();
+                        path.of(configuration.getDbRoot()).concat(tableToken).concat("2022-08-01").concat("sh.v").$();
                         long fd = TestFilesFacadeImpl.INSTANCE.openRW(path.$(), CairoConfiguration.O_NONE);
                         Files.truncate(fd, Files.length(fd) / 2);
                         TestFilesFacadeImpl.INSTANCE.close(fd);
@@ -622,7 +636,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         txn = writer.getTxn();
                         writer.attachPartition(timestamp);
                     }
-                    path.of(configuration.getRoot()).concat(dstTableToken);
+                    path.of(configuration.getDbRoot()).concat(dstTableToken);
                     TableUtils.setPathForNativePartition(path, PartitionBy.DAY, IntervalUtils.parseFloorPartialTimestamp("2022-08-01"), txn);
                     int pathLen = path.size();
 
@@ -913,7 +927,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     // remove .k
                     engine.clear();
                     TableToken tableToken = engine.verifyTableName(src.getName());
-                    path.of(configuration.getRoot()).concat(tableToken).concat("2022-08-09").concat("s.k").$();
+                    path.of(configuration.getDbRoot()).concat(tableToken).concat("2022-08-09").concat("s.k").$();
                     Assert.assertTrue(Files.remove(path.$()));
                     try {
                         attachFromSrcIntoDst(src, dst, "2022-08-09");
@@ -1238,11 +1252,11 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
         engine.clear();
 
         TableToken tableToken = engine.verifyTableName(src.getName());
-        path.of(configuration.getRoot()).concat(tableToken);
+        path.of(configuration.getDbRoot()).concat(tableToken);
         int pathLen = path.size();
 
         TableToken tableToken0 = engine.verifyTableName(dst.getName());
-        other.of(configuration.getRoot()).concat(tableToken0);
+        other.of(configuration.getDbRoot()).concat(tableToken0);
         int otherLen = other.size();
 
         int hi = -1;
@@ -1312,10 +1326,10 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
             String dstPartitionName
     ) {
         copyPartitionAndMetadata(
-                configuration.getRoot(),
+                configuration.getDbRoot(),
                 srcTableToken,
                 srcPartitionName,
-                configuration.getRoot(),
+                configuration.getDbRoot(),
                 dstTableName,
                 dstPartitionName,
                 configuration.getAttachPartitionSuffix()
@@ -1354,7 +1368,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     s -> {
                         engine.clear();
                         TableToken tableToken = engine.verifyTableName(s.getName());
-                        path.of(configuration.getRoot()).concat(tableToken).concat("2022-08-01").concat("t.d").$();
+                        path.of(configuration.getDbRoot()).concat(tableToken).concat("2022-08-01").concat("t.d").$();
                         long fd = TestFilesFacadeImpl.INSTANCE.openRW(path.$(), CairoConfiguration.O_NONE);
                         Files.truncate(fd, Files.length(fd) / 10);
                         TestFilesFacadeImpl.INSTANCE.close(fd);
@@ -1419,7 +1433,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
             // .i file
             engine.clear();
             TableToken tableToken = engine.verifyTableName(src.getName());
-            path.of(configuration.getRoot()).concat(tableToken).concat(partition).concat(columnFileName).$();
+            path.of(configuration.getDbRoot()).concat(tableToken).concat(partition).concat(columnFileName).$();
             fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
             Unsafe.getUnsafe().putLong(writeBuff, value);
             ff.write(fd, writeBuff, Long.BYTES, offset);

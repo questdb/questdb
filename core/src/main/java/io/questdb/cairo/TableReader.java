@@ -117,7 +117,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         this.messageBus = messageBus;
         try {
             this.path = new Path();
-            this.path.of(configuration.getRoot());
+            this.path.of(configuration.getDbRoot());
             this.dbRootSize = path.size();
             path.concat(tableToken.getDirName());
             this.rootLen = path.size();

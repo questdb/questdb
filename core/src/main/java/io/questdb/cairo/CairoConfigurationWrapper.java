@@ -242,6 +242,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public @NotNull String getDbRoot() {
+        return getDelegate().getDbRoot();
+    }
+
+    @Override
     public @NotNull DateLocale getDefaultDateLocale() {
         return getDelegate().getDefaultDateLocale();
     }
@@ -374,6 +379,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getInsertModelPoolCapacity() {
         return getDelegate().getInsertModelPoolCapacity();
+    }
+
+    @Override
+    public @NotNull String getInstallRoot() {
+        return getDelegate().getInstallRoot();
     }
 
     @Override
@@ -634,11 +644,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getRndFunctionMemoryPageSize() {
         return getDelegate().getRndFunctionMemoryPageSize();
-    }
-
-    @Override
-    public @NotNull String getRoot() {
-        return getDelegate().getRoot();
     }
 
     @Override

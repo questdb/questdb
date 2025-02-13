@@ -87,7 +87,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     private final GrowOnlyTableNameRegistryStore tableNameRegistryStore; // protected with #lock
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
     private ColumnVersionReader columnVersionReader = null;
-    private Path partitionCleanPath;
+    private Path partitionCleanPath;  // To be used exclusively as parameter for `removePartitionDirsNotAttached`.
     private DateFormat partitionDirFmt;
     private int pathTableLen;
     private TableReaderMetadata tableMetadata = null;
@@ -291,6 +291,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                             LOG.info().$("materialized view definition not found [view=").$(tableToken).I$();
                                         }
                                     }
+
                                     LOG.info().$("table included in the checkpoint [table=").$(tableToken).I$();
                                     break;
                                 } finally {
@@ -394,7 +395,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             if (PartitionBy.isPartitioned(tableMetadata.getPartitionBy())) {
                 // Remove non-attached partitions
                 LOG.debug().$("purging non attached partitions [path=").$(tablePath.$()).I$();
-                partitionCleanPath = tablePath;
+                partitionCleanPath = tablePath; // parameter for `removePartitionDirsNotAttached`
                 this.partitionDirFmt = PartitionBy.getPartitionDirFormatMethod(tableMetadata.getPartitionBy());
                 ff.iterateDir(tablePath.$(), removePartitionDirsNotAttached);
             }
@@ -510,7 +511,8 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         }
 
         final FilesFacade ff = configuration.getFilesFacade();
-        final CharSequence root = configuration.getRoot();
+        final CharSequence installRoot = configuration.getInstallRoot();
+        final CharSequence dbRoot = configuration.getDbRoot();
         final CharSequence checkpointRoot = configuration.getCheckpointRoot();
         final CharSequence legacyCheckpointRoot = configuration.getLegacyCheckpointRoot();
 
@@ -536,7 +538,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             srcPath.concat(configuration.getDbDirectory());
             final int checkpointRootLen = srcPath.size();
 
-            dstPath.of(root).parent().concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME);
+            dstPath.of(installRoot).concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME);
             boolean triggerExists = ff.exists(dstPath.$());
 
             // Check if the checkpoint dir exists.
@@ -602,7 +604,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                         .I$();
             }
 
-            dstPath.of(root);
+            dstPath.of(dbRoot);
             final int rootLen = dstPath.size();
 
             // First delete all table name registry files in dst.
@@ -714,7 +716,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                         .put(", errno=").put(ff.errno())
                         .put(']');
             }
-            dstPath.of(root).parent().concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME);
+            dstPath.of(installRoot).concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME);
             if (triggerExists && !ff.removeQuiet(dstPath.$())) {
                 throw CairoException.critical(ff.errno())
                         .put("could not remove restore trigger file. file permission issues? [file=").put(dstPath).put(']');

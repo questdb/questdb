@@ -120,7 +120,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
 
         // Windows does not allow to lock directories, so we lock a special lock file
         FilesFacade ff = configuration.getFilesFacade();
-        LPSZ path = Path.getThreadLocal(configuration.getRoot()).concat(TABLE_REGISTRY_NAME_FILE).put(".lock").$();
+        LPSZ path = Path.getThreadLocal(configuration.getDbRoot()).concat(TABLE_REGISTRY_NAME_FILE).put(".lock").$();
         if (ff.exists(path)) {
             ff.touch(path);
         }
@@ -147,7 +147,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
         }
         tableNameMemory.close();
 
-        final LPSZ path = Path.getThreadLocal(configuration.getRoot()).concat(TABLE_REGISTRY_NAME_FILE).put(".0").$();
+        final LPSZ path = Path.getThreadLocal(configuration.getDbRoot()).concat(TABLE_REGISTRY_NAME_FILE).put(".0").$();
         configuration.getFilesFacade().remove(path);
 
         tableNameMemory.smallFile(configuration.getFilesFacade(), path, MemoryTag.MMAP_DEFAULT);
@@ -244,7 +244,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
         tableNameMemory.close();
 
         // rename tmp to next version file, everyone will automatically switch to new file
-        LPSZ path2 = Path.getThreadLocal2(configuration.getRoot())
+        LPSZ path2 = Path.getThreadLocal2(configuration.getDbRoot())
                 .concat(TABLE_REGISTRY_NAME_FILE).put('.').put(lastFileVersion + 1).$();
         if (ff.rename(path.$(), path2) == Files.FILES_RENAME_OK) {
             LOG.info().$("compacted tables file [path=").$(path2).I$();
@@ -260,7 +260,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
         } else {
             // Not critical, if rename fails, compaction will be done next time
             // Reopen the existing, non-compacted file
-            path2 = Path.getThreadLocal2(configuration.getRoot())
+            path2 = Path.getThreadLocal2(configuration.getDbRoot())
                     .concat(TABLE_REGISTRY_NAME_FILE).put('.').put(lastFileVersion).$();
             tableNameMemory.smallFile(ff, path2, MemoryTag.MMAP_DEFAULT);
             long appendOffset = tableNameMemory.getLong(0);
@@ -310,7 +310,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
     }
 
     private int readTableId(Path path, CharSequence dirName, FilesFacade ff) {
-        path.of(configuration.getRoot()).concat(dirName).concat(META_FILE_NAME);
+        path.of(configuration.getDbRoot()).concat(dirName).concat(META_FILE_NAME);
         long fd = ff.openRO(path.$());
         if (fd < 1) {
             return 0;
@@ -333,7 +333,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
             ConcurrentHashMap<TableToken> tableNameToTableTokenMap,
             ConcurrentHashMap<ReverseTableMapItem> dirNameToTableTokenMap
     ) {
-        Path path = Path.getThreadLocal(configuration.getRoot());
+        Path path = Path.getThreadLocal(configuration.getDbRoot());
         int plimit = path.size();
         FilesFacade ff = configuration.getFilesFacade();
         long findPtr = ff.findFirst(path.$());
@@ -344,7 +344,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                     String dirName = Utf8s.toString(dirNameSink);
                     if (
                             !dirNameToTableTokenMap.containsKey(dirName)
-                                    && TableUtils.exists(ff, path, configuration.getRoot(), dirNameSink) == TableUtils.TABLE_EXISTS
+                                    && TableUtils.exists(ff, path, configuration.getDbRoot(), dirNameSink) == TableUtils.TABLE_EXISTS
                     ) {
                         int tableId;
                         boolean isWal;
@@ -354,7 +354,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                             tableId = readTableId(path, dirName, ff);
                             isWal = tableId < 0;
                             tableId = Math.abs(tableId);
-                            tableName = TableUtils.readTableName(path.of(configuration.getRoot()).concat(dirNameSink), plimit, tableNameRoMemory, ff);
+                            tableName = TableUtils.readTableName(path.of(configuration.getDbRoot()).concat(dirNameSink), plimit, tableNameRoMemory, ff);
                         } catch (CairoException e) {
                             if (e.errnoReadPathDoesNotExist()) {
                                 // table is being removed.
@@ -411,7 +411,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
     ) {
         int lastFileVersion;
         FilesFacade ff = configuration.getFilesFacade();
-        Path path = Path.getThreadLocal(configuration.getRoot());
+        Path path = Path.getThreadLocal(configuration.getDbRoot());
         int plimit = path.size();
 
         MemoryMR memory = isLocked() ? tableNameMemory : tableNameRoMemory;
@@ -480,7 +480,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                 }
             } else {
                 assert operation == OPERATION_ADD;
-                if (TableUtils.exists(ff, path, configuration.getRoot(), dirName) != TableUtils.TABLE_EXISTS) {
+                if (TableUtils.exists(ff, path, configuration.getDbRoot(), dirName) != TableUtils.TABLE_EXISTS) {
                     // This can be BAU, remove record will follow
                     tableToCompact++;
                 } else {

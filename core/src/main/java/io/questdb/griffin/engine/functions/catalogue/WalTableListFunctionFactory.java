@@ -109,7 +109,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
             super(METADATA);
             this.ff = configuration.getFilesFacade();
             this.rootPath = new Path();
-            rootPath.of(configuration.getRoot());
+            rootPath.of(configuration.getDbRoot());
             this.sqlExecutionContext = sqlExecutionContext;
             this.cursor = new TableListRecordCursor();
         }

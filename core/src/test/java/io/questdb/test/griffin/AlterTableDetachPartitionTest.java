@@ -114,7 +114,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 "could not detach partition [table=tab143, detachStatus=DETACH_ERR_ALREADY_DETACHED",
                 () -> {
                     TableToken tableToken = engine.verifyTableName("tab143");
-                    path.of(configuration.getRoot())
+                    path.of(configuration.getDbRoot())
                             .concat(tableToken)
                             .concat("2022-06-03")
                             .put(DETACHED_DIR_MARKER)
@@ -977,8 +977,8 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 TableToken tableToken = engine.verifyTableName(brokenTableName);
                 TableToken tableToken1 = engine.verifyTableName(tableName);
 
-                path.of(configuration.getRoot()).concat(tableToken).concat(timestampDay).put(DETACHED_DIR_MARKER).$();
-                other.of(configuration.getRoot()).concat(tableToken1).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
+                path.of(configuration.getDbRoot()).concat(tableToken).concat(timestampDay).put(DETACHED_DIR_MARKER).$();
+                other.of(configuration.getDbRoot()).concat(tableToken1).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
 
                 Assert.assertTrue(Files.rename(path.$(), other.$()) > -1);
 
@@ -1079,7 +1079,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             // remove _meta.detached simply prevents metadata checking, all else is the same
             TableToken tableToken = engine.verifyTableName(tableName);
-            path.of(configuration.getRoot())
+            path.of(configuration.getDbRoot())
                     .concat(tableToken)
                     .concat("2022-06-02")
                     .put(DETACHED_DIR_MARKER)
@@ -1276,7 +1276,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                         // Split partition by committing O3 to "2022-06-01"
                         execute("insert into " + tableName + "(ts) select ts + 20 * 60 * 60 * 1000000L from " + tableName, sqlExecutionContext);
 
-                        Path path = Path.getThreadLocal(configuration.getRoot()).concat(token).concat("2022-06-01T200057-183001.1").concat("ts.d");
+                        Path path = Path.getThreadLocal(configuration.getDbRoot()).concat(token).concat("2022-06-01T200057-183001.1").concat("ts.d");
                         FilesFacade ff = configuration.getFilesFacade();
                         Assert.assertTrue(ff.exists(path.$()));
 
@@ -1407,8 +1407,8 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 TableToken tableToken = engine.verifyTableName(brokenTableName);
                 TableToken tableToken1 = engine.verifyTableName(tableName);
 
-                path.of(configuration.getRoot()).concat(tableToken).concat(timestampDay).put(DETACHED_DIR_MARKER).$();
-                other.of(configuration.getRoot()).concat(tableToken1).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
+                path.of(configuration.getDbRoot()).concat(tableToken).concat(timestampDay).put(DETACHED_DIR_MARKER).$();
+                other.of(configuration.getDbRoot()).concat(tableToken1).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
 
                 Assert.assertTrue(Files.rename(path.$(), other.$()) > -1);
 
@@ -1486,8 +1486,8 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 TableToken tableToken = engine.verifyTableName(brokenTableName);
                 TableToken tableToken1 = engine.verifyTableName(tableName);
 
-                path.of(configuration.getRoot()).concat(tableToken).concat(timestampDay).put(DETACHED_DIR_MARKER).$();
-                other.of(configuration.getRoot()).concat(tableToken1).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
+                path.of(configuration.getDbRoot()).concat(tableToken).concat(timestampDay).put(DETACHED_DIR_MARKER).$();
+                other.of(configuration.getDbRoot()).concat(tableToken1).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
 
                 Assert.assertTrue(Files.rename(path.$(), other.$()) > -1);
 
@@ -1580,8 +1580,8 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 TableToken tableToken = engine.verifyTableName(tableName);
                 TableToken brokenTableToken = engine.verifyTableName(brokenTableName);
 
-                path.of(configuration.getRoot()).concat(brokenTableToken).concat(timestampDay).put(DETACHED_DIR_MARKER).$();
-                other.of(configuration.getRoot()).concat(tableToken).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
+                path.of(configuration.getDbRoot()).concat(brokenTableToken).concat(timestampDay).put(DETACHED_DIR_MARKER).$();
+                other.of(configuration.getDbRoot()).concat(tableToken).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
                 Assert.assertTrue(Files.rename(path.$(), other.$()) > -1);
 
                 // Change table id in the metadata file in the partition
@@ -1595,7 +1595,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     writer.attachPartition(timestamp);
                 }
 
-                Assert.assertFalse(Files.exists(other.of(configuration.getRoot()).concat(tableToken).concat(timestampDay).concat("s.k").$()));
+                Assert.assertFalse(Files.exists(other.of(configuration.getDbRoot()).concat(tableToken).concat(timestampDay).concat("s.k").$()));
                 Assert.assertFalse(Files.exists(other.parent().concat("s.v").$()));
 
                 assertContent(expected, tableName);
@@ -2096,7 +2096,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             renameDetachedToAttachable(tableName, timestampDay);
 
             TableToken tableToken = engine.verifyTableName(tableName);
-            Path src = Path.PATH.get().of(configuration.getRoot()).concat(tableToken).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).slash();
+            Path src = Path.PATH.get().of(configuration.getDbRoot()).concat(tableToken).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).slash();
             FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             dFile(src, "ts", -1);
             long fd = TableUtils.openRW(ff, src.$(), LOG, configuration.getWriterFileOpenOpts());
@@ -2138,16 +2138,16 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             // Partition does not exist in copied _dtxn
             TableToken tableToken = engine.verifyTableName(tableName);
-            Path src = Path.PATH.get().of(configuration.getRoot()).concat(tableToken).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).slash();
-            Path dst = Path.PATH2.get().of(configuration.getRoot()).concat(tableToken).concat(timestampWrongDay).put(configuration.getAttachPartitionSuffix()).slash();
+            Path src = Path.PATH.get().of(configuration.getDbRoot()).concat(tableToken).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).slash();
+            Path dst = Path.PATH2.get().of(configuration.getDbRoot()).concat(tableToken).concat(timestampWrongDay).put(configuration.getAttachPartitionSuffix()).slash();
 
             FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             Assert.assertEquals(0, ff.rename(src.$(), dst.$()));
             assertFailure("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampWrongDay + "'", "partition is not preset in detached txn file");
 
             // Existing partition but wrong folder name
-            dst = Path.PATH2.get().of(configuration.getRoot()).concat(tableToken).concat(timestampWrongDay).put(configuration.getAttachPartitionSuffix()).slash();
-            Path dst2 = Path.PATH.get().of(configuration.getRoot()).concat(tableToken).concat(timestampWrongDay2).put(configuration.getAttachPartitionSuffix()).slash();
+            dst = Path.PATH2.get().of(configuration.getDbRoot()).concat(tableToken).concat(timestampWrongDay).put(configuration.getAttachPartitionSuffix()).slash();
+            Path dst2 = Path.PATH.get().of(configuration.getDbRoot()).concat(tableToken).concat(timestampWrongDay2).put(configuration.getAttachPartitionSuffix()).slash();
             Assert.assertEquals(0, ff.rename(dst.$(), dst2.$()));
 
             assertFailure(
@@ -2307,7 +2307,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             // check no metadata files were left behind
             TableToken tableToken = engine.verifyTableName(tableName);
-            path.of(configuration.getRoot())
+            path.of(configuration.getDbRoot())
                     .concat(tableToken)
                     .concat("2022-06-01").concat(META_FILE_NAME)
                     .$();
@@ -2372,14 +2372,14 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 );
                 engine.clear();
                 TableToken tableToken = engine.verifyTableName(tableName);
-                path.of(configuration.getRoot())
+                path.of(configuration.getDbRoot())
                         .concat(tableToken)
                         .concat("2022-06-02")
                         .put(DETACHED_DIR_MARKER)
                         .concat(META_FILE_NAME)
                         .$();
                 Assert.assertTrue(Files.remove(path.$()));
-                other.of(configuration.getRoot())
+                other.of(configuration.getDbRoot())
                         .concat(engine.verifyTableName(brokenTableName))
                         .concat("2022-06-02")
                         .put(DETACHED_DIR_MARKER)
@@ -2457,8 +2457,8 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         engine.clear();
         // hide the detached partition
         TableToken tableToken = engine.verifyTableName(tableName);
-        path.of(configuration.getRoot()).concat(tableToken).concat(partitionName + ".detached").$();
-        other.of(configuration.getRoot()).concat(tableToken).concat(partitionName + ".detached.hide").$();
+        path.of(configuration.getDbRoot()).concat(tableToken).concat(partitionName + ".detached").$();
+        other.of(configuration.getDbRoot()).concat(tableToken).concat(partitionName + ".detached.hide").$();
 
         Assert.assertEquals(Files.FILES_RENAME_OK, Files.rename(path.$(), other.$()));
         // drop the latest version of the partition
@@ -2471,14 +2471,14 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         TableToken tableToken = engine.verifyTableName(tableName);
         for (long partition : partitions) {
             TableUtils.setSinkForNativePartition(
-                    path.of(configuration.getRoot()).concat(tableToken),
+                    path.of(configuration.getDbRoot()).concat(tableToken),
                     PartitionBy.DAY,
                     partition,
                     -1
             );
             path.put(DETACHED_DIR_MARKER).$();
             TableUtils.setSinkForNativePartition(
-                    other.of(configuration.getRoot()).concat(tableToken),
+                    other.of(configuration.getDbRoot()).concat(tableToken),
                     PartitionBy.DAY,
                     partition,
                     -1
@@ -2491,8 +2491,8 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     private void renameDetachedToAttachable(String tableName, String... partitions) {
         TableToken tableToken = engine.verifyTableName(tableName);
         for (String partition : partitions) {
-            path.of(configuration.getRoot()).concat(tableToken).concat(partition).put(DETACHED_DIR_MARKER).$();
-            other.of(configuration.getRoot()).concat(tableToken).concat(partition).put(configuration.getAttachPartitionSuffix()).$();
+            path.of(configuration.getDbRoot()).concat(tableToken).concat(partition).put(DETACHED_DIR_MARKER).$();
+            other.of(configuration.getDbRoot()).concat(tableToken).concat(partition).put(configuration.getAttachPartitionSuffix()).$();
             Assert.assertTrue(Files.rename(path.$(), other.$()) > -1);
         }
     }

@@ -90,7 +90,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             this.blockFileWriter = new BlockFileWriter(engine.getConfiguration().getFilesFacade());
             this.blockFileReader = new BlockFileReader(engine.getConfiguration());
             this.dbRoot = new Path();
-            dbRoot.of(engine.getConfiguration().getRoot());
+            dbRoot.of(engine.getConfiguration().getDbRoot());
             this.dbRootLen = dbRoot.size();
         } catch (Throwable th) {
             close();

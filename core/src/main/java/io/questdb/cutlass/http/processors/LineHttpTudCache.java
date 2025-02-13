@@ -164,7 +164,7 @@ public class LineHttpTudCache implements QuietCloseable {
 
         TelemetryTask.store(telemetry, TelemetryOrigin.ILP_TCP, TelemetrySystemEvent.ILP_RESERVE_WRITER);
         // check if table on disk is WAL
-        path.of(engine.getConfiguration().getRoot());
+        path.of(engine.getConfiguration().getDbRoot());
         Utf8String nameUtf8 = Utf8String.newInstance(parser.getMeasurementName());
         WalTableUpdateDetails tud = new WalTableUpdateDetails(
                 engine,

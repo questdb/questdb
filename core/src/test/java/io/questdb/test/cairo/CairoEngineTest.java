@@ -204,7 +204,7 @@ public class CairoEngineTest extends AbstractCairoTest {
             MyListener listener = new MyListener();
 
             try (CairoEngine engine = new CairoEngine(
-                    new DefaultCairoConfiguration(configuration.getRoot()) {
+                    new DefaultCairoConfiguration(configuration.getDbRoot()) {
                         @Override
                         public boolean getAllowTableRegistrySharedWrite() {
                             return true;

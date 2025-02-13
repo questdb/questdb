@@ -565,10 +565,10 @@ public class BlockFileTest extends AbstractCairoTest {
     }
 
     private static Path getDefinitionFilePath(final String tableName) {
-        Path path = new Path().of(configuration.getRoot()).concat(tableName).slash();
+        Path path = new Path().of(configuration.getDbRoot()).concat(tableName).slash();
         FilesFacade ff = configuration.getFilesFacade();
         ff.mkdirs(path, configuration.getMkDirMode());
-        return path.of(configuration.getRoot()).concat(tableName).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME);
+        return path.of(configuration.getDbRoot()).concat(tableName).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME);
     }
 
     private static void readAllBlocks(Path path, int expectedBlocks) {

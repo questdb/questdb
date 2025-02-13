@@ -808,7 +808,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 assertNotNull(matViewDefinition);
 
                 try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade())) {
-                    writer.of(path.of(configuration.getRoot()).concat(matViewToken).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
+                    writer.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
                     // Add unknown block.
                     AppendableBlock block = writer.append();
                     block.putStr("foobar");
@@ -830,7 +830,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
                 // Reader should ignore unknown block.
                 try (BlockFileReader reader = new BlockFileReader(configuration)) {
-                    path.of(configuration.getRoot());
+                    path.of(configuration.getDbRoot());
                     final int rootLen = path.size();
                     MatViewDefinition actualDefinition = MatViewDefinition.readFrom(
                             reader,
@@ -866,7 +866,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 assertNotNull(matViewRefreshState);
 
                 try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade())) {
-                    writer.of(path.of(configuration.getRoot()).concat(matViewToken).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
+                    writer.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
                     // Add unknown block.
                     AppendableBlock block = writer.append();
                     block.putStr("foobar");
@@ -888,7 +888,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
                 // Reader should ignore unknown block.
                 try (BlockFileReader reader = new BlockFileReader(configuration)) {
-                    reader.of(path.of(configuration.getRoot()).concat(matViewToken).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
+                    reader.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
                     MatViewRefreshState actualState = new MatViewRefreshState(
                             matViewDefinition,
                             false,
@@ -945,7 +945,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
     ) {
         final TableToken matViewToken = engine.getTableTokenIfExists(name);
         try (BlockFileReader reader = new BlockFileReader(configuration); Path path = new Path()) {
-            path.of(configuration.getRoot());
+            path.of(configuration.getDbRoot());
             final int rootLen = path.size();
             MatViewDefinition mvd = MatViewDefinition.readFrom(
                     reader,

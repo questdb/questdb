@@ -35,7 +35,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
         super(engine, tableFlagResolver);
         if (!nameStore.lock()) {
             if (!engine.getConfiguration().getAllowTableRegistrySharedWrite()) {
-                throw CairoException.critical(0).put("cannot lock table name registry file [path=").put(engine.getConfiguration().getRoot()).put(']');
+                throw CairoException.critical(0).put("cannot lock table name registry file [path=").put(engine.getConfiguration().getDbRoot()).put(']');
             }
         }
         this.tableNameToTableTokenMap = new ConcurrentHashMap<>(false);

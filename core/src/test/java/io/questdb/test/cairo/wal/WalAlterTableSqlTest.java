@@ -56,8 +56,8 @@ public class WalAlterTableSqlTest extends AbstractCairoTest {
 
             try (Path path = new Path(); Path other = new Path()) {
                 TableToken tableToken = engine.verifyTableName(tableName);
-                path.of(configuration.getRoot()).concat(tableToken).concat(partition).put(DETACHED_DIR_MARKER).$();
-                other.of(configuration.getRoot()).concat(tableToken).concat(partition).put(configuration.getAttachPartitionSuffix()).$();
+                path.of(configuration.getDbRoot()).concat(tableToken).concat(partition).put(DETACHED_DIR_MARKER).$();
+                other.of(configuration.getDbRoot()).concat(tableToken).concat(partition).put(configuration.getAttachPartitionSuffix()).$();
                 Assert.assertTrue(Files.rename(path.$(), other.$()) > -1);
             }
 

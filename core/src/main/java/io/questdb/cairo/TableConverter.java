@@ -64,7 +64,7 @@ public class TableConverter {
             return null;
         }
 
-        final Path path = Path.getThreadLocal(configuration.getRoot());
+        final Path path = Path.getThreadLocal(configuration.getDbRoot());
         final int rootLen = path.size();
         final Utf8StringSink dirNameSink = Misc.getThreadLocalUtf8Sink();
         final FilesFacade ff = configuration.getFilesFacade();
@@ -95,7 +95,7 @@ public class TableConverter {
                             } else {
                                 final String tableName;
                                 try (final MemoryCMR mem = Vm.getCMRInstance()) {
-                                    final String name = TableUtils.readTableName(path.of(configuration.getRoot()).concat(dirNameSink), rootLen, mem, ff);
+                                    final String name = TableUtils.readTableName(path.of(configuration.getDbRoot()).concat(dirNameSink), rootLen, mem, ff);
                                     tableName = name != null ? name : dirName;
                                 }
 

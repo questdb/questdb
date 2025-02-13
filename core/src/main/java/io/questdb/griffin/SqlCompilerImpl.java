@@ -1239,7 +1239,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
             }
 
-            path.of(configuration.getRoot()).concat(tableToken.getDirName());
+            path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
             TableUtils.createConvertFile(ff, path, walFlag);
             compiledQuery.ofTableSetType();
         } catch (CairoException e) {
@@ -1979,7 +1979,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
         checkMatViewModification(tableToken);
         try (IndexBuilder indexBuilder = new IndexBuilder(configuration)) {
-            indexBuilder.of(path.of(configuration.getRoot()).concat(tableToken.getDirName()));
+            indexBuilder.of(path.of(configuration.getDbRoot()).concat(tableToken.getDirName()));
 
             tok = SqlUtil.fetchNext(lexer);
             CharSequence columnName = null;
@@ -2496,7 +2496,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         null,
                         false,
                         DefaultLifecycleManager.INSTANCE,
-                        engine.getConfiguration().getRoot(),
+                        engine.getConfiguration().getDbRoot(),
                         engine.getDdlListener(tableToken),
                         engine.getCheckpointStatus(),
                         engine
@@ -4030,7 +4030,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 backupTable(tableTokenBucket.get(i));
             }
 
-            srcPath.of(configuration.getRoot()).$();
+            srcPath.of(configuration.getDbRoot()).$();
             int srcLen = srcPath.size();
 
             // backup table registry file (tables.d.<last>)

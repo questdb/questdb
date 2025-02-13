@@ -58,7 +58,7 @@ public class WalTxnRangeLoader {
     public void load(CairoEngine engine, Path tempPath, TableToken tableToken, long txnLo, long txnHi) {
         try (TransactionLogCursor transactionLogCursor = engine.getTableSequencerAPI().getCursor(tableToken, txnLo)) {
             if (transactionLogCursor.getVersion() == WAL_SEQUENCER_FORMAT_VERSION_V1) {
-                tempPath.of(engine.getConfiguration().getRoot()).concat(tableToken);
+                tempPath.of(engine.getConfiguration().getDbRoot()).concat(tableToken);
                 int rootLen = tempPath.size();
                 loadTransactionDetailsV1(tempPath, transactionLogCursor, rootLen, txnLo, txnHi);
             } else {

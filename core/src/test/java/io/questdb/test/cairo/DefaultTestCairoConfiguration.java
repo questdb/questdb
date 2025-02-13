@@ -33,8 +33,12 @@ import org.jetbrains.annotations.NotNull;
 public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
     private final Metrics metrics = Metrics.ENABLED;
 
-    public DefaultTestCairoConfiguration(CharSequence root) {
-        super(root);
+    public DefaultTestCairoConfiguration(CharSequence dbRoot, CharSequence installRoot) {
+        super(dbRoot, installRoot);
+    }
+
+    public DefaultTestCairoConfiguration(CharSequence dbRoot) {
+        super(dbRoot);
     }
 
     @Override

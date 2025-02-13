@@ -526,11 +526,11 @@ public class O3SplitPartitionTest extends AbstractO3Test {
 
                     engine.update("update x set str = str where ts >= '2020-02-04'", executionContext);
 
-                    LPSZ colVer = dFile(Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(engine.verifyTableName("x")).concat("2020-02-04"), "str", -1);
+                    LPSZ colVer = dFile(Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(engine.verifyTableName("x")).concat("2020-02-04"), "str", -1);
                     LOG.info().$("deleting ").$(colVer).$();
                     Assert.assertTrue(Os.isWindows() || ff.removeQuiet(colVer));
 
-                    colVer = iFile(Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(engine.verifyTableName("x")).concat("2020-02-04"), "str", -1);
+                    colVer = iFile(Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(engine.verifyTableName("x")).concat("2020-02-04"), "str", -1);
                     LOG.info().$("deleting ").$(colVer).$();
                     Assert.assertTrue(Os.isWindows() || ff.removeQuiet(colVer));
 
@@ -585,21 +585,21 @@ public class O3SplitPartitionTest extends AbstractO3Test {
 
                     engine.update("update x set v1 = v1 where ts >= '2020-02-04'", executionContext);
 
-                    LPSZ colVer1 = dFile(Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(engine.verifyTableName("x")).concat("2020-02-04"), "v1", -1);
+                    LPSZ colVer1 = dFile(Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(engine.verifyTableName("x")).concat("2020-02-04"), "v1", -1);
                     LOG.info().$("deleting ").$(colVer1).$();
                     Assert.assertTrue(Os.isWindows() || ff.removeQuiet(colVer1));
 
-                    colVer1 = iFile(Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(engine.verifyTableName("x")).concat("2020-02-04"), "v1", -1);
+                    colVer1 = iFile(Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(engine.verifyTableName("x")).concat("2020-02-04"), "v1", -1);
                     LOG.info().$("deleting ").$(colVer1).$();
                     Assert.assertTrue(Os.isWindows() || ff.removeQuiet(colVer1));
 
                     engine.update("update x set v2 = v2 where ts >= '2020-02-04'", executionContext);
 
-                    LPSZ colVer2 = dFile(Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(engine.verifyTableName("x")).concat("2020-02-04"), "v2", -1);
+                    LPSZ colVer2 = dFile(Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(engine.verifyTableName("x")).concat("2020-02-04"), "v2", -1);
                     LOG.info().$("deleting ").$(colVer2).$();
                     Assert.assertTrue(Os.isWindows() || ff.removeQuiet(colVer2));
 
-                    colVer2 = iFile(Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(engine.verifyTableName("x")).concat("2020-02-04"), "v2", -1);
+                    colVer2 = iFile(Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(engine.verifyTableName("x")).concat("2020-02-04"), "v2", -1);
                     LOG.info().$("deleting ").$(colVer2).$();
                     Assert.assertTrue(Os.isWindows() || ff.removeQuiet(colVer2));
 

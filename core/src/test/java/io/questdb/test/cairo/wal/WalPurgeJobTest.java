@@ -763,7 +763,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             assertSegmentLockEngagement(false, tableName, 1, 0);  // Segment 0 is unlocked.
             assertSegmentLockEngagement(true, tableName, 1, 1);  // Segment 1 is locked.
 
-            CharSequence root = engine.getConfiguration().getRoot();
+            CharSequence root = engine.getConfiguration().getDbRoot();
             try (Path path = new Path()) {
                 final FilesFacade ff = engine.getConfiguration().getFilesFacade();
                 path.of(root).concat(engine.verifyTableName(tableName)).concat("wal1").concat("stuff");
@@ -1034,7 +1034,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                     + "ts timestamp"
                     + ") timestamp(ts) partition by DAY WAL");
 
-            CharSequence root = engine.getConfiguration().getRoot();
+            CharSequence root = engine.getConfiguration().getDbRoot();
             try (Path path = new Path()) {
                 final FilesFacade ff = engine.getConfiguration().getFilesFacade();
                 TableToken tableToken = engine.verifyTableName(tableName);
@@ -1157,7 +1157,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     }
 
     private void assertExistence(boolean exists, TableToken tableToken) {
-        final CharSequence root = engine.getConfiguration().getRoot();
+        final CharSequence root = engine.getConfiguration().getDbRoot();
         try (Path path = new Path()) {
             path.of(root).concat(tableToken).concat(WalUtils.SEQ_DIR).$();
             Assert.assertEquals(Utf8s.toString(path), exists, TestFilesFacadeImpl.INSTANCE.exists(path.$()));
@@ -1175,13 +1175,13 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     }
 
     private void assertSeqPartExistence(boolean exists, TableToken tableToken, int partNo) {
-        Path path = Path.getThreadLocal(engine.getConfiguration().getRoot());
+        Path path = Path.getThreadLocal(engine.getConfiguration().getDbRoot());
         path.of(root).concat(tableToken).concat(SEQ_DIR).concat(WalUtils.TXNLOG_PARTS_DIR).concat(String.valueOf(partNo)).$();
         Assert.assertEquals(Utf8s.toString(path), exists, TestFilesFacadeImpl.INSTANCE.exists(path.$()));
     }
 
     private void createPendingFile(TableToken tableToken) {
-        final CharSequence root = engine.getConfiguration().getRoot();
+        final CharSequence root = engine.getConfiguration().getDbRoot();
         try (Path path = new Path()) {
             path.of(root).concat(tableToken).concat(WalUtils.SEQ_DIR).concat(WalUtils.WAL_PENDING_FS_MARKER);
             ff.mkdir(path.$(), configuration.getMkDirMode());
@@ -1191,7 +1191,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     }
 
     private void removePendingFile(TableToken tableToken) {
-        final CharSequence root = engine.getConfiguration().getRoot();
+        final CharSequence root = engine.getConfiguration().getDbRoot();
         try (Path path = new Path()) {
             path.of(root).concat(tableToken).concat(WalUtils.SEQ_DIR).concat(WalUtils.WAL_PENDING_FS_MARKER);
             path.concat("test.pending");

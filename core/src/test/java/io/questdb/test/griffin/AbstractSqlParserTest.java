@@ -66,7 +66,7 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
                 for (int i = 0, n = tableModels.length; i < n; i++) {
                     TableModel tableModel = tableModels[i];
                     TableToken tableToken = engine.verifyTableName(tableModel.getName());
-                    path.of(tableModel.getConfiguration().getRoot()).concat(tableToken).slash$();
+                    path.of(tableModel.getConfiguration().getDbRoot()).concat(tableToken).slash$();
                     configuration.getFilesFacade().rmdir(path);
                 }
             }
@@ -182,7 +182,7 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
                 for (int i = 0, n = tableModels.length; i < n; i++) {
                     TableModel tableModel = tableModels[i];
                     TableToken tableToken = engine.verifyTableName(tableModel.getName());
-                    path.of(tableModel.getConfiguration().getRoot()).concat(tableToken).slash$();
+                    path.of(tableModel.getConfiguration().getDbRoot()).concat(tableToken).slash$();
                     Assert.assertTrue(filesFacade.rmdir(path));
                 }
             }

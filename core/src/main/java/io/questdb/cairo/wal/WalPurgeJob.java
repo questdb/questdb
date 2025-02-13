@@ -196,12 +196,12 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                         TableUtils.exists(
                                 ff,
                                 Path.getThreadLocal(""),
-                                configuration.getRoot(),
+                                configuration.getDbRoot(),
                                 tableToken.getDirName()
                         ) != TableUtils.TABLE_EXISTS
                 ) {
                     // Fully deregister the table
-                    Path pathToDelete = Path.getThreadLocal(configuration.getRoot()).concat(tableToken);
+                    Path pathToDelete = Path.getThreadLocal(configuration.getDbRoot()).concat(tableToken);
                     Path symLinkTarget = null;
                     if (ff.isSoftLink(path.$())) {
                         symLinkTarget = Path.getThreadLocal2("");
@@ -420,7 +420,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     }
 
     private boolean sequencerHasPendingTasks() {
-        return walDirectoryPolicy.isInUse(path.of(configuration.getRoot()).concat(tableToken).concat(WalUtils.SEQ_DIR));
+        return walDirectoryPolicy.isInUse(path.of(configuration.getDbRoot()).concat(tableToken).concat(WalUtils.SEQ_DIR));
     }
 
     private Path setSegmentLockPath(TableToken tableName, int walId, int segmentId) {
@@ -429,35 +429,35 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     }
 
     private Path setSegmentPath(TableToken tableName, int walId, int segmentId) {
-        return path.of(configuration.getRoot())
+        return path.of(configuration.getDbRoot())
                 .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId).slash().put(segmentId);
     }
 
     private Path setSeqPartPath(TableToken tableName) {
-        return path.of(configuration.getRoot())
+        return path.of(configuration.getDbRoot())
                 .concat(tableName).concat(WalUtils.SEQ_DIR).concat(WalUtils.TXNLOG_PARTS_DIR);
     }
 
     private Path setTablePath(TableToken tableName) {
-        return path.of(configuration.getRoot())
+        return path.of(configuration.getDbRoot())
                 .concat(tableName);
     }
 
     private void setTxnPath(TableToken tableName) {
-        path.of(configuration.getRoot())
+        path.of(configuration.getDbRoot())
                 .concat(tableName)
                 .concat(TableUtils.TXN_FILE_NAME);
     }
 
     private Path setWalLockPath(TableToken tableName, int walId) {
-        path.of(configuration.getRoot())
+        path.of(configuration.getDbRoot())
                 .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId);
         TableUtils.lockName(path);
         return path;
     }
 
     private Path setWalPath(TableToken tableName, int walId) {
-        return path.of(configuration.getRoot())
+        return path.of(configuration.getDbRoot())
                 .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId);
     }
 

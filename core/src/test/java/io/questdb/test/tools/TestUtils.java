@@ -1108,7 +1108,7 @@ public final class TestUtils {
         if (token == null) {
             throw new RuntimeException("table already exists: " + tableName);
         }
-        path.of(engine.getConfiguration().getRoot()).concat(token);
+        path.of(engine.getConfiguration().getDbRoot()).concat(token);
         TableUtils.createTable(engine.getConfiguration(), memory, path, structure, ColumnType.VERSION, tableId, token.getDirName());
         engine.registerTableToken(token);
         if (structure.isWalEnabled()) {
@@ -1477,7 +1477,7 @@ public final class TestUtils {
                 messageBus,
                 true,
                 DefaultLifecycleManager.INSTANCE,
-                configuration.getRoot(),
+                configuration.getDbRoot(),
                 DefaultDdlListener.INSTANCE,
                 () -> Numbers.LONG_NULL,
                 engine
@@ -1610,10 +1610,13 @@ public final class TestUtils {
     }
 
     public static String replaceSizeToMatchOS(
-            String expected, String tableName,
-            CairoConfiguration configuration, CairoEngine engine, StringSink sink
+            String expected,
+            String tableName,
+            CairoConfiguration configuration,
+            CairoEngine engine,
+            StringSink sink
     ) {
-        return replaceSizeToMatchOS(expected, new Utf8String(configuration.getRoot()), tableName, engine, sink);
+        return replaceSizeToMatchOS(expected, new Utf8String(configuration.getDbRoot()), tableName, engine, sink);
     }
 
     public static String replaceSizeToMatchOS(

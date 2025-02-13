@@ -387,7 +387,7 @@ public final class TableUtils {
             CharSequence dirName
     ) {
         final FilesFacade ff = configuration.getFilesFacade();
-        final CharSequence root = configuration.getRoot();
+        final CharSequence root = configuration.getDbRoot();
         final int mkDirMode = configuration.getMkDirMode();
         createTable(ff, root, mkDirMode, memory, path, structure, tableVersion, tableId, dirName);
     }
@@ -1205,9 +1205,9 @@ public final class TableUtils {
 
     public static boolean matViewFilesExist(CairoConfiguration configuration, Path path, CharSequence dirName) {
         FilesFacade ff = configuration.getFilesFacade();
-        path.of(configuration.getRoot()).concat(dirName).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME);
+        path.of(configuration.getDbRoot()).concat(dirName).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME);
         boolean defExists = ff.exists(path.$());
-        path.of(configuration.getRoot()).concat(dirName).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
+        path.of(configuration.getDbRoot()).concat(dirName).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
         boolean stateExists = ff.exists(path.$());
         return defExists && stateExists;
     }

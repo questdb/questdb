@@ -199,7 +199,7 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
 
     private static short getDBSizeClass(CairoConfiguration configuration) {
         final FilesFacade ff = configuration.getFilesFacade();
-        final CharSequence root = configuration.getRoot();
+        final CharSequence root = configuration.getDbRoot();
         final Path path = Path.PATH.get();
         path.of(root).$();
 
