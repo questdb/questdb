@@ -241,18 +241,17 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
             return;
         }
 
-        if (e.lockOwner == thread) {
-            entries.remove(tableToken.getDirName());
-            while (e != null) {
-                e = e.next;
-            }
-        } else {
-            notifyListener(thread, tableToken, PoolListener.EV_NOT_LOCK_OWNER);
-            throw CairoException.nonCritical().put("Not the lock owner of ").put(tableToken.getDirName());
+        unlock(tableToken, e, thread);
+    }
+
+    public void unlockIfLocked(TableToken tableToken) {
+        Entry<T> e = entries.get(tableToken.getDirName());
+        long thread = Thread.currentThread().getId();
+        if (e == null) {
+            return;
         }
 
-        notifyListener(thread, tableToken, PoolListener.EV_UNLOCKED, -1, -1);
-        LOG.debug().$("unlocked [table=`").utf8(tableToken.getDirName()).$("`]").$();
+        unlock(tableToken, e, thread);
     }
 
     private void checkClosed() {
@@ -295,6 +294,21 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         if (listener != null) {
             listener.onEvent(getListenerSrc(), thread, token, event, (short) segment, (short) position);
         }
+    }
+
+    private void unlock(TableToken tableToken, Entry<T> e, long thread) {
+        if (e.lockOwner == thread) {
+            entries.remove(tableToken.getDirName());
+            while (e != null) {
+                e = e.next;
+            }
+        } else {
+            notifyListener(thread, tableToken, PoolListener.EV_NOT_LOCK_OWNER);
+            throw CairoException.nonCritical().put("Not the lock owner of ").put(tableToken.getDirName());
+        }
+
+        notifyListener(thread, tableToken, PoolListener.EV_UNLOCKED, -1, -1);
+        LOG.debug().$("unlocked [table=`").utf8(tableToken.getDirName()).$("`]").$();
     }
 
     @Override

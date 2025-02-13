@@ -107,7 +107,7 @@ public class TableReaderReloadBenchmark {
                 new MessageBusImpl(configuration),
                 true,
                 DefaultLifecycleManager.INSTANCE,
-                configuration.getRoot(),
+                configuration.getDbRoot(),
                 DefaultDdlListener.INSTANCE,
                 () -> Numbers.LONG_NULL,
                 cairoEngine

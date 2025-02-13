@@ -474,7 +474,7 @@ public class TableBackupTest {
     }
 
     private void assertDatabase() {
-        path.of(mainConfiguration.getRoot()).concat(TableUtils.TAB_INDEX_FILE_NAME);
+        path.of(mainConfiguration.getDbRoot()).concat(TableUtils.TAB_INDEX_FILE_NAME);
         Assert.assertTrue(Files.exists(path.$()));
         finalBackupPath.trimTo(finalBackupPathLen).concat(mainConfiguration.getDbDirectory()).concat(TableUtils.TAB_INDEX_FILE_NAME);
         Assert.assertTrue(Files.exists(finalBackupPath.$()));

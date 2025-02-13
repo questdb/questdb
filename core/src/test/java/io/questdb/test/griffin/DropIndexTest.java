@@ -24,7 +24,15 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
@@ -81,7 +89,7 @@ public class DropIndexTest extends AbstractCairoTest {
     public static void setUpStatic() throws Exception {
         AbstractCairoTest.setUpStatic();
         CharSequence dirName = tableName + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
-        path = new Path().put(configuration.getRoot()).concat(dirName);
+        path = new Path().put(configuration.getDbRoot()).concat(dirName);
         tablePathLen = path.size();
     }
 
@@ -310,7 +318,7 @@ public class DropIndexTest extends AbstractCairoTest {
             final int defaultIndexValueBlockSize = configuration.getIndexValueBlockSize();
             final String select = "SELECT ts, sensor_id FROM sensors WHERE sensor_id = 'OMEGA' and ts > '1970-01-01T01:59:06.000000Z'";
             TableToken tableToken = engine.verifyTableName(tableName);
-            try (Path path2 = new Path().put(configuration.getRoot()).concat(tableToken)) {
+            try (Path path2 = new Path().put(configuration.getDbRoot()).concat(tableToken)) {
                 for (int i = 0; i < 5; i++) {
                     try (RecordCursorFactory factory = select(select)) {
                         try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
@@ -564,7 +572,7 @@ public class DropIndexTest extends AbstractCairoTest {
     private static long countFiles(String columnName, long txn, FileChecker fileChecker) throws IOException {
         TableToken tableToken = engine.verifyTableName(tableName);
         final java.nio.file.Path tablePath = FileSystems.getDefault().getPath(
-                configuration.getRoot(),
+                configuration.getDbRoot(),
                 tableToken.getDirName()
         );
         try (Stream<?> stream = Files.find(
@@ -619,7 +627,7 @@ public class DropIndexTest extends AbstractCairoTest {
     }
 
     private void assertIndexFileExist(String tableName, String index, String version, boolean exists) {
-        Path path = Path.getThreadLocal(engine.getConfiguration().getRoot());
+        Path path = Path.getThreadLocal(engine.getConfiguration().getDbRoot());
         TableToken token = engine.verifyTableName(tableName);
         path.concat(token);
         try (TableReader rdr = engine.getReader(token)) {

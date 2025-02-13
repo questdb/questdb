@@ -24,7 +24,12 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.RecoverVarIndex;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
@@ -347,7 +352,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
             engine.releaseAllWriters();
 
             TableToken xxx = engine.verifyTableName("xxx");
-            String tablePath = configuration.getRoot() + Files.SEPARATOR + xxx.getDirName();
+            String tablePath = configuration.getDbRoot() + Files.SEPARATOR + xxx.getDirName();
             changeTable.run(tablePath);
 
             rebuildVarColumn.clear();

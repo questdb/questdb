@@ -130,12 +130,12 @@ public class SymbolCacheTest extends AbstractCairoTest {
                 TableToken tableToken = engine.verifyTableName(tableName);
                 try (Path path = new Path();
                      TxReader txReader = new TxReader(configuration.getFilesFacade()).ofRO(
-                             path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
+                             path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
                              PartitionBy.DAY
                      );
                      TableReader rdr = getReader(tableName)
                 ) {
-                    path.of(configuration.getRoot()).concat(tableToken);
+                    path.of(configuration.getDbRoot()).concat(tableToken);
                     start.await();
                     int colAdded = 0, newColsAdded;
                     while (colAdded < totalColAddCount) {
@@ -219,7 +219,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                 try (
                         TableWriter writer = newOffPoolWriter(configuration, tableName);
                         TxReader txReader = new TxReader(ff).ofRO(
-                                path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
+                                path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
                                 PartitionBy.DAY
                         )
                 ) {
@@ -229,7 +229,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                             configuration,
                             writer,
                             symColIndex,
-                            path.of(configuration.getRoot()).concat(tableToken),
+                            path.of(configuration.getDbRoot()).concat(tableToken),
                             "symCol",
                             symColIndex,
                             txReader,
@@ -286,11 +286,11 @@ public class SymbolCacheTest extends AbstractCairoTest {
                     SymbolCache symbolCache = new SymbolCache(new DefaultLineTcpReceiverConfiguration(configuration));
                     Path path = new Path();
                     TxReader txReader = new TxReader(ff).ofRO(
-                            path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
+                            path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
                             PartitionBy.DAY
                     )
             ) {
-                path.of(configuration.getRoot()).concat(tableToken);
+                path.of(configuration.getDbRoot()).concat(tableToken);
                 symbolCache.of(configuration, new TestTableWriterAPI(), 1, path, "b", 1, txReader, -1);
 
                 final CyclicBarrier barrier = new CyclicBarrier(2);
@@ -400,7 +400,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                 try (
                         TableWriter writer = TestUtils.newOffPoolWriter(configuration, tableToken, engine);
                         TxReader txReader = new TxReader(ff).ofRO(
-                                path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
+                                path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
                                 PartitionBy.DAY
                         )
                 ) {
@@ -410,7 +410,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                             configuration,
                             writer,
                             symColIndex,
-                            path.of(configuration.getRoot()).concat(tableToken),
+                            path.of(configuration.getDbRoot()).concat(tableToken),
                             "symCol",
                             symColIndex,
                             txReader,
@@ -465,7 +465,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                         TableWriter writer = newOffPoolWriter(configuration, tableName);
                         MemoryMR txMem = Vm.getCMRInstance();
                         TxReader txReader = new TxReader(ff).ofRO(
-                                path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
+                                path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
                                 PartitionBy.DAY
                         )
                 ) {
@@ -485,7 +485,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                             configuration,
                             new TestTableWriterAPI(),
                             symColIndex2,
-                            path.of(configuration.getRoot()).concat(tableToken),
+                            path.of(configuration.getDbRoot()).concat(tableToken),
                             "symCol2",
                             symColIndex2,
                             txReader,
@@ -567,7 +567,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                     writer.removeColumn("symCol1");
                     cache.close();
                     txMem.close();
-                    path.of(configuration.getRoot()).concat(tableToken);
+                    path.of(configuration.getDbRoot()).concat(tableToken);
 
                     cache.of(
                             configuration,
@@ -624,7 +624,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                         TableWriter writer = newOffPoolWriter(configuration, tableName);
                         MemoryMR txMem = Vm.getCMRInstance();
                         TxReader txReader = new TxReader(ff).ofRO(
-                                path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
+                                path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
                                 PartitionBy.DAY
                         )
                 ) {
@@ -651,7 +651,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                             configuration,
                             new TestTableWriterAPI(1),
                             symColIndex,
-                            path.of(configuration.getRoot()).concat(tableToken),
+                            path.of(configuration.getDbRoot()).concat(tableToken),
                             "symCol",
                             symColIndex,
                             txReader,
@@ -707,7 +707,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                         TableWriter writer = newOffPoolWriter(configuration, tableName);
                         MemoryMR txMem = Vm.getCMRInstance();
                         TxReader txReader = new TxReader(ff).ofRO(
-                                path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
+                                path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
                                 PartitionBy.DAY
                         )
                 ) {
@@ -734,7 +734,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                             configuration,
                             new TestTableWriterAPI(0),
                             symColIndex,
-                            path.of(configuration.getRoot()).concat(tableToken),
+                            path.of(configuration.getDbRoot()).concat(tableToken),
                             "symCol",
                             symColIndex,
                             txReader,

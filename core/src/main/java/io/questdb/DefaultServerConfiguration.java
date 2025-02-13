@@ -51,8 +51,12 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     private final PublicPassthroughConfiguration publicPassthroughConfiguration = new DefaultPublicPassthroughConfiguration();
     private final WorkerPoolConfiguration walApplyPoolConfiguration = new DefaultWalApplyWorkerPoolConfiguration();
 
-    public DefaultServerConfiguration(CharSequence root) {
-        this.cairoConfiguration = new DefaultCairoConfiguration(root);
+    public DefaultServerConfiguration(CharSequence dbRoot, CharSequence installRoot) {
+        this.cairoConfiguration = new DefaultCairoConfiguration(dbRoot, installRoot);
+    }
+
+    public DefaultServerConfiguration(CharSequence dbRoot) {
+        this.cairoConfiguration = new DefaultCairoConfiguration(dbRoot);
         this.lineTcpReceiverConfiguration = new DefaultLineTcpReceiverConfiguration(cairoConfiguration);
         this.httpServerConfiguration = new DefaultHttpServerConfiguration(cairoConfiguration);
     }

@@ -2850,6 +2850,29 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeyedFromTo() throws Exception {
+        assertException(
+                "SELECT" +
+                        "  day(ts) AS day, " +
+                        "  sym2, " +
+                        "  COUNT(*) AS c " +
+                        "FROM x " +
+                        "WHERE sym = 'abc' " +
+                        "SAMPLE BY 1d FROM dateadd('d', -31, now()) to now() FILL(NULL);",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_symbol(5,4,4,1) sym," +
+                        " rnd_symbol(5,4,4,1) sym2," +
+                        " timestamp_sequence(172800000000, 3600000000) ts" +
+                        " from long_sequence(20)" +
+                        ") timestamp(ts) partition by day",
+                0,
+                "FROM-TO intervals are not supported for keyed SAMPLE BY queries"
+        );
+    }
+
+    @Test
     public void testNoSampleByWithDeferredSingleSymbolFilterPageFrameRecordCursorFactory() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table xx (k timestamp, d DOUBLE, s SYMBOL)" +
@@ -2945,6 +2968,55 @@ public class SampleByTest extends AbstractCairoTest {
                             "  )\n" +
                             ");");
         });
+    }
+
+    @Test
+    public void testRedundantGroupByInKeyedFromTo1() throws Exception {
+        assertException(
+                "SELECT" +
+                        "  day(ts) AS day, " +
+                        "  sym2, " +
+                        "  COUNT(*) AS c " +
+                        "FROM x " +
+                        "WHERE sym = 'abc' " +
+                        "SAMPLE BY 1d " +
+                        "GROUP BY day, sym2 ",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_symbol(5,4,4,1) sym," +
+                        " rnd_symbol(5,4,4,1) sym2," +
+                        " timestamp_sequence(172800000000, 3600000000) ts" +
+                        " from long_sequence(20)" +
+                        ") timestamp(ts) partition by day",
+                95,
+                "SELECT query must not contain both GROUP BY and SAMPLE BY"
+        );
+    }
+
+    @Test
+    public void testRedundantGroupByInKeyedFromTo2() throws Exception {
+        assertException(
+                "SELECT" +
+                        "  day(ts) AS day, " +
+                        "  sym2, " +
+                        "  COUNT(*) AS c " +
+                        "FROM x " +
+                        "WHERE sym = 'abc' " +
+                        "SAMPLE BY 1d FROM dateadd('d', -31, now()) to now() FILL(NULL) " +
+                        "GROUP BY day, sym2 " +
+                        "ORDER BY day(ts) DESC, sym2;",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_symbol(5,4,4,1) sym," +
+                        " rnd_symbol(5,4,4,1) sym2," +
+                        " timestamp_sequence(172800000000, 3600000000) ts" +
+                        " from long_sequence(20)" +
+                        ") timestamp(ts) partition by day",
+                145,
+                "SELECT query must not contain both GROUP BY and SAMPLE BY"
+        );
     }
 
     @Test
@@ -3576,8 +3648,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "FROM x " +
                         "WHERE ts BETWEEN '2023-05-16T00:00:00.00Z' AND '2023-05-16T00:10:00.00Z' " +
                         "AND s2 = ('foo') " +
-                        "SAMPLE BY 5m ALIGN TO FIRST OBSERVATION " +
-                        "GROUP BY s1;",
+                        "SAMPLE BY 5m ALIGN TO FIRST OBSERVATION;",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -3602,8 +3673,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "FROM x " +
                         "WHERE ts BETWEEN '2023-05-16T00:00:00.00Z' AND '2023-05-16T00:10:00.00Z' " +
                         "AND s2 = ('foo') " +
-                        "SAMPLE BY 5m ALIGN TO CALENDAR " +
-                        "GROUP BY s1;",
+                        "SAMPLE BY 5m ALIGN TO CALENDAR;",
                 null,
                 true,
                 true

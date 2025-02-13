@@ -959,10 +959,10 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
             TableToken xTbl = engine.verifyTableName("x");
 
-            Path path = Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(xTbl).concat("wal1").concat("0").concat("s.d");
+            Path path = Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(xTbl).concat("wal1").concat("0").concat("s.d");
             Assert.assertTrue(Files.exists(path.$()));
 
-            path = Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(xTbl).concat("wal1").concat("0").concat("s.i");
+            path = Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(xTbl).concat("wal1").concat("0").concat("s.i");
             Assert.assertFalse(Files.exists(path.$()));
 
             execute("insert into x(s, timestamp) values(1, '2024-02-04T00:00:00.000Z')", sqlExecutionContext);

@@ -555,8 +555,9 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 serverMain.start();
 
                 String tableName = QueryTracingJob.TABLE_NAME;
-                try (Connection conn = getConnection("admin", "quest");
-                     PreparedStatement queryTraceStmt = conn.prepareStatement(tableName)
+                try (
+                        Connection conn = getConnection("admin", "quest");
+                        PreparedStatement queryTraceStmt = conn.prepareStatement(tableName)
                 ) {
                     Runnable assertTableEmpty = () -> {
                         try (ResultSet rs = queryTraceStmt.executeQuery()) {
@@ -675,6 +676,50 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
 
                 // unsupported property should stay as it was before reload
                 Assert.assertTrue(serverMain.getConfiguration().getLineTcpReceiverConfiguration().isUseLegacyStringDefault());
+            }
+        });
+    }
+
+    @Test
+    public void testUnknownPropertyAdditionIsIgnored() throws Exception {
+        assertMemoryLeak(() -> {
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("query.tracing.enabled=false\n");
+            }
+
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                try (FileWriter w = new FileWriter(serverConf, false)) {
+                    w.write("query.tracing.enabled=true\n");
+                    w.write("foo.bar=baz\n");
+                }
+
+                assertReloadConfig(true, "admin", "quest");
+
+                Assert.assertTrue(serverMain.getConfiguration().getCairoConfiguration().isQueryTracingEnabled());
+            }
+        });
+    }
+
+    @Test
+    public void testUnknownPropertyRemovalIsIgnored() throws Exception {
+        assertMemoryLeak(() -> {
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("query.tracing.enabled=false\n");
+                w.write("foo.bar=baz\n");
+            }
+
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                try (FileWriter w = new FileWriter(serverConf, false)) {
+                    w.write("query.tracing.enabled=true\n");
+                }
+
+                assertReloadConfig(true, "admin", "quest");
+
+                Assert.assertTrue(serverMain.getConfiguration().getCairoConfiguration().isQueryTracingEnabled());
             }
         });
     }

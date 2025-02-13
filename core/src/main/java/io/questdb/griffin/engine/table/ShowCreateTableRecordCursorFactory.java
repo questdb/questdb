@@ -274,7 +274,7 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                 sink.putAscii(", IN VOLUME ");
 
                 Path.clearThreadLocals();
-                Path softLinkPath = Path.getThreadLocal(config.getRoot()).concat(table.getDirectoryName());
+                Path softLinkPath = Path.getThreadLocal(config.getDbRoot()).concat(table.getDirectoryName());
                 Path otherVolumePath = Path.getThreadLocal2("");
 
                 config.getFilesFacade().readLink(softLinkPath, otherVolumePath);

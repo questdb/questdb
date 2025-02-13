@@ -25,9 +25,22 @@
 package io.questdb.test.cairo.o3;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.O3PartitionPurgeJob;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxReader;
 import io.questdb.log.Log;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -37,7 +50,11 @@ import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -89,7 +106,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
             runPartitionPurgeJobs();
 
             try (Path path = new Path()) {
-                path.concat(engine.getConfiguration().getRoot()).concat("tbl").concat("1970-01-10");
+                path.concat(engine.getConfiguration().getDbRoot()).concat("tbl").concat("1970-01-10");
                 int len = path.size();
                 for (int i = 0; i < 3; i++) {
                     path.trimTo(len).put(".").put(Integer.toString(i)).concat("x.d").$();
@@ -184,15 +201,15 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
 
             TableToken tableToken = engine.verifyTableName("tbl");
             try (Path path = new Path()) {
-                Files.mkdir(path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("invalid_folder.123").$(), 509);
-                Files.mkdir(path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-01.invalid").$(), 509);
+                Files.mkdir(path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat("invalid_folder.123").$(), 509);
+                Files.mkdir(path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat("1970-01-01.invalid").$(), 509);
 
                 runPartitionPurgeJobs();
 
-                path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-10").concat("x.d").$();
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat("1970-01-10").concat("x.d").$();
                 Assert.assertFalse(Utf8s.toString(path), Files.exists(path.$()));
 
-                path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-10.1").concat("x.d").$();
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat("1970-01-10.1").concat("x.d").$();
                 Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
             }
         });
@@ -214,7 +231,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                         rdr2.openPartition(0);
                     }
                     runPartitionPurgeJobs();
-                    path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-10T03").concat("x.d").$();
+                    path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat("1970-01-10T03").concat("x.d").$();
                     Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
 
                     // This should not fail
@@ -222,11 +239,11 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 }
                 runPartitionPurgeJobs();
 
-                path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-10T03").concat("x.d").$();
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat("1970-01-10T03").concat("x.d").$();
                 Assert.assertFalse(Utf8s.toString(path), Files.exists(path.$()));
-                path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-10T04").concat("x.d").$();
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat("1970-01-10T04").concat("x.d").$();
                 Assert.assertFalse(Utf8s.toString(path), Files.exists(path.$()));
-                path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-10T05").concat("x.d").$();
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat("1970-01-10T05").concat("x.d").$();
                 Assert.assertFalse(Utf8s.toString(path), Files.exists(path.$()));
             }
         });
@@ -298,7 +315,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 for (int i = 0; i < tableCount; i++) {
                     String tableName = "tbl" + i;
                     TableToken tableToken = engine.verifyTableName(tableName);
-                    path.of(engine.getConfiguration().getRoot()).concat(tableToken);
+                    path.of(engine.getConfiguration().getDbRoot()).concat(tableToken);
                     int len = path.size();
                     int partitionBy = PartitionBy.DAY;
                     txReader.ofRO(path.concat(TXN_FILE_NAME).$(), partitionBy);
@@ -348,7 +365,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
 
             try (Path path = new Path()) {
                 TableToken tableToken = engine.verifyTableName(tableName);
-                path.concat(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-10");
+                path.concat(engine.getConfiguration().getDbRoot()).concat(tableToken).concat("1970-01-10");
                 int len = path.size();
                 for (int i = 0; i < 3; i++) {
                     path.trimTo(len).put(".").put(Integer.toString(i)).concat("x.d").$();
@@ -368,14 +385,14 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 execute("insert into tbl select 4, '1970-01-09T10'");
 
                 TableToken tableToken = engine.verifyTableName("tbl");
-                path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-09.0").concat("x.d").$();
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat("1970-01-09.0").concat("x.d").$();
                 Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
 
                 try (TableReader rdr = getReader("tbl")) {
                     // OOO inserts partition 1970-01-09
                     execute("insert into tbl select 4, '1970-01-09T09'");
 
-                    path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-09.2").concat("x.d").$();
+                    path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat("1970-01-09.2").concat("x.d").$();
                     Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
 
                     try (TableReader rdr2 = getReader("tbl")) {
@@ -393,7 +410,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 }
                 runPartitionPurgeJobs();
 
-                path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-09.0").concat("x.d").$();
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat("1970-01-09.0").concat("x.d").$();
                 Assert.assertFalse(Utf8s.toString(path), Files.exists(path.$()));
             }
         });
@@ -421,7 +438,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                     // in order insert
                     execute("insert into tbl select 2, '2022-02-26T19'");
 
-                    path.of(engine.getConfiguration().getRoot()).concat(token).concat("2022-02-24T185959-687501.1");
+                    path.of(engine.getConfiguration().getDbRoot()).concat(token).concat("2022-02-24T185959-687501.1");
                     Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
 
                     // OOO insert
@@ -439,10 +456,10 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
             }
             runPartitionPurgeJobs();
 
-            path.of(engine.getConfiguration().getRoot()).concat(token).concat("2022-02-24T185959-687501.1");
+            path.of(engine.getConfiguration().getDbRoot()).concat(token).concat("2022-02-24T185959-687501.1");
             Assert.assertFalse(Utf8s.toString(path), Files.exists(path.$()));
 
-            path.of(engine.getConfiguration().getRoot()).concat(token).concat("2022-02-24T185959-687501.3");
+            path.of(engine.getConfiguration().getDbRoot()).concat(token).concat("2022-02-24T185959-687501.3");
             Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
         });
     }
@@ -468,7 +485,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                     }
 
                     TableToken tableToken = engine.verifyTableName("tbl");
-                    path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-01T01.0").concat("x.d").$();
+                    path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat("1970-01-01T01.0").concat("x.d").$();
                     Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
 
                     execute("vacuum table tbl");
@@ -511,7 +528,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 Assert.assertEquals(2, deleteAttempts.get()); // One message from Writer, one from Reader
 
                 TableToken tableToken = engine.verifyTableName("tbl");
-                path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-10.1").concat("x.d").$();
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat("1970-01-10.1").concat("x.d").$();
                 Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
             }
         });
@@ -548,16 +565,16 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 Assert.assertEquals(2, deleteAttempts.get()); // One message from Writer, one from Reader
 
                 TableToken tableToken = engine.verifyTableName("tbl");
-                path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-10").concat("x.d").$();
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat("1970-01-10").concat("x.d").$();
                 Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
 
-                path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-10.1").concat("x.d").$();
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat("1970-01-10.1").concat("x.d").$();
                 Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
 
                 // VACUUM SQL should delete partition version 1970-01-10 on attempt 3
                 execute("vacuum partitions tbl");
                 runPartitionPurgeJobs();
-                path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-10").concat("x.d").$();
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat("1970-01-10").concat("x.d").$();
                 Assert.assertFalse(Utf8s.toString(path), Files.exists(path.$()));
             }
         });
@@ -586,7 +603,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
             runPartitionPurgeJobs();
 
             try (Path path = new Path()) {
-                path.concat(engine.getConfiguration().getRoot()).concat("tbl").concat("1970-01-10");
+                path.concat(engine.getConfiguration().getDbRoot()).concat("tbl").concat("1970-01-10");
                 int len = path.size();
                 for (int i = 0; i < 3; i++) {
                     path.trimTo(len).put(".").put(Integer.toString(i)).concat("x.d").$();
@@ -639,7 +656,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                     execute("insert into tbl select 5, '1970-01-09T09'");
                     execute("insert into tbl select 5, '1970-01-09T08'");
 
-                    path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-09.5").concat("x.d").$();
+                    path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat("1970-01-09.5").concat("x.d").$();
                     Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
 
                     runPartitionPurgeJobs();
@@ -792,22 +809,22 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
 
             try (Path path = new Path()) {
                 TableToken tableToken = engine.verifyTableName(tableName);
-                path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-10").concat("x.d").$();
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat("1970-01-10").concat("x.d").$();
                 Assert.assertFalse(Utf8s.toString(path), Files.exists(path.$()));
 
-                path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-10.0").concat("x.d").$();
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat("1970-01-10.0").concat("x.d").$();
                 Assert.assertFalse(Utf8s.toString(path), Files.exists(path.$()));
 
-                path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-10.1").concat("x.d").$();
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat("1970-01-10.1").concat("x.d").$();
                 Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
 
-                path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-11").concat("x.d").$();
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat("1970-01-11").concat("x.d").$();
                 Assert.assertFalse(Utf8s.toString(path), Files.exists(path.$()));
 
-                path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-11.0").concat("x.d").$();
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat("1970-01-11.0").concat("x.d").$();
                 Assert.assertFalse(Utf8s.toString(path), Files.exists(path.$()));
 
-                path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-11.1").concat("x.d").$();
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat("1970-01-11.1").concat("x.d").$();
                 Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
             }
         });
@@ -833,7 +850,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                     }
                     runPartitionPurgeJobs();
 
-                    path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-10T00").concat("x.d").$();
+                    path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat("1970-01-10T00").concat("x.d").$();
                     Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
 
                     // This should not fail
@@ -842,7 +859,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 runPartitionPurgeJobs();
 
                 // Remove last partition
-                path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-10T00").concat("x.d").$();
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat("1970-01-10T00").concat("x.d").$();
                 Assert.assertFalse(Utf8s.toString(path), Files.exists(path.$()));
 
                 try (TableReader rdr = getReader("tbl")) {
@@ -855,7 +872,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                     }
                     runPartitionPurgeJobs();
 
-                    path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-10T07").concat("x.d").$();
+                    path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat("1970-01-10T07").concat("x.d").$();
                     Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
 
                     // This should not fail
@@ -863,7 +880,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 }
                 runPartitionPurgeJobs();
 
-                path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-10T07").concat("x.d").$();
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat("1970-01-10T07").concat("x.d").$();
                 Assert.assertFalse(Utf8s.toString(path), Files.exists(path.$()));
             }
         });
@@ -905,7 +922,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
 
                 try (Path path = new Path()) {
                     TableToken tableToken = engine.verifyTableName("tbl");
-                    path.concat(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-10");
+                    path.concat(engine.getConfiguration().getDbRoot()).concat(tableToken).concat("1970-01-10");
                     int len = path.size();
 
                     Assert.assertFalse(Utf8s.toString(path.concat("x.d")), Files.exists(path.$()));
@@ -965,7 +982,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
 
                 try (Path path = new Path()) {
                     TableToken tableToken = engine.verifyTableName("tbl");
-                    path.concat(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-10");
+                    path.concat(engine.getConfiguration().getDbRoot()).concat(tableToken).concat("1970-01-10");
                     int len = path.size();
 
                     Assert.assertFalse(Utf8s.toString(path.concat("x.d")), Files.exists(path.$()));
