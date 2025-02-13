@@ -43,13 +43,13 @@ public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietClos
     private static final int[] EMPTY_INTS = new int[0];
     private static final long LONG_BYTES = 8;
     private static final int MEM_TAG = MemoryTag.NATIVE_ND_ARRAY;
+    private final CairoConfiguration configuration;
     private long capacity;
     private long mem = 0;
     private int[] shape;
     private long size = 0;
     private int[] strides;
     private int type = ColumnType.UNDEFINED;
-    private final CairoConfiguration configuration;
 
     public DirectArrayView(CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -121,11 +121,11 @@ public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietClos
 
     @Override
     public double getDoubleAtFlatIndex(int flatIndex) {
-        assert ColumnType.decodeArrayElementType(type) == ColumnType.DOUBLE;
-        assert flatIndex >= 0;
+        assert mem != 0 : "uninitialized DirectArrayView";
+        assert ColumnType.decodeArrayElementType(type) == ColumnType.DOUBLE : "accessing DOUBLE on an non-DOUBLE array";
+        assert flatIndex >= 0 : "negative flatIndex";
         long offset = flatIndex * DOUBLE_BYTES;
-        assert offset + DOUBLE_BYTES <= size;
-        assert mem != 0;
+        assert offset + DOUBLE_BYTES <= size : "flatIndex out of range";
         return Unsafe.getUnsafe().getDouble(mem + offset);
     }
 
@@ -136,11 +136,11 @@ public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietClos
 
     @Override
     public long getLongAtFlatIndex(int flatIndex) {
-        assert ColumnType.decodeArrayElementType(type) == ColumnType.LONG;
-        assert flatIndex >= 0;
+        assert mem != 0 : "uninitialized DirectArrayView";
+        assert ColumnType.decodeArrayElementType(type) == ColumnType.LONG : "accessing LONG on a non-LONG array";
+        assert flatIndex >= 0 : "negative flatIndex";
         long offset = flatIndex * LONG_BYTES;
-        assert offset + LONG_BYTES <= size;
-        assert mem != 0;
+        assert offset + LONG_BYTES <= size : "flatIndex out of range";
         return Unsafe.getUnsafe().getLong(mem + offset);
     }
 
@@ -172,8 +172,8 @@ public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietClos
 
     @Override
     public void putDouble(int flatIndex, double value) {
-        assert ColumnType.decodeArrayElementType(type) == ColumnType.DOUBLE;
-        assert flatIndex >= 0;
+        assert ColumnType.decodeArrayElementType(type) == ColumnType.DOUBLE : "putting DOUBLE to a non-DOUBLE array";
+        assert flatIndex >= 0 : "negative flatIndex";
         long offset = flatIndex * DOUBLE_BYTES;
         ensureCapacity(offset + DOUBLE_BYTES);
         Unsafe.getUnsafe().putDouble(mem + offset, value);
@@ -191,8 +191,8 @@ public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietClos
 
     @Override
     public void putLong(int flatIndex, long value) {
-        assert ColumnType.decodeArrayElementType(type) == ColumnType.LONG;
-        assert flatIndex >= 0;
+        assert ColumnType.decodeArrayElementType(type) == ColumnType.LONG : "putting LONG to a non-LONG array";
+        assert flatIndex >= 0 : "negative flatIndex";
         long offset = flatIndex * LONG_BYTES;
         ensureCapacity(offset + LONG_BYTES);
         Unsafe.getUnsafe().putLong(mem + offset, value);
