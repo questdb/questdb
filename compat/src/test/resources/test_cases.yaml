@@ -262,7 +262,7 @@ tests:
     description: Test inserting and selecting data.
     prepare:
       - action: execute
-        query: "create table ${table_name} as (select concat('Sym', x%3) col1, x%4 status, timestamp_sequence(20000000, 100000) ts from long_sequence(100)) timestamp(ts)"
+        query: "create table ${table_name} as (select concat('Sym', x%3) col1, x%4 status, timestamp_sequence(20000000, 100000) ts from long_sequence(100)) timestamp(ts) partition by none bypass wal;"
     steps:
       - action: query
         description: Check with first limits
