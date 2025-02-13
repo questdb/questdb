@@ -3877,8 +3877,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 MatViewRefreshState state = graph.getViewRefreshState(tableToken);
                                 writer.of(auxPath.trimTo(tableRootLen).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
                                 MatViewRefreshState.commitTo(writer, state);
-                                MatViewDefinition matViewDefinition = (state != null) ?
-                                        state.getViewDefinition() : graph.getMatViewDefinition(tableToken);
+                                MatViewDefinition matViewDefinition = (state != null)
+                                        ? state.getViewDefinition() : graph.getMatViewDefinition(tableToken);
                                 if (matViewDefinition != null) {
                                     writer.of(auxPath.trimTo(tableRootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
                                     MatViewDefinition.commitTo(writer, matViewDefinition);

@@ -26,7 +26,9 @@ package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileReader;
+import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.sql.TableMetadata;
@@ -788,6 +790,62 @@ public class CreateMatViewTest extends AbstractCairoTest {
             refresher.join();
 
             Assert.assertEquals(0, errorCounter.get());
+        });
+    }
+
+    @Test
+    public void testIgnoreUnknownBlocks() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+                createTable(TABLE1);
+
+                final String query = "select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
+                execute("create materialized view test as (" + query + ") partition by day");
+
+                final TableToken matViewToken = engine.getTableTokenIfExists("test");
+                final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getMatViewDefinition(matViewToken);
+                assertNotNull(matViewDefinition);
+
+                try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade())) {
+                    writer.of(path.of(configuration.getRoot()).concat(matViewToken.getDirName()).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
+                    // Add unknown block.
+                    AppendableBlock block = writer.append();
+                    block.putStr("foobar");
+                    block.commit(
+                            (short) (MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE + 1),
+                            (byte) (MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_MSG_VERSION + 1),
+                            MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_FLAGS
+                    );
+                    // Then write mat view definition.
+                    block = writer.append();
+                    MatViewDefinition.writeTo(block, matViewDefinition);
+                    block.commit(
+                            MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE,
+                            MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_MSG_VERSION,
+                            MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_FLAGS
+                    );
+                    writer.commit();
+                }
+
+                // Reader should ignore unknown block.
+                try (BlockFileReader reader = new BlockFileReader(configuration)) {
+                    path.of(configuration.getRoot());
+                    final int rootLen = path.size();
+                    MatViewDefinition actualDefinition = MatViewDefinition.readFrom(
+                            reader,
+                            path,
+                            rootLen,
+                            matViewToken
+                    );
+
+                    assertEquals(matViewDefinition.getMatViewSql(), actualDefinition.getMatViewSql());
+                    assertEquals(matViewDefinition.getBaseTableName(), actualDefinition.getBaseTableName());
+                    assertEquals(matViewDefinition.getSamplingInterval(), actualDefinition.getSamplingInterval());
+                    assertEquals(matViewDefinition.getSamplingIntervalUnit(), actualDefinition.getSamplingIntervalUnit());
+                    assertEquals(matViewDefinition.getTimeZone(), actualDefinition.getTimeZone());
+                    assertEquals(matViewDefinition.getTimeZoneOffset(), actualDefinition.getTimeZoneOffset());
+                }
+            }
         });
     }
 

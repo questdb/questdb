@@ -130,15 +130,17 @@ public class MatViewDefinition {
     public static MatViewDefinition readFrom(@NotNull BlockFileReader reader, Path path, int rootLen, final TableToken matViewToken) {
         path.trimTo(rootLen).concat(matViewToken.getDirName()).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME);
         reader.of(path.$());
-        BlockFileReader.BlockCursor cursor = reader.getCursor();
-        if (cursor.hasNext()) {
-            return loadMatViewDefinition(cursor.next(), matViewToken);
-        } else {
-            throw CairoException.critical(0)
-                    .put("cannot read materialized view definition, file is empty [path=")
-                    .put(path)
-                    .put(']');
+        final BlockFileReader.BlockCursor cursor = reader.getCursor();
+        // Iterate through the block until we find the one we recognize.
+        while (cursor.hasNext()) {
+            final MatViewDefinition matViewDefinition = loadMatViewDefinition(cursor.next(), matViewToken);
+            if (matViewDefinition != null) {
+                return matViewDefinition;
+            }
         }
+        throw CairoException.critical(0)
+                .put("cannot read materialized view definition, block not found [path=").put(path)
+                .put(']');
     }
 
     public static void writeTo(@NotNull AppendableBlock mem, @NotNull MatViewDefinition matViewDefinition) {
@@ -191,17 +193,9 @@ public class MatViewDefinition {
     }
 
     private static MatViewDefinition loadMatViewDefinition(final ReadableBlock mem, final TableToken matViewToken) {
-        if (mem.version() != MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_MSG_VERSION
-                || mem.type() != MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE
-        ) {
-            throw CairoException.critical(0)
-                    .put("unsupported materialized view definition format [view=")
-                    .put(matViewToken.getTableName())
-                    .put(", msgVersion=")
-                    .put(mem.version())
-                    .put(", msgType=")
-                    .put(mem.type())
-                    .put(']');
+        if (mem.version() != MAT_VIEW_DEFINITION_FORMAT_MSG_VERSION || mem.type() != MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE) {
+            // Unknown block.
+            return null;
         }
 
         long offset = 0;
